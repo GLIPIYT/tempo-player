@@ -85,10 +85,10 @@ export default function QueuePanel({ open, onClose }: { open: boolean; onClose: 
               <span className="qrow-tag">{t('Now')}</span>
             </div>
           ) : null}
-          {p.queue.map((t, idx) =>
+          {p.queue.map((track, idx) =>
             idx <= p.queueIndex ? null : (
               <div
-                key={`${t.sourceId}-${idx}`}
+                key={`${track.sourceId}-${idx}`}
                 className={
                   'qrow' +
                   (dragFrom === idx ? ' qrow-dragging' : '') +
@@ -119,19 +119,22 @@ export default function QueuePanel({ open, onClose }: { open: boolean; onClose: 
                 onClick={() => p.playTracks(p.queue, idx)}
               >
                 <span className="qrow-num">{idx + 1}</span>
-                <Cover path={t.coverPath} label={t.title} size={34} />
+                <Cover path={track.coverPath} label={track.title} size={34} />
                 <div className="qrow-meta">
-                  <span className="qrow-title">{t.title}</span>
-                  <span className="qrow-sub">{t.artists.join(', ') || unknownArtist}</span>
+                  <span className="qrow-title">{track.title}</span>
+                  <span className="qrow-sub">
+                    {track.auto ? <span className="qrow-auto">{t('Autopick')}</span> : null}
+                    {track.artists.join(', ') || unknownArtist}
+                  </span>
                 </div>
-                <span className="qrow-dur">{fmtTime(t.durationSec)}</span>
+                <span className="qrow-dur">{fmtTime(track.durationSec)}</span>
                 <button
                   className="icon-btn qrow-remove"
                   onClick={(e) => {
                     e.stopPropagation()
                     p.removeFromQueue(idx)
                   }}
-                  aria-label={`${removeAria} ${t.title} ${fromQueue}`}
+                  aria-label={`${removeAria} ${track.title} ${fromQueue}`}
                 >
                   <X size={13} />
                 </button>

@@ -132,6 +132,8 @@ export interface UnifiedTrack {
   playable: boolean
   localPath: string | null
   externalUrl: string | null
+  /** appended automatically by queue auto-extend */
+  auto?: boolean
 }
 
 export interface HistoryEntry {

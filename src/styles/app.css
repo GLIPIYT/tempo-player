@@ -2755,3 +2755,25 @@ html.has-bg .app-content {
     transform: translateY(0);
   }
 }
+
+
+/* ── Queue autopick badge ─────────────────────────────────────────────── */
+
+.qrow-auto {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
+  vertical-align: 1px;
+}
+
+.qrow-meta .qrow-sub {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}

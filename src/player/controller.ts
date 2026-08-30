@@ -1,6 +1,7 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '../api/client'
 import type { RepeatMode, UnifiedTrack } from '../types/models'
+import { trackToUnified } from '../utils/unified'
 import { AudioEngine } from './engine'
 import { QueueController } from './queue'
 
@@ -32,6 +33,7 @@ interface ScPlayback {
 const VOLUME_KEY = 'tempo.volume'
 const REPEAT_KEY = 'tempo.repeat'
 const SHUFFLE_KEY = 'tempo.shuffle'
+const QUEUE_SNAPSHOT_KEY = 'tempo.queue.snapshot.v1'
 
 function readPref(key: string): string | null {
   try {
@@ -108,6 +110,9 @@ export class PlayerController {
   private loadedSourceId: string | null = null
   private metadataSourceId: string | null | undefined = undefined
   private bufferPct: number | null = null
+  private playedSourceIds = new Set<string>()
+  private autoPickBusy = false
+  private saveTimer: number | null = null
   private snapshot: PlayerSnapshot = {
     currentTrack: null,
     queue: [],
@@ -123,6 +128,7 @@ export class PlayerController {
   }
 
   constructor() {
+    this.loadSnapshot()
     this.engine.onTime = t => {
       this.position = t
       this.emit()
@@ -161,6 +167,7 @@ export class PlayerController {
     // switching tracks manually counts as a skip for the track that was playing
     this.recordSkip()
     this.engine.stop()
+    this.playedSourceIds.clear()
     this.queueCtl.setQueue(tracks, startIndex)
     void this.startPlayableFromCurrent()
   }
@@ -196,7 +203,12 @@ export class PlayerController {
     this.recordSkip()
     const advanced = this.queueCtl.next(this.repeat)
     if (!advanced) {
-      this.stop()
+      const picked = await this.autoPick()
+      if (!picked) {
+        this.stop()
+        return
+      }
+      await this.startPlayableFromCurrent()
       return
     }
     await this.startPlayableFromCurrent()
@@ -275,7 +287,32 @@ export class PlayerController {
     this.position = 0
     this.duration = 0
     this.bufferPct = null
+    try {
+      localStorage.removeItem(QUEUE_SNAPSHOT_KEY)
+    } catch {}
     this.emit()
+  }
+
+  /** Persists the queue (throttled) so it survives an app restart. */
+  private saveSnapshot(): void {
+    if (this.saveTimer !== null) return
+    this.saveTimer = window.setTimeout(() => {
+      this.saveTimer = null
+      const q = this.queueCtl.getItems().map(({ auto: _auto, ...rest }) => rest)
+      try {
+        localStorage.setItem(QUEUE_SNAPSHOT_KEY, JSON.stringify({ q, i: this.queueCtl.getIndex() }))
+      } catch {}
+    }, 1200)
+  }
+
+  private loadSnapshot(): void {
+    try {
+      const raw = localStorage.getItem(QUEUE_SNAPSHOT_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as { q?: UnifiedTrack[]; i?: number }
+      if (!Array.isArray(parsed.q) || parsed.q.length === 0) return
+      this.queueCtl.setQueue(parsed.q, Math.min(Math.max(parsed.i ?? 0, 0), parsed.q.length - 1))
+    } catch {}
   }
 
   private startSeq = 0
@@ -335,6 +372,7 @@ export class PlayerController {
 
   private startTrack(track: UnifiedTrack, resolved: ResolvedTrack): void {
     this.loadedSourceId = track.sourceId
+    this.playedSourceIds.add(track.sourceId)
     this.position = 0
     this.duration = track.durationSec ?? 0
     this.bufferPct = null
@@ -346,6 +384,58 @@ export class PlayerController {
       api.bumpPlayCount(track.dbId).catch(() => {})
     }
     this.emit()
+  }
+
+  /**
+   * Auto-extend: when the queue runs dry, continue with the rest of the same
+   * album, then with tracks by the same artists. Returns null when nothing is
+   * left and playback should stop.
+   */
+  private async autoPick(): Promise<UnifiedTrack | null> {
+    if (this.autoPickBusy) return null
+    this.autoPickBusy = true
+    try {
+      const cur = this.queueCtl.current()
+      const inQueue = new Set(this.queueCtl.getItems().map((t) => t.sourceId))
+      const skip = (t: UnifiedTrack) =>
+        inQueue.has(t.sourceId) ||
+        this.playedSourceIds.has(t.sourceId) ||
+        (cur !== null && t.sourceId === cur.sourceId)
+      if (cur?.album) {
+        try {
+          const albums = await api.listAlbums(cur.album)
+          const exact = albums.find((a) => a.title.toLowerCase() === cur.album!.toLowerCase())
+          if (exact) {
+            const detail = await api.getAlbum(exact.id)
+            const pick = detail.tracks.map(trackToUnified).find((t) => !skip(t))
+            if (pick) return this.appendAuto(pick)
+          }
+        } catch {}
+      }
+      if (cur) {
+        for (const artistName of cur.artists) {
+          if (!artistName.trim()) continue
+          try {
+            const artists = await api.listArtists(artistName)
+            const exact = artists.find((a) => a.name.toLowerCase() === artistName.toLowerCase())
+            if (!exact) continue
+            const rows = await api.getArtistTracks(exact.id)
+            const pick = rows.map(trackToUnified).find((t) => !skip(t))
+            if (pick) return this.appendAuto(pick)
+          } catch {}
+        }
+      }
+      return null
+    } finally {
+      this.autoPickBusy = false
+    }
+  }
+
+  private appendAuto(t: UnifiedTrack): UnifiedTrack {
+    const marked: UnifiedTrack = { ...t, auto: true }
+    this.queueCtl.append(marked)
+    this.emit()
+    return marked
   }
 
   private async handleEnded(): Promise<void> {
@@ -366,7 +456,12 @@ export class PlayerController {
     }
     const advanced = this.queueCtl.next(this.repeat)
     if (!advanced) {
-      this.stop()
+      const picked = await this.autoPick()
+      if (!picked) {
+        this.stop()
+        return
+      }
+      await this.startPlayableFromCurrent()
       return
     }
     this.engine.stop()
@@ -405,6 +500,7 @@ export class PlayerController {
     }
     this.updateMediaMetadata(cur)
     this.syncMediaSessionState()
+    this.saveSnapshot()
     for (const listener of this.listeners) listener()
   }
 

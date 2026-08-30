@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Heart, ListMusic, MicVocal, Pause, Play, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-react'
+import { Heart, ListMusic, MicVocal, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-react'
 import { usePlayer } from '../../player'
 import { useLikes } from '../../hooks/useLikes'
 import { useSettings } from '../../state/settings'
@@ -130,6 +130,14 @@ function PlayerBarContent() {
         </div>
 
         <div className="pb-controls">
+          <button
+            className={'icon-btn' + (p.shuffle ? ' is-active' : '')}
+            onClick={() => p.toggleShuffle()}
+            aria-label={t('Shuffle')}
+            title={t('Shuffle')}
+          >
+            <Shuffle size={15} />
+          </button>
           <button className="icon-btn" onClick={() => p.previous()} aria-label={t('Previous track')}>
             <SkipBack size={17} />
           </button>
@@ -143,6 +151,26 @@ function PlayerBarContent() {
           </button>
           <button className="icon-btn" onClick={() => p.next()} aria-label={t('Next track')}>
             <SkipForward size={17} />
+          </button>
+          <button
+            className={'icon-btn' + (p.repeat !== 'off' ? ' is-active' : '')}
+            onClick={() => p.setRepeat(p.repeat === 'off' ? 'all' : p.repeat === 'all' ? 'one' : 'off')}
+            aria-label={
+              p.repeat === 'one'
+                ? t('Repeat one')
+                : p.repeat === 'all'
+                  ? t('Repeat all')
+                  : t('Repeat off')
+            }
+            title={
+              p.repeat === 'one'
+                ? t('Repeat one')
+                : p.repeat === 'all'
+                  ? t('Repeat all')
+                  : t('Repeat off')
+            }
+          >
+            {p.repeat === 'one' ? <Repeat1 size={16} /> : <Repeat size={15} />}
           </button>
         </div>
 
