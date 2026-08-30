@@ -825,7 +825,7 @@ export default function SettingsPage() {
                       />
                     </div>
                     <div className="set-note">
-                      {t('Create an app at discord.com/developers and paste its Application ID. The synced lyrics line shows up in your status while it plays.')}
+                      {t('Application ID is already built in. Replace it only if you want your own app: create one at discord.com/developers and paste its ID. The synced lyrics line shows up in your status while it plays.')}
                     </div>
                   </>
                 ) : null}

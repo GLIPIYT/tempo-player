@@ -18,6 +18,8 @@ pub enum PresenceMsg {
         details: String,
         state: Option<String>,
         start_ms: Option<u64>,
+        large_image: Option<String>,
+        small_image: Option<String>,
     },
     Clear,
 }
@@ -34,11 +36,25 @@ fn sender() -> &'static Sender<PresenceMsg> {
     })
 }
 
-pub fn set_presence(client_id: String, details: String, state: Option<String>, start_ms: Option<u64>) {
+pub fn set_presence(
+    client_id: String,
+    details: String,
+    state: Option<String>,
+    start_ms: Option<u64>,
+    large_image: Option<String>,
+    small_image: Option<String>,
+) {
     if client_id.trim().is_empty() {
         return;
     }
-    let _ = sender().send(PresenceMsg::Set { client_id, details, state, start_ms });
+    let _ = sender().send(PresenceMsg::Set {
+        client_id,
+        details,
+        state,
+        start_ms,
+        large_image,
+        small_image,
+    });
 }
 
 pub fn clear_presence() {
@@ -48,6 +64,33 @@ pub fn clear_presence() {
 struct Pending {
     client_id: String,
     payload: String,
+}
+
+/// base64url without padding - the format Discord's media proxy expects in
+/// `mp:external/<key>` image references.
+fn b64url(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        if chunk.len() > 1 {
+            out.push(T[(n >> 6) as usize & 63] as char);
+        }
+        if chunk.len() > 2 {
+            out.push(T[n as usize & 63] as char);
+        }
+    }
+    out
+}
+
+/// Track artwork (an https URL) as a Discord media-proxy image reference.
+pub fn external_image(url: &str) -> String {
+    format!("mp:external/{}", b64url(url.as_bytes()))
 }
 
 fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
@@ -61,14 +104,14 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
         // disabled until the first Set carries a client id
         if client_id.is_empty() {
             match rx.recv() {
-                Ok(PresenceMsg::Set { client_id: id, details, state, start_ms }) => {
+                Ok(PresenceMsg::Set { client_id: id, details, state, start_ms, large_image, small_image }) => {
                     if id.trim().is_empty() {
                         continue;
                     }
                     client_id = id;
                     pending = Some(Pending {
                         client_id: client_id.clone(),
-                        payload: build_activity(&details, state, start_ms),
+                        payload: build_activity(&details, state, start_ms, large_image, small_image),
                     });
                 }
                 Ok(PresenceMsg::Clear) => continue,
@@ -95,7 +138,7 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
         let f = file.as_mut().unwrap();
 
         match rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(PresenceMsg::Set { client_id: id, details, state, start_ms }) => {
+            Ok(PresenceMsg::Set { client_id: id, details, state, start_ms, large_image, small_image }) => {
                 if id.trim() != client_id {
                     // id changed: drop the connection so the next loop re-handshakes
                     client_id = id;
@@ -105,7 +148,7 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                 }
                 pending = Some(Pending {
                     client_id: client_id.clone(),
-                    payload: build_activity(&details, state, start_ms),
+                    payload: build_activity(&details, state, start_ms, large_image, small_image),
                 });
             }
             Ok(PresenceMsg::Clear) => {
@@ -177,7 +220,13 @@ fn json_escape(s: &str) -> String {
     out
 }
 
-fn build_activity(details: &str, state: Option<String>, start_ms: Option<u64>) -> String {
+fn build_activity(
+    details: &str,
+    state: Option<String>,
+    start_ms: Option<u64>,
+    large_image: Option<String>,
+    small_image: Option<String>,
+) -> String {
     let mut s = String::new();
     s.push_str("{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":");
     s.push_str(&std::process::id().to_string());
@@ -194,6 +243,21 @@ fn build_activity(details: &str, state: Option<String>, start_ms: Option<u64>) -
     if let Some(ms) = start_ms {
         s.push_str(&format!(",\"timestamps\":{{\"start\":{}}}}}", ms));
     }
+    let has_large = large_image.as_deref().map(|v| !v.trim().is_empty()).unwrap_or(false);
+    if has_large {
+        s.push_str(",\"assets\":{\"large_image\":\"");
+        s.push_str(&json_escape(large_image.as_deref().unwrap_or("")));
+        s.push('"');
+        s.push_str(",\"large_text\":\"\"");
+        if let Some(sm) = small_image {
+            if !sm.trim().is_empty() {
+                s.push_str(",\"small_image\":\"");
+                s.push_str(&json_escape(&sm));
+                s.push_str("\",\"small_text\":\"Tempo\"");
+            }
+        }
+        s.push('}');
+    }
     s.push_str("}}");
     s
 }
@@ -204,13 +268,28 @@ mod tests {
 
     #[test]
     fn activity_json_is_balanced() {
-        let s = build_activity("Det \"quote\"", Some("St".into()), Some(1));
+        let s = build_activity(
+            "Det \"quote\"",
+            Some("St".into()),
+            Some(1),
+            Some("mp:external/aGk".into()),
+            Some("tempo_logo".into()),
+        );
         assert_eq!(s.matches('{').count(), s.matches('}').count());
         assert!(s.contains("\"details\":\"Det \\\"quote\\\"\""));
         assert!(s.contains("\"timestamps\":{\"start\":1}"));
+        assert!(s.contains("\"large_image\":\"mp:external/aGk\""));
+        assert!(s.contains("\"small_image\":\"tempo_logo\""));
+        let no_assets = build_activity("D", None, None, None, None);
+        assert!(!no_assets.contains("assets"));
         let c = build_clear();
         assert_eq!(c.matches('{').count(), c.matches('}').count());
         assert!(c.contains("\"activity\":null"));
+    }
+
+    #[test]
+    fn external_image_encodes_base64url() {
+        assert_eq!(external_image("https://a.b/c.png"), "mp:external/aHR0cHM6Ly9hLmIvYy5wbmc");
     }
 }
 

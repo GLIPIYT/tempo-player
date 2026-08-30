@@ -10,6 +10,16 @@ import { lyricLineAt, lyricsService } from '../../features/lyrics/lyricsService'
  * otherwise the artist. Updates are rate-limited (Discord allows ~1 per 15s,
  * the Rust side coalesces as well).
  */
+const LOGO_ASSET = 'tempo_logo'
+
+/** Discord media-proxy reference for a remote image; local files can't be proxied. */
+function coverAsset(coverPath: string | null): string | null {
+  if (coverPath && /^https?:\/\//.test(coverPath)) {
+    return `mp:external/${btoa(unescape(encodeURIComponent(coverPath))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`
+  }
+  return null
+}
+
 export default function PresenceBridge() {
   const p = usePlayer()
   const { settings } = useSettings()
@@ -48,12 +58,15 @@ export default function PresenceBridge() {
       return
     }
     if (lastTrackKey.current !== track.sourceId) return
+    const cover = coverAsset(track.coverPath)
     void api
       .discordSetPresence({
         clientId,
         details: track.title,
         state: track.artists.join(', ') || null,
         startMs: startMs.current,
+        largeImage: cover ?? LOGO_ASSET,
+        smallImage: cover ? LOGO_ASSET : null,
       })
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -70,8 +83,16 @@ export default function PresenceBridge() {
     if (now - lastSent.current < 5000) return
     lastSent.current = now
     lastLine.current = line
+    const cover = coverAsset(track.coverPath)
     void api
-      .discordSetPresence({ clientId, details: track.title, state: line, startMs: startMs.current })
+      .discordSetPresence({
+        clientId,
+        details: track.title,
+        state: line,
+        startMs: startMs.current,
+        largeImage: cover ?? LOGO_ASSET,
+        smallImage: cover ? LOGO_ASSET : null,
+      })
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.position, enabled, track?.sourceId])

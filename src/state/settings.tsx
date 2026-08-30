@@ -44,7 +44,7 @@ export const defaultSettings: AppSettings = {
   theme: { kind: 'preset', presetId: 'tempo' },
   startupPage: 'home',
   profile: { nickname: null, avatarPath: null, onboarded: false },
-  discord: { enabled: false, clientId: '' },
+  discord: { enabled: false, clientId: '1543766505295183904' },
   lyrics: { cacheOnline: true },
   font: { family: null, importedPath: null, sizePx: 13, uiScalePct: 100 },
   background: { path: null, dimPct: 45, blurPx: 0 },
@@ -69,7 +69,14 @@ function load(): AppSettings {
         ? (parsed.startupPage as StartupPage)
         : defaultSettings.startupPage,
       profile: { ...defaultSettings.profile, ...parsed.profile },
-      discord: { ...defaultSettings.discord, ...parsed.discord },
+      discord: {
+        ...defaultSettings.discord,
+        ...parsed.discord,
+        clientId:
+          parsed.discord?.clientId && parsed.discord.clientId.trim()
+            ? parsed.discord.clientId
+            : defaultSettings.discord.clientId,
+      },
       lyrics: { ...defaultSettings.lyrics, ...parsed.lyrics },
       font: { ...defaultSettings.font, ...parsed.font },
       background: { ...defaultSettings.background, ...parsed.background },
