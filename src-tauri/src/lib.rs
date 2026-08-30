@@ -14,7 +14,16 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            // the saved window state must not resurrect native decorations
+            // over the frameless windows configured in tauri.conf.json
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::DECORATIONS,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
@@ -37,7 +46,7 @@ pub fn run() {
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let state = handle.state::<commands::AppState>();
-                soundcloud_store::startup_maintenance(&state.db, &state.sc_cache_dir);
+                soundcloud_store::startup_maintenance(&state.db, &state.sc_cache_dir, &state.covers_dir);
                 commands::startup_rescan(handle.clone());
             });
             Ok(())
@@ -92,7 +101,8 @@ pub fn run() {
             commands::unlike_track,
             commands::list_liked_track_ids,
             commands::get_top_tracks,
-            commands::get_hour_picks
+            commands::get_hour_picks,
+            commands::get_artist_tracks
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

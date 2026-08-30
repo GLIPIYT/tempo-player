@@ -2,12 +2,14 @@ import { ChevronLeft, Play } from 'lucide-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
+import type { Track } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { usePlayer } from '../player'
-import { tracksToUnified } from '../utils/unified'
+import { tracksToUnified, trackToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
 import CardPlayButton from '../components/common/CardPlayButton'
+import TrackList from '../components/common/TrackList'
 import EmptyState from '../components/common/EmptyState'
 import { useT } from '../i18n'
 
@@ -17,6 +19,7 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
   const player = usePlayer()
   const version = useLibraryVersion()
   const { data, loading, error, reload } = useAsync(() => api.getArtist(artistId), [artistId, version])
+  const tracks = useAsync(() => api.getArtistTracks(artistId), [artistId, version])
 
   if (loading) {
     return (
@@ -38,13 +41,10 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
   if (!data) return null
 
   const { artist, albums } = data
+  const artistTracks: Track[] = tracks.data ?? []
 
-  const playAll = async () => {
-    try {
-      const details = await Promise.all(albums.map((a) => api.getAlbum(a.id)))
-      const allTracks = details.flatMap((d) => d.tracks)
-      if (allTracks.length > 0) player.playTracks(tracksToUnified(allTracks), 0)
-    } catch {}
+  const playAll = () => {
+    if (artistTracks.length > 0) player.playTracks(artistTracks.map(trackToUnified), 0)
   }
 
   const playAlbum = async (albumId: number) => {
@@ -132,6 +132,15 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
           ))}
         </div>
       )}
+
+      {artistTracks.length > 0 ? (
+        <section className="home-section">
+          <div className="home-section-head">
+            <span className="home-section-title">{t('Tracks')}</span>
+          </div>
+          <TrackList tracks={artistTracks} />
+        </section>
+      ) : null}
     </div>
   )
 }

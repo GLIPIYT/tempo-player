@@ -2,12 +2,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use tauri::{AppHandle, Emitter};
+
 use crate::database::Db;
 
 const DESKTOP_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
 const CACHE_DIR_KEY: &str = "sc_cache_dir";
 const CACHE_LIMIT_KEY: &str = "sc_cache_limit_bytes";
+pub const LIBRARY_CHANGED_EVENT: &str = "library://changed";
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,10 +88,22 @@ pub fn enforce_cache_limit(db: &Db, dir: &Path, limit: i64) {
 
 /// Runs at startup: flags cached tracks so they show up in the library,
 /// unflags rows whose files disappeared, then applies the cache limit.
-pub fn startup_maintenance(db: &Db, default_root: &Path) {
+pub fn startup_maintenance(db: &Db, default_root: &Path, covers_dir: &Path) {
     let dir = cache_dir(db, default_root);
-    let _ = db.reconcile_sc_cache(&dir);
+    let _ = db.reconcile_sc_cache(&dir, covers_dir);
     enforce_cache_limit(db, &dir, cache_limit(db));
+}
+
+/// Marks the freshly downloaded file as cached, links it into albums/artists
+/// from the file's tags and notifies the frontend so the library refreshes.
+fn finalize_cached_file(db: &Db, dir: &Path, covers_dir: &Path, sc_id: &str, app: Option<&AppHandle>) {
+    let file = cached_file_path(dir, sc_id);
+    let size = std::fs::metadata(&file).map(|m| m.len() as i64).unwrap_or(0);
+    let _ = db.mark_sc_cached(sc_id, size);
+    let _ = db.enrich_sc_track_from_tags(sc_id, &file, covers_dir);
+    if let Some(app) = app {
+        let _ = app.emit(LIBRARY_CHANGED_EVENT, sc_id.to_string());
+    }
 }
 
 pub fn cache_info(db: &Db, default_root: &Path) -> ScCacheInfo {
@@ -120,7 +135,9 @@ pub fn cache_info(db: &Db, default_root: &Path) -> ScCacheInfo {
 pub async fn get_playback(
     db: Arc<Db>,
     default_root: PathBuf,
+    covers_dir: PathBuf,
     track_id: &str,
+    app: Option<AppHandle>,
 ) -> Result<ScPlayback, String> {
     let dir = cache_dir(&db, &default_root);
     let cached = cached_file_path(&dir, track_id);
@@ -141,15 +158,20 @@ pub async fn get_playback(
     let limit = cache_limit(&db);
     tokio::spawn(async move {
         if download_to_cache(&bg_url, &cached).await.is_ok() {
-            let size = std::fs::metadata(&cached).map(|m| m.len() as i64).unwrap_or(0);
-            let _ = db.mark_sc_cached(&bg_id, size);
+            finalize_cached_file(&db, &dir, &covers_dir, &bg_id, app.as_ref());
             enforce_cache_limit(&db, &dir, limit);
         }
     });
     Ok(ScPlayback { url: Some(info.url), cached_path: None, format })
 }
 
-pub async fn precache(db: Arc<Db>, default_root: PathBuf, track_id: &str) {
+pub async fn precache(
+    db: Arc<Db>,
+    default_root: PathBuf,
+    covers_dir: PathBuf,
+    track_id: &str,
+    app: Option<AppHandle>,
+) {
     let dir = cache_dir(&db, &default_root);
     let dest = cached_file_path(&dir, track_id);
     if dest.exists() {
@@ -160,8 +182,7 @@ pub async fn precache(db: Arc<Db>, default_root: PathBuf, track_id: &str) {
             return;
         }
         if download_to_cache(&info.url, &dest).await.is_ok() {
-            let size = std::fs::metadata(&dest).map(|m| m.len() as i64).unwrap_or(0);
-            let _ = db.mark_sc_cached(track_id, size);
+            finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
             enforce_cache_limit(&db, &dir, cache_limit(&db));
         }
     }
@@ -347,7 +368,15 @@ mod tests {
         std::fs::create_dir_all(&cache).unwrap();
         std::fs::write(cache.join("999.mp3"), b"cached-bytes").unwrap();
         set_cache_dir(&db, cache.to_str().unwrap()).unwrap();
-        let playback = get_playback(Arc::new(db), root.join("default"), "999").await.unwrap();
+        let playback = get_playback(
+            Arc::new(db),
+            root.join("default"),
+            root.join("covers"),
+            "999",
+            None,
+        )
+        .await
+        .unwrap();
         assert!(playback.url.is_none());
         assert_eq!(
             playback.cached_path.as_deref(),

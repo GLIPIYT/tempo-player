@@ -519,15 +519,24 @@ pub async fn fetch_online_lyrics_all(
 
 #[tauri::command]
 pub async fn sc_get_playback(
+    app: AppHandle,
     state: State<'_, AppState>,
     track_id: String,
 ) -> Result<crate::soundcloud_store::ScPlayback, String> {
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
-    crate::soundcloud_store::get_playback(state.db.clone(), root, &track_id).await
+    crate::soundcloud_store::get_playback(
+        state.db.clone(),
+        root,
+        state.covers_dir.clone(),
+        &track_id,
+        Some(app),
+    )
+    .await
 }
 
 #[tauri::command]
-pub fn add_sc_track_to_playlist(
+pub async fn add_sc_track_to_playlist(
+    app: AppHandle,
     state: State<'_, AppState>,
     playlist_id: i64,
     track: crate::soundcloud::ScTrack,
@@ -542,9 +551,10 @@ pub fn add_sc_track_to_playlist(
     state.db.playlist_add_track(playlist_id, track_id)?;
     let db = state.db.clone();
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
+    let covers = state.covers_dir.clone();
     let sc_id = track.id.clone();
     tauri::async_runtime::spawn(async move {
-        crate::soundcloud_store::precache(db, root, &sc_id).await;
+        crate::soundcloud_store::precache(db, root, covers, &sc_id, Some(app)).await;
     });
     Ok(track_id)
 }
@@ -592,4 +602,9 @@ pub fn get_top_tracks(state: State<'_, AppState>, limit: i64) -> Result<Vec<crat
 #[tauri::command]
 pub fn get_hour_picks(state: State<'_, AppState>, limit: i64) -> Result<Vec<Track>, String> {
     state.db.get_hour_picks(limit)
+}
+
+#[tauri::command]
+pub fn get_artist_tracks(state: State<'_, AppState>, artist_id: i64) -> Result<Vec<Track>, String> {
+    state.db.get_artist_tracks(artist_id)
 }

@@ -158,6 +158,8 @@ export class PlayerController {
   getSnapshot = (): PlayerSnapshot => this.snapshot
 
   playTracks(tracks: UnifiedTrack[], startIndex = 0): void {
+    // switching tracks manually counts as a skip for the track that was playing
+    this.recordSkip()
     this.engine.stop()
     this.queueCtl.setQueue(tracks, startIndex)
     void this.startPlayableFromCurrent()

@@ -434,22 +434,20 @@ export default function Sidebar() {
             <Play size={13} />
             {t('Play now')}
           </button>
-          {menu.isLikes ? null : (
-            <button
-              className="menu-item"
-              onClick={() => {
-                const id = menu.id
-                setMenu(null)
-                api
-                  .setPlaylistPinned(id, false)
-                  .then(() => bumpLibraryVersion())
-                  .catch(() => undefined)
-              }}
-            >
-              <StarOff size={13} />
-              {t('Remove from favorites')}
-            </button>
-          )}
+          <button
+            className="menu-item"
+            onClick={() => {
+              const id = menu.id
+              setMenu(null)
+              api
+                .setPlaylistPinned(id, false)
+                .then(() => bumpLibraryVersion())
+                .catch(() => undefined)
+            }}
+          >
+            <StarOff size={13} />
+            {t('Remove from favorites')}
+          </button>
           {menu.isLikes ? null : (
             <>
               <div className="menu-sep" />

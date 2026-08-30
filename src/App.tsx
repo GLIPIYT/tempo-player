@@ -21,7 +21,7 @@ import { SettingsProvider } from './state/settings'
 import { I18nProvider } from './i18n'
 import { ThemeApply } from './theme/engine'
 import BackgroundLayer from './components/layout/BackgroundLayer'
-import { onScanProgress } from './api/events'
+import { onScanProgress, onLibraryChanged } from './api/events'
 import { api } from './api/client'
 import { bumpLibraryVersion } from './utils/libraryVersion'
 import { likesStore } from './utils/likesStore'
@@ -107,6 +107,25 @@ function ScanWatcher() {
   return null
 }
 
+function LibraryChangeWatcher() {
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    let cancelled = false
+    void onLibraryChanged(() => {
+      bumpLibraryVersion()
+      likesStore.reload()
+    }).then((fn) => {
+      if (cancelled) fn()
+      else unlisten = fn
+    })
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [])
+  return null
+}
+
 function FolderDropWatcher() {
   useEffect(() => {
     let unlisten: (() => void) | undefined
@@ -164,6 +183,7 @@ function Shell() {
       </div>
       <Shortcuts />
       <ScanWatcher />
+      <LibraryChangeWatcher />
       <FolderDropWatcher />
       <TaskbarProgress />
     </div>

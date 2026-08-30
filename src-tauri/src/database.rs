@@ -762,6 +762,98 @@ impl Db {
         })
     }
 
+    /// Pulls album/artist/year/genre from the cached file's tags and links the
+    /// SoundCloud row into the normal albums and artists catalogs. Returns false
+    /// when the row is gone or the file has no readable tags.
+    pub fn enrich_sc_track_from_tags(
+        &self,
+        external_id: &str,
+        file: &Path,
+        covers_dir: &Path,
+    ) -> Result<bool, String> {
+        let meta = match crate::metadata::read_metadata(file, covers_dir) {
+            Ok(meta) => meta,
+            Err(_) => return Ok(false),
+        };
+        self.with_conn(|conn| {
+            let track_id: Option<i64> = conn
+                .query_row(
+                    "SELECT id FROM tracks WHERE source = 'soundcloud' AND external_id = ?1",
+                    params![external_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(db_err)?;
+            let Some(track_id) = track_id else { return Ok(false) };
+
+            let tag_artist = meta.artist.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            let artist_id = match tag_artist {
+                Some(name) => Some(get_or_create_artist(conn, name)?),
+                None => None,
+            };
+            let tag_album = meta.album.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            let album_id = match tag_album {
+                Some(title) => {
+                    let album_artist = meta
+                        .album_artist
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .or(tag_artist);
+                    let album_artist_id = match album_artist {
+                        Some(name) => Some(get_or_create_artist(conn, name)?),
+                        None => artist_id,
+                    };
+                    let album_id = get_or_create_album(conn, title, album_artist_id)?;
+                    if let Some(cover) = &meta.cover_path {
+                        conn.execute(
+                            "UPDATE albums SET cover_path = ?1 WHERE id = ?2 AND cover_path IS NULL",
+                            params![cover, album_id],
+                        )
+                        .map_err(db_err)?;
+                    }
+                    Some(album_id)
+                }
+                None => None,
+            };
+            let new_search_text = build_search_text(
+                meta.title.as_deref().unwrap_or(""),
+                tag_artist.unwrap_or(""),
+                tag_album.unwrap_or(""),
+                meta.genre.as_deref().unwrap_or(""),
+            );
+            conn.execute(
+                "UPDATE tracks SET \
+                 title = CASE WHEN ?2 <> '' THEN ?2 ELSE title END, \
+                 artist_id = COALESCE(?3, artist_id), \
+                 album_id = COALESCE(?4, album_id), \
+                 track_number = COALESCE(?5, track_number), \
+                 disc_number = COALESCE(?6, disc_number), \
+                 duration_sec = COALESCE(?7, duration_sec), \
+                 year = COALESCE(?8, year), \
+                 genre = COALESCE(?9, genre), \
+                 search_text = CASE WHEN ?11 <> '' THEN ?11 ELSE search_text END, \
+                 cover_path = COALESCE(cover_path, ?10) \
+                 WHERE id = ?1",
+                params![
+                    track_id,
+                    meta.title.as_deref().unwrap_or(""),
+                    artist_id,
+                    album_id,
+                    meta.track_number,
+                    meta.disc_number,
+                    meta.duration_sec,
+                    meta.year,
+                    meta.genre,
+                    meta.cover_path,
+                    new_search_text,
+                ],
+            )
+            .map_err(db_err)?;
+            Ok(true)
+        })
+    }
+
     pub fn mark_sc_uncached(&self, external_id: &str) -> Result<(), String> {
         self.with_conn(|conn| {
             conn.execute(
@@ -788,10 +880,12 @@ impl Db {
         })
     }
 
-    /// Syncs `cached_at` flags with the actual cache directory contents and removes
+    /// Syncs `cached_at` flags with the actual cache directory contents, removes
     /// duplicate local rows created by the old "add the cache folder as a library
-    /// folder" workaround. Returns the number of tracks currently backed by a file.
-    pub fn reconcile_sc_cache(&self, cache_dir: &Path) -> Result<u32, String> {
+    /// folder" workaround, and enriches cached rows with file tags. Returns the
+    /// number of tracks currently backed by a file.
+    pub fn reconcile_sc_cache(&self, cache_dir: &Path, covers_dir: &Path) -> Result<u32, String> {
+        let mut cached_files: Vec<(String, std::path::PathBuf)> = Vec::new();
         self.with_conn(|conn| {
             let mut stmt = conn
                 .prepare("SELECT id, external_id FROM tracks WHERE source = 'soundcloud'")
@@ -805,7 +899,6 @@ impl Db {
             }
             drop(stmt);
             let tx = conn.unchecked_transaction().map_err(db_err)?;
-            let mut cached = 0u32;
             for (id, external_id) in rows {
                 let Some(external_id) = external_id else { continue };
                 let file = cache_dir.join(format!("{}.mp3", external_id));
@@ -821,7 +914,7 @@ impl Db {
                         params![file.to_string_lossy()],
                     )
                     .map_err(db_err)?;
-                    cached += 1;
+                    cached_files.push((external_id, file));
                 } else {
                     tx.execute(
                         "UPDATE tracks SET cached_at = NULL, file_size = 0 WHERE id = ?1 AND cached_at IS NOT NULL",
@@ -831,7 +924,26 @@ impl Db {
                 }
             }
             tx.commit().map_err(db_err)?;
-            Ok(cached)
+            Ok(())
+        })?;
+        let cached = cached_files.len() as u32;
+        for (external_id, file) in &cached_files {
+            let _ = self.enrich_sc_track_from_tags(external_id, file, covers_dir);
+        }
+        Ok(cached)
+    }
+
+    pub fn get_artist_tracks(&self, artist_id: i64) -> Result<Vec<Track>, String> {
+        self.with_conn(|conn| {
+            fetch_tracks(
+                conn,
+                TRACK_FROM,
+                "t.artist_id = ?1",
+                Some(Value::Integer(artist_id)),
+                "t.album_id, t.disc_number, t.track_number, t.title COLLATE NOCASE, t.id",
+                -1,
+                0,
+            )
         })
     }
 

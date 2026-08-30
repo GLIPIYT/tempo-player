@@ -12,7 +12,17 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
+# common-controls-v6 is off: it imports TaskDialogIndirect, which needs a
+# Common-Controls v6 manifest that tauri-build embeds into bins only — test
+# binaries then fail to load. Nothing in Tempo uses TaskDialog tray/menus.
+tauri = { version = "2", default-features = false, features = [
+    "wry",
+    "compression",
+    "dynamic-acl",
+    "x11",
+    "dbus",
+    "protocol-asset",
+] }
 tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
 serde = { version = "1", features = ["derive"] }

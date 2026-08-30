@@ -46,6 +46,7 @@ export const api = {
   getAlbum: (albumId: number) => invoke<AlbumDetail>('get_album', { albumId }),
   listArtists: (query: string) => invoke<Artist[]>('list_artists', { query }),
   getArtist: (artistId: number) => invoke<ArtistDetail>('get_artist', { artistId }),
+  getArtistTracks: (artistId: number) => invoke<Track[]>('get_artist_tracks', { artistId }),
 
   createPlaylist: (name: string) => invoke<Playlist>('create_playlist', { name }),
   renamePlaylist: (playlistId: number, name: string) =>
