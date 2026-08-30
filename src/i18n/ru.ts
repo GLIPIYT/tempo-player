@@ -150,7 +150,7 @@ export const ru: Record<string, string> = {
   Search: 'Поиск',
   'Search tracks, albums, artists': 'Поиск треков, альбомов, исполнителей',
   'Search your library': 'Поиск по библиотеке',
-  'Searching…': 'Поиск…',
+  'Searching…': 'Ищем…',
   Seek: 'Перемотка',
   Settings: 'Настройки',
   showing: 'показано',
@@ -263,5 +263,4 @@ export const ru: Record<string, string> = {
   'Search manually': 'Искать вручную',
   Hide: 'Скрыть',
   Title: 'Название',
-  'Searching…': 'Ищем…',
 }
