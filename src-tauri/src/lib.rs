@@ -1,5 +1,6 @@
 mod commands;
 mod database;
+mod discord;
 mod lyrics;
 mod metadata;
 mod models;
@@ -108,7 +109,10 @@ pub fn run() {
             commands::get_top_tracks,
             commands::get_hour_picks,
             commands::get_artist_tracks,
-            commands::get_daily_minutes
+            commands::get_daily_minutes,
+            commands::discord_set_presence,
+            commands::discord_clear_presence,
+            commands::set_track_lyrics
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

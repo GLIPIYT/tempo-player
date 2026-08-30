@@ -15,6 +15,7 @@ import AlbumDetailPage from './pages/AlbumDetailPage'
 import ArtistDetailPage from './pages/ArtistDetailPage'
 import PlaylistDetailPage from './pages/PlaylistDetailPage'
 import Onboarding from './components/onboarding/Onboarding'
+import PresenceBridge from './components/integration/PresenceBridge'
 import { NavProvider, useNav } from './state/nav'
 import { usePlayer } from './player'
 import PlayerProvider from './player/PlayerProvider'
@@ -188,6 +189,7 @@ function Shell() {
       <LibraryChangeWatcher />
       <FolderDropWatcher />
       <TaskbarProgress />
+      <PresenceBridge />
       <ToastHost />
       <Onboarding />
     </div>

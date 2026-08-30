@@ -294,6 +294,13 @@ export const ru: Record<string, string> = {
   Month: 'Месяц',
   'Recent plays': 'Недавние прослушивания',
   'Good night': 'Доброй ночи',
+  Integrations: 'Интеграции',
+  'Discord Application ID': 'Discord Application ID',
+  'Create an app at discord.com/developers and paste its Application ID. The synced lyrics line shows up in your status while it plays.':
+    'Создай приложение на discord.com/developers и вставь его Application ID. В статусе будет показываться активная строчка синхронизированной лирики.',
+  'Save lyrics to cache': 'Сохранять лирику в кэш',
+  'Lyrics found online are stored with the track and keep working offline. Lyrics are fetched automatically in the background.':
+    'Найденная в сети лирика сохраняется вместе с треком и работает офлайн. Лирика ищется автоматически в фоне.',
   Shuffle: 'Перемешать',
   'Repeat off': 'Повтор выключен',
   'Repeat all': 'Повторять список',

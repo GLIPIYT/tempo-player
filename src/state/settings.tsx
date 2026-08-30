@@ -16,6 +16,13 @@ export interface AppSettings {
   theme: ActiveTheme
   startupPage: StartupPage
   profile: ProfileSettings
+  discord: {
+    enabled: boolean
+    clientId: string
+  }
+  lyrics: {
+    cacheOnline: boolean
+  }
   font: {
     family: string | null
     importedPath: string | null
@@ -37,6 +44,8 @@ export const defaultSettings: AppSettings = {
   theme: { kind: 'preset', presetId: 'tempo' },
   startupPage: 'home',
   profile: { nickname: null, avatarPath: null, onboarded: false },
+  discord: { enabled: false, clientId: '' },
+  lyrics: { cacheOnline: true },
   font: { family: null, importedPath: null, sizePx: 13, uiScalePct: 100 },
   background: { path: null, dimPct: 45, blurPx: 0 },
   player: { waveform: false },
@@ -60,6 +69,8 @@ function load(): AppSettings {
         ? (parsed.startupPage as StartupPage)
         : defaultSettings.startupPage,
       profile: { ...defaultSettings.profile, ...parsed.profile },
+      discord: { ...defaultSettings.discord, ...parsed.discord },
+      lyrics: { ...defaultSettings.lyrics, ...parsed.lyrics },
       font: { ...defaultSettings.font, ...parsed.font },
       background: { ...defaultSettings.background, ...parsed.background },
       player: { ...defaultSettings.player, ...parsed.player },
@@ -93,6 +104,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       ...prev,
       ...patch,
       profile: { ...prev.profile, ...patch.profile },
+      discord: { ...prev.discord, ...patch.discord },
+      lyrics: { ...prev.lyrics, ...patch.lyrics },
       font: { ...prev.font, ...patch.font },
       background: { ...prev.background, ...patch.background },
       player: { ...prev.player, ...patch.player },

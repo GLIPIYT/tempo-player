@@ -1072,6 +1072,17 @@ impl Db {
         })
     }
 
+    pub fn set_track_lyrics(&self, track_id: i64, lyrics: &str) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE tracks SET lyrics = ?2 WHERE id = ?1",
+                params![track_id, lyrics],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
     pub fn get_playlist_tracks(&self, playlist_id: i64) -> Result<Vec<PlaylistTrack>, String> {
         self.with_conn(|conn| {
             let sql = format!(

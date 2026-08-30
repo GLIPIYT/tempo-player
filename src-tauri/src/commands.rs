@@ -635,6 +635,28 @@ pub fn get_daily_minutes(state: State<'_, AppState>, days: i64) -> Result<Vec<cr
 }
 
 #[tauri::command]
+pub fn discord_set_presence(
+    client_id: String,
+    details: String,
+    state: Option<String>,
+    start_ms: Option<u64>,
+) -> Result<(), String> {
+    crate::discord::set_presence(client_id, details, state, start_ms);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn discord_clear_presence() -> Result<(), String> {
+    crate::discord::clear_presence();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_track_lyrics(state: State<'_, AppState>, track_id: i64, lyrics: String) -> Result<(), String> {
+    state.db.set_track_lyrics(track_id, &lyrics)
+}
+
+#[tauri::command]
 pub fn get_artist_tracks(state: State<'_, AppState>, artist_id: i64) -> Result<Vec<Track>, String> {
     state.db.get_artist_tracks(artist_id)
 }

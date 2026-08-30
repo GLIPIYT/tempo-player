@@ -83,6 +83,15 @@ export const api = {
   setAppSetting: (key: string, value: string) => invoke<void>('set_app_setting', { key, value }),
 
   getTrackLyrics: (trackId: number) => invoke<string | null>('get_track_lyrics', { trackId }),
+  setTrackLyrics: (trackId: number, lyrics: string) => invoke<void>('set_track_lyrics', { trackId, lyrics }),
+
+  discordSetPresence: (payload: {
+    clientId: string
+    details: string
+    state: string | null
+    startMs: number | null
+  }) => invoke<void>('discord_set_presence', payload),
+  discordClearPresence: () => invoke<void>('discord_clear_presence'),
 
   importFont: (path: string) => invoke<string>('import_font', { path }),
   importBackground: (path: string) => invoke<string>('import_background', { path }),

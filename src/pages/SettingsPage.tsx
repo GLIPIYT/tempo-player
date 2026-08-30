@@ -801,6 +801,48 @@ export default function SettingsPage() {
                 </div>
                 <div className="set-note">{t('Tempo is offline-first: your library never leaves this machine.')}</div>
               </Card>
+              <Card title={t('Integrations')}>
+                <div className="set-row">
+                  <span className="set-row-label">Discord Rich Presence</span>
+                  <button
+                    className={settings.discord.enabled ? 'switch is-on' : 'switch'}
+                    role="switch"
+                    aria-checked={settings.discord.enabled}
+                    aria-label="Discord Rich Presence"
+                    onClick={() => update({ discord: { enabled: !settings.discord.enabled } })}
+                  />
+                </div>
+                {settings.discord.enabled ? (
+                  <>
+                    <div className="set-row">
+                      <span className="set-row-label">{t('Discord Application ID')}</span>
+                      <input
+                        className="text-input stack-input"
+                        value={settings.discord.clientId}
+                        placeholder="000000000000000000"
+                        spellCheck={false}
+                        onChange={(e) => update({ discord: { clientId: e.target.value.trim() } })}
+                      />
+                    </div>
+                    <div className="set-note">
+                      {t('Create an app at discord.com/developers and paste its Application ID. The synced lyrics line shows up in your status while it plays.')}
+                    </div>
+                  </>
+                ) : null}
+                <div className="set-row" style={{ marginTop: 6 }}>
+                  <span className="set-row-label">{t('Save lyrics to cache')}</span>
+                  <button
+                    className={settings.lyrics.cacheOnline ? 'switch is-on' : 'switch'}
+                    role="switch"
+                    aria-checked={settings.lyrics.cacheOnline}
+                    aria-label={t('Save lyrics to cache')}
+                    onClick={() => update({ lyrics: { cacheOnline: !settings.lyrics.cacheOnline } })}
+                  />
+                </div>
+                <div className="set-note">
+                  {t('Lyrics found online are stored with the track and keep working offline. Lyrics are fetched automatically in the background.')}
+                </div>
+              </Card>
             </>
           ) : null}
 
