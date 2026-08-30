@@ -811,6 +811,16 @@ impl Db {
                             params![cover, album_id],
                         )
                         .map_err(db_err)?;
+                    } else {
+                        // no embedded art in the file - fall back to the track's
+                        // SoundCloud artwork so the album still has a cover
+                        conn.execute(
+                            "UPDATE albums SET cover_path = \
+                             COALESCE(cover_path, (SELECT cover_path FROM tracks WHERE id = ?1)) \
+                             WHERE id = ?2 AND cover_path IS NULL",
+                            params![track_id, album_id],
+                        )
+                        .map_err(db_err)?;
                     }
                     Some(album_id)
                 }
@@ -871,6 +881,7 @@ impl Db {
             conn.query_row(
                 "SELECT external_id FROM tracks \
                  WHERE source = 'soundcloud' AND cached_at IS NOT NULL AND external_id IS NOT NULL \
+                 AND id NOT IN (SELECT track_id FROM playlist_tracks) \
                  ORDER BY COALESCE(last_played_at, cached_at, 0) ASC LIMIT 1",
                 [],
                 |row| row.get(0),
@@ -880,10 +891,11 @@ impl Db {
         })
     }
 
-    /// Syncs `cached_at` flags with the actual cache directory contents, removes
-    /// duplicate local rows created by the old "add the cache folder as a library
-    /// folder" workaround, and enriches cached rows with file tags. Returns the
-    /// number of tracks currently backed by a file.
+    /// Syncs `cached_at` flags with the actual cache directory contents, imports
+    /// orphan cache files that have no track row yet, removes duplicate local rows
+    /// created by the old "add the cache folder as a library folder" workaround,
+    /// and enriches cached rows with file tags. Returns the number of tracks
+    /// currently backed by a file.
     pub fn reconcile_sc_cache(&self, cache_dir: &Path, covers_dir: &Path) -> Result<u32, String> {
         let mut cached_files: Vec<(String, std::path::PathBuf)> = Vec::new();
         self.with_conn(|conn| {
@@ -926,6 +938,41 @@ impl Db {
             tx.commit().map_err(db_err)?;
             Ok(())
         })?;
+
+        // orphan files: cached on disk but no soundcloud row (e.g. downloaded by
+        // playback before the row existed). Import them so every cached track is
+        // visible in the library.
+        if let Ok(entries) = std::fs::read_dir(cache_dir) {
+            let known: HashSet<String> = cached_files.iter().map(|(id, _)| id.clone()).collect();
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|ext| ext.to_str()) != Some("mp3") {
+                    continue;
+                }
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if known.contains(stem) {
+                    continue;
+                }
+                let exists: i64 = self.with_conn(|conn| {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM tracks WHERE source = 'soundcloud' AND external_id = ?1",
+                        params![stem],
+                        |row| row.get(0),
+                    )
+                    .map_err(db_err)
+                })?;
+                if exists > 0 {
+                    continue;
+                }
+                let size = std::fs::metadata(&path).map(|m| m.len() as i64).unwrap_or(0);
+                self.upsert_sc_track(stem, stem, "", 0, None)?;
+                self.mark_sc_cached(stem, size)?;
+                cached_files.push((stem.to_string(), path));
+            }
+        }
+
         let cached = cached_files.len() as u32;
         for (external_id, file) in &cached_files {
             let _ = self.enrich_sc_track_from_tags(external_id, file, covers_dir);

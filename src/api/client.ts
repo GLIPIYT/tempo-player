@@ -105,6 +105,8 @@ export const api = {
     invoke<{ url: string | null; cachedPath: string | null; format: string | null }>('sc_get_playback', {
       trackId,
     }),
+  upsertScTrack: (track: Omit<ScTrack, 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'> & Partial<Pick<ScTrack, 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'>>) =>
+    invoke<number>('sc_upsert_track', { track }),
   fetchOnlineLyricsAll: (artist: string, title: string) =>
     invoke<Array<{ provider: string; plain: string | null; syncedLrc: string | null }>>('fetch_online_lyrics_all', {
       artist,

@@ -21,9 +21,14 @@ pub struct ScTrack {
     pub artist: String,
     pub duration_ms: i64,
     pub artwork_url: Option<String>,
+    #[serde(default)]
     pub permalink_url: Option<String>,
+    // sent by the SoundCloud API; the player's lightweight upsert omits them
+    #[serde(default)]
     pub streamable: bool,
+    #[serde(default)]
     pub has_progressive: bool,
+    #[serde(default)]
     pub has_hls: bool,
 }
 

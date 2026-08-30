@@ -175,6 +175,8 @@ pub async fn precache(
     let dir = cache_dir(&db, &default_root);
     let dest = cached_file_path(&dir, track_id);
     if dest.exists() {
+        // already on disk - make sure the row is flagged and enriched
+        finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
         return;
     }
     if let Ok(info) = crate::soundcloud::get_stream_info(track_id).await {

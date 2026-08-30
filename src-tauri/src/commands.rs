@@ -560,6 +560,17 @@ pub async fn add_sc_track_to_playlist(
 }
 
 #[tauri::command]
+pub fn sc_upsert_track(state: State<'_, AppState>, track: crate::soundcloud::ScTrack) -> Result<i64, String> {
+    state.db.upsert_sc_track(
+        &track.id,
+        &track.title,
+        &track.artist,
+        track.duration_ms,
+        track.artwork_url.as_deref(),
+    )
+}
+
+#[tauri::command]
 pub fn sc_cache_info(state: State<'_, AppState>) -> Result<crate::soundcloud_store::ScCacheInfo, String> {
     Ok(crate::soundcloud_store::cache_info(&state.db, &state.sc_cache_dir))
 }

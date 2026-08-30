@@ -21,6 +21,7 @@ import { SettingsProvider } from './state/settings'
 import { I18nProvider } from './i18n'
 import { ThemeApply } from './theme/engine'
 import BackgroundLayer from './components/layout/BackgroundLayer'
+import { ToastHost } from './components/common/Toast'
 import { onScanProgress, onLibraryChanged } from './api/events'
 import { api } from './api/client'
 import { bumpLibraryVersion } from './utils/libraryVersion'
@@ -186,6 +187,7 @@ function Shell() {
       <LibraryChangeWatcher />
       <FolderDropWatcher />
       <TaskbarProgress />
+      <ToastHost />
     </div>
   )
 }

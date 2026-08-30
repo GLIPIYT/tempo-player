@@ -6,6 +6,8 @@ import { usePlayer } from '../../player'
 import { useLikes } from '../../hooks/useLikes'
 import { useT } from '../../i18n'
 import { trackToUnified } from '../../utils/unified'
+import { playlistDisplayName } from '../../utils/playlists'
+import { toast } from './Toast'
 
 interface TrackMenuProps {
   track: Track
@@ -38,20 +40,10 @@ export default function TrackMenu({
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null)
-  const [note, setNote] = useState<{ text: string; bad: boolean } | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
-  const timerRef = useRef<number | null>(null)
 
   const flash = useCallback((text: string, bad: boolean) => {
-    setNote({ text, bad })
-    if (timerRef.current !== null) window.clearTimeout(timerRef.current)
-    timerRef.current = window.setTimeout(() => setNote(null), 1500)
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current)
-    }
+    toast.show(text, bad ? 'error' : 'success')
   }, [])
 
   useEffect(() => {
@@ -99,7 +91,6 @@ export default function TrackMenu({
       close()
       return
     }
-    setNote(null)
     setSub(false)
     setCreating(false)
     setNewName('')
@@ -136,7 +127,7 @@ export default function TrackMenu({
     try {
       await api.playlistAddTrack(pl.id, track.id)
       setSub(false)
-      flash(`${t('Added to')} ${pl.name}`, false)
+      flash(`${t('Added to')} ${playlistDisplayName(pl, pl.name, t)}`, false)
     } catch (e: unknown) {
       flash(errText(e), true)
     }
@@ -151,7 +142,7 @@ export default function TrackMenu({
       setCreating(false)
       setNewName('')
       setSub(false)
-      flash(`${t('Added to')} ${pl.name}`, false)
+      flash(`${t('Added to')} ${playlistDisplayName(pl, pl.name, t)}`, false)
     } catch (e: unknown) {
       flash(errText(e), true)
     }
@@ -189,7 +180,6 @@ export default function TrackMenu({
       </button>
       {open ? (
         <div className="menu-pop" role="menu">
-          {note ? <div className={'menu-note' + (note.bad ? ' is-bad' : '')}>{note.text}</div> : null}
           <button className="menu-item" role="menuitem" onClick={toggleLike}>
             <Heart size={13} fill={likes.isLiked(track.id) ? 'currentColor' : 'none'} />
             {likes.isLiked(track.id) ? t('Remove from Likes') : t('Add to Likes')}
@@ -244,16 +234,19 @@ export default function TrackMenu({
               ) : playlists.length === 0 ? (
                 <div className="menu-item is-static">{t('No playlists yet')}</div>
               ) : (
-                playlists.map((pl) => (
-                  <button
-                    key={pl.id}
-                    className="menu-item"
-                    role="menuitem"
-                    onClick={() => void addTo(pl)}
-                  >
-                    {pl.name}
-                  </button>
-                ))
+                playlists.map((pl) => {
+                  const displayName = playlistDisplayName(pl, pl.name, t)
+                  return (
+                    <button
+                      key={pl.id}
+                      className="menu-item"
+                      role="menuitem"
+                      onClick={() => void addTo(pl)}
+                    >
+                      {displayName}
+                    </button>
+                  )
+                })
               )}
               <div className="menu-sep" />
               {creating ? (

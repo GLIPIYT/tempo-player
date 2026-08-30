@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Copy, Minus, Square, X } from 'lucide-react'
+import { usePlayer } from '../../player'
 import appIcon from '../../assets/app-icon.png'
 
 export default function TitleBar() {
   const [maximized, setMaximized] = useState(false)
+  const player = usePlayer()
   const win = getCurrentWindow()
+  const now = player.currentTrack
+    ? `${player.currentTrack.artists.join(', ')} — ${player.currentTrack.title}`
+    : null
 
   useEffect(() => {
     let unlisten: (() => void) | undefined
@@ -40,6 +45,11 @@ export default function TitleBar() {
         <img className="titlebar-icon" src={appIcon} alt="" draggable={false} />
         <span data-tauri-drag-region>Tempo</span>
       </div>
+      {now ? (
+        <div className="titlebar-now" data-tauri-drag-region title={now}>
+          {now}
+        </div>
+      ) : null}
       <div className="titlebar-drag" data-tauri-drag-region />
       <div className="titlebar-controls">
         <button

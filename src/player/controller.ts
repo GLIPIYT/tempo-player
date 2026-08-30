@@ -283,6 +283,19 @@ export class PlayerController {
   private async resolveTrackUrl(t: UnifiedTrack): Promise<ResolvedTrack | null> {
     if (t.localPath) return { url: convertFileSrc(t.localPath), format: null }
     if (t.source === 'soundcloud') {
+      if (t.dbId === null) {
+        // tracks started from search have no library row yet - create one so the
+        // track can be liked, counted and show up once its download finishes
+        try {
+          t.dbId = await api.upsertScTrack({
+            id: t.sourceId,
+            title: t.title,
+            artist: t.artists[0] ?? '',
+            durationMs: Math.round((t.durationSec ?? 0) * 1000),
+            artworkUrl: /^https?:\/\//.test(t.coverPath ?? '') ? t.coverPath : null,
+          })
+        } catch {}
+      }
       const playback = await fetchScPlayback(t.sourceId)
       if (!playback) return null
       return { url: playback.url, format: playback.format }
