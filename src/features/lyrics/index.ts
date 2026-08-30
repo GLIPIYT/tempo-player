@@ -1,0 +1,6 @@
+export { LyricsContextProvider, useLyrics } from './LyricsContext'
+export { EmbeddedTagsLyricsProvider } from './embeddedProvider'
+export { OnlineLyricsProvider, fetchOnlineLyricsCandidates } from './onlineProvider'
+export type { LyricsCandidate } from './onlineProvider'
+export { parseLrc } from './lrc'
+export type { LyricsLine, LyricsProvider, LyricsResult } from './types'

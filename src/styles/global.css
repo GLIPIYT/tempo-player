@@ -1,0 +1,206 @@
+:root {
+  --bg: #0d1017;
+  --bg-elevated: #131722;
+  --surface: #171c29;
+  --surface-hover: #1e2433;
+  --border: #232a3b;
+  --text: #e8ebf2;
+  --text-muted: #8a93a6;
+  --accent: #6c8cff;
+  --accent-strong: #86a1ff;
+  --danger: #ff6b6b;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --sidebar-w: 216px;
+  --playerbar-h: 76px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family:
+    'Segoe UI Variable Text',
+    'Segoe UI',
+    system-ui,
+    -apple-system,
+    Roboto,
+    'Helvetica Neue',
+    sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+input {
+  font: inherit;
+  color: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a3145;
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #39415a;
+  background-clip: content-box;
+  border: 3px solid transparent;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-root {
+  height: 100%;
+}
+
+:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: rgba(108, 140, 255, 0.35);
+}
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  outline: none;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  background: var(--text);
+  transition: background-color 0.15s ease;
+}
+
+input[type='range']:hover::-webkit-slider-thumb,
+input[type='range']:active::-webkit-slider-thumb {
+  background: var(--accent-strong);
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  background: var(--text);
+}
+
+input[type='range']:hover::-moz-range-thumb,
+input[type='range']:active::-moz-range-thumb {
+  background: var(--accent-strong);
+}
+
+input[type='range']::-moz-range-track {
+  height: 4px;
+  background: transparent;
+}
+
+body {
+  font-family:
+    var(--font-base, 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, Roboto,
+    'Helvetica Neue', sans-serif);
+}
+
+/* ============================================================
+   AGENT-B3-POLISH — design-quality pass (cascade overrides)
+   All values derive from tokens; safe under any theme.
+   ============================================================ */
+
+:root {
+  /* fallback only; runtime themes set the real value inline on <html> */
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --ring-accent: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* focus-visible normalization: consistent 2px accent ring */
+:focus-visible {
+  outline: 2px solid var(--ring-accent);
+  outline-offset: 1px;
+}
+
+/* scrollbars: slimmer 8px, token-based thumb with accent hover */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--border) 80%, var(--text) 10%);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  background-clip: content-box;
+  border: 2px solid transparent;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* range sliders: accent thumb by default, soft ring on hover */
+input[type='range']::-webkit-slider-thumb {
+  background: var(--accent);
+}
+
+input[type='range']::-moz-range-thumb {
+  background: var(--accent);
+}
+
+input[type='range']:hover::-webkit-slider-thumb,
+input[type='range']:active::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+input[type='range']:hover::-moz-range-thumb,
+input[type='range']:active::-moz-range-thumb {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+input[type='range'] {
+  background: linear-gradient(to right, var(--accent) var(--fill, 0%), var(--border) var(--fill, 0%));
+}
+
+.cover {
+  transition: box-shadow 0.15s ease;
+}
+
