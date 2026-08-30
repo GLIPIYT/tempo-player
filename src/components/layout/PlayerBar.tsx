@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ListMusic, MicVocal, Pause, Play, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-react'
+import { Heart, ListMusic, MicVocal, Pause, Play, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-react'
 import { usePlayer } from '../../player'
+import { useLikes } from '../../hooks/useLikes'
 import { useSettings } from '../../state/settings'
 import { useT } from '../../i18n'
 import { fmtTime } from '../../utils/format'
@@ -22,9 +23,12 @@ export default function PlayerBar() {
 function PlayerBarContent() {
   const p = usePlayer()
   const { settings } = useSettings()
+  const likes = useLikes()
   const t = useT()
   const lyrics = useLyrics()
   const [queueOpen, setQueueOpen] = useState(false)
+  const currentDbId = p.currentTrack?.dbId ?? null
+  const liked = currentDbId !== null && likes.isLiked(currentDbId)
   const [scrubbing, setScrubbing] = useState(false)
   const [scrubVal, setScrubVal] = useState<number | null>(null)
   const dur = p.duration > 0 ? p.duration : (p.currentTrack?.durationSec ?? 0)
@@ -180,6 +184,16 @@ function PlayerBarContent() {
         </div>
 
         <div className="pb-right">
+          {currentDbId !== null ? (
+            <button
+              className={'icon-btn pb-like-btn' + (liked ? ' is-active' : '')}
+              onClick={() => likes.toggle(currentDbId)}
+              aria-label={liked ? t('Remove from Likes') : t('Add to Likes')}
+              title={liked ? t('Remove from Likes') : t('Add to Likes')}
+            >
+              <Heart size={16} fill={liked ? 'currentColor' : 'none'} />
+            </button>
+          ) : null}
           <button
             className="icon-btn pb-vol-btn"
             onClick={toggleMute}

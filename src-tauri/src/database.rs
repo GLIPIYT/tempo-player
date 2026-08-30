@@ -25,7 +25,7 @@ const HISTORY_TRACKS_FROM: &str = "listening_history h \
      LEFT JOIN artists a ON a.id = t.artist_id \
      LEFT JOIN albums al ON al.id = t.album_id";
 
-const TRACK_SEARCH_PRED: &str = r"t.folder_id IS NOT NULL AND t.search_text LIKE ?1 ESCAPE '\'";
+const TRACK_SEARCH_PRED: &str = r"(t.folder_id IS NOT NULL OR (t.source = 'soundcloud' AND t.cached_at IS NOT NULL)) AND t.search_text LIKE ?1 ESCAPE '\'";
 
 const TRACK_EXACT_TARGET: usize = 25;
 const CATALOG_EXACT_TARGET: usize = 15;
@@ -45,7 +45,14 @@ const ARTIST_COLUMNS: &str =
 const PLAYLIST_COLUMNS: &str =
     "p.id, p.name, p.created_at, p.updated_at, \
      (SELECT COUNT(*) FROM playlist_tracks pc WHERE pc.playlist_id = p.id), \
-     p.pinned, p.pin_order";
+     p.pinned, p.pin_order, p.is_likes, \
+     (SELECT tc.cover_path FROM playlist_tracks ptc \
+      JOIN tracks tc ON tc.id = ptc.track_id \
+      WHERE ptc.playlist_id = p.id AND tc.cover_path IS NOT NULL \
+      ORDER BY ptc.added_at DESC, ptc.id DESC LIMIT 1)";
+
+const PLAYLIST_VISIBLE_PRED: &str =
+    "t.folder_id IS NOT NULL OR (t.source = 'soundcloud' AND t.cached_at IS NOT NULL)";
 
 const FOLDER_COLUMNS: &str =
     "f.id, f.path, f.enabled, f.added_at, \
@@ -138,7 +145,22 @@ ALTER TABLE tracks ADD COLUMN artist_name TEXT;
 CREATE INDEX idx_tracks_source ON tracks(source);
 "#;
 
-const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4];
+const MIGRATION_5: &str = r#"
+ALTER TABLE tracks ADD COLUMN cached_at INTEGER;
+ALTER TABLE playlists ADD COLUMN is_likes INTEGER NOT NULL DEFAULT 0;
+INSERT INTO playlists(name, created_at, updated_at, pinned, pin_order, is_likes)
+SELECT 'Likes', CAST(strftime('%s', 'now') AS INTEGER), CAST(strftime('%s', 'now') AS INTEGER), 1, 0, 1
+WHERE NOT EXISTS (SELECT 1 FROM playlists WHERE is_likes = 1);
+"#;
+
+const MIGRATION_6: &str = r#"
+UPDATE playlists SET pin_order = pin_order + 1 WHERE pinned = 1 AND is_likes = 0;
+UPDATE playlists SET pin_order = 0 WHERE is_likes = 1 AND pinned = 1;
+"#;
+
+const MIGRATIONS: &[&str] = &[
+    MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6,
+];
 
 pub struct Db {
     conn: Mutex<Connection>,
@@ -159,6 +181,7 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", "ON").map_err(db_err)?;
         let db = Db { conn: Mutex::new(conn) };
         db.migrate()?;
+        db.ensure_likes_playlist()?;
         db.backfill_search_text()?;
         Ok(db)
     }
@@ -323,8 +346,12 @@ impl Db {
 
     pub fn count_tracks(&self) -> Result<i64, String> {
         self.with_conn(|conn| {
-            conn.query_row("SELECT COUNT(*) FROM tracks", [], |row| row.get(0))
-                .map_err(db_err)
+            conn.query_row(
+                &format!("SELECT COUNT(*) FROM tracks t WHERE {}", PLAYLIST_VISIBLE_PRED),
+                [],
+                |row| row.get(0),
+            )
+            .map_err(db_err)
         })
     }
 
@@ -334,7 +361,7 @@ impl Db {
                 fetch_tracks(
                     conn,
                     TRACK_FROM,
-                    "t.folder_id IS NOT NULL",
+                    PLAYLIST_VISIBLE_PRED,
                     None,
                     "t.added_at DESC, t.id DESC",
                     limit,
@@ -365,16 +392,18 @@ impl Db {
     ) -> Result<i64, String> {
         let path = format!("soundcloud://{}", sc_id);
         let duration_sec = duration_ms as f64 / 1000.0;
+        let search_text = build_search_text(title, artist, "", "");
         self.with_conn(|conn| {
             conn.query_row(
                 "INSERT INTO tracks(path, folder_id, title, artist_name, duration_sec, cover_path, \
                  file_size, modified_at, added_at, source, external_id, search_text) \
-                 VALUES(?1, NULL, ?2, ?3, ?4, ?5, 0, 0, ?6, 'soundcloud', ?7, '') \
+                 VALUES(?1, NULL, ?2, ?3, ?4, ?5, 0, 0, ?6, 'soundcloud', ?7, ?8) \
                  ON CONFLICT(path) DO UPDATE SET \
                  title = excluded.title, artist_name = excluded.artist_name, \
-                 duration_sec = excluded.duration_sec, cover_path = excluded.cover_path \
+                 duration_sec = excluded.duration_sec, cover_path = excluded.cover_path, \
+                 search_text = excluded.search_text \
                  RETURNING id",
-                params![path, title, artist, duration_sec, artwork_url, now(), sc_id],
+                params![path, title, artist, duration_sec, artwork_url, now(), sc_id, search_text],
                 |row| row.get(0),
             )
             .map_err(db_err)
@@ -480,6 +509,8 @@ impl Db {
             track_count: Some(0),
             pinned: Some(false),
             pin_order: None,
+            is_likes: Some(false),
+            cover_path: None,
         })
     }
 
@@ -496,8 +527,21 @@ impl Db {
 
     pub fn delete_playlist(&self, id: i64) -> Result<(), String> {
         self.with_conn(|conn| {
-            conn.execute("DELETE FROM playlists WHERE id = ?1", params![id])
+            let deleted = conn
+                .execute("DELETE FROM playlists WHERE id = ?1 AND is_likes = 0", params![id])
                 .map_err(db_err)?;
+            if deleted == 0 {
+                let is_likes: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM playlists WHERE id = ?1 AND is_likes = 1",
+                        params![id],
+                        |row| row.get(0),
+                    )
+                    .map_err(db_err)?;
+                if is_likes > 0 {
+                    return Err("The Likes playlist cannot be deleted".to_string());
+                }
+            }
             Ok(())
         })
     }
@@ -568,6 +612,227 @@ impl Db {
         }
         tx.commit().map_err(db_err)?;
         Ok(())
+    }
+
+    fn ensure_likes_playlist(&self) -> Result<(), String> {
+        self.with_conn(|conn| {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM playlists WHERE is_likes = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(db_err)?;
+            if exists == 0 {
+                let ts = now();
+                conn.execute(
+                    "INSERT INTO playlists(name, created_at, updated_at, pinned, pin_order, is_likes) \
+                     VALUES('Likes', ?1, ?1, 1, 0, 1)",
+                    params![ts],
+                )
+                .map_err(db_err)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn likes_playlist_id(conn: &Connection) -> Result<Option<i64>, String> {
+        conn.query_row("SELECT id FROM playlists WHERE is_likes = 1", [], |row| row.get(0))
+            .optional()
+            .map_err(db_err)
+    }
+
+    pub fn like_track(&self, track_id: i64) -> Result<bool, String> {
+        let conn = self.lock_conn()?;
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        let likes_id: i64 = Self::likes_playlist_id(&tx)?
+            .ok_or_else(|| "likes playlist is missing".to_string())?;
+        let exists: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?1 AND track_id = ?2",
+                params![likes_id, track_id],
+                |row| row.get(0),
+            )
+            .map_err(db_err)?;
+        let added = exists == 0;
+        if added {
+            tx.execute(
+                "INSERT INTO playlist_tracks(playlist_id, track_id, position, added_at) \
+                 VALUES(?1, ?2, COALESCE((SELECT MAX(position) + 1 FROM playlist_tracks WHERE playlist_id = ?1), 0), ?3)",
+                params![likes_id, track_id, now()],
+            )
+            .map_err(db_err)?;
+            tx.execute(
+                "UPDATE playlists SET updated_at = ?1 WHERE id = ?2",
+                params![now(), likes_id],
+            )
+            .map_err(db_err)?;
+        }
+        tx.commit().map_err(db_err)?;
+        Ok(added)
+    }
+
+    pub fn unlike_track(&self, track_id: i64) -> Result<bool, String> {
+        let conn = self.lock_conn()?;
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        let likes_id: i64 = Self::likes_playlist_id(&tx)?
+            .ok_or_else(|| "likes playlist is missing".to_string())?;
+        let deleted = tx
+            .execute(
+                "DELETE FROM playlist_tracks WHERE id = \
+                 (SELECT id FROM playlist_tracks WHERE playlist_id = ?1 AND track_id = ?2 \
+                 ORDER BY position LIMIT 1)",
+                params![likes_id, track_id],
+            )
+            .map_err(db_err)?;
+        if deleted > 0 {
+            renumber_playlist(&tx, likes_id)?;
+            tx.execute(
+                "UPDATE playlists SET updated_at = ?1 WHERE id = ?2",
+                params![now(), likes_id],
+            )
+            .map_err(db_err)?;
+        }
+        tx.commit().map_err(db_err)?;
+        Ok(deleted > 0)
+    }
+
+    pub fn list_liked_track_ids(&self) -> Result<Vec<i64>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT pt.track_id FROM playlist_tracks pt \
+                     JOIN playlists p ON p.id = pt.playlist_id \
+                     WHERE p.is_likes = 1 ORDER BY pt.position",
+                )
+                .map_err(db_err)?;
+            let mapped = stmt.query_map([], |row| row.get::<_, i64>(0)).map_err(db_err)?;
+            let mut ids = Vec::new();
+            for row in mapped {
+                ids.push(row.map_err(db_err)?);
+            }
+            Ok(ids)
+        })
+    }
+
+    pub fn get_top_tracks(&self, limit: i64) -> Result<Vec<TopTrackItem>, String> {
+        self.with_conn(|conn| fetch_top_tracks(conn, None, limit))
+    }
+
+    pub fn get_hour_picks(&self, limit: i64) -> Result<Vec<Track>, String> {
+        self.with_conn(|conn| {
+            let sql = format!(
+                "SELECT {cols} FROM ( \
+                     SELECT h.track_id AS tid, COUNT(*) AS plays, MAX(h.played_at) AS last_play \
+                     FROM listening_history h \
+                     WHERE (CAST(strftime('%H', h.played_at, 'unixepoch', 'localtime') AS INTEGER) \
+                            - CAST(strftime('%H', 'now', 'localtime') AS INTEGER) + 24) % 24 IN (23, 0, 1) \
+                     GROUP BY h.track_id \
+                     ORDER BY plays DESC, last_play DESC \
+                     LIMIT {lim} \
+                 ) picks \
+                 JOIN tracks t ON t.id = picks.tid \
+                 LEFT JOIN artists a ON a.id = t.artist_id \
+                 LEFT JOIN albums al ON al.id = t.album_id \
+                 ORDER BY picks.plays DESC, picks.last_play DESC",
+                cols = TRACK_COLUMNS,
+                lim = limit,
+            );
+            let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+            let mapped = stmt
+                .query_map([], |row| map_track_at(row, 0))
+                .map_err(db_err)?;
+            let mut tracks = Vec::new();
+            for row in mapped {
+                tracks.push(row.map_err(db_err)?);
+            }
+            Ok(tracks)
+        })
+    }
+
+    pub fn mark_sc_cached(&self, external_id: &str, size: i64) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE tracks SET cached_at = COALESCE(cached_at, ?1), file_size = ?2 \
+                 WHERE source = 'soundcloud' AND external_id = ?3",
+                params![now(), size, external_id],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    pub fn mark_sc_uncached(&self, external_id: &str) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE tracks SET cached_at = NULL, file_size = 0 \
+                 WHERE source = 'soundcloud' AND external_id = ?1",
+                params![external_id],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    pub fn oldest_cached_sc_track(&self) -> Result<Option<String>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT external_id FROM tracks \
+                 WHERE source = 'soundcloud' AND cached_at IS NOT NULL AND external_id IS NOT NULL \
+                 ORDER BY COALESCE(last_played_at, cached_at, 0) ASC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_err)
+        })
+    }
+
+    /// Syncs `cached_at` flags with the actual cache directory contents and removes
+    /// duplicate local rows created by the old "add the cache folder as a library
+    /// folder" workaround. Returns the number of tracks currently backed by a file.
+    pub fn reconcile_sc_cache(&self, cache_dir: &Path) -> Result<u32, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT id, external_id FROM tracks WHERE source = 'soundcloud'")
+                .map_err(db_err)?;
+            let mapped = stmt
+                .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)))
+                .map_err(db_err)?;
+            let mut rows: Vec<(i64, Option<String>)> = Vec::new();
+            for row in mapped {
+                rows.push(row.map_err(db_err)?);
+            }
+            drop(stmt);
+            let tx = conn.unchecked_transaction().map_err(db_err)?;
+            let mut cached = 0u32;
+            for (id, external_id) in rows {
+                let Some(external_id) = external_id else { continue };
+                let file = cache_dir.join(format!("{}.mp3", external_id));
+                if file.exists() {
+                    let size = std::fs::metadata(&file).map(|m| m.len() as i64).unwrap_or(0);
+                    tx.execute(
+                        "UPDATE tracks SET cached_at = COALESCE(cached_at, ?1), file_size = ?2 WHERE id = ?3",
+                        params![now(), size, id],
+                    )
+                    .map_err(db_err)?;
+                    tx.execute(
+                        "DELETE FROM tracks WHERE source = 'local' AND path = ?1 COLLATE NOCASE",
+                        params![file.to_string_lossy()],
+                    )
+                    .map_err(db_err)?;
+                    cached += 1;
+                } else {
+                    tx.execute(
+                        "UPDATE tracks SET cached_at = NULL, file_size = 0 WHERE id = ?1 AND cached_at IS NOT NULL",
+                        params![id],
+                    )
+                    .map_err(db_err)?;
+                }
+            }
+            tx.commit().map_err(db_err)?;
+            Ok(cached)
+        })
     }
 
     pub fn get_app_setting(&self, key: &str) -> Result<Option<String>, String> {
@@ -1054,7 +1319,7 @@ fn search_tracks(
         return fetch_tracks(
             conn,
             TRACK_FROM,
-            "t.folder_id IS NOT NULL",
+            PLAYLIST_VISIBLE_PRED,
             None,
             "t.added_at DESC, t.id DESC",
             limit,
@@ -1319,6 +1584,8 @@ fn map_playlist(row: &rusqlite::Row) -> rusqlite::Result<Playlist> {
         track_count: Some(row.get(4)?),
         pinned: Some(row.get(5)?),
         pin_order: row.get(6)?,
+        is_likes: Some(row.get::<_, i64>(7)? != 0),
+        cover_path: row.get(8)?,
     })
 }
 
@@ -1966,11 +2233,14 @@ mod tests {
         assert_eq!(positions, vec![0, 1]);
         db.rename_playlist(pl.id, "Deep Focus").unwrap();
         let playlists = db.list_playlists().unwrap();
-        assert_eq!(playlists.len(), 1);
-        assert_eq!(playlists[0].name, "Deep Focus");
-        assert_eq!(playlists[0].track_count, Some(2));
+        let renamed = playlists
+            .iter()
+            .find(|p| p.id == pl.id)
+            .expect("playlist still exists");
+        assert_eq!(renamed.name, "Deep Focus");
+        assert_eq!(renamed.track_count, Some(2));
         db.delete_playlist(pl.id).unwrap();
-        assert!(db.list_playlists().unwrap().is_empty());
+        assert!(!db.list_playlists().unwrap().iter().any(|p| p.id == pl.id));
         assert!(db.get_playlist_tracks(pl.id).unwrap().is_empty());
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
@@ -2131,14 +2401,21 @@ mod tests {
             .unwrap();
         assert_eq!(version, MIGRATIONS.len() as i64);
         let playlists = db.list_playlists().unwrap();
-        assert_eq!(playlists.len(), 1);
-        assert_eq!(playlists[0].name, "Legacy");
-        assert_eq!(playlists[0].pinned, Some(false));
-        assert_eq!(playlists[0].pin_order, None);
-        db.set_playlist_pinned(playlists[0].id, true).unwrap();
+        // the auto-created Likes playlist coexists with the legacy one
+        assert_eq!(playlists.len(), 2);
+        let legacy_id = playlists
+            .iter()
+            .find(|p| p.name == "Legacy")
+            .expect("legacy playlist kept")
+            .id;
+        let legacy = playlists.iter().find(|p| p.id == legacy_id).unwrap();
+        assert_eq!(legacy.pinned, Some(false));
+        assert_eq!(legacy.pin_order, None);
+        db.set_playlist_pinned(legacy_id, true).unwrap();
         let playlists = db.list_playlists().unwrap();
-        assert_eq!(playlists[0].pinned, Some(true));
-        assert_eq!(playlists[0].pin_order, Some(0));
+        let legacy = playlists.iter().find(|p| p.id == legacy_id).unwrap();
+        assert_eq!(legacy.pinned, Some(true));
+        assert_eq!(legacy.pin_order, Some(1));
         db.set_app_setting("volume", "0.8").unwrap();
         assert_eq!(db.get_app_setting("volume").unwrap().as_deref(), Some("0.8"));
         let track_id: i64 = db
@@ -2382,6 +2659,14 @@ mod tests {
     #[test]
     fn pinned_playlists_pin_move_unpin_resequence() {
         let (db, dir) = test_db("pins");
+        let likes = db
+            .list_playlists()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.is_likes == Some(true))
+            .expect("likes playlist exists");
+        // keep the pinned-set assertions focused on regular playlists
+        db.set_playlist_pinned(likes.id, false).unwrap();
         let a = db.create_playlist("A").unwrap();
         let b = db.create_playlist("B").unwrap();
         let c = db.create_playlist("C").unwrap();
@@ -2710,6 +2995,142 @@ mod tests {
         assert!(cyr_query.iter().any(|t| t.title == "Зппп"));
         assert!(db.list_tracks("шаman", 10, 0).unwrap().is_empty());
         assert!(db.list_tracks("жжж", 10, 0).unwrap().is_empty());
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn likes_playlist_auto_created_cannot_be_deleted_and_tracks_toggle() {
+        let (db, dir) = test_db("likes");
+        let folder = db.add_library_folder(r"C:\likes").unwrap();
+        let t1 = seed_track(&db, folder.id, r"C:\likes\a.mp3", "Song One", "Artist", None, 90.0);
+        let t2 = db.upsert_sc_track("900", "SC Song", "SC Artist", 120_000, None).unwrap();
+
+        let playlists = db.list_playlists().unwrap();
+        assert_eq!(playlists.len(), 1);
+        let likes = &playlists[0];
+        assert_eq!(likes.is_likes, Some(true));
+        assert_eq!(likes.pinned, Some(true));
+
+        assert!(db.like_track(t1).unwrap());
+        assert!(db.like_track(t2).unwrap());
+        assert!(!db.like_track(t1).unwrap());
+
+        let liked = db.list_liked_track_ids().unwrap();
+        assert_eq!(liked, vec![t1, t2]);
+
+        assert!(db.list_tracks("", 10, 0).unwrap().iter().all(|t| t.id != t2));
+
+        assert!(db.unlike_track(t1).unwrap());
+        assert_eq!(db.list_liked_track_ids().unwrap(), vec![t2]);
+
+        assert!(db.delete_playlist(likes.id).is_err());
+        assert!(db.list_playlists().unwrap().iter().any(|p| p.id == likes.id));
+
+        db.rename_playlist(likes.id, "My Likes").unwrap();
+        assert_eq!(db.list_playlists().unwrap()[0].name, "My Likes");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cached_soundcloud_tracks_become_visible_in_library_and_search() {
+        let (db, dir) = test_db("scvis");
+        let folder = db.add_library_folder(r"C:\vis").unwrap();
+        let local = seed_track(&db, folder.id, r"C:\vis\l.mp3", "Local Song", "Local", None, 60.0);
+        let sc = db.upsert_sc_track("901", "Cached Song", "Net Artist", 100_000, None).unwrap();
+
+        assert_eq!(db.count_tracks().unwrap(), 1);
+        let browse = db.list_tracks("", 10, 0).unwrap();
+        assert_eq!(browse.iter().map(|t| t.id).collect::<Vec<_>>(), vec![local]);
+
+        db.mark_sc_cached("901", 4096).unwrap();
+        assert_eq!(db.count_tracks().unwrap(), 2);
+        let browse = db.list_tracks("", 10, 0).unwrap();
+        assert!(browse.iter().any(|t| t.id == sc));
+        let hits = db.list_tracks("cached song", 10, 0).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, sc);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn playlist_cover_follows_last_added_track_with_cover() {
+        let (db, dir) = test_db("plcover");
+        let folder = db.add_library_folder(r"C:\plc").unwrap();
+        let t1 = seed_track(&db, folder.id, r"C:\plc\a.mp3", "One", "A", None, 60.0);
+        let t2 = seed_track(&db, folder.id, r"C:\plc\b.mp3", "Two", "B", None, 60.0);
+        db.with_conn(|c| {
+            c.execute(
+                "UPDATE tracks SET cover_path = 'covers/a.png' WHERE id = ?1",
+                params![t1],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .unwrap();
+        let pl = db.create_playlist("Mix").unwrap();
+        db.playlist_add_track(pl.id, t1).unwrap();
+        let cover = db
+            .list_playlists()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.id == pl.id)
+            .unwrap()
+            .cover_path;
+        assert_eq!(cover.as_deref(), Some("covers/a.png"));
+
+        db.playlist_add_track(pl.id, t2).unwrap();
+        let cover = db
+            .list_playlists()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.id == pl.id)
+            .unwrap()
+            .cover_path;
+        assert_eq!(cover.as_deref(), Some("covers/a.png"));
+
+        db.with_conn(|c| {
+            c.execute(
+                "UPDATE tracks SET cover_path = 'covers/b.png' WHERE id = ?1",
+                params![t2],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .unwrap();
+        let cover = db
+            .list_playlists()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.id == pl.id)
+            .unwrap()
+            .cover_path;
+        assert_eq!(cover.as_deref(), Some("covers/b.png"));
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hour_picks_return_tracks_played_at_the_current_hour() {
+        let (db, dir) = test_db("hourpicks");
+        let folder = db.add_library_folder(r"C:\hp").unwrap();
+        let now_track = seed_track(&db, folder.id, r"C:\hp\m.mp3", "Morning", "A", None, 60.0);
+        seed_track(&db, folder.id, r"C:\hp\n.mp3", "Night", "B", None, 60.0);
+        db.with_conn(|c| {
+            c.execute(
+                "INSERT INTO listening_history(track_id, played_at, listened_sec, completed, skipped) \
+                 VALUES(?1, strftime('%s', 'now'), 60, 1, 0)",
+                params![now_track],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .unwrap();
+        let picks = db.get_hour_picks(5).unwrap();
+        assert_eq!(picks.len(), 1);
+        assert_eq!(picks[0].id, now_track);
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

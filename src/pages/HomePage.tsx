@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
-import { Disc3, FolderPlus, MicVocal, Music2, RefreshCw, Timer } from 'lucide-react'
+import { Clock3, Disc3, Flame, FolderPlus, MicVocal, Music2, RefreshCw, Timer } from 'lucide-react'
 import { api } from '../api/client'
-import type { Track } from '../types/models'
+import type { TopTrackItem, Track } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
@@ -10,6 +10,7 @@ import { useT } from '../i18n'
 import { usePlayer } from '../player'
 import { trackToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
+import CardPlayButton from '../components/common/CardPlayButton'
 import EmptyState from '../components/common/EmptyState'
 import ScanLine from '../components/common/ScanLine'
 
@@ -59,6 +60,8 @@ export default function HomePage() {
     }
   }, [version])
   const recent = useAsync(() => api.listTracks('', 12, 0), [version])
+  const hourPicks = useAsync(() => api.getHourPicks(12), [version])
+  const top = useAsync(() => api.getTopTracks(12), [version])
   const played = useAsync(async () => dedupeRecent((await api.getAnalytics('30d')).recent, 10), [version])
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
 
@@ -81,6 +84,13 @@ export default function HomePage() {
 
   const total = counts.data?.tracks ?? 0
   const unknownArtist = t('Unknown artist')
+  const hourTracks = hourPicks.data ?? []
+  const topTracks: TopTrackItem[] = top.data ?? []
+  const recentPlays = played.data ?? []
+
+  const playSection = (tracks: Track[], index: number) => {
+    player.playTracks(tracks.map((tr) => trackToUnified(tr)), index)
+  }
 
   return (
     <div className="page">
@@ -149,29 +159,102 @@ export default function HomePage() {
         />
       ) : (
         <>
-          <div className="section-label">{t('Recently added')}</div>
-          <div className="cards-grid cards-grid-tight">
-            {(recent.data ?? []).map((tr) => (
-              <button
-                key={tr.id}
-                className="card track-card"
-                title={tr.title}
-                onClick={() => player.playTracks([trackToUnified(tr)], 0)}
-              >
-                <Cover path={tr.coverPath} label={tr.title} size={120} />
-                <span className="card-title">{tr.title}</span>
-                <span className="card-sub">{tr.artistName ?? unknownArtist}</span>
-              </button>
-            ))}
-          </div>
-
-          {(played.data?.length ?? 0) > 0 ? (
-            <>
-              <div className="section-label">{t('Recently played')}</div>
-              <div className="cards-grid cards-grid-tight">
-                {(played.data ?? []).map((tr) => (
+          {hourTracks.length > 0 ? (
+            <section className="home-section">
+              <div className="home-section-head">
+                <span className="home-section-title">
+                  <Clock3 size={15} />
+                  {t('For this hour')}
+                </span>
+                <span className="home-section-hint">
+                  {t('Picked from what you usually play around this time of day')}
+                </span>
+              </div>
+              <div className="rail">
+                {hourTracks.map((tr, i) => (
                   <button
-                    key={tr.id}
+                    key={`hour-${tr.id}`}
+                    className="rail-card"
+                    title={tr.title}
+                    onClick={() => playSection(hourTracks, i)}
+                  >
+                    <div className="rail-cover">
+                      <Cover path={tr.coverPath} label={tr.title} size={152} />
+                      <CardPlayButton onPlay={() => playSection(hourTracks, i)} />
+                      <span className="rail-badge rail-badge-hour">
+                        <Clock3 size={11} />
+                      </span>
+                    </div>
+                    <span className="card-title">{tr.title}</span>
+                    <span className="card-sub">{tr.artistName ?? unknownArtist}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {topTracks.length > 0 ? (
+            <section className="home-section">
+              <div className="home-section-head">
+                <span className="home-section-title">
+                  <Flame size={15} />
+                  {t('Most played')}
+                </span>
+                <span className="home-section-hint">{t('Your all-time favorites by play count')}</span>
+              </div>
+              <div className="rail">
+                {topTracks.map((item, i) => (
+                  <button
+                    key={`top-${item.track.id}`}
+                    className="rail-card"
+                    title={item.track.title}
+                    onClick={() => playSection(topTracks.map((x) => x.track), i)}
+                  >
+                    <div className="rail-cover">
+                      <Cover path={item.track.coverPath} label={item.track.title} size={152} />
+                      <CardPlayButton onPlay={() => playSection(topTracks.map((x) => x.track), i)} />
+                      <span className="rail-rank">{i + 1}</span>
+                    </div>
+                    <span className="card-title">{item.track.title}</span>
+                    <span className="card-sub">
+                      {item.track.artistName ?? unknownArtist}
+                      <span className="rail-plays"> · {item.playCount} {t('plays')}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          <section className="home-section">
+            <div className="home-section-head">
+              <span className="home-section-title">{t('Recently added')}</span>
+            </div>
+            <div className="cards-grid cards-grid-tight">
+              {(recent.data ?? []).map((tr) => (
+                <button
+                  key={tr.id}
+                  className="card track-card"
+                  title={tr.title}
+                  onClick={() => player.playTracks([trackToUnified(tr)], 0)}
+                >
+                  <Cover path={tr.coverPath} label={tr.title} size={120} />
+                  <span className="card-title">{tr.title}</span>
+                  <span className="card-sub">{tr.artistName ?? unknownArtist}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {recentPlays.length > 0 ? (
+            <section className="home-section">
+              <div className="home-section-head">
+                <span className="home-section-title">{t('Recently played')}</span>
+              </div>
+              <div className="cards-grid cards-grid-tight">
+                {recentPlays.map((tr) => (
+                  <button
+                    key={`played-${tr.id}`}
                     className="card track-card"
                     title={tr.title}
                     onClick={() => player.playTracks([trackToUnified(tr)], 0)}
@@ -182,7 +265,7 @@ export default function HomePage() {
                   </button>
                 ))}
               </div>
-            </>
+            </section>
           ) : null}
         </>
       )}

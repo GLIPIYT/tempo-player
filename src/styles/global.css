@@ -78,6 +78,14 @@ input {
 
 .app-root {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-root > .app-shell {
+  flex: 1;
+  min-height: 0;
 }
 
 :focus-visible {

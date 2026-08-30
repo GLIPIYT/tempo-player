@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Check, MoreHorizontal, Plus } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Heart, MoreHorizontal, Plus } from 'lucide-react'
 import { api } from '../../api/client'
 import type { Playlist, Track } from '../../types/models'
 import { usePlayer } from '../../player'
+import { useLikes } from '../../hooks/useLikes'
 import { useT } from '../../i18n'
 import { trackToUnified } from '../../utils/unified'
 
@@ -30,6 +31,7 @@ export default function TrackMenu({
   onMove,
 }: TrackMenuProps) {
   const player = usePlayer()
+  const likes = useLikes()
   const t = useT()
   const [open, setOpen] = useState(false)
   const [sub, setSub] = useState(false)
@@ -166,6 +168,11 @@ export default function TrackMenu({
     }
   }
 
+  const toggleLike = () => {
+    likes.toggle(track.id)
+    close()
+  }
+
   return (
     <div
       ref={rootRef}
@@ -183,6 +190,11 @@ export default function TrackMenu({
       {open ? (
         <div className="menu-pop" role="menu">
           {note ? <div className={'menu-note' + (note.bad ? ' is-bad' : '')}>{note.text}</div> : null}
+          <button className="menu-item" role="menuitem" onClick={toggleLike}>
+            <Heart size={13} fill={likes.isLiked(track.id) ? 'currentColor' : 'none'} />
+            {likes.isLiked(track.id) ? t('Remove from Likes') : t('Add to Likes')}
+          </button>
+          <div className="menu-sep" />
           {playlistMode ? (
             <>
               <button

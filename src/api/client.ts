@@ -14,6 +14,7 @@ import type {
   ScanSummary,
   ScTrack,
   SearchResults,
+  TopTrackItem,
   Track,
 } from '../types/models'
 
@@ -63,6 +64,14 @@ export const api = {
   recordHistory: (trackId: number, listenedSec: number | null, completed: boolean, skipped: boolean) =>
     invoke<void>('record_history', { trackId, listenedSec, completed, skipped }),
 
+  likeTrack: (trackId: number) => invoke<void>('like_track', { trackId }),
+  unlikeTrack: (trackId: number) => invoke<void>('unlike_track', { trackId }),
+  listLikedTrackIds: () => invoke<number[]>('list_liked_track_ids'),
+
+  getTopTracks: (limit: number) =>
+    invoke<TopTrackItem[]>('get_top_tracks', { limit }),
+  getHourPicks: (limit: number) => invoke<Track[]>('get_hour_picks', { limit }),
+
   setPlaylistPinned: (playlistId: number, pinned: boolean) =>
     invoke<void>('set_playlist_pinned', { playlistId, pinned }),
   movePinnedPlaylist: (playlistId: number, newOrder: number) =>
@@ -103,9 +112,10 @@ export const api = {
   addScTrackToPlaylist: (playlistId: number, track: ScTrack) =>
     invoke<number>('add_sc_track_to_playlist', { playlistId, track }),
   scCacheInfo: () =>
-    invoke<{ path: string; totalBytes: number; fileCount: number }>('sc_cache_info'),
+    invoke<{ path: string; totalBytes: number; fileCount: number; limitBytes: number }>('sc_cache_info'),
   setScCacheDir: (path: string) => invoke<void>('set_sc_cache_dir', { path }),
   clearScCache: () => invoke<void>('clear_sc_cache'),
+  setScCacheLimit: (bytes: number) => invoke<void>('sc_set_cache_limit', { bytes }),
 
   fetchOnlineLyrics: (artist: string, title: string) =>
     invoke<{ plain: string | null; syncedLrc: string | null } | null>('fetch_online_lyrics', {

@@ -75,6 +75,10 @@ pub struct Playlist {
     pub pinned: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pin_order: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_likes: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

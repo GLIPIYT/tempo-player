@@ -10,6 +10,7 @@ import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { usePlayer } from '../player'
 import { fmtTime } from '../utils/format'
 import { trackToUnified } from '../utils/unified'
+import { playlistDisplayName } from '../utils/playlists'
 import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
@@ -138,6 +139,8 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const removeAria = t('Remove')
   const fromPlaylist = t('from playlist')
   const unknownArtist = t('Unknown artist')
+  const displayName = playlistDisplayName(playlist, t('Playlist'), t)
+  const isLikes = playlist?.isLikes === true
 
   return (
     <div className="page">
@@ -148,11 +151,15 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
 
       <div className="detail-hero">
         <div className="playlist-tile playlist-tile-lg">
-          <ListMusic size={34} />
+          {playlist?.coverPath ? (
+            <Cover path={playlist.coverPath} label={displayName} size={160} />
+          ) : (
+            <ListMusic size={34} />
+          )}
         </div>
         <div className="detail-hero-info">
           <div className="section-label">{t('Playlist')}</div>
-          <h1 className="detail-title">{playlist?.name ?? t('Playlist')}</h1>
+          <h1 className="detail-title">{displayName}</h1>
           <div className="detail-meta">
             <span>
               {items.length === 1 ? `${items.length} ${t('track')}` : `${items.length} ${t('tracks')}`}
@@ -187,10 +194,12 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                   <Pencil size={14} />
                   {t('Rename')}
                 </button>
-                <button className="btn btn-danger" disabled={busy} onClick={() => void destroy()}>
-                  <Trash2 size={14} />
-                  {t('Delete')}
-                </button>
+                {isLikes ? null : (
+                  <button className="btn btn-danger" disabled={busy} onClick={() => void destroy()}>
+                    <Trash2 size={14} />
+                    {t('Delete')}
+                  </button>
+                )}
               </>
             ) : null}
           </div>

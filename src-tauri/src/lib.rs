@@ -35,7 +35,11 @@ pub fn run() {
                 sc_cache_dir,
             });
             let handle = app.handle().clone();
-            std::thread::spawn(move || commands::startup_rescan(handle));
+            std::thread::spawn(move || {
+                let state = handle.state::<commands::AppState>();
+                soundcloud_store::startup_maintenance(&state.db, &state.sc_cache_dir);
+                commands::startup_rescan(handle.clone());
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -82,7 +86,13 @@ pub fn run() {
             commands::add_sc_track_to_playlist,
             commands::sc_cache_info,
             commands::set_sc_cache_dir,
-            commands::clear_sc_cache
+            commands::clear_sc_cache,
+            commands::sc_set_cache_limit,
+            commands::like_track,
+            commands::unlike_track,
+            commands::list_liked_track_ids,
+            commands::get_top_tracks,
+            commands::get_hour_picks
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

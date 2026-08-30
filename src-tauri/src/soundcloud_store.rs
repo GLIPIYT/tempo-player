@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::database::Db;
@@ -6,6 +7,7 @@ use crate::database::Db;
 const DESKTOP_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
 const CACHE_DIR_KEY: &str = "sc_cache_dir";
+const CACHE_LIMIT_KEY: &str = "sc_cache_limit_bytes";
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +23,7 @@ pub struct ScCacheInfo {
     pub path: String,
     pub total_bytes: i64,
     pub file_count: i64,
+    pub limit_bytes: i64,
 }
 
 pub fn cache_dir(db: &Db, default_root: &Path) -> PathBuf {
@@ -36,6 +39,56 @@ pub fn set_cache_dir(db: &Db, path: &str) -> Result<(), String> {
     std::fs::create_dir_all(path)
         .map_err(|e| format!("failed to create soundcloud cache directory {}: {}", path, e))?;
     db.set_app_setting(CACHE_DIR_KEY, path)
+}
+
+pub fn cache_limit(db: &Db) -> i64 {
+    db.get_app_setting(CACHE_LIMIT_KEY)
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0)
+        .max(0)
+}
+
+pub fn set_cache_limit(db: &Db, default_root: &Path, bytes: i64) -> Result<(), String> {
+    let bytes = bytes.max(0);
+    db.set_app_setting(CACHE_LIMIT_KEY, &bytes.to_string())?;
+    if bytes > 0 {
+        let dir = cache_dir(db, default_root);
+        enforce_cache_limit(db, &dir, bytes);
+    }
+    Ok(())
+}
+
+/// Deletes cached files for the least recently played SoundCloud tracks until the
+/// cache fits into `limit_bytes` (0 disables the limit).
+pub fn enforce_cache_limit(db: &Db, dir: &Path, limit: i64) {
+    if limit <= 0 {
+        return;
+    }
+    for _ in 0..10_000 {
+        let info = cache_info(db, dir);
+        if info.total_bytes <= limit {
+            break;
+        }
+        let Ok(Some(external_id)) = db.oldest_cached_sc_track() else {
+            break;
+        };
+        let file = cached_file_path(dir, &external_id);
+        if std::fs::remove_file(&file).is_ok() || !file.exists() {
+            let _ = db.mark_sc_uncached(&external_id);
+        } else {
+            break;
+        }
+    }
+}
+
+/// Runs at startup: flags cached tracks so they show up in the library,
+/// unflags rows whose files disappeared, then applies the cache limit.
+pub fn startup_maintenance(db: &Db, default_root: &Path) {
+    let dir = cache_dir(db, default_root);
+    let _ = db.reconcile_sc_cache(&dir);
+    enforce_cache_limit(db, &dir, cache_limit(db));
 }
 
 pub fn cache_info(db: &Db, default_root: &Path) -> ScCacheInfo {
@@ -56,15 +109,20 @@ pub fn cache_info(db: &Db, default_root: &Path) -> ScCacheInfo {
             }
         }
     }
-    ScCacheInfo { path: dir.to_string_lossy().to_string(), total_bytes, file_count }
+    ScCacheInfo {
+        path: dir.to_string_lossy().to_string(),
+        total_bytes,
+        file_count,
+        limit_bytes: cache_limit(db),
+    }
 }
 
 pub async fn get_playback(
-    db: &Db,
-    default_root: &Path,
+    db: Arc<Db>,
+    default_root: PathBuf,
     track_id: &str,
 ) -> Result<ScPlayback, String> {
-    let dir = cache_dir(db, default_root);
+    let dir = cache_dir(&db, &default_root);
     let cached = cached_file_path(&dir, track_id);
     if cached.exists() {
         return Ok(ScPlayback {
@@ -78,16 +136,21 @@ pub async fn get_playback(
     if info.format == "hls" {
         return Ok(ScPlayback { url: Some(info.url), cached_path: None, format });
     }
-    let dest = cached;
     let bg_url = info.url.clone();
+    let bg_id = track_id.to_string();
+    let limit = cache_limit(&db);
     tokio::spawn(async move {
-        let _ = download_to_cache(&bg_url, &dest).await;
+        if download_to_cache(&bg_url, &cached).await.is_ok() {
+            let size = std::fs::metadata(&cached).map(|m| m.len() as i64).unwrap_or(0);
+            let _ = db.mark_sc_cached(&bg_id, size);
+            enforce_cache_limit(&db, &dir, limit);
+        }
     });
     Ok(ScPlayback { url: Some(info.url), cached_path: None, format })
 }
 
-pub async fn precache(db: &Db, default_root: &Path, track_id: &str) {
-    let dir = cache_dir(db, default_root);
+pub async fn precache(db: Arc<Db>, default_root: PathBuf, track_id: &str) {
+    let dir = cache_dir(&db, &default_root);
     let dest = cached_file_path(&dir, track_id);
     if dest.exists() {
         return;
@@ -96,7 +159,11 @@ pub async fn precache(db: &Db, default_root: &Path, track_id: &str) {
         if info.format == "hls" {
             return;
         }
-        let _ = download_to_cache(&info.url, &dest).await;
+        if download_to_cache(&info.url, &dest).await.is_ok() {
+            let size = std::fs::metadata(&dest).map(|m| m.len() as i64).unwrap_or(0);
+            let _ = db.mark_sc_cached(track_id, size);
+            enforce_cache_limit(&db, &dir, cache_limit(&db));
+        }
     }
 }
 
@@ -280,12 +347,54 @@ mod tests {
         std::fs::create_dir_all(&cache).unwrap();
         std::fs::write(cache.join("999.mp3"), b"cached-bytes").unwrap();
         set_cache_dir(&db, cache.to_str().unwrap()).unwrap();
-        let playback = get_playback(&db, &root.join("default"), "999").await.unwrap();
+        let playback = get_playback(Arc::new(db), root.join("default"), "999").await.unwrap();
         assert!(playback.url.is_none());
         assert_eq!(
             playback.cached_path.as_deref(),
             Some(cache.join("999.mp3").to_string_lossy().as_ref())
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cache_limit_evicts_least_recently_played() {
+        let (db, root) = test_env("limit");
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        set_cache_dir(&db, cache.to_str().unwrap()).unwrap();
+        let played = db.upsert_sc_track("201", "A", "X", 1000, None).unwrap();
+        db.upsert_sc_track("202", "B", "Y", 1000, None).unwrap();
+        std::fs::write(cache.join("201.mp3"), vec![0u8; 100]).unwrap();
+        std::fs::write(cache.join("202.mp3"), vec![0u8; 100]).unwrap();
+        db.mark_sc_cached("201", 100).unwrap();
+        db.mark_sc_cached("202", 100).unwrap();
+        // make the eviction order deterministic regardless of wall-clock seconds
+        db.with_conn(|c| {
+            c.execute("UPDATE tracks SET cached_at = 1 WHERE external_id = '202'", [])
+                .map_err(|e| e.to_string())
+        })
+        .unwrap();
+        db.bump_play_count(played).unwrap();
+
+        assert_eq!(cache_limit(&db), 0);
+        enforce_cache_limit(&db, &cache, 0);
+        assert!(cache.join("202.mp3").exists());
+
+        enforce_cache_limit(&db, &cache, 150);
+        assert!(cache.join("201.mp3").exists());
+        assert!(!cache.join("202.mp3").exists());
+        let (uncached, size): (i64, i64) = db
+            .with_conn(|c| {
+                c.query_row(
+                    "SELECT cached_at IS NULL, file_size FROM tracks WHERE external_id = '202'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|e| e.to_string())
+            })
+            .unwrap();
+        assert_eq!(uncached, 1);
+        assert_eq!(size, 0);
         drop(db);
         let _ = std::fs::remove_dir_all(&root);
     }

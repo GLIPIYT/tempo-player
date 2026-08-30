@@ -523,7 +523,7 @@ pub async fn sc_get_playback(
     track_id: String,
 ) -> Result<crate::soundcloud_store::ScPlayback, String> {
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
-    crate::soundcloud_store::get_playback(&state.db, &root, &track_id).await
+    crate::soundcloud_store::get_playback(state.db.clone(), root, &track_id).await
 }
 
 #[tauri::command]
@@ -544,7 +544,7 @@ pub fn add_sc_track_to_playlist(
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
     let sc_id = track.id.clone();
     tauri::async_runtime::spawn(async move {
-        crate::soundcloud_store::precache(&db, &root, &sc_id).await;
+        crate::soundcloud_store::precache(db, root, &sc_id).await;
     });
     Ok(track_id)
 }
@@ -562,4 +562,34 @@ pub fn set_sc_cache_dir(state: State<'_, AppState>, path: String) -> Result<(), 
 #[tauri::command]
 pub fn clear_sc_cache(state: State<'_, AppState>) -> Result<(u32, u32), String> {
     crate::soundcloud_store::clear_cache(&state.db, &state.sc_cache_dir)
+}
+
+#[tauri::command]
+pub fn sc_set_cache_limit(state: State<'_, AppState>, bytes: i64) -> Result<(), String> {
+    crate::soundcloud_store::set_cache_limit(&state.db, &state.sc_cache_dir, bytes)
+}
+
+#[tauri::command]
+pub fn like_track(state: State<'_, AppState>, track_id: i64) -> Result<(), String> {
+    state.db.like_track(track_id).map(|_| ())
+}
+
+#[tauri::command]
+pub fn unlike_track(state: State<'_, AppState>, track_id: i64) -> Result<(), String> {
+    state.db.unlike_track(track_id).map(|_| ())
+}
+
+#[tauri::command]
+pub fn list_liked_track_ids(state: State<'_, AppState>) -> Result<Vec<i64>, String> {
+    state.db.list_liked_track_ids()
+}
+
+#[tauri::command]
+pub fn get_top_tracks(state: State<'_, AppState>, limit: i64) -> Result<Vec<crate::models::TopTrackItem>, String> {
+    state.db.get_top_tracks(limit)
+}
+
+#[tauri::command]
+pub fn get_hour_picks(state: State<'_, AppState>, limit: i64) -> Result<Vec<Track>, String> {
+    state.db.get_hour_picks(limit)
 }

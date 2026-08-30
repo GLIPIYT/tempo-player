@@ -263,4 +263,16 @@ export const ru: Record<string, string> = {
   'Search manually': 'Искать вручную',
   Hide: 'Скрыть',
   Title: 'Название',
+  Likes: 'Лайки',
+  'Add to Likes': 'Добавить в «Лайки»',
+  'Remove from Likes': 'Убрать из «Лайки»',
+  'For this hour': 'Для этого часа',
+  'Picked from what you usually play around this time of day':
+    'Собрано из того, что вы обычно слушаете в это время суток',
+  'Most played': 'Часто слушаете',
+  'Your all-time favorites by play count': 'Самые прослушиваемые треки за всё время',
+  Unlimited: 'Без ограничений',
+  'Cache limit': 'Лимит кэша',
+  'When the cache exceeds the limit, the least recently played tracks are removed first.':
+    'Когда кэш превышает лимит, первыми удаляются треки, которые вы слушали давнее всего.',
 }

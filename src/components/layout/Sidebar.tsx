@@ -28,6 +28,7 @@ import { useNav, type View } from '../../state/nav'
 import { useT } from '../../i18n'
 import { api } from '../../api/client'
 import type { Playlist } from '../../types/models'
+import { playlistDisplayName } from '../../utils/playlists'
 import { useLibraryVersion } from '../../hooks/useLibraryVersion'
 import { bumpLibraryVersion } from '../../utils/libraryVersion'
 import { tracksToUnified } from '../../utils/unified'
@@ -77,6 +78,7 @@ function activeFor(view: View): string | null {
 interface FavMenu {
   id: number
   name: string
+  isLikes: boolean
   x: number
   y: number
 }
@@ -353,11 +355,12 @@ export default function Sidebar() {
             <div className="fav-list">
               {favorites.map((f, i) => {
                 const isActive = view.name === 'playlist' && view.id === f.id
+                const displayName = playlistDisplayName(f, f.name, t)
                 return (
                   <div
                     key={f.id}
                     draggable
-                    title={f.name}
+                    title={displayName}
                     className={
                       'fav-item' +
                       (isActive ? ' is-active' : '') +
@@ -371,7 +374,7 @@ export default function Sidebar() {
                     onClick={() => navigate({ name: 'playlist', id: f.id })}
                     onContextMenu={(e) => {
                       e.preventDefault()
-                      setMenu({ id: f.id, name: f.name, x: e.clientX, y: e.clientY })
+                      setMenu({ id: f.id, name: displayName, isLikes: f.isLikes === true, x: e.clientX, y: e.clientY })
                     }}
                     onDragStart={(e) => onFavDragStart(e, i)}
                     onDragOver={(e) => onFavDragOver(e, i)}
@@ -379,9 +382,9 @@ export default function Sidebar() {
                     onDragEnd={finishDrag}
                   >
                     <span className="fav-cover">
-                      <Cover path={null} label={f.name} size={22} />
+                      <Cover path={f.coverPath ?? null} label={displayName} size={22} />
                     </span>
-                    <span className="fav-name">{f.name}</span>
+                    <span className="fav-name">{displayName}</span>
                   </div>
                 )
               })}
@@ -431,32 +434,38 @@ export default function Sidebar() {
             <Play size={13} />
             {t('Play now')}
           </button>
-          <button
-            className="menu-item"
-            onClick={() => {
-              const id = menu.id
-              setMenu(null)
-              api
-                .setPlaylistPinned(id, false)
-                .then(() => bumpLibraryVersion())
-                .catch(() => undefined)
-            }}
-          >
-            <StarOff size={13} />
-            {t('Remove from favorites')}
-          </button>
-          <div className="menu-sep" />
-          <button
-            className="menu-item menu-item-danger"
-            onClick={() => {
-              const m = menu
-              setMenu(null)
-              setDeleteTarget({ id: m.id, name: m.name })
-            }}
-          >
-            <Trash2 size={13} />
-            {t('Delete playlist')}
-          </button>
+          {menu.isLikes ? null : (
+            <button
+              className="menu-item"
+              onClick={() => {
+                const id = menu.id
+                setMenu(null)
+                api
+                  .setPlaylistPinned(id, false)
+                  .then(() => bumpLibraryVersion())
+                  .catch(() => undefined)
+              }}
+            >
+              <StarOff size={13} />
+              {t('Remove from favorites')}
+            </button>
+          )}
+          {menu.isLikes ? null : (
+            <>
+              <div className="menu-sep" />
+              <button
+                className="menu-item menu-item-danger"
+                onClick={() => {
+                  const m = menu
+                  setMenu(null)
+                  setDeleteTarget({ id: m.id, name: m.name })
+                }}
+              >
+                <Trash2 size={13} />
+                {t('Delete playlist')}
+              </button>
+            </>
+          )}
         </div>
       ) : null}
       <ConfirmModal

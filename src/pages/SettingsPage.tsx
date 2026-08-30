@@ -403,6 +403,24 @@ function StorageCard() {
   const [busy, setBusy] = useState(false)
   const [scBusy, setScBusy] = useState(false)
 
+  const limitMb = scInfo.data ? Math.round(scInfo.data.limitBytes / 1048576) : 0
+
+  const formatLimit = (v: number): string => {
+    if (v <= 0) return t('Unlimited')
+    if (v >= 1024) {
+      const gb = v / 1024
+      return `${Number.isInteger(gb) ? gb : gb.toFixed(1)} GB`
+    }
+    return `${v} MB`
+  }
+
+  const applyLimit = async (v: number) => {
+    try {
+      await api.setScCacheLimit(Math.round(v * 1048576))
+      scInfo.reload()
+    } catch {}
+  }
+
   const clearCovers = async () => {
     setConfirmOpen(false)
     setBusy(true)
@@ -501,6 +519,18 @@ function StorageCard() {
             </div>
           </>
         ) : null}
+        <CommitSlider
+          label={t('Cache limit')}
+          min={0}
+          max={20480}
+          step={256}
+          value={limitMb}
+          format={formatLimit}
+          onCommit={(v) => void applyLimit(v)}
+        />
+        <div className="set-note">
+          {t('When the cache exceeds the limit, the least recently played tracks are removed first.')}
+        </div>
         <div className="set-actions">
           <button className="btn" disabled={scBusy} onClick={() => void changeScCacheDir()}>
             <FolderOpen size={14} />

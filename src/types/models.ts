@@ -69,6 +69,8 @@ export interface Playlist {
   trackCount?: number
   pinned?: boolean
   pinOrder?: number | null
+  isLikes?: boolean
+  coverPath?: string | null
 }
 
 export interface PlaylistTrack {

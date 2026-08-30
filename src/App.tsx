@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import Sidebar from './components/layout/Sidebar'
 import TopBar from './components/layout/TopBar'
 import PlayerBar from './components/layout/PlayerBar'
+import TitleBar from './components/layout/TitleBar'
 import HomePage from './pages/HomePage'
 import LibraryPage from './pages/LibraryPage'
 import AlbumsPage from './pages/AlbumsPage'
@@ -23,6 +24,7 @@ import BackgroundLayer from './components/layout/BackgroundLayer'
 import { onScanProgress } from './api/events'
 import { api } from './api/client'
 import { bumpLibraryVersion } from './utils/libraryVersion'
+import { likesStore } from './utils/likesStore'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import './styles/app.css'
 
@@ -144,16 +146,22 @@ function TaskbarProgress() {
 }
 
 function Shell() {
+  useEffect(() => {
+    likesStore.ensureLoaded()
+  }, [])
   return (
-    <div className="app-root app-shell">
-      <Sidebar />
-      <div className="app-main">
-        <TopBar />
-        <main className="app-content">
-          <CurrentPage />
-        </main>
+    <div className="app-root">
+      <TitleBar />
+      <div className="app-shell">
+        <Sidebar />
+        <div className="app-main">
+          <TopBar />
+          <main className="app-content">
+            <CurrentPage />
+          </main>
+        </div>
+        <PlayerBar />
       </div>
-      <PlayerBar />
       <Shortcuts />
       <ScanWatcher />
       <FolderDropWatcher />

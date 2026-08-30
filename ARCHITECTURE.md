@@ -32,13 +32,21 @@ albums(id PK, title COLLATE NOCASE, artist_id→artists ON DELETE SET NULL, year
 tracks(id PK, path UNIQUE, folder_id→library_folders ON DELETE CASCADE, title, artist_id→artists,
        album_id→albums ON DELETE SET NULL, track_number, disc_number, duration_sec REAL, year, genre,
        cover_path, file_size, modified_at, added_at, source DEFAULT 'local', external_id,
-       last_played_at, play_count DEFAULT 0, skip_count DEFAULT 0)
-playlists(id PK, name, created_at, updated_at)
+       last_played_at, play_count DEFAULT 0, skip_count DEFAULT 0, artist_name, search_text,
+       cached_at)   -- cached_at: SoundCloud track has a cached audio file → visible in library
+playlists(id PK, name, created_at, updated_at, pinned DEFAULT 0, pin_order, is_likes DEFAULT 0)
 playlist_tracks(id PK, playlist_id→playlists ON DELETE CASCADE, track_id→tracks ON DELETE CASCADE,
        position, added_at, UNIQUE(playlist_id, position))
 listening_history(id PK, track_id→tracks ON DELETE CASCADE, played_at, start_sec REAL,
        listened_sec REAL, completed INT, skipped INT)
 ```
+
+The `playlists` row with `is_likes = 1` is the auto-created Likes playlist: created and pinned on
+every DB open, rename allowed, delete/pin-off rejected in the UI and blocked for delete in SQL.
+Library visibility rule: a track is listed/searchable/counted when
+`folder_id IS NOT NULL OR (source = 'soundcloud' AND cached_at IS NOT NULL)`.
+Playlist cover = cover_path of the last-added playlist track that has one (computed in
+`PLAYLIST_COLUMNS`).
 
 Indexes: `tracks(album_id)`, `tracks(artist_id)`, `tracks(added_at)`, `tracks(title)`,
 `tracks(folder_id)`, `playlist_tracks(playlist_id, position)`.
@@ -74,6 +82,27 @@ playlist_remove_track(playlistId, trackId) -> ()
 playlist_move_track(playlistId, fromPos, toPos) -> ()
 bump_play_count(trackId) -> ()
 record_history(trackId, listenedSec: f64|null, completed: bool, skipped: bool) -> ()
+like_track(trackId) -> ()                  // insert into the Likes playlist, idempotent
+unlike_track(trackId) -> ()                // remove from the Likes playlist
+list_liked_track_ids() -> Vec<i64>
+get_top_tracks(limit) -> Vec<TopTrackItem> // history play-count ranking, all time
+get_hour_picks(limit) -> Vec<Track>        // most played within current local hour ±1
+get_analytics(sinceSecs) -> AnalyticsData
+get_history(limit, offset) -> Vec<HistoryEntryDto>
+clear_history() -> u32
+
+// SoundCloud cache
+sc_cache_info() -> { path, totalBytes, fileCount, limitBytes }
+set_sc_cache_dir(path) -> ()
+clear_sc_cache() -> (u32, u32)             // also deletes ALL soundcloud track rows
+sc_set_cache_limit(bytes) -> ()            // 0 = unlimited; evicts least-recently-played files
+```
+
+SoundCloud rows are upserted into `tracks` on add-to-playlist / playback with
+`path = 'soundcloud://{id}'`, `folder_id NULL`, `cached_at NULL`. `sc_get_playback` downloads
+progressive streams in the background; on success it sets `cached_at` + `file_size`, which makes
+the track appear in the library, then enforces the cache limit (startup maintenance re-syncs
+`cached_at` with the cache directory and prunes duplicate local rows).
 ```
 
 Event `scan://progress` payload = `ScanProgress { phase: started|progress|completed, scannedFiles,
@@ -140,6 +169,13 @@ Implementation: module-level singleton `PlayerController` owning an HTML5 `<Audi
 mirrors state via subscription. On track start: `api.bumpPlayCount(dbId)` when local; on natural end:
 `api.recordHistory(dbId, dur, true, false)`; on manual skip after ≥10s listened: recordHistory(..., skipped=true).
 Local files resolved via `convertFileSrc(localPath)`.
+
+## Window chrome
+
+The main window runs with `decorations: false` and a custom in-app title bar
+(`src/components/layout/TitleBar.tsx`): drag region via `data-tauri-drag-region`, custom
+minimize / maximize-restore / close buttons on the Tauri window API, double-click on the bar
+toggles maximize. Required capabilities live in `src-tauri/capabilities/default.json`.
 
 ## AGENT-UI contract
 

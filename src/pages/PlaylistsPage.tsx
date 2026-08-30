@@ -6,6 +6,8 @@ import type { Playlist } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { useT } from '../i18n'
+import { playlistDisplayName } from '../utils/playlists'
+import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
 
@@ -71,20 +73,27 @@ export default function PlaylistsPage() {
         />
       ) : (
         <div className="cards-grid">
-          {data.map((pl) => (
-            <button
-              key={pl.id}
-              className="card"
-              onClick={() => navigate({ name: 'playlist', id: pl.id })}
-              title={pl.name}
-            >
-              <div className="playlist-tile">
-                <ListMusic size={28} />
-              </div>
-              <span className="card-title">{pl.name}</span>
-              <span className="card-sub">{pl.trackCount ?? 0} {t('tracks')}</span>
-            </button>
-          ))}
+          {data.map((pl) => {
+            const displayName = playlistDisplayName(pl, pl.name, t)
+            return (
+              <button
+                key={pl.id}
+                className="card"
+                onClick={() => navigate({ name: 'playlist', id: pl.id })}
+                title={displayName}
+              >
+                <div className="playlist-tile">
+                  {pl.coverPath ? (
+                    <Cover path={pl.coverPath} label={displayName} size={200} />
+                  ) : (
+                    <ListMusic size={28} />
+                  )}
+                </div>
+                <span className="card-title">{displayName}</span>
+                <span className="card-sub">{pl.trackCount ?? 0} {t('tracks')}</span>
+              </button>
+            )
+          })}
         </div>
       )}
 
