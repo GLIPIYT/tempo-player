@@ -43,7 +43,7 @@ export default function HomePage() {
   const version = useLibraryVersion()
   const total = useAsync(() => api.countTracks(), [version])
   const recent = useAsync(() => api.listTracks('', 12, 0), [version])
-  const hourPicks = useAsync(() => api.getHourPicks(12), [version])
+  const hourPicks = useAsync(() => api.getHourPicks(30), [version])
   const top = useAsync(() => api.getTopTracks(12), [version])
   const played = useAsync(async () => dedupeRecent((await api.getAnalytics('30d')).recent, 10), [version])
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
@@ -68,9 +68,37 @@ export default function HomePage() {
 
   const totalTracks = total.data ?? 0
   const unknownArtist = t('Unknown artist')
-  const hourTracks = hourPicks.data ?? []
+  const hourPicksList = hourPicks.data ?? []
   const topTracks: TopTrackItem[] = top.data ?? []
   const recentPlays = played.data ?? []
+
+  const hourMixes = useMemo(() => {
+    if (hourPicksList.length === 0) return []
+    const mixes: { key: string; title: string; tracks: Track[] }[] = []
+    const byArtist = new Map<string, Track[]>()
+    for (const tr of hourPicksList) {
+      const artist = tr.artistName ?? unknownArtist
+      const list = byArtist.get(artist)
+      if (list) list.push(tr)
+      else byArtist.set(artist, [tr])
+    }
+    if (hourPicksList.length >= 4) {
+      const shuffled = hourPicksList.slice()
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+      }
+      mixes.push({ key: 'mix', title: t('Hour mix'), tracks: shuffled.slice(0, 24) })
+    }
+    const artistMixes = [...byArtist.entries()]
+      .filter(([, list]) => list.length >= 3)
+      .sort((a, b) => b[1].length - a[1].length)
+      .slice(0, 3)
+    for (const [artist, list] of artistMixes) {
+      mixes.push({ key: `artist:${artist}`, title: artist, tracks: list })
+    }
+    return mixes
+  }, [hourPicksList, unknownArtist, t])
 
   const playSection = (tracks: Track[], index: number) => {
     player.playTracks(tracks.map((tr) => trackToUnified(tr)), index)
@@ -126,7 +154,7 @@ export default function HomePage() {
         />
       ) : (
         <>
-          {hourTracks.length > 0 ? (
+          {hourMixes.length > 0 ? (
             <section className="home-section">
               <div className="home-section-head">
                 <span className="home-section-title">
@@ -134,28 +162,33 @@ export default function HomePage() {
                   {t('For this hour')}
                 </span>
                 <span className="home-section-hint">
-                  {t('Picked from what you usually play around this time of day')}
+                  {t('Auto-generated playlists from what you usually play around this time of day')}
                 </span>
               </div>
-              <div className="rail">
-                {hourTracks.map((tr, i) => (
-                  <button
-                    key={`hour-${tr.id}`}
-                    className="rail-card"
-                    title={tr.title}
-                    onClick={() => playSection(hourTracks, i)}
-                  >
-                    <div className="rail-cover">
-                      <Cover path={tr.coverPath} label={tr.title} size={152} />
-                      <CardPlayButton onPlay={() => playSection(hourTracks, i)} />
-                      <span className="rail-badge rail-badge-hour">
-                        <Clock3 size={11} />
+              <div className="cards-grid cards-grid-tight">
+                {hourMixes.map((mix) => {
+                  const cover = mix.tracks.find((tr) => tr.coverPath)?.coverPath ?? null
+                  return (
+                    <button
+                      key={mix.key}
+                      className="card"
+                      title={mix.title}
+                      onClick={() => playSection(mix.tracks, 0)}
+                    >
+                      <div className="hour-mix-tile">
+                        <Cover path={cover} label={mix.title} size={150} />
+                        <CardPlayButton onPlay={() => playSection(mix.tracks, 0)} />
+                        <span className="rail-badge rail-badge-hour">
+                          <Clock3 size={11} />
+                        </span>
+                      </div>
+                      <span className="card-title">{mix.title}</span>
+                      <span className="card-sub">
+                        {mix.tracks.length === 1 ? `1 ${t('track')}` : `${mix.tracks.length} ${t('tracks')}`}
                       </span>
-                    </div>
-                    <span className="card-title">{tr.title}</span>
-                    <span className="card-sub">{tr.artistName ?? unknownArtist}</span>
-                  </button>
-                ))}
+                    </button>
+                  )
+                })}
               </div>
             </section>
           ) : null}

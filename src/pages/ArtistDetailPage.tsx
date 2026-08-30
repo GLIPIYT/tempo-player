@@ -1,10 +1,11 @@
-import { ChevronLeft, Play } from 'lucide-react'
+import { ChevronLeft, Heart, Play } from 'lucide-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
 import type { Track } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
+import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { usePlayer } from '../player'
 import { tracksToUnified, trackToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
@@ -20,6 +21,7 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
   const version = useLibraryVersion()
   const { data, loading, error, reload } = useAsync(() => api.getArtist(artistId), [artistId, version])
   const tracks = useAsync(() => api.getArtistTracks(artistId), [artistId, version])
+  const fav = useAsync(() => api.isFavoriteArtist(artistId), [artistId, version])
 
   if (loading) {
     return (
@@ -91,11 +93,27 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
                 </>
               ) : null}
             </div>
-            {albums.length > 0 ? (
+            {albums.length > 0 || (tracks.data?.length ?? 0) > 0 ? (
               <div className="detail-actions">
                 <button className="btn btn-primary" onClick={() => void playAll()}>
                   <Play size={14} />
                   {t('Play all')}
+                </button>
+                <button
+                  className={'btn' + (fav.data ? ' is-active' : '')}
+                  title={t('Favorite artist')}
+                  onClick={() =>
+                    void api
+                      .toggleFavoriteArtist(artistId)
+                      .then(() => {
+                        fav.reload()
+                        bumpLibraryVersion()
+                      })
+                      .catch(() => {})
+                  }
+                >
+                  <Heart size={14} fill={fav.data ? 'currentColor' : 'none'} />
+                  {fav.data ? t('Remove from favorites') : t('Add to favorites')}
                 </button>
               </div>
             ) : null}

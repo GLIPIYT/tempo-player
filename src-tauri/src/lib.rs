@@ -112,7 +112,12 @@ pub fn run() {
             commands::get_daily_minutes,
             commands::discord_set_presence,
             commands::discord_clear_presence,
-            commands::set_track_lyrics
+            commands::set_track_lyrics,
+            commands::toggle_favorite_artist,
+            commands::list_favorite_artists,
+            commands::is_favorite_artist,
+            commands::export_playlist_m3u8,
+            commands::import_playlist_m3u8
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

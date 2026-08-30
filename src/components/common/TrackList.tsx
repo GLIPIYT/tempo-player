@@ -38,6 +38,11 @@ export default function TrackList({ tracks, showAlbum = true, showIndex = true, 
           <div
             key={t.id}
             className={'tl-row' + (playing ? ' is-playing' : '')}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = 'copy'
+              e.dataTransfer.setData('application/x-tempo-track', String(t.id))
+            }}
             onDoubleClick={() => playAt(i)}
           >
             {showIndex ? (

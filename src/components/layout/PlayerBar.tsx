@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Heart, ListMusic, MicVocal, Pause, Play, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-react'
+import { Heart, ListMusic, MicVocal, Pause, Play, Radio, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-react'
+import { api } from '../../api/client'
 import { usePlayer } from '../../player'
 import { useLikes } from '../../hooks/useLikes'
 import { useSettings } from '../../state/settings'
 import { useT } from '../../i18n'
 import { fmtTime } from '../../utils/format'
+import { trackToUnified } from '../../utils/unified'
+import { toast } from '../common/Toast'
 import Cover from '../common/Cover'
 import WaveProgress from '../common/WaveProgress'
 import QueuePanel from './QueuePanel'
@@ -66,6 +69,19 @@ function PlayerBarContent() {
     } else {
       p.setVolume(lastNonZeroVolume > 0 ? lastNonZeroVolume : 0.8)
     }
+  }
+
+  const playRadio = async () => {
+    try {
+      const total = await api.countTracks()
+      if (total <= 0) return
+      const offset = Math.floor(Math.random() * total)
+      const rows = await api.listTracks('', 1, offset)
+      if (rows[0]) {
+        p.playTracks([trackToUnified(rows[0])], 0)
+        toast.show(`${t('Radio')}: ${rows[0].title}`)
+      }
+    } catch {}
   }
 
   return (
@@ -242,6 +258,14 @@ function PlayerBarContent() {
             }}
             aria-label={t('Volume')}
           />
+          <button
+            className="icon-btn pb-radio-btn"
+            onClick={() => void playRadio()}
+            aria-label={t('Radio')}
+            title={t('Radio')}
+          >
+            <Radio size={16} />
+          </button>
           <button
             className={'icon-btn pb-lyrics-btn' + (lyrics.open ? ' is-active' : '')}
             onClick={() => (lyrics.open ? lyrics.closeLyrics() : lyrics.openLyrics())}

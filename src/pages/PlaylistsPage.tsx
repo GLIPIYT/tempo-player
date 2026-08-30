@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { ListMusic, Plus } from 'lucide-react'
+import { ListMusic, Plus, Upload } from 'lucide-react'
+import { open } from '@tauri-apps/plugin-dialog'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
 import type { Playlist } from '../types/models'
@@ -10,6 +11,7 @@ import { playlistDisplayName } from '../utils/playlists'
 import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
+import { toast } from '../components/common/Toast'
 
 export default function PlaylistsPage() {
   const { navigate } = useNav()
@@ -19,6 +21,25 @@ export default function PlaylistsPage() {
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
+
+  const importM3u8 = async () => {
+    try {
+      const sel = await open({
+        multiple: false,
+        filters: [{ name: 'M3U playlist', extensions: ['m3u8', 'm3u'] }],
+      })
+      if (typeof sel !== 'string') return
+      const parts = sel.split(/[\/]/)
+      const file = parts[parts.length - 1] ?? 'Playlist'
+      const stem = file.replace(/\.(m3u8|m3u)$/i, '') || 'Playlist'
+      const pl = await api.importPlaylistM3u8(sel, stem)
+      reload()
+      navigate({ name: 'playlist', id: pl.id })
+      toast.show(t('Playlist imported'))
+    } catch (e: unknown) {
+      toast.show(e instanceof Error ? e.message : String(e), 'error')
+    }
+  }
 
   const create = async () => {
     const trimmed = name.trim()
@@ -43,6 +64,10 @@ export default function PlaylistsPage() {
           <div className="page-sub">{data ? `${data.length} ${t('playlists')}` : t('Loading…')}</div>
         </div>
         <div className="page-actions">
+          <button className="btn" onClick={() => void importM3u8()} title={t('Import playlist (m3u8)')}>
+            <Upload size={15} />
+            m3u8
+          </button>
           <button
             className="btn btn-primary"
             onClick={() => {

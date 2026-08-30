@@ -93,6 +93,15 @@ export const api = {
   }) => invoke<void>('discord_set_presence', payload),
   discordClearPresence: () => invoke<void>('discord_clear_presence'),
 
+  toggleFavoriteArtist: (artistId: number) => invoke<boolean>('toggle_favorite_artist', { artistId }),
+  listFavoriteArtists: () => invoke<Artist[]>('list_favorite_artists'),
+  isFavoriteArtist: (artistId: number) => invoke<boolean>('is_favorite_artist', { artistId }),
+
+  exportPlaylistM3u8: (playlistId: number, path: string) =>
+    invoke<number>('export_playlist_m3u8', { playlistId, path }),
+  importPlaylistM3u8: (path: string, name: string) =>
+    invoke<Playlist>('import_playlist_m3u8', { path, name }),
+
   importFont: (path: string) => invoke<string>('import_font', { path }),
   importBackground: (path: string) => invoke<string>('import_background', { path }),
   importAvatar: (path: string) => invoke<string>('import_avatar', { path }),

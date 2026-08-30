@@ -657,6 +657,81 @@ pub fn set_track_lyrics(state: State<'_, AppState>, track_id: i64, lyrics: Strin
 }
 
 #[tauri::command]
+pub fn toggle_favorite_artist(state: State<'_, AppState>, artist_id: i64) -> Result<bool, String> {
+    state.db.toggle_favorite_artist(artist_id)
+}
+
+#[tauri::command]
+pub fn list_favorite_artists(state: State<'_, AppState>) -> Result<Vec<crate::models::Artist>, String> {
+    state.db.list_favorite_artists()
+}
+
+#[tauri::command]
+pub fn is_favorite_artist(state: State<'_, AppState>, artist_id: i64) -> Result<bool, String> {
+    state.db.is_favorite_artist(artist_id)
+}
+
+#[tauri::command]
+pub fn export_playlist_m3u8(
+    state: State<'_, AppState>,
+    playlist_id: i64,
+    path: String,
+) -> Result<usize, String> {
+    let rows = state.db.get_playlist_tracks(playlist_id)?;
+    let cache_dir = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
+    let mut out = String::from("#EXTM3U\n");
+    let mut count = 0usize;
+    for row in rows {
+        let track = &row.track;
+        let location = match track.source.as_str() {
+            "soundcloud" => {
+                let Some(external_id) = &track.external_id else { continue };
+                let file = cache_dir.join(format!("{}.mp3", external_id));
+                if !file.exists() {
+                    continue;
+                }
+                file.to_string_lossy().into_owned()
+            }
+            _ => track.path.clone(),
+        };
+        let artist = track.artist_name.clone().unwrap_or_default();
+        let dur = track.duration_sec.map(|d| d.round() as i64).unwrap_or(-1);
+        out.push_str(&format!("#EXTINF:{},{} - {}\n{}\n", dur, artist, track.title, location));
+        count += 1;
+    }
+    std::fs::write(&path, out).map_err(|e| format!("failed to write m3u8: {e}"))?;
+    Ok(count)
+}
+
+#[tauri::command]
+pub fn import_playlist_m3u8(
+    state: State<'_, AppState>,
+    path: String,
+    name: String,
+) -> Result<Playlist, String> {
+    let content = std::fs::read_to_string(&path).map_err(|e| format!("failed to read m3u8: {e}"))?;
+    let mut track_ids: Vec<i64> = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let clean = line.strip_prefix(r"file://").unwrap_or(line);
+        let clean = clean.strip_prefix(r"file:///").unwrap_or(clean);
+        if let Some(id) = state.db.find_track_id_by_path(clean)? {
+            if !track_ids.contains(&id) {
+                track_ids.push(id);
+            }
+        }
+    }
+    let playlist = state.db.create_playlist(&name)?;
+    for id in &track_ids {
+        state.db.playlist_add_track(playlist.id, *id)?;
+    }
+    Ok(playlist)
+}
+
+#[tauri::command]
 pub fn get_artist_tracks(state: State<'_, AppState>, artist_id: i64) -> Result<Vec<Track>, String> {
     state.db.get_artist_tracks(artist_id)
 }

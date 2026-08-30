@@ -28,10 +28,12 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { useNav, type View } from '../../state/nav'
 import { useSettings } from '../../state/settings'
 import { useT } from '../../i18n'
+import { toast } from '../common/Toast'
 import { api } from '../../api/client'
 import type { Playlist } from '../../types/models'
 import { playlistDisplayName } from '../../utils/playlists'
 import { useLibraryVersion } from '../../hooks/useLibraryVersion'
+import { useAsync } from '../../hooks/useAsync'
 import { bumpLibraryVersion } from '../../utils/libraryVersion'
 import { tracksToUnified } from '../../utils/unified'
 import { usePlayer } from '../../player'
@@ -110,6 +112,7 @@ export default function Sidebar() {
   const t = useT()
   const player = usePlayer()
   const version = useLibraryVersion()
+  const favArtists = useAsync(() => api.listFavoriteArtists(), [version])
   const active = activeFor(view)
 
   const [width, setWidth] = useState(readWidth)
@@ -124,6 +127,7 @@ export default function Sidebar() {
   const [creating, setCreating] = useState(false)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dropAt, setDropAt] = useState<number | null>(null)
+  const [trackDropFav, setTrackDropFav] = useState<number | null>(null)
 
   const widthRef = useRef(width)
   widthRef.current = width
@@ -259,7 +263,15 @@ export default function Sidebar() {
     e.dataTransfer.setData('text/plain', String(favorites[index].id))
   }
 
+  const isTrackDrag = (e: ReactDragEvent) => e.dataTransfer.types.includes('application/x-tempo-track')
+
   const onFavDragOver = (e: ReactDragEvent<HTMLDivElement>, index: number) => {
+    if (isTrackDrag(e)) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'copy'
+      setTrackDropFav(index)
+      return
+    }
     if (dragIndexRef.current === null) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
@@ -267,6 +279,24 @@ export default function Sidebar() {
   }
 
   const onFavDrop = (e: ReactDragEvent<HTMLDivElement>, index: number) => {
+    if (isTrackDrag(e)) {
+      e.preventDefault()
+      const raw = e.dataTransfer.getData('application/x-tempo-track')
+      const trackId = Number(raw)
+      setTrackDropFav(null)
+      dragIndexRef.current = null
+      setDragIndex(null)
+      setDropAt(null)
+      if (!Number.isInteger(trackId) || trackId <= 0) return
+      void api
+        .playlistAddTrack(favorites[index].id, trackId)
+        .then(() => {
+          toast.show(`${t('Added to')} ${favorites[index].name}`)
+          bumpLibraryVersion()
+        })
+        .catch(() => undefined)
+      return
+    }
     e.preventDefault()
     const from = dragIndexRef.current
     const rawTo = from === null ? null : insertionAt(e, index)
@@ -366,6 +396,7 @@ export default function Sidebar() {
                     className={
                       'fav-item' +
                       (isActive ? ' is-active' : '') +
+                      (trackDropFav === i ? ' is-drop-target' : '') +
                       (dragIndex !== null && dropAt === i ? ' drop-before' : '') +
                       (dragIndex !== null &&
                       dropAt === favorites.length &&
@@ -380,6 +411,7 @@ export default function Sidebar() {
                     }}
                     onDragStart={(e) => onFavDragStart(e, i)}
                     onDragOver={(e) => onFavDragOver(e, i)}
+                    onDragLeave={() => setTrackDropFav((cur) => (cur === i ? null : cur))}
                     onDrop={(e) => onFavDrop(e, i)}
                     onDragEnd={finishDrag}
                   >
@@ -392,6 +424,29 @@ export default function Sidebar() {
               })}
             </div>
           )}
+          {!collapsed && (favArtists.data?.length ?? 0) > 0 ? (
+            <>
+              <div className="fav-head" style={{ marginTop: 10 }}>
+                <span>{t('Favorite artists')}</span>
+                <span className="fav-count">{favArtists.data!.length}</span>
+              </div>
+              <div className="fav-list">
+                {favArtists.data!.map((a) => (
+                  <div
+                    key={a.id}
+                    className="fav-item"
+                    title={a.name}
+                    onClick={() => navigate({ name: 'artist', id: a.id })}
+                  >
+                    <span className="fav-cover">
+                      <Cover path={null} label={a.name} size={22} rounded />
+                    </span>
+                    <span className="fav-name">{a.name}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : null}
           <button className="fav-new" title={t('New playlist')} onClick={() => setNewOpen(true)}>
             <Plus size={15} />
             {!collapsed ? <span>{t('New playlist')}</span> : null}

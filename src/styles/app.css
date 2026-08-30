@@ -3108,3 +3108,37 @@ html.has-bg .app-content {
   border-radius: 50%;
   object-fit: cover;
 }
+
+
+/* ── Hour mix cards ───────────────────────────────────────────────────── */
+
+.hour-mix-tile {
+  position: relative;
+  margin-bottom: 10px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.hour-mix-tile .cover {
+  width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 1 / 1;
+  display: block;
+}
+
+
+/* ── Sidebar drop target + misc ───────────────────────────────────────── */
+
+.fav-item.is-drop-target {
+  outline: 1px dashed var(--accent);
+  background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
+}
+
+.icon-btn.is-active {
+  color: var(--accent);
+}
+
+.btn.is-active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--accent);
+}

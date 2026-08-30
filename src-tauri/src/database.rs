@@ -158,8 +158,15 @@ UPDATE playlists SET pin_order = pin_order + 1 WHERE pinned = 1 AND is_likes = 0
 UPDATE playlists SET pin_order = 0 WHERE is_likes = 1 AND pinned = 1;
 "#;
 
+const MIGRATION_7: &str = r#"
+CREATE TABLE IF NOT EXISTS favorite_artists (
+    artist_id INTEGER PRIMARY KEY REFERENCES artists(id) ON DELETE CASCADE,
+    added_at INTEGER NOT NULL
+);
+"#;
+
 const MIGRATIONS: &[&str] = &[
-    MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6,
+    MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
 ];
 
 pub struct Db {
@@ -1006,6 +1013,18 @@ impl Db {
         })
     }
 
+    pub fn find_track_id_by_path(&self, path: &str) -> Result<Option<i64>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT id FROM tracks WHERE path = ?1 COLLATE NOCASE LIMIT 1",
+                params![path],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_err)
+        })
+    }
+
     pub fn get_daily_minutes(&self, days: i64) -> Result<Vec<crate::models::DailyMinutes>, String> {
         self.with_conn(|conn| {
             let since = now() - days * 86_400;
@@ -1030,6 +1049,62 @@ impl Db {
                 out.push(row.map_err(db_err)?);
             }
             Ok(out)
+        })
+    }
+
+    pub fn toggle_favorite_artist(&self, artist_id: i64) -> Result<bool, String> {
+        self.with_conn(|conn| {
+            let removed = conn
+                .execute(
+                    "DELETE FROM favorite_artists WHERE artist_id = ?1",
+                    params![artist_id],
+                )
+                .map_err(db_err)?;
+            if removed > 0 {
+                return Ok(false);
+            }
+            let exists: i64 = conn
+                .query_row("SELECT COUNT(*) FROM artists WHERE id = ?1", params![artist_id], |row| row.get(0))
+                .map_err(db_err)?;
+            if exists == 0 {
+                return Err("artist not found".to_string());
+            }
+            conn.execute(
+                "INSERT OR IGNORE INTO favorite_artists(artist_id, added_at) VALUES(?1, ?2)",
+                params![artist_id, now()],
+            )
+            .map_err(db_err)?;
+            Ok(true)
+        })
+    }
+
+    pub fn list_favorite_artists(&self) -> Result<Vec<Artist>, String> {
+        self.with_conn(|conn| {
+            let sql = format!(
+                "SELECT {} FROM favorite_artists fa JOIN artists ar ON ar.id = fa.artist_id \
+                 ORDER BY fa.added_at, ar.id",
+                ARTIST_COLUMNS
+            );
+            let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+            let mapped = stmt.query_map([], map_artist).map_err(db_err)?;
+            let mut out = Vec::new();
+            for row in mapped {
+                out.push(row.map_err(db_err)?);
+            }
+            Ok(out)
+        })
+    }
+
+    pub fn is_favorite_artist(&self, artist_id: i64) -> Result<bool, String> {
+        self.with_conn(|conn| {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM favorite_artists WHERE artist_id = ?1",
+                    params![artist_id],
+                    |row| row.get(0),
+                )
+                .map_err(db_err)?;
+            Ok(count > 0)
         })
     }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { ChevronLeft, ListMusic, Pencil, Play, Star, StarOff, Trash2, X } from 'lucide-react'
+import { save } from '@tauri-apps/plugin-dialog'
+import { ChevronLeft, Download, FileDown, ListMusic, Pencil, Play, Star, StarOff, Trash2, X } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { useT } from '../i18n'
 import { api } from '../api/client'
@@ -12,6 +13,7 @@ import { fmtTime } from '../utils/format'
 import { trackToUnified } from '../utils/unified'
 import { playlistDisplayName } from '../utils/playlists'
 import Cover from '../components/common/Cover'
+import { toast } from '../components/common/Toast'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
 import TrackMenu from '../components/common/TrackMenu'
@@ -34,6 +36,41 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const [dragFromPos, setDragFromPos] = useState<number | null>(null)
   const [dropEdge, setDropEdge] = useState<{ pos: number; after: boolean } | null>(null)
   const [orderOverride, setOrderOverride] = useState<PlaylistTrack[] | null>(null)
+  const [exportBusy, setExportBusy] = useState(false)
+  const [downloadBusy, setDownloadBusy] = useState(false)
+
+  const exportM3u8 = async () => {
+    setExportBusy(true)
+    try {
+      const fileName = `${playlist?.name ?? 'playlist'}.m3u8`
+      const path = await save({ defaultPath: fileName, filters: [{ name: 'M3U playlist', extensions: ['m3u8'] }] })
+      if (typeof path === 'string') {
+        const count = await api.exportPlaylistM3u8(playlistId, path)
+        toast.show(`${t('Exported')}: ${count}`)
+      }
+    } catch (e: unknown) {
+      toast.show(errText(e), 'error')
+    } finally {
+      setExportBusy(false)
+    }
+  }
+
+  const downloadToCache = async () => {
+    setDownloadBusy(true)
+    try {
+      let started = 0
+      for (const item of baseItems) {
+        const tr = item.track
+        if (tr.source === 'soundcloud' && tr.externalId) {
+          await api.scGetPlayback(tr.externalId).catch(() => {})
+          started += 1
+        }
+      }
+      toast.show(started > 0 ? t('Downloads started') : t('Nothing to download'))
+    } finally {
+      setDownloadBusy(false)
+    }
+  }
 
   useEffect(() => {
     if (orderOverride !== null && !detail.loading) setOrderOverride(null)
@@ -194,6 +231,26 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                   <Pencil size={14} />
                   {t('Rename')}
                 </button>
+                <button
+                  className="btn"
+                  disabled={exportBusy || items.length === 0}
+                  title={t('Export playlist (m3u8)')}
+                  onClick={() => void exportM3u8()}
+                >
+                  <FileDown size={14} />
+                  m3u8
+                </button>
+                {isLikes ? (
+                  <button
+                    className="btn"
+                    disabled={downloadBusy || !items.some((it) => it.track.source === 'soundcloud')}
+                    title={t('Download to cache')}
+                    onClick={() => void downloadToCache()}
+                  >
+                    <Download size={14} />
+                    {t('Download to cache')}
+                  </button>
+                ) : null}
                 {isLikes ? null : (
                   <button className="btn btn-danger" disabled={busy} onClick={() => void destroy()}>
                     <Trash2 size={14} />
@@ -250,6 +307,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                 onDragStart={(e) => {
                   e.dataTransfer.effectAllowed = 'move'
                   e.dataTransfer.setData('text/plain', String(p.position))
+                  e.dataTransfer.setData('application/x-tempo-track', String(t.id))
                   setDragFromPos(p.position)
                 }}
                 onDragOver={(e) => {
