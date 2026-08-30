@@ -356,17 +356,29 @@ impl Db {
     }
 
     pub fn list_tracks(&self, query: &str, limit: i64, offset: i64) -> Result<Vec<Track>, String> {
+        self.list_tracks_sorted(query, "added", limit, offset)
+    }
+
+    pub fn list_tracks_sorted(
+        &self,
+        query: &str,
+        sort: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Track>, String> {
         self.with_conn(|conn| {
             if query.is_empty() {
-                fetch_tracks(
-                    conn,
-                    TRACK_FROM,
-                    PLAYLIST_VISIBLE_PRED,
-                    None,
-                    "t.added_at DESC, t.id DESC",
-                    limit,
-                    offset,
-                )
+                let order = match sort {
+                    "title" => "t.title COLLATE NOCASE ASC, t.id ASC",
+                    "artist" => {
+                        "COALESCE(a.name, t.artist_name) COLLATE NOCASE ASC, \
+                         t.title COLLATE NOCASE ASC, t.id ASC"
+                    }
+                    "duration" => "t.duration_sec DESC, t.id DESC",
+                    "plays" => "t.play_count DESC, COALESCE(t.last_played_at, 0) DESC, t.id DESC",
+                    _ => "t.added_at DESC, t.id DESC",
+                };
+                fetch_tracks(conn, TRACK_FROM, PLAYLIST_VISIBLE_PRED, None, order, limit, offset)
             } else {
                 search_tracks(conn, query, limit, offset)
             }
@@ -3267,6 +3279,33 @@ mod tests {
             .unwrap()
             .cover_path;
         assert_eq!(cover.as_deref(), Some("covers/b.png"));
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_tracks_sorted_orders_by_each_key() {
+        let (db, dir) = test_db("sort");
+        let folder = db.add_library_folder(r"C:\srt").unwrap();
+        let played = seed_track(&db, folder.id, r"C:\srt.mp3", "Beta", "Zeta", None, 200.0);
+        seed_track(&db, folder.id, r"C:\srt.mp3", "Alpha", "Yankee", None, 100.0);
+        db.upsert_sc_track("777", "Charlie", "Xray", 150_000, None).unwrap();
+        db.mark_sc_cached("777", 1000).unwrap();
+        db.bump_play_count(played).unwrap();
+
+        let by_title = db.list_tracks_sorted("", "title", 10, 0).unwrap();
+        assert_eq!(
+            by_title.iter().map(|t| t.title.as_str()).collect::<Vec<_>>(),
+            vec!["Alpha", "Beta", "Charlie"]
+        );
+        let by_artist = db.list_tracks_sorted("", "artist", 10, 0).unwrap();
+        assert_eq!(by_artist[0].title, "Charlie");
+        let by_duration = db.list_tracks_sorted("", "duration", 10, 0).unwrap();
+        assert_eq!(by_duration[0].title, "Beta");
+        let by_plays = db.list_tracks_sorted("", "plays", 10, 0).unwrap();
+        assert_eq!(by_plays[0].title, "Beta");
+        let added = db.list_tracks_sorted("", "added", 10, 0).unwrap();
+        assert_eq!(added.last().map(|t| t.title.as_str()), Some("Beta"));
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

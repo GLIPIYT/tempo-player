@@ -37,8 +37,8 @@ export const api = {
   rescanFolder: (folderId: number) => invoke<ScanSummary>('rescan_folder', { folderId }),
   rescanLibrary: (force = false) => invoke<ScanSummary>('rescan_library', { force }),
 
-  listTracks: (query: string, limit: number, offset: number) =>
-    invoke<Track[]>('list_tracks', { query, limit, offset }),
+  listTracks: (query: string, limit: number, offset: number, sort = 'added') =>
+    invoke<Track[]>('list_tracks', { query, limit, offset, sort }),
   countTracks: () => invoke<number>('count_tracks'),
   searchAll: (query: string) => invoke<SearchResults>('search_all', { query }),
 

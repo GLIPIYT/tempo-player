@@ -258,8 +258,16 @@ pub fn startup_rescan(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn list_tracks(state: State<'_, AppState>, query: String, limit: i64, offset: i64) -> Result<Vec<Track>, String> {
-    state.db.list_tracks(&query, limit, offset)
+pub fn list_tracks(
+    state: State<'_, AppState>,
+    query: String,
+    limit: i64,
+    offset: i64,
+    sort: Option<String>,
+) -> Result<Vec<Track>, String> {
+    state
+        .db
+        .list_tracks_sorted(&query, sort.as_deref().unwrap_or("added"), limit, offset)
 }
 
 #[tauri::command]

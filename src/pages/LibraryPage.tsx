@@ -11,6 +11,22 @@ import TrackList from '../components/common/TrackList'
 import ScanLine from '../components/common/ScanLine'
 
 const PAGE = 500
+const SORT_KEY = 'tempo.library.sort'
+
+const SORTS = [
+  { value: 'added', label: 'Sort by date added' },
+  { value: 'title', label: 'Sort by title' },
+  { value: 'artist', label: 'Sort by artist' },
+  { value: 'duration', label: 'Sort by duration' },
+  { value: 'plays', label: 'Sort by play count' },
+] as const
+
+type Sort = (typeof SORTS)[number]['value']
+
+function readSort(): Sort {
+  const raw = localStorage.getItem(SORT_KEY)
+  return SORTS.some((s) => s.value === raw) ? (raw as Sort) : 'added'
+}
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
@@ -22,6 +38,7 @@ export default function LibraryPage() {
   const scan = useScanProgress()
   const version = useLibraryVersion()
   const total = useAsync(() => api.countTracks(), [version])
+  const [sort, setSort] = useState<Sort>(readSort)
   const [tracks, setTracks] = useState<Track[]>([])
   const [hasMore, setHasMore] = useState(true)
   const [loading, setLoading] = useState(true)
@@ -32,7 +49,7 @@ export default function LibraryPage() {
   useEffect(() => {
     let cancelled = false
     api
-      .listTracks('', PAGE, 0)
+      .listTracks('', PAGE, 0, sort)
       .then((rows) => {
         if (cancelled) return
         setTracks(rows)
@@ -49,7 +66,13 @@ export default function LibraryPage() {
     return () => {
       cancelled = true
     }
-  }, [tick, version])
+  }, [tick, version, sort])
+
+  const changeSort = (next: Sort) => {
+    localStorage.setItem(SORT_KEY, next)
+    setLoading(true)
+    setSort(next)
+  }
 
   const reload = () => {
     setLoading(true)
@@ -60,7 +83,7 @@ export default function LibraryPage() {
   const loadMore = async () => {
     setLoadingMore(true)
     try {
-      const next = await api.listTracks('', PAGE, tracks.length)
+      const next = await api.listTracks('', PAGE, tracks.length, sort)
       setTracks((prev) => [...prev, ...next])
       setHasMore(next.length >= PAGE)
       setError(null)
@@ -81,6 +104,18 @@ export default function LibraryPage() {
           </div>
         </div>
         <div className="page-actions">
+          <select
+            className="select"
+            value={sort}
+            aria-label={t('Sort by')}
+            onChange={(e) => changeSort(e.target.value as Sort)}
+          >
+            {SORTS.map((s) => (
+              <option key={s.value} value={s.value}>
+                {t(s.label)}
+              </option>
+            ))}
+          </select>
           <button className="icon-btn" onClick={reload} aria-label={t('Reload library list')}>
             <RotateCw size={15} />
           </button>
