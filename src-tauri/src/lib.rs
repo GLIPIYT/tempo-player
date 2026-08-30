@@ -30,10 +30,12 @@ pub fn run() {
             let covers_dir = app.path().app_cache_dir()?.join("covers");
             let fonts_dir = data_dir.join("fonts");
             let backgrounds_dir = data_dir.join("backgrounds");
+            let avatars_dir = data_dir.join("avatars");
             let sc_cache_dir = data_dir.join("sc_cache");
             std::fs::create_dir_all(&covers_dir)?;
             std::fs::create_dir_all(&fonts_dir)?;
             std::fs::create_dir_all(&backgrounds_dir)?;
+            std::fs::create_dir_all(&avatars_dir)?;
             std::fs::create_dir_all(&sc_cache_dir)?;
             let db = database::Db::open_at(&data_dir.join("tempo.db"))?;
             app.manage(commands::AppState {
@@ -41,6 +43,7 @@ pub fn run() {
                 covers_dir,
                 fonts_dir,
                 backgrounds_dir,
+                avatars_dir,
                 sc_cache_dir,
             });
             let handle = app.handle().clone();
@@ -76,6 +79,7 @@ pub fn run() {
             commands::record_history,
             commands::import_font,
             commands::import_background,
+            commands::import_avatar,
             commands::set_playlist_pinned,
             commands::move_pinned_playlist,
             commands::get_app_setting,
@@ -103,7 +107,8 @@ pub fn run() {
             commands::list_liked_track_ids,
             commands::get_top_tracks,
             commands::get_hour_picks,
-            commands::get_artist_tracks
+            commands::get_artist_tracks,
+            commands::get_daily_minutes
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

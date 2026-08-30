@@ -2777,3 +2777,334 @@ html.has-bg .app-content {
   align-items: center;
   min-width: 0;
 }
+
+
+/* ── Onboarding wizard ────────────────────────────────────────────────── */
+
+.onb-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.onb-card {
+  width: 470px;
+  max-width: calc(100vw - 48px);
+  padding: 32px 34px 26px;
+  border-radius: 18px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  animation: onb-in 0.28s ease;
+}
+
+@keyframes onb-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.onb-dots {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.onb-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: all 0.2s ease;
+}
+
+.onb-dot.is-active {
+  width: 18px;
+  background: var(--accent);
+}
+
+.onb-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  margin-bottom: 16px;
+}
+
+.onb-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.onb-sub {
+  margin: 8px 0 20px;
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 370px;
+}
+
+.onb-label {
+  align-self: flex-start;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.onb-input {
+  width: 100%;
+  font-size: 14px;
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.onb-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 22px;
+  justify-content: center;
+}
+
+.onb-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin: 4px 0;
+}
+
+.onb-avatar {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--border);
+}
+
+.onb-avatar-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.onb-avatar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.onb-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.onb-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 18px 14px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.onb-choice:hover {
+  background: var(--surface-hover);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  transform: translateY(-2px);
+}
+
+.onb-choice svg {
+  color: var(--accent);
+}
+
+.onb-choice-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.onb-choice-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+/* ── Profile page ─────────────────────────────────────────────────────── */
+
+.profile-head {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 26px 28px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 60%);
+}
+
+.profile-avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--border);
+  flex-shrink: 0;
+}
+
+.profile-avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.profile-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.profile-name-edit {
+  display: flex;
+  gap: 8px;
+  max-width: 340px;
+}
+
+.profile-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.profile-stats {
+  display: flex;
+  gap: 26px;
+  padding-right: 8px;
+  flex-shrink: 0;
+}
+
+.profile-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.profile-stat-num {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.profile-stat-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.profile-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.profile-col {
+  min-width: 0;
+}
+
+.arow-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+
+.arow-sub {
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* ── Listening chart ──────────────────────────────────────────────────── */
+
+.chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 132px;
+  padding: 8px 4px 0;
+}
+
+.chart-bar-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  gap: 6px;
+  min-width: 0;
+}
+
+.chart-bar {
+  width: 100%;
+  max-width: 26px;
+  border-radius: 5px 5px 2px 2px;
+  background: linear-gradient(to top, color-mix(in srgb, var(--accent) 55%, transparent), var(--accent));
+  min-height: 3px;
+  transition: height 0.25s ease;
+}
+
+.chart-bar-wrap:hover .chart-bar {
+  filter: brightness(1.18);
+}
+
+.chart-day {
+  font-size: 9.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ── Sidebar avatar ───────────────────────────────────────────────────── */
+
+.side-avatar {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  object-fit: cover;
+}

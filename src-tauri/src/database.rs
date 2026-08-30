@@ -1006,6 +1006,33 @@ impl Db {
         })
     }
 
+    pub fn get_daily_minutes(&self, days: i64) -> Result<Vec<crate::models::DailyMinutes>, String> {
+        self.with_conn(|conn| {
+            let since = now() - days * 86_400;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT date(h.played_at, 'unixepoch', 'localtime') AS d, \
+                     COALESCE(SUM(h.listened_sec), 0) / 60.0 \
+                     FROM listening_history h WHERE h.played_at >= ?1 \
+                     GROUP BY d ORDER BY d",
+                )
+                .map_err(db_err)?;
+            let mapped = stmt
+                .query_map(params![since], |row| {
+                    Ok(crate::models::DailyMinutes {
+                        date: row.get(0)?,
+                        minutes: row.get(1)?,
+                    })
+                })
+                .map_err(db_err)?;
+            let mut out = Vec::new();
+            for row in mapped {
+                out.push(row.map_err(db_err)?);
+            }
+            Ok(out)
+        })
+    }
+
     pub fn get_app_setting(&self, key: &str) -> Result<Option<String>, String> {
         self.with_conn(|conn| {
             conn.query_row(

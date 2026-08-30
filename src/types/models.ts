@@ -178,3 +178,8 @@ export interface CoversCacheInfo {
   totalBytes: number
   fileCount: number
 }
+
+export interface DailyMinutes {
+  date: string
+  minutes: number
+}

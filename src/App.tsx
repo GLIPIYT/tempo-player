@@ -8,12 +8,13 @@ import LibraryPage from './pages/LibraryPage'
 import AlbumsPage from './pages/AlbumsPage'
 import ArtistsPage from './pages/ArtistsPage'
 import PlaylistsPage from './pages/PlaylistsPage'
-import HistoryPage from './pages/HistoryPage'
+import ProfilePage from './pages/ProfilePage'
 import SettingsPage from './pages/SettingsPage'
 import SearchPage from './pages/SearchPage'
 import AlbumDetailPage from './pages/AlbumDetailPage'
 import ArtistDetailPage from './pages/ArtistDetailPage'
 import PlaylistDetailPage from './pages/PlaylistDetailPage'
+import Onboarding from './components/onboarding/Onboarding'
 import { NavProvider, useNav } from './state/nav'
 import { usePlayer } from './player'
 import PlayerProvider from './player/PlayerProvider'
@@ -42,8 +43,8 @@ function CurrentPage() {
       return <ArtistsPage />
     case 'playlists':
       return <PlaylistsPage />
-    case 'history':
-      return <HistoryPage />
+    case 'profile':
+      return <ProfilePage />
     case 'settings':
       return <SettingsPage />
     case 'search':
@@ -188,6 +189,7 @@ function Shell() {
       <FolderDropWatcher />
       <TaskbarProgress />
       <ToastHost />
+      <Onboarding />
     </div>
   )
 }

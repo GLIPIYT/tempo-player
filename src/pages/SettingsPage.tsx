@@ -22,7 +22,7 @@ import { useScanProgress } from '../hooks/useScanProgress'
 import { useSettings, type StartupPage } from '../state/settings'
 import { resolveLang, useT } from '../i18n'
 
-const STARTUP_PAGE_OPTIONS: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists', 'history']
+const STARTUP_PAGE_OPTIONS: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists']
 
 const PAGE_LABELS: Record<StartupPage, string> = {
   home: 'Home',
@@ -30,7 +30,6 @@ const PAGE_LABELS: Record<StartupPage, string> = {
   albums: 'Albums',
   artists: 'Artists',
   playlists: 'Playlists',
-  history: 'History',
 }
 import ScanLine from '../components/common/ScanLine'
 import ConfirmModal from '../components/common/ConfirmModal'

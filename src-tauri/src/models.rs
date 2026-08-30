@@ -216,6 +216,13 @@ pub struct AnalyticsData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DailyMinutes {
+    pub date: String,
+    pub minutes: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoversCacheInfo {
     pub path: String,
     pub total_bytes: i64,

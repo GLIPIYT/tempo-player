@@ -1,11 +1,12 @@
 import { useMemo } from 'react'
-import { Clock3, Disc3, Flame, FolderPlus, MicVocal, Music2, RefreshCw, Timer } from 'lucide-react'
+import { Clock3, Flame, FolderPlus, RefreshCw } from 'lucide-react'
 import { api } from '../api/client'
 import type { TopTrackItem, Track } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { useScanProgress } from '../hooks/useScanProgress'
+import { useSettings } from '../state/settings'
 import { useT } from '../i18n'
 import { usePlayer } from '../player'
 import { trackToUnified } from '../utils/unified'
@@ -14,17 +15,11 @@ import CardPlayButton from '../components/common/CardPlayButton'
 import EmptyState from '../components/common/EmptyState'
 import ScanLine from '../components/common/ScanLine'
 
-interface HomeCounts {
-  tracks: number
-  albums: number
-  artists: number
-  minutes: number
-}
-
 function greetingForHour(h: number): string {
   if (h >= 5 && h < 12) return 'Good morning'
   if (h >= 12 && h < 18) return 'Good afternoon'
-  return 'Good evening'
+  if (h >= 18 && h < 23) return 'Good evening'
+  return 'Good night'
 }
 
 function dedupeRecent(entries: { track: Track }[], limit: number): Track[] {
@@ -41,31 +36,20 @@ function dedupeRecent(entries: { track: Track }[], limit: number): Track[] {
 
 export default function HomePage() {
   const t = useT()
+  const { settings } = useSettings()
   const player = usePlayer()
   const foldersApi = useFolders()
   const scan = useScanProgress()
   const version = useLibraryVersion()
-  const counts = useAsync<HomeCounts>(async () => {
-    const [tracks, albums, artists, stats] = await Promise.all([
-      api.countTracks(),
-      api.listAlbums(''),
-      api.listArtists(''),
-      api.getAnalytics('all'),
-    ])
-    return {
-      tracks,
-      albums: albums.length,
-      artists: artists.length,
-      minutes: Math.round(stats.summary.totalMinutes),
-    }
-  }, [version])
+  const total = useAsync(() => api.countTracks(), [version])
   const recent = useAsync(() => api.listTracks('', 12, 0), [version])
   const hourPicks = useAsync(() => api.getHourPicks(12), [version])
   const top = useAsync(() => api.getTopTracks(12), [version])
   const played = useAsync(async () => dedupeRecent((await api.getAnalytics('30d')).recent, 10), [version])
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
+  const nickname = settings.profile.nickname
 
-  if (counts.loading || recent.loading) {
+  if (recent.loading) {
     return (
       <div className="page">
         <div className="muted">{t('Loading…')}</div>
@@ -73,7 +57,7 @@ export default function HomePage() {
     )
   }
 
-  const error = counts.error ?? recent.error ?? foldersApi.error
+  const error = recent.error ?? foldersApi.error
   if (error) {
     return (
       <div className="page">
@@ -82,7 +66,7 @@ export default function HomePage() {
     )
   }
 
-  const total = counts.data?.tracks ?? 0
+  const totalTracks = total.data ?? 0
   const unknownArtist = t('Unknown artist')
   const hourTracks = hourPicks.data ?? []
   const topTracks: TopTrackItem[] = top.data ?? []
@@ -96,28 +80,11 @@ export default function HomePage() {
     <div className="page">
       <div className="hero">
         <div className="hero-main">
-          <h1 className="hero-title">{t(greeting)}</h1>
+          <h1 className="hero-title">
+            {t(greeting)}
+            {nickname ? `, ${nickname}` : ''}
+          </h1>
           <div className="hero-sub">{t('Tempo · local library')}</div>
-          {total > 0 ? (
-            <div className="chips hero-chips">
-              <span className="chip">
-                <Music2 size={13} />
-                <span>{total} {t('tracks')}</span>
-              </span>
-              <span className="chip">
-                <Disc3 size={13} />
-                <span>{counts.data?.albums ?? 0} {t('albums')}</span>
-              </span>
-              <span className="chip">
-                <MicVocal size={13} />
-                <span>{counts.data?.artists ?? 0} {t('artists')}</span>
-              </span>
-              <span className="chip">
-                <Timer size={13} />
-                <span>{counts.data?.minutes ?? 0} {t('minutes listened')}</span>
-              </span>
-            </div>
-          ) : null}
         </div>
         <div className="page-actions">
           <button
@@ -141,7 +108,7 @@ export default function HomePage() {
 
       <ScanLine />
 
-      {total === 0 ? (
+      {totalTracks === 0 ? (
         <EmptyState
           icon={<FolderPlus size={34} />}
           title={t('Your library is empty')}

@@ -7,6 +7,7 @@ import type {
   Artist,
   ArtistDetail,
   CoversCacheInfo,
+  DailyMinutes,
   HistoryEntry,
   LibraryFolder,
   Playlist,
@@ -85,6 +86,9 @@ export const api = {
 
   importFont: (path: string) => invoke<string>('import_font', { path }),
   importBackground: (path: string) => invoke<string>('import_background', { path }),
+  importAvatar: (path: string) => invoke<string>('import_avatar', { path }),
+
+  getDailyMinutes: (days: number) => invoke<DailyMinutes[]>('get_daily_minutes', { days }),
 
   getAnalytics: (period: AnalyticsPeriod) =>
     invoke<AnalyticsData>('get_analytics', { sinceSecs: periodSinceSecs(period) }),

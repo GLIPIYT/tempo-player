@@ -10,7 +10,6 @@ import {
 } from 'react'
 import {
   Disc3,
-  History,
   House,
   LibraryBig,
   ListMusic,
@@ -22,9 +21,12 @@ import {
   Settings,
   StarOff,
   Trash2,
+  User,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import { useNav, type View } from '../../state/nav'
+import { useSettings } from '../../state/settings'
 import { useT } from '../../i18n'
 import { api } from '../../api/client'
 import type { Playlist } from '../../types/models'
@@ -45,7 +47,7 @@ const DEFAULT_W = 216
 const COLLAPSED_W = 64
 
 interface NavItem {
-  key: 'home' | 'library' | 'albums' | 'artists' | 'playlists' | 'history'
+  key: 'home' | 'library' | 'albums' | 'artists' | 'playlists'
   label: string
   icon: LucideIcon
 }
@@ -56,7 +58,6 @@ const items: NavItem[] = [
   { key: 'albums', label: 'Albums', icon: Disc3 },
   { key: 'artists', label: 'Artists', icon: MicVocal },
   { key: 'playlists', label: 'Playlists', icon: ListMusic },
-  { key: 'history', label: 'History', icon: History },
 ]
 
 function activeFor(view: View): string | null {
@@ -105,6 +106,7 @@ function readCollapsed(): boolean {
 
 export default function Sidebar() {
   const { view, navigate } = useNav()
+  const { settings } = useSettings()
   const t = useT()
   const player = usePlayer()
   const version = useLibraryVersion()
@@ -396,6 +398,23 @@ export default function Sidebar() {
           </button>
         </div>
         <div className="sidebar-bottom">
+          <button
+            className={'side-item' + (view.name === 'profile' ? ' is-active' : '')}
+            title={t('Profile')}
+            onClick={() => navigate({ name: 'profile' })}
+          >
+            {settings.profile.avatarPath ? (
+              <img
+                className="side-avatar"
+                src={convertFileSrc(settings.profile.avatarPath)}
+                alt=""
+                draggable={false}
+              />
+            ) : (
+              <User size={17} />
+            )}
+            <span>{settings.profile.nickname ?? t('Profile')}</span>
+          </button>
           <button
             className={'side-item' + (view.name === 'settings' ? ' is-active' : '')}
             title={t('Settings')}

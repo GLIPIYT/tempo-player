@@ -7,7 +7,7 @@ export type View =
   | { name: 'albums' }
   | { name: 'artists' }
   | { name: 'playlists' }
-  | { name: 'history' }
+  | { name: 'profile' }
   | { name: 'settings' }
   | { name: 'search' }
   | { name: 'album'; id: number }

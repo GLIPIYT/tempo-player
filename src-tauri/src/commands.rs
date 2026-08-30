@@ -19,6 +19,7 @@ pub struct AppState {
     pub covers_dir: PathBuf,
     pub fonts_dir: PathBuf,
     pub backgrounds_dir: PathBuf,
+    pub avatars_dir: PathBuf,
     pub sc_cache_dir: PathBuf,
 }
 
@@ -389,6 +390,11 @@ pub fn import_background(state: State<'_, AppState>, path: String) -> Result<Str
 }
 
 #[tauri::command]
+pub fn import_avatar(state: State<'_, AppState>, path: String) -> Result<String, String> {
+    import_file_into(&state.avatars_dir, &path)
+}
+
+#[tauri::command]
 pub fn set_playlist_pinned(state: State<'_, AppState>, playlist_id: i64, pinned: bool) -> Result<(), String> {
     state.db.set_playlist_pinned(playlist_id, pinned)
 }
@@ -621,6 +627,11 @@ pub fn get_top_tracks(state: State<'_, AppState>, limit: i64) -> Result<Vec<crat
 #[tauri::command]
 pub fn get_hour_picks(state: State<'_, AppState>, limit: i64) -> Result<Vec<Track>, String> {
     state.db.get_hour_picks(limit)
+}
+
+#[tauri::command]
+pub fn get_daily_minutes(state: State<'_, AppState>, days: i64) -> Result<Vec<crate::models::DailyMinutes>, String> {
+    state.db.get_daily_minutes(days)
 }
 
 #[tauri::command]
