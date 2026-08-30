@@ -1106,7 +1106,7 @@ export default function SettingsPage() {
             <Card title={t('About')}>
               <div className="about-name">Tempo</div>
               <div className="muted settings-line">
-                {t('Version 0.1.0 — a local-first desktop music player. Your library is scanned and stored entirely on this machine; Tempo works fully offline with no account required.')}
+                {t('Version 0.2.0 — a local-first desktop music player. Your library is scanned and stored entirely on this machine; Tempo works fully offline with no account required.')}
               </div>
               <div className="muted settings-line" style={{ marginTop: 8 }}>Tauri 2 · React 18 · TypeScript · SQLite</div>
             </Card>

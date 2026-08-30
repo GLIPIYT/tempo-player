@@ -190,7 +190,7 @@ export const ru: Record<string, string> = {
   Unmute: 'Включить звук',
   Mute: 'Выключить звук',
   'Unknown artist': 'Неизвестный исполнитель',
-  'Version 0.1.0 — a local-first desktop music player. Your library is scanned and stored entirely on this machine; Tempo works fully offline with no account required.':
+  'Version 0.2.0 — a local-first desktop music player. Your library is scanned and stored entirely on this machine; Tempo works fully offline with no account required.':
     'Версия 0.1.0 — локальный десктопный музыкальный плеер. Библиотека сканируется и хранится целиком на этом компьютере; Tempo полностью работает офлайн и не требует аккаунта.',
   Volume: 'Громкость',
   'Waveform progress bar': 'Волновой индикатор прогресса',
