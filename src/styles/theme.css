@@ -24,6 +24,10 @@ html.has-bg .topbar {
   background: color-mix(in srgb, var(--bg-elevated) 55%, transparent);
 }
 
+html.has-bg .titlebar {
+  background: color-mix(in srgb, var(--bg-elevated) 55%, transparent);
+}
+
 html.has-bg .playerbar {
   background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
 }

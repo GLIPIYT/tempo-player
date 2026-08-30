@@ -1,9 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ActiveTheme } from '../types/theme'
 
+export type StartupPage = 'home' | 'library' | 'albums' | 'artists' | 'playlists' | 'history'
+
+const STARTUP_PAGES: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists', 'history']
+
 export interface AppSettings {
   lang: 'ru' | 'en' | 'system'
   theme: ActiveTheme
+  startupPage: StartupPage
   font: {
     family: string | null
     importedPath: string | null
@@ -23,6 +28,7 @@ export interface AppSettings {
 export const defaultSettings: AppSettings = {
   lang: 'system',
   theme: { kind: 'preset', presetId: 'tempo' },
+  startupPage: 'home',
   font: { family: null, importedPath: null, sizePx: 13, uiScalePct: 100 },
   background: { path: null, dimPct: 45, blurPx: 0 },
   player: { waveform: false },
@@ -42,6 +48,9 @@ function load(): AppSettings {
     return {
       ...defaultSettings,
       ...parsed,
+      startupPage: STARTUP_PAGES.includes(parsed.startupPage as StartupPage)
+        ? (parsed.startupPage as StartupPage)
+        : defaultSettings.startupPage,
       font: { ...defaultSettings.font, ...parsed.font },
       background: { ...defaultSettings.background, ...parsed.background },
       player: { ...defaultSettings.player, ...parsed.player },

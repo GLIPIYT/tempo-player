@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { useSettings } from './settings'
 
 export type View =
   | { name: 'home' }
@@ -21,7 +22,8 @@ interface NavState {
 const NavContext = createContext<NavState | null>(null)
 
 export function NavProvider({ children }: { children: ReactNode }) {
-  const [view, setView] = useState<View>({ name: 'home' })
+  const { settings } = useSettings()
+  const [view, setView] = useState<View>(() => ({ name: settings.startupPage }))
   const navigate = useCallback((v: View) => setView(v), [])
   const value = useMemo(() => ({ view, navigate }), [view, navigate])
   return <NavContext.Provider value={value}>{children}</NavContext.Provider>

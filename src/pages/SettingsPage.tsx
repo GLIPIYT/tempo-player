@@ -19,8 +19,19 @@ import { api } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useScanProgress } from '../hooks/useScanProgress'
-import { useSettings } from '../state/settings'
+import { useSettings, type StartupPage } from '../state/settings'
 import { resolveLang, useT } from '../i18n'
+
+const STARTUP_PAGE_OPTIONS: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists', 'history']
+
+const PAGE_LABELS: Record<StartupPage, string> = {
+  home: 'Home',
+  library: 'Library',
+  albums: 'Albums',
+  artists: 'Artists',
+  playlists: 'Playlists',
+  history: 'History',
+}
 import ScanLine from '../components/common/ScanLine'
 import ConfirmModal from '../components/common/ConfirmModal'
 import type { CustomTheme, ThemeTokens } from '../types/theme'
@@ -777,8 +788,16 @@ export default function SettingsPage() {
               <Card title={t('Startup')} desc={t('Choose what Tempo shows when it launches.')}>
                 <div className="set-row">
                   <span className="set-row-label">{t('Startup page')}</span>
-                  <select className="select" disabled value="home">
-                    <option value="home">{t('Home')}</option>
+                  <select
+                    className="select"
+                    value={settings.startupPage}
+                    onChange={(e) => update({ startupPage: e.target.value as StartupPage })}
+                  >
+                    {STARTUP_PAGE_OPTIONS.map((page) => (
+                      <option key={page} value={page}>
+                        {t(PAGE_LABELS[page])}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="set-note">{t('Tempo is offline-first: your library never leaves this machine.')}</div>
