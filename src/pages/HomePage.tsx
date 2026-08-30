@@ -46,32 +46,10 @@ export default function HomePage() {
   const hourPicks = useAsync(() => api.getHourPicks(30), [version])
   const top = useAsync(() => api.getTopTracks(12), [version])
   const played = useAsync(async () => dedupeRecent((await api.getAnalytics('30d')).recent, 10), [version])
-  const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
-  const nickname = settings.profile.nickname
-
-  if (recent.loading) {
-    return (
-      <div className="page">
-        <div className="muted">{t('Loading…')}</div>
-      </div>
-    )
-  }
-
-  const error = recent.error ?? foldersApi.error
-  if (error) {
-    return (
-      <div className="page">
-        <div className="error-line">{error}</div>
-      </div>
-    )
-  }
-
-  const totalTracks = total.data ?? 0
   const unknownArtist = t('Unknown artist')
   const hourPicksList = hourPicks.data ?? []
-  const topTracks: TopTrackItem[] = top.data ?? []
-  const recentPlays = played.data ?? []
-
+  const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
+  const nickname = settings.profile.nickname
   const hourMixes = useMemo(() => {
     if (hourPicksList.length === 0) return []
     const mixes: { key: string; title: string; tracks: Track[] }[] = []
@@ -99,6 +77,28 @@ export default function HomePage() {
     }
     return mixes
   }, [hourPicksList, unknownArtist, t])
+
+
+  if (recent.loading) {
+    return (
+      <div className="page">
+        <div className="muted">{t('Loading…')}</div>
+      </div>
+    )
+  }
+
+  const error = recent.error ?? foldersApi.error
+  if (error) {
+    return (
+      <div className="page">
+        <div className="error-line">{error}</div>
+      </div>
+    )
+  }
+
+  const totalTracks = total.data ?? 0
+  const topTracks: TopTrackItem[] = top.data ?? []
+  const recentPlays = played.data ?? []
 
   const playSection = (tracks: Track[], index: number) => {
     player.playTracks(tracks.map((tr) => trackToUnified(tr)), index)
