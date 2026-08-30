@@ -8,9 +8,7 @@ Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLi
 
 ![Version](https://img.shields.io/badge/version-0.1.0--alpha-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)
 
-<!-- Screenshot: drop a PNG here (e.g. docs/screenshot.png) and uncomment:
-![Tempo screenshot](docs/screenshot.png)
--->
+![Tempo — home screen](docs/screenshot.png)
 
 ## ✨ Features
 

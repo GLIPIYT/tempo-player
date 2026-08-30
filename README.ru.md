@@ -8,9 +8,7 @@
 
 ![Version](https://img.shields.io/badge/version-0.1.0--alpha-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)
 
-<!-- Скриншот: положите PNG (например, docs/screenshot.png) и раскомментируйте:
-![Скриншот Tempo](docs/screenshot.png)
--->
+![Tempo — главный экран](docs/screenshot.png)
 
 ## ✨ Возможности
 
