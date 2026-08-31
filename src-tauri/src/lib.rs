@@ -116,6 +116,10 @@ pub fn run() {
             commands::toggle_favorite_artist,
             commands::list_favorite_artists,
             commands::is_favorite_artist,
+            commands::toggle_favorite_album,
+            commands::list_favorite_albums,
+            commands::is_favorite_album,
+            commands::import_artist_image,
             commands::export_playlist_m3u8,
             commands::import_playlist_m3u8
         ])

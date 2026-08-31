@@ -20,6 +20,8 @@ pub struct Artist {
     pub album_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub track_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

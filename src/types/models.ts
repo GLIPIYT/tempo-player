@@ -25,6 +25,7 @@ export interface Artist {
   name: string
   albumCount?: number
   trackCount?: number
+  imagePath?: string | null
 }
 
 export interface Album {

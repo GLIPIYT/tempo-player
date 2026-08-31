@@ -99,6 +99,13 @@ export const api = {
   listFavoriteArtists: () => invoke<Artist[]>('list_favorite_artists'),
   isFavoriteArtist: (artistId: number) => invoke<boolean>('is_favorite_artist', { artistId }),
 
+  toggleFavoriteAlbum: (albumId: number) => invoke<boolean>('toggle_favorite_album', { albumId }),
+  listFavoriteAlbums: () => invoke<Album[]>('list_favorite_albums'),
+  isFavoriteAlbum: (albumId: number) => invoke<boolean>('is_favorite_album', { albumId }),
+
+  importArtistImage: (artistId: number, path: string) =>
+    invoke<void>('import_artist_image', { artistId, path }),
+
   exportPlaylistM3u8: (playlistId: number, path: string) =>
     invoke<number>('export_playlist_m3u8', { playlistId, path }),
   importPlaylistM3u8: (path: string, name: string) =>

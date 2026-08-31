@@ -395,6 +395,24 @@ pub fn import_avatar(state: State<'_, AppState>, path: String) -> Result<String,
 }
 
 #[tauri::command]
+pub fn import_artist_image(
+    state: State<'_, AppState>,
+    artist_id: i64,
+    path: String,
+) -> Result<(), String> {
+    let src = PathBuf::from(&path);
+    let file_name = src
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .ok_or_else(|| "invalid file name".to_string())?;
+    let dir = state.avatars_dir.join("artists");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dest = dir.join(format!("{}-{}", artist_id, file_name));
+    std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
+    state.db.set_artist_image(artist_id, Some(&dest.to_string_lossy()))
+}
+
+#[tauri::command]
 pub fn set_playlist_pinned(state: State<'_, AppState>, playlist_id: i64, pinned: bool) -> Result<(), String> {
     state.db.set_playlist_pinned(playlist_id, pinned)
 }
@@ -671,6 +689,21 @@ pub fn list_favorite_artists(state: State<'_, AppState>) -> Result<Vec<crate::mo
 #[tauri::command]
 pub fn is_favorite_artist(state: State<'_, AppState>, artist_id: i64) -> Result<bool, String> {
     state.db.is_favorite_artist(artist_id)
+}
+
+#[tauri::command]
+pub fn toggle_favorite_album(state: State<'_, AppState>, album_id: i64) -> Result<bool, String> {
+    state.db.toggle_favorite_album(album_id)
+}
+
+#[tauri::command]
+pub fn list_favorite_albums(state: State<'_, AppState>) -> Result<Vec<crate::models::Album>, String> {
+    state.db.list_favorite_albums()
+}
+
+#[tauri::command]
+pub fn is_favorite_album(state: State<'_, AppState>, album_id: i64) -> Result<bool, String> {
+    state.db.is_favorite_album(album_id)
 }
 
 #[tauri::command]

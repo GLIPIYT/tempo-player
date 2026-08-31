@@ -40,7 +40,7 @@ const ALBUM_ORDER: &str = "al.title COLLATE NOCASE, al.id";
 
 const ARTIST_COLUMNS: &str =
     "ar.id, ar.name, (SELECT COUNT(*) FROM albums ac WHERE ac.artist_id = ar.id), \
-     (SELECT COUNT(*) FROM tracks tk WHERE tk.artist_id = ar.id)";
+     (SELECT COUNT(*) FROM tracks tk WHERE tk.artist_id = ar.id), ar.image_path";
 
 const PLAYLIST_COLUMNS: &str =
     "p.id, p.name, p.created_at, p.updated_at, \
@@ -165,8 +165,17 @@ CREATE TABLE IF NOT EXISTS favorite_artists (
 );
 "#;
 
+const MIGRATION_8: &str = r#"
+CREATE TABLE IF NOT EXISTS favorite_albums (
+    album_id INTEGER PRIMARY KEY REFERENCES albums(id) ON DELETE CASCADE,
+    added_at INTEGER NOT NULL
+);
+ALTER TABLE artists ADD COLUMN image_path TEXT;
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
+    MIGRATION_8,
 ];
 
 pub struct Db {
@@ -515,19 +524,25 @@ impl Db {
         let conn = self.lock_conn()?;
         let ts = now();
         conn.execute(
-            "INSERT INTO playlists(name, created_at, updated_at) VALUES(?1, ?2, ?2)",
+            "INSERT INTO playlists(name, created_at, updated_at, pinned, pin_order) \
+             VALUES(?1, ?2, ?2, 1, COALESCE((SELECT MAX(pin_order) + 1 FROM playlists WHERE pinned = 1), 0))",
             params![name, ts],
         )
         .map_err(db_err)?;
         let id = conn.last_insert_rowid();
+        let pin_order: i64 = conn
+            .query_row("SELECT pin_order FROM playlists WHERE id = ?1", params![id], |row| {
+                row.get(0)
+            })
+            .map_err(db_err)?;
         Ok(Playlist {
             id,
             name: name.to_string(),
             created_at: ts,
             updated_at: ts,
             track_count: Some(0),
-            pinned: Some(false),
-            pin_order: None,
+            pinned: Some(true),
+            pin_order: Some(pin_order),
             is_likes: Some(false),
             cover_path: None,
         })
@@ -1101,6 +1116,81 @@ impl Db {
                 .query_row(
                     "SELECT COUNT(*) FROM favorite_artists WHERE artist_id = ?1",
                     params![artist_id],
+                    |row| row.get(0),
+                )
+                .map_err(db_err)?;
+            Ok(count > 0)
+        })
+    }
+
+    pub fn set_artist_image(&self, artist_id: i64, image_path: Option<&str>) -> Result<(), String> {
+        self.with_conn(|conn| {
+            let updated = conn
+                .execute(
+                    "UPDATE artists SET image_path = ?1 WHERE id = ?2",
+                    params![image_path, artist_id],
+                )
+                .map_err(db_err)?;
+            if updated == 0 {
+                return Err("artist not found".to_string());
+            }
+            Ok(())
+        })
+    }
+
+    pub fn toggle_favorite_album(&self, album_id: i64) -> Result<bool, String> {
+        self.with_conn(|conn| {
+            let removed = conn
+                .execute(
+                    "DELETE FROM favorite_albums WHERE album_id = ?1",
+                    params![album_id],
+                )
+                .map_err(db_err)?;
+            if removed > 0 {
+                return Ok(false);
+            }
+            let exists: i64 = conn
+                .query_row("SELECT COUNT(*) FROM albums WHERE id = ?1", params![album_id], |row| {
+                    row.get(0)
+                })
+                .map_err(db_err)?;
+            if exists == 0 {
+                return Err("album not found".to_string());
+            }
+            conn.execute(
+                "INSERT OR IGNORE INTO favorite_albums(album_id, added_at) VALUES(?1, ?2)",
+                params![album_id, now()],
+            )
+            .map_err(db_err)?;
+            Ok(true)
+        })
+    }
+
+    pub fn list_favorite_albums(&self) -> Result<Vec<Album>, String> {
+        self.with_conn(|conn| {
+            let sql = format!(
+                "SELECT {} FROM favorite_albums fa \
+                 JOIN albums al ON al.id = fa.album_id \
+                 LEFT JOIN artists ar ON ar.id = al.artist_id \
+                 ORDER BY fa.added_at, al.id",
+                ALBUM_COLUMNS
+            );
+            let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+            let mapped = stmt.query_map([], map_album).map_err(db_err)?;
+            let mut out = Vec::new();
+            for row in mapped {
+                out.push(row.map_err(db_err)?);
+            }
+            Ok(out)
+        })
+    }
+
+    pub fn is_favorite_album(&self, album_id: i64) -> Result<bool, String> {
+        self.with_conn(|conn| {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM favorite_albums WHERE album_id = ?1",
+                    params![album_id],
                     |row| row.get(0),
                 )
                 .map_err(db_err)?;
@@ -1856,6 +1946,7 @@ fn map_artist(row: &rusqlite::Row) -> rusqlite::Result<Artist> {
         name: row.get(1)?,
         album_count: Some(row.get(2)?),
         track_count: Some(row.get(3)?),
+        image_path: row.get(4)?,
     })
 }
 
@@ -2044,7 +2135,7 @@ fn fetch_top_artists(
         .query_map(params_from_iter(args), |row| {
             Ok(TopArtistItem {
                 artist: map_artist(row)?,
-                play_count: row.get(4)?,
+                play_count: row.get(5)?,
             })
         })
         .map_err(db_err)?;
@@ -2956,7 +3047,16 @@ mod tests {
         let c = db.create_playlist("C").unwrap();
         let plain = db.create_playlist("Plain").unwrap();
 
-        db.move_pinned_playlist(a.id, 0).unwrap();
+        // new playlists are created pinned (favorites) in creation order
+        assert_eq!(a.pinned, Some(true));
+        assert_eq!(a.pin_order, Some(0));
+        let order: Vec<i64> = pinned_rows(&db).iter().map(|(id, _)| *id).collect();
+        assert_eq!(order, vec![a.id, b.id, c.id, plain.id]);
+
+        // unpin everything to rebuild a chosen order
+        for pl in [&a, &b, &c, &plain] {
+            db.set_playlist_pinned(pl.id, false).unwrap();
+        }
         assert!(pinned_rows(&db).is_empty());
 
         db.set_playlist_pinned(c.id, true).unwrap();
