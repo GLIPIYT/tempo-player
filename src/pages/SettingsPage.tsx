@@ -799,6 +799,19 @@ export default function SettingsPage() {
                     ))}
                   </select>
                 </div>
+                <div className="set-row" style={{ marginTop: 6 }}>
+                  <span className="set-row-label">{t('Group favorites in sidebar')}</span>
+                  <button
+                    className={settings.sidebar.grouped ? 'switch is-on' : 'switch'}
+                    role="switch"
+                    aria-checked={settings.sidebar.grouped}
+                    aria-label={t('Group favorites in sidebar')}
+                    onClick={() => update({ sidebar: { grouped: !settings.sidebar.grouped } })}
+                  />
+                </div>
+                <div className="set-note">
+                  {t('When enabled, favorite playlists, artists and albums are grouped into separate sidebar sections. Turn it off for one continuous list.')}
+                </div>
                 <div className="set-note">{t('Tempo is offline-first: your library never leaves this machine.')}</div>
               </Card>
               <Card title={t('Integrations')}>

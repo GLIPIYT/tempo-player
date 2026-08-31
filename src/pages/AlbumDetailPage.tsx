@@ -1,9 +1,10 @@
-import { ChevronLeft, Play } from 'lucide-react'
+import { ChevronLeft, Heart, Play } from 'lucide-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
+import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { usePlayer } from '../player'
 import { tracksToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
@@ -18,6 +19,7 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
   const player = usePlayer()
   const version = useLibraryVersion()
   const { data, loading, error, reload } = useAsync(() => api.getAlbum(albumId), [albumId, version])
+  const fav = useAsync(() => api.isFavoriteAlbum(albumId), [albumId, version])
 
   if (loading) {
     return (
@@ -91,6 +93,22 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
                 >
                   <Play size={14} />
                   {t('Play all')}
+                </button>
+                <button
+                  className={'btn' + (fav.data ? ' is-active' : '')}
+                  title={t('Favorite album')}
+                  onClick={() =>
+                    void api
+                      .toggleFavoriteAlbum(albumId)
+                      .then(() => {
+                        fav.reload()
+                        bumpLibraryVersion()
+                      })
+                      .catch(() => {})
+                  }
+                >
+                  <Heart size={14} fill={fav.data ? 'currentColor' : 'none'} />
+                  {fav.data ? t('Remove from favorites') : t('Add to favorites')}
                 </button>
                 <span className="muted detail-total">
                   {fmtTime(tracks.reduce((acc, tr) => acc + (tr.durationSec ?? 0), 0))}

@@ -3065,26 +3065,28 @@ html.has-bg .app-content {
 .chart {
   display: flex;
   align-items: flex-end;
-  gap: 4px;
-  height: 132px;
+  gap: 3px;
+  height: 120px;
+  width: fit-content;
+  max-width: 100%;
   padding: 8px 4px 0;
 }
 
 .chart-bar-wrap {
-  flex: 1;
+  flex: 0 1 auto;
+  width: 14px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
   height: 100%;
   gap: 6px;
-  min-width: 0;
 }
 
 .chart-bar {
   width: 100%;
-  max-width: 26px;
-  border-radius: 5px 5px 2px 2px;
+  border-radius: 4px 4px 2px 2px;
   background: linear-gradient(to top, color-mix(in srgb, var(--accent) 55%, transparent), var(--accent));
   min-height: 3px;
   transition: height 0.25s ease;
@@ -3134,6 +3136,10 @@ html.has-bg .app-content {
   background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
 }
 
+.fav-item.is-dragged {
+  opacity: 0.35;
+}
+
 .icon-btn.is-active {
   color: var(--accent);
 }
@@ -3141,4 +3147,57 @@ html.has-bg .app-content {
 .btn.is-active {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
   color: var(--accent);
+}
+
+/* ── Pointer drag & drop layer ────────────────────────────────────────── */
+
+.dnd-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 200;
+  pointer-events: none;
+  filter: drop-shadow(0 8px 18px rgba(5, 7, 12, 0.5));
+  will-change: transform, opacity;
+}
+
+/* ── Avatar click-to-change (profile + artist) ────────────────────────── */
+
+.avatar-edit {
+  position: relative;
+  display: inline-flex;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.avatar-edit:disabled {
+  cursor: default;
+}
+
+.avatar-edit-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: inherit;
+  background: rgba(8, 10, 15, 0.62);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.2;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.avatar-edit:hover:not(:disabled) .avatar-edit-overlay,
+.avatar-edit:focus-visible .avatar-edit-overlay {
+  opacity: 1;
 }

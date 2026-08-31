@@ -1,5 +1,7 @@
-import { ChevronLeft, Heart, Play } from 'lucide-react'
+import { useState } from 'react'
+import { ChevronLeft, Heart, ImagePlus, Play } from 'lucide-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
 import type { Track } from '../types/models'
@@ -19,6 +21,7 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
   const t = useT()
   const player = usePlayer()
   const version = useLibraryVersion()
+  const [imageBusy, setImageBusy] = useState(false)
   const { data, loading, error, reload } = useAsync(() => api.getArtist(artistId), [artistId, version])
   const tracks = useAsync(() => api.getArtistTracks(artistId), [artistId, version])
   const fav = useAsync(() => api.isFavoriteArtist(artistId), [artistId, version])
@@ -56,6 +59,24 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
     } catch {}
   }
 
+  const changeImage = async () => {
+    if (imageBusy) return
+    setImageBusy(true)
+    try {
+      const sel = await open({
+        multiple: false,
+        filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+      })
+      if (typeof sel === 'string') {
+        await api.importArtistImage(artistId, sel)
+        reload()
+        bumpLibraryVersion()
+      }
+    } catch {} finally {
+      setImageBusy(false)
+    }
+  }
+
   return (
     <div className="page">
       <button className="back-link" onClick={() => navigate({ name: 'artists' })}>
@@ -76,7 +97,28 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
           </div>
         ) : null}
         <div className="dh-fg">
-          <Cover label={artist.name} size={132} rounded />
+          <button
+            className="avatar-edit"
+            title={t('Change image')}
+            disabled={imageBusy}
+            onClick={() => void changeImage()}
+          >
+            {artist.imagePath ? (
+              <img
+                className="profile-avatar"
+                style={{ width: 132, height: 132 }}
+                src={convertFileSrc(artist.imagePath)}
+                alt=""
+                draggable={false}
+              />
+            ) : (
+              <Cover label={artist.name} size={132} rounded />
+            )}
+            <span className="avatar-edit-overlay">
+              <ImagePlus size={16} />
+              <span>{t('Change image')}</span>
+            </span>
+          </button>
           <div className="detail-hero-info">
             <div className="section-label">{t('Artist')}</div>
             <h1 className="detail-title">{artist.name}</h1>

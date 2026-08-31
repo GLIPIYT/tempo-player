@@ -297,6 +297,12 @@ export const ru: Record<string, string> = {
   Radio: 'Радио',
   'Favorite artist': 'Любимый исполнитель',
   'Favorite artists': 'Любимые исполнители',
+  'Favorite album': 'Любимый альбом',
+  'Favorite albums': 'Избранные альбомы',
+  'Change image': 'Изменить фото',
+  'Group favorites in sidebar': 'Группировать избранное в сайдбаре',
+  'When enabled, favorite playlists, artists and albums are grouped into separate sidebar sections. Turn it off for one continuous list.':
+    'Когда включено, избранные плейлисты, исполнители и альбомы сгруппированы по отдельным секциям сайдбара. Выключите, чтобы получить один сплошной список.',
   'Download to cache': 'Скачать в кэш',
   'Downloads started': 'Загрузки запущены',
   'Nothing to download': 'Скачивать нечего',

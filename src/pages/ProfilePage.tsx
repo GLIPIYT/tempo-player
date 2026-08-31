@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
-import { FolderOpen, Pencil, User } from 'lucide-react'
+import { ImagePlus, Pencil, User } from 'lucide-react'
 import { api } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
@@ -81,13 +81,24 @@ export default function ProfilePage() {
   return (
     <div className="page">
       <div className="profile-head">
-        {settings.profile.avatarPath ? (
-          <img className="profile-avatar" src={convertFileSrc(settings.profile.avatarPath)} alt="" draggable={false} />
-        ) : (
-          <div className="profile-avatar profile-avatar-fallback">
-            <User size={38} />
-          </div>
-        )}
+        <button
+          className="avatar-edit"
+          title={settings.profile.avatarPath ? t('Change avatar') : t('Pick an avatar')}
+          disabled={avatarBusy}
+          onClick={() => void changeAvatar()}
+        >
+          {settings.profile.avatarPath ? (
+            <img className="profile-avatar" src={convertFileSrc(settings.profile.avatarPath)} alt="" draggable={false} />
+          ) : (
+            <div className="profile-avatar profile-avatar-fallback">
+              <User size={38} />
+            </div>
+          )}
+          <span className="avatar-edit-overlay">
+            <ImagePlus size={16} />
+            <span>{settings.profile.avatarPath ? t('Change avatar') : t('Pick an avatar')}</span>
+          </span>
+        </button>
         <div className="profile-info">
           <div className="section-label">{t('Profile')}</div>
           {editingName ? (
@@ -124,12 +135,6 @@ export default function ProfilePage() {
               </button>
             </h1>
           )}
-          <div className="profile-actions">
-            <button className="btn" disabled={avatarBusy} onClick={() => void changeAvatar()}>
-              <FolderOpen size={14} />
-              {settings.profile.avatarPath ? t('Change avatar') : t('Pick an avatar')}
-            </button>
-          </div>
         </div>
         <div className="profile-stats">
           <div className="profile-stat">
