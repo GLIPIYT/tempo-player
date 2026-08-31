@@ -1,14 +1,16 @@
 //! Minimal Discord Rich Presence client over the local IPC named pipe.
-//! Send-only by design: every write is followed by a Discord reply that we
-//! deliberately leave buffered (a few hundred bytes per 15s heartbeat drains
-//! slowly enough to never matter for a desktop session).
+//! Every request carries a nonce (Discord rejects payloads without one) and a
+//! helper thread continuously drains replies/events so the pipe buffer never
+//! fills up and blocks discord's side.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::mpsc::{self, Sender};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-const UPDATE_INTERVAL: Duration = Duration::from_secs(15);
+/// discord tolerates up to 5 updates per 20s; anything above this gap is
+/// safety-only, real updates go out as soon as the payload changes
+const MIN_SEND_INTERVAL: Duration = Duration::from_secs(2);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
@@ -64,33 +66,17 @@ pub fn clear_presence() {
 struct Pending {
     client_id: String,
     payload: String,
+    nonce: String,
 }
 
-/// base64url without padding - the format Discord's media proxy expects in
-/// `mp:external/<key>` image references.
-fn b64url(data: &[u8]) -> String {
-    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut out = String::new();
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
-        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        out.push(T[(n >> 18) as usize & 63] as char);
-        out.push(T[(n >> 12) as usize & 63] as char);
-        if chunk.len() > 1 {
-            out.push(T[(n >> 6) as usize & 63] as char);
-        }
-        if chunk.len() > 2 {
-            out.push(T[n as usize & 63] as char);
-        }
-    }
-    out
-}
-
-/// Track artwork (an https URL) as a Discord media-proxy image reference.
-pub fn external_image(url: &str) -> String {
-    format!("mp:external/{}", b64url(url.as_bytes()))
+fn gen_nonce() -> String {
+    format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    )
 }
 
 fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
@@ -98,7 +84,8 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
     let mut pending: Option<Pending> = None;
     let mut client_id = String::new();
     let mut last_beat = Instant::now() - HEARTBEAT_INTERVAL;
-    let mut last_update = Instant::now() - UPDATE_INTERVAL;
+    let mut last_sent_at = Instant::now() - MIN_SEND_INTERVAL;
+    let mut last_sent_payload: Option<String> = None;
 
     loop {
         // disabled until the first Set carries a client id
@@ -109,9 +96,18 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                         continue;
                     }
                     client_id = id;
+                    let nonce = gen_nonce();
                     pending = Some(Pending {
                         client_id: client_id.clone(),
-                        payload: build_activity(&details, state, start_ms, large_image, small_image),
+                        payload: build_activity(
+                            &details,
+                            state,
+                            start_ms,
+                            large_image,
+                            small_image,
+                            &nonce,
+                        ),
+                        nonce,
                     });
                 }
                 Ok(PresenceMsg::Clear) => continue,
@@ -124,7 +120,7 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
             match connect(&client_id) {
                 Some(f) => {
                     last_beat = Instant::now();
-                    last_update = Instant::now() - UPDATE_INTERVAL; // allow immediate set
+                    last_sent_at = Instant::now() - MIN_SEND_INTERVAL; // allow immediate set
                     file = Some(f);
                 }
                 None => {
@@ -146,13 +142,26 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                     pending = None;
                     continue;
                 }
+                let nonce = gen_nonce();
                 pending = Some(Pending {
                     client_id: client_id.clone(),
-                    payload: build_activity(&details, state, start_ms, large_image, small_image),
+                    payload: build_activity(
+                        &details,
+                        state,
+                        start_ms,
+                        large_image,
+                        small_image,
+                        &nonce,
+                    ),
+                    nonce,
                 });
             }
             Ok(PresenceMsg::Clear) => {
-                pending = Some(Pending { client_id: String::new(), payload: build_clear() });
+                pending = Some(Pending {
+                    client_id: String::new(),
+                    payload: build_clear(),
+                    nonce: gen_nonce(),
+                });
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
@@ -167,25 +176,28 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
             last_beat = now;
         }
         if let Some(p) = pending.take() {
-            if p.client_id.is_empty() {
-                // clear goes out immediately
-                if write_frame(f, 1, p.payload.as_bytes()).is_ok() {
-                    last_update = now;
-                    client_id = String::new();
-                    file = None; // re-handshake when presence returns
-                } else {
-                    file = None;
-                }
+            let is_clear = p.client_id.is_empty();
+            let changed = last_sent_payload.as_deref() != Some(p.payload.as_str());
+            if !is_clear && !changed {
+                // identical to what discord already shows - drop it
                 continue;
             }
-            if now.duration_since(last_update) < UPDATE_INTERVAL {
+            if now.duration_since(last_sent_at) < MIN_SEND_INTERVAL {
                 pending = Some(p);
-            } else if write_frame(f, 1, p.payload.as_bytes()).is_err() {
+                continue;
+            }
+            if write_frame(f, 1, p.payload.as_bytes()).is_err() {
                 file = None;
                 pending = Some(p);
                 continue;
+            }
+            last_sent_at = now;
+            if is_clear {
+                client_id = String::new();
+                file = None; // re-handshake when presence returns
+                last_sent_payload = None;
             } else {
-                last_update = now;
+                last_sent_payload = Some(p.payload);
             }
         }
     }
@@ -197,6 +209,29 @@ fn connect(client_id: &str) -> Option<std::fs::File> {
         if let Ok(mut f) = std::fs::OpenOptions::new().read(true).write(true).open(&path) {
             let handshake = format!(r#"{{"v":1,"client_id":"{client_id}"}}"#);
             if write_frame(&mut f, 0, handshake.as_bytes()).is_ok() {
+                // continuously drain replies/events on a helper handle so the
+                // pipe buffer never fills up and blocks discord's side
+                if let Ok(reader) = f.try_clone() {
+                    std::thread::Builder::new()
+                        .name("discord-drain".into())
+                        .spawn(move || {
+                            let mut reader = reader;
+                            let mut header = [0u8; 8];
+                            loop {
+                                if reader.read_exact(&mut header).is_err() {
+                                    break;
+                                }
+                                let len = u32::from_le_bytes([
+                                    header[4], header[5], header[6], header[7],
+                                ]) as usize;
+                                let mut sink = vec![0u8; len];
+                                if reader.read_exact(&mut sink).is_err() {
+                                    break;
+                                }
+                            }
+                        })
+                        .ok();
+                }
                 return Some(f);
             }
         }
@@ -226,9 +261,12 @@ fn build_activity(
     start_ms: Option<u64>,
     large_image: Option<String>,
     small_image: Option<String>,
+    nonce: &str,
 ) -> String {
     let mut s = String::new();
-    s.push_str("{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":");
+    s.push_str("{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"");
+    s.push_str(&json_escape(nonce));
+    s.push_str("\",\"args\":{\"pid\":");
     s.push_str(&std::process::id().to_string());
     s.push_str(",\"activity\":{\"name\":\"Tempo\",\"type\":2,\"details\":\"");
     s.push_str(&json_escape(details));
@@ -274,13 +312,14 @@ mod tests {
             Some(1),
             Some("mp:external/aGk".into()),
             Some("tempo_logo".into()),
+            "n1",
         );
         assert_eq!(s.matches('{').count(), s.matches('}').count());
         assert!(s.contains("\"details\":\"Det \\\"quote\\\"\""));
         assert!(s.contains("\"timestamps\":{\"start\":1}"));
         assert!(s.contains("\"large_image\":\"mp:external/aGk\""));
         assert!(s.contains("\"small_image\":\"tempo_logo\""));
-        let no_assets = build_activity("D", None, None, None, None);
+        let no_assets = build_activity("D", None, None, None, None, "n");
         assert!(!no_assets.contains("assets"));
         let c = build_clear();
         assert_eq!(c.matches('{').count(), c.matches('}').count());
@@ -288,8 +327,11 @@ mod tests {
     }
 
     #[test]
-    fn external_image_encodes_base64url() {
-        assert_eq!(external_image("https://a.b/c.png"), "mp:external/aHR0cHM6Ly9hLmIvYy5wbmc");
+    fn nonce_changes_each_call() {
+        let a = build_activity("D", None, None, None, None, "a");
+        let b = build_activity("D", None, None, None, None, "b");
+        assert!(a.contains("\"nonce\":\"a\""));
+        assert!(b.contains("\"nonce\":\"b\""));
     }
 }
 
