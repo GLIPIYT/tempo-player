@@ -4,6 +4,7 @@ import { usePlayer } from '../../player'
 import { useT } from '../../i18n'
 import { fmtTime } from '../../utils/format'
 import { trackToUnified } from '../../utils/unified'
+import { beginTrackDrag } from '../../dnd/trackDrag'
 import Cover from './Cover'
 import TrackMenu from './TrackMenu'
 
@@ -38,10 +39,14 @@ export default function TrackList({ tracks, showAlbum = true, showIndex = true, 
           <div
             key={t.id}
             className={'tl-row' + (playing ? ' is-playing' : '')}
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.effectAllowed = 'copy'
-              e.dataTransfer.setData('application/x-tempo-track', String(t.id))
+            onPointerDown={(e) => {
+              if (e.button !== 0) return
+              beginTrackDrag({
+                e,
+                title: t.title,
+                coverPath: t.coverPath,
+                trackId: t.id,
+              })
             }}
             onDoubleClick={() => playAt(i)}
           >

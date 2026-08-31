@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import {
@@ -35,8 +34,14 @@ import { playlistDisplayName } from '../../utils/playlists'
 import { useLibraryVersion } from '../../hooks/useLibraryVersion'
 import { useAsync } from '../../hooks/useAsync'
 import { bumpLibraryVersion } from '../../utils/libraryVersion'
-import { tracksToUnified } from '../../utils/unified'
+import { tracksToUnified, trackToUnified } from '../../utils/unified'
 import { usePlayer } from '../../player'
+import {
+  beginPlaylistReorder,
+  consumeDragClick,
+  registerPlaylistDropper,
+  useDragTargets,
+} from '../../dnd/trackDrag'
 import Cover from '../common/Cover'
 import Modal from '../common/Modal'
 import ConfirmModal from '../common/ConfirmModal'
@@ -79,6 +84,7 @@ function activeFor(view: View): string | null {
 }
 
 interface FavMenu {
+  kind: 'playlist' | 'artist' | 'album'
   id: number
   name: string
   isLikes: boolean
@@ -113,7 +119,10 @@ export default function Sidebar() {
   const player = usePlayer()
   const version = useLibraryVersion()
   const favArtists = useAsync(() => api.listFavoriteArtists(), [version])
+  const favAlbums = useAsync(() => api.listFavoriteAlbums(), [version])
+  const dragState = useDragTargets()
   const active = activeFor(view)
+  const grouped = settings.sidebar.grouped
 
   const [width, setWidth] = useState(readWidth)
   const [collapsed, setCollapsed] = useState(readCollapsed)
@@ -125,14 +134,10 @@ export default function Sidebar() {
   const [newOpen, setNewOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [creating, setCreating] = useState(false)
-  const [dragIndex, setDragIndex] = useState<number | null>(null)
-  const [dropAt, setDropAt] = useState<number | null>(null)
-  const [trackDropFav, setTrackDropFav] = useState<number | null>(null)
 
   const widthRef = useRef(width)
   widthRef.current = width
   const resizeStart = useRef<{ x: number; w: number } | null>(null)
-  const dragIndexRef = useRef<number | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -198,6 +203,9 @@ export default function Sidebar() {
     return kept
   }, [pinned, override])
 
+  const favoritesRef = useRef(favorites)
+  favoritesRef.current = favorites
+
   const playFavorite = useCallback(
     async (id: number) => {
       try {
@@ -207,6 +215,55 @@ export default function Sidebar() {
     },
     [player],
   )
+
+  const playArtist = useCallback(
+    async (id: number) => {
+      try {
+        const rows = await api.getArtistTracks(id)
+        if (rows.length > 0) player.playTracks(rows.map(trackToUnified), 0)
+      } catch {}
+    },
+    [player],
+  )
+
+  const playAlbum = useCallback(
+    async (id: number) => {
+      try {
+        const detail = await api.getAlbum(id)
+        if (detail.tracks.length > 0) player.playTracks(tracksToUnified(detail.tracks), 0)
+      } catch {}
+    },
+    [player],
+  )
+
+  // track drop target: add the dropped track to the playlist + toast
+  useEffect(() => {
+    registerPlaylistDropper((playlistId, trackId) => {
+      const pl = favoritesRef.current.find((f) => f.id === playlistId)
+      void api
+        .playlistAddTrack(playlistId, trackId)
+        .then(() => {
+          const name = pl ? playlistDisplayName(pl, pl.name, t) : ''
+          toast.show(`${t('Added to')} ${name}`)
+          bumpLibraryVersion()
+        })
+        .catch(() => undefined)
+    })
+    return () => registerPlaylistDropper(null)
+  }, [t])
+
+  const reorderFavorites = useCallback((from: number, to: number) => {
+    const ids = favoritesRef.current.map((f) => f.id)
+    if (from < 0 || from >= ids.length) return
+    const moved = ids[from]
+    ids.splice(from, 1)
+    ids.splice(Math.max(0, Math.min(to, ids.length)), 0, moved)
+    setOverride(ids)
+    api
+      .movePinnedPlaylist(moved, to)
+      .then(() => bumpLibraryVersion())
+      .catch(() => undefined)
+  }, [])
 
   const toggleCollapse = () => {
     setCollapsed((c) => {
@@ -245,82 +302,12 @@ export default function Sidebar() {
     localStorage.setItem(WIDTH_KEY, String(DEFAULT_W))
   }
 
-  const finishDrag = () => {
-    dragIndexRef.current = null
-    setDragIndex(null)
-    setDropAt(null)
-  }
-
-  const insertionAt = (e: ReactDragEvent<HTMLDivElement>, index: number): number => {
-    const r = e.currentTarget.getBoundingClientRect()
-    return e.clientY > r.top + r.height / 2 ? index + 1 : index
-  }
-
-  const onFavDragStart = (e: ReactDragEvent<HTMLDivElement>, index: number) => {
-    dragIndexRef.current = index
-    setDragIndex(index)
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', String(favorites[index].id))
-  }
-
-  const isTrackDrag = (e: ReactDragEvent) => e.dataTransfer.types.includes('application/x-tempo-track')
-
-  const onFavDragOver = (e: ReactDragEvent<HTMLDivElement>, index: number) => {
-    if (isTrackDrag(e)) {
-      e.preventDefault()
-      e.dataTransfer.dropEffect = 'copy'
-      setTrackDropFav(index)
-      return
-    }
-    if (dragIndexRef.current === null) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    setDropAt(insertionAt(e, index))
-  }
-
-  const onFavDrop = (e: ReactDragEvent<HTMLDivElement>, index: number) => {
-    if (isTrackDrag(e)) {
-      e.preventDefault()
-      const raw = e.dataTransfer.getData('application/x-tempo-track')
-      const trackId = Number(raw)
-      setTrackDropFav(null)
-      dragIndexRef.current = null
-      setDragIndex(null)
-      setDropAt(null)
-      if (!Number.isInteger(trackId) || trackId <= 0) return
-      void api
-        .playlistAddTrack(favorites[index].id, trackId)
-        .then(() => {
-          toast.show(`${t('Added to')} ${favorites[index].name}`)
-          bumpLibraryVersion()
-        })
-        .catch(() => undefined)
-      return
-    }
-    e.preventDefault()
-    const from = dragIndexRef.current
-    const rawTo = from === null ? null : insertionAt(e, index)
-    finishDrag()
-    if (from === null || rawTo === null) return
-    let to = rawTo
-    if (from < to) to -= 1
-    if (to === from) return
-    const ids = favorites.map((f) => f.id)
-    const moved = ids[from]
-    ids.splice(from, 1)
-    ids.splice(to, 0, moved)
-    setOverride(ids)
-    api
-      .movePinnedPlaylist(moved, to)
-      .then(() => bumpLibraryVersion())
-      .catch(() => undefined)
-  }
-
   const createNew = async () => {
     const trimmed = newName.trim()
     if (trimmed.length === 0 || creating) return
     setCreating(true)
     try {
+      // new playlists are pinned (favorites) by the backend by default
       const pl = await api.createPlaylist(trimmed)
       setNewOpen(false)
       setNewName('')
@@ -343,6 +330,106 @@ export default function Sidebar() {
       setDeleteTarget(null)
     }
   }
+
+  const trackDragActive = dragState?.kind === 'track'
+  const reorderDrag = dragState?.kind === 'playlist' ? dragState : null
+
+  const playlistRow = (f: Playlist, i: number) => {
+    const isActive = view.name === 'playlist' && view.id === f.id
+    const displayName = playlistDisplayName(f, f.name, t)
+    const isDropTarget = trackDragActive && dragState?.targetId === f.id
+    const dropBefore = reorderDrag !== null && reorderDrag.insertAt === i
+    const dropAfter =
+      reorderDrag !== null &&
+      reorderDrag.insertAt === favorites.length &&
+      i === favorites.length - 1
+    const isDragged = reorderDrag !== null && reorderDrag.draggedIndex === i
+    return (
+      <div
+        key={`p${f.id}`}
+        data-fav-index={i}
+        data-drop-playlist={f.id}
+        title={displayName}
+        className={
+          'fav-item' +
+          (isActive ? ' is-active' : '') +
+          (isDropTarget ? ' is-drop-target' : '') +
+          (isDragged ? ' is-dragged' : '') +
+          (dropBefore ? ' drop-before' : '') +
+          (dropAfter ? ' drop-after' : '')
+        }
+        onClick={() => {
+          // a drag that ends on this row is followed by a click - ignore it
+          if (consumeDragClick()) return
+          navigate({ name: 'playlist', id: f.id })
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          setMenu({
+            kind: 'playlist',
+            id: f.id,
+            name: displayName,
+            isLikes: f.isLikes === true,
+            x: e.clientX,
+            y: e.clientY,
+          })
+        }}
+        onPointerDown={(e) => {
+          if (e.button !== 0) return
+          beginPlaylistReorder({
+            e,
+            index: i,
+            coverPath: f.coverPath ?? null,
+            onDrop: reorderFavorites,
+          })
+        }}
+      >
+        <span className="fav-cover">
+          <Cover path={f.coverPath ?? null} label={displayName} size={22} />
+        </span>
+        <span className="fav-name">{displayName}</span>
+      </div>
+    )
+  }
+
+  const artistRow = (a: { id: number; name: string; imagePath?: string | null }) => (
+    <div
+      key={`a${a.id}`}
+      className="fav-item"
+      title={a.name}
+      onClick={() => navigate({ name: 'artist', id: a.id })}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        setMenu({ kind: 'artist', id: a.id, name: a.name, isLikes: false, x: e.clientX, y: e.clientY })
+      }}
+    >
+      <span className="fav-cover">
+        <Cover path={a.imagePath ?? null} label={a.name} size={22} rounded />
+      </span>
+      <span className="fav-name">{a.name}</span>
+    </div>
+  )
+
+  const albumRow = (al: { id: number; title: string; coverPath: string | null }) => (
+    <div
+      key={`al${al.id}`}
+      className="fav-item"
+      title={al.title}
+      onClick={() => navigate({ name: 'album', id: al.id })}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        setMenu({ kind: 'album', id: al.id, name: al.title, isLikes: false, x: e.clientX, y: e.clientY })
+      }}
+    >
+      <span className="fav-cover">
+        <Cover path={al.coverPath} label={al.title} size={22} />
+      </span>
+      <span className="fav-name">{al.title}</span>
+    </div>
+  )
+
+  const artists = favArtists.data ?? []
+  const albums = favAlbums.data ?? []
 
   return (
     <>
@@ -376,76 +463,55 @@ export default function Sidebar() {
         </nav>
         <div className="sidebar-favs">
           {!collapsed ? (
-            <div className="fav-head">
-              <span>{t('Favorites')}</span>
-              <span className="fav-count">{favorites.length}</span>
-            </div>
+            grouped ? (
+              <>
+                <div className="fav-head">
+                  <span>{t('Favorites')}</span>
+                  <span className="fav-count">{favorites.length}</span>
+                </div>
+                {artists.length > 0 ? (
+                  <div className="fav-head" style={{ marginTop: 10 }}>
+                    <span>{t('Favorite artists')}</span>
+                    <span className="fav-count">{artists.length}</span>
+                  </div>
+                ) : null}
+                {albums.length > 0 ? (
+                  <div className="fav-head" style={{ marginTop: 10 }}>
+                    <span>{t('Favorite albums')}</span>
+                    <span className="fav-count">{albums.length}</span>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="fav-head">
+                <span>{t('Favorites')}</span>
+                <span className="fav-count">
+                  {favorites.length + artists.length + albums.length}
+                </span>
+              </div>
+            )
           ) : null}
-          {favorites.length === 0 && !collapsed ? (
+          {!collapsed &&
+          (grouped
+            ? favorites.length === 0
+            : favorites.length + artists.length + albums.length === 0) ? (
             <div className="fav-empty">{t('Pin playlists to see them here')}</div>
           ) : (
             <div className="fav-list">
-              {favorites.map((f, i) => {
-                const isActive = view.name === 'playlist' && view.id === f.id
-                const displayName = playlistDisplayName(f, f.name, t)
-                return (
-                  <div
-                    key={f.id}
-                    draggable
-                    title={displayName}
-                    className={
-                      'fav-item' +
-                      (isActive ? ' is-active' : '') +
-                      (trackDropFav === i ? ' is-drop-target' : '') +
-                      (dragIndex !== null && dropAt === i ? ' drop-before' : '') +
-                      (dragIndex !== null &&
-                      dropAt === favorites.length &&
-                      i === favorites.length - 1
-                        ? ' drop-after'
-                        : '')
-                    }
-                    onClick={() => navigate({ name: 'playlist', id: f.id })}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      setMenu({ id: f.id, name: displayName, isLikes: f.isLikes === true, x: e.clientX, y: e.clientY })
-                    }}
-                    onDragStart={(e) => onFavDragStart(e, i)}
-                    onDragOver={(e) => onFavDragOver(e, i)}
-                    onDragLeave={() => setTrackDropFav((cur) => (cur === i ? null : cur))}
-                    onDrop={(e) => onFavDrop(e, i)}
-                    onDragEnd={finishDrag}
-                  >
-                    <span className="fav-cover">
-                      <Cover path={f.coverPath ?? null} label={displayName} size={22} />
-                    </span>
-                    <span className="fav-name">{displayName}</span>
-                  </div>
-                )
-              })}
+              {favorites.map((f, i) => playlistRow(f, i))}
+              {grouped && artists.length > 0 ? null : artists.map(artistRow)}
+              {grouped && albums.length > 0 ? null : albums.map(albumRow)}
             </div>
           )}
-          {!collapsed && (favArtists.data?.length ?? 0) > 0 ? (
-            <>
-              <div className="fav-head" style={{ marginTop: 10 }}>
-                <span>{t('Favorite artists')}</span>
-                <span className="fav-count">{favArtists.data!.length}</span>
-              </div>
-              <div className="fav-list">
-                {favArtists.data!.map((a) => (
-                  <div
-                    key={a.id}
-                    className="fav-item"
-                    title={a.name}
-                    onClick={() => navigate({ name: 'artist', id: a.id })}
-                  >
-                    <span className="fav-cover">
-                      <Cover path={null} label={a.name} size={22} rounded />
-                    </span>
-                    <span className="fav-name">{a.name}</span>
-                  </div>
-                ))}
-              </div>
-            </>
+          {grouped && !collapsed && artists.length > 0 ? (
+            <div className="fav-list" style={{ marginTop: 2 }}>
+              {artists.map(artistRow)}
+            </div>
+          ) : null}
+          {grouped && !collapsed && albums.length > 0 ? (
+            <div className="fav-list" style={{ marginTop: 2 }}>
+              {albums.map(albumRow)}
+            </div>
           ) : null}
           <button className="fav-new" title={t('New playlist')} onClick={() => setNewOpen(true)}>
             <Plus size={15} />
@@ -500,9 +566,11 @@ export default function Sidebar() {
           <button
             className="menu-item"
             onClick={() => {
-              const id = menu.id
+              const m = menu
               setMenu(null)
-              void playFavorite(id)
+              if (m.kind === 'playlist') void playFavorite(m.id)
+              else if (m.kind === 'artist') void playArtist(m.id)
+              else void playAlbum(m.id)
             }}
           >
             <Play size={13} />
@@ -511,18 +579,21 @@ export default function Sidebar() {
           <button
             className="menu-item"
             onClick={() => {
-              const id = menu.id
+              const m = menu
               setMenu(null)
-              api
-                .setPlaylistPinned(id, false)
-                .then(() => bumpLibraryVersion())
-                .catch(() => undefined)
+              if (m.kind === 'playlist') {
+                api.setPlaylistPinned(m.id, false).then(() => bumpLibraryVersion()).catch(() => undefined)
+              } else if (m.kind === 'artist') {
+                void api.toggleFavoriteArtist(m.id).then(() => bumpLibraryVersion()).catch(() => undefined)
+              } else {
+                void api.toggleFavoriteAlbum(m.id).then(() => bumpLibraryVersion()).catch(() => undefined)
+              }
             }}
           >
             <StarOff size={13} />
             {t('Remove from favorites')}
           </button>
-          {menu.isLikes ? null : (
+          {menu.kind === 'playlist' && !menu.isLikes ? (
             <>
               <div className="menu-sep" />
               <button
@@ -537,7 +608,7 @@ export default function Sidebar() {
                 {t('Delete playlist')}
               </button>
             </>
-          )}
+          ) : null}
         </div>
       ) : null}
       <ConfirmModal

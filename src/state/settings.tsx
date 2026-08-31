@@ -37,6 +37,9 @@ export interface AppSettings {
   player: {
     waveform: boolean
   }
+  sidebar: {
+    grouped: boolean
+  }
 }
 
 export const defaultSettings: AppSettings = {
@@ -49,6 +52,7 @@ export const defaultSettings: AppSettings = {
   font: { family: null, importedPath: null, sizePx: 13, uiScalePct: 100 },
   background: { path: null, dimPct: 45, blurPx: 0 },
   player: { waveform: false },
+  sidebar: { grouped: true },
 }
 
 const STORAGE_KEY = 'tempo.settings.v1'
@@ -81,6 +85,7 @@ function load(): AppSettings {
       font: { ...defaultSettings.font, ...parsed.font },
       background: { ...defaultSettings.background, ...parsed.background },
       player: { ...defaultSettings.player, ...parsed.player },
+      sidebar: { ...defaultSettings.sidebar, ...parsed.sidebar },
     }
   } catch {
     return defaultSettings
@@ -116,6 +121,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       font: { ...prev.font, ...patch.font },
       background: { ...prev.background, ...patch.background },
       player: { ...prev.player, ...patch.player },
+      sidebar: { ...prev.sidebar, ...patch.sidebar },
     }))
   }, [])
 
