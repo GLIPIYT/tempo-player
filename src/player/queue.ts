@@ -102,6 +102,11 @@ export class QueueController {
     if (this.index === -1) this.index = 0
   }
 
+  /** Points the index at the last item - used after an auto-appended pick. */
+  goToLast(): void {
+    if (this.items.length > 0) this.index = this.items.length - 1
+  }
+
   move(from: number, to: number): void {
     const len = this.items.length
     if (from < 0 || from >= len || to < 0 || to >= len || from === to) return

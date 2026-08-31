@@ -434,6 +434,9 @@ export class PlayerController {
   private appendAuto(t: UnifiedTrack): UnifiedTrack {
     const marked: UnifiedTrack = { ...t, auto: true }
     this.queueCtl.append(marked)
+    // move playback to the newly appended track; otherwise current() still
+    // points at the track that just ended and it would simply replay
+    this.queueCtl.goToLast()
     this.emit()
     return marked
   }
