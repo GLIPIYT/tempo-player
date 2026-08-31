@@ -4,8 +4,9 @@
 //! fills up and blocks discord's side.
 
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 /// discord tolerates up to 5 updates per 20s; anything above this gap is
@@ -86,6 +87,11 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
     let mut last_beat = Instant::now() - HEARTBEAT_INTERVAL;
     let mut last_sent_at = Instant::now() - MIN_SEND_INTERVAL;
     let mut last_sent_payload: Option<String> = None;
+    // last accepted Set, so a rejected payload can be retried on a fresh session
+    let mut last_set: Option<(String, Option<String>, Option<u64>, Option<String>, Option<String>)> =
+        None;
+    let mut error_retries: u32 = 0;
+    let mut err_flag: Option<Arc<AtomicBool>> = None;
 
     loop {
         // disabled until the first Set carries a client id
@@ -101,14 +107,15 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                         client_id: client_id.clone(),
                         payload: build_activity(
                             &details,
-                            state,
+                            state.clone(),
                             start_ms,
-                            large_image,
-                            small_image,
+                            large_image.clone(),
+                            small_image.clone(),
                             &nonce,
                         ),
                         nonce,
                     });
+                    last_set = Some((details, state, start_ms, large_image, small_image));
                 }
                 Ok(PresenceMsg::Clear) => continue,
                 Err(_) => return,
@@ -118,14 +125,16 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
         // (re)connect
         if file.is_none() {
             match connect(&client_id) {
-                Some(f) => {
+                Some((f, flag)) => {
                     last_beat = Instant::now();
                     last_sent_at = Instant::now() - MIN_SEND_INTERVAL; // allow immediate set
                     file = Some(f);
+                    err_flag = Some(flag);
                 }
                 None => {
-                    // Discord is not running or the pipe is busy; retry later
-                    pending = None;
+                    // Discord is not running or the pipe is busy; keep the
+                    // payload and retry later so it goes out once discord
+                    // appears instead of being silently lost.
                     std::thread::sleep(RECONNECT_DELAY);
                     continue;
                 }
@@ -147,24 +156,59 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                     client_id: client_id.clone(),
                     payload: build_activity(
                         &details,
-                        state,
+                        state.clone(),
                         start_ms,
-                        large_image,
-                        small_image,
+                        large_image.clone(),
+                        small_image.clone(),
                         &nonce,
                     ),
                     nonce,
                 });
+                last_set = Some((details, state, start_ms, large_image, small_image));
+                error_retries = 0;
             }
             Ok(PresenceMsg::Clear) => {
                 pending = Some(Pending {
                     client_id: String::new(),
-                    payload: build_clear(),
+                    payload: build_clear(&gen_nonce()),
                     nonce: gen_nonce(),
                 });
+                last_set = None;
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+
+        // discord rejected the previous request: retry it once on a fresh session
+        if let Some(flag) = &err_flag {
+            if flag.swap(false, Ordering::Relaxed) {
+                if error_retries < 2 {
+                    error_retries += 1;
+                    if let Some((details, state, start_ms, large_image, small_image)) = &last_set {
+                        let nonce = gen_nonce();
+                        pending = Some(Pending {
+                            client_id: client_id.clone(),
+                            payload: build_activity(
+                                details,
+                                state.clone(),
+                                *start_ms,
+                                large_image.clone(),
+                                small_image.clone(),
+                                &nonce,
+                            ),
+                            nonce,
+                        });
+                    }
+                } else {
+                    #[cfg(debug_assertions)]
+                    eprintln!("[tempo discord] discord keeps rejecting the activity payload");
+                    pending = None;
+                    last_set = None;
+                }
+                last_sent_payload = None;
+                file = None; // re-handshake on the next loop iteration
+                continue;
+            }
         }
 
         let now = Instant::now();
@@ -203,15 +247,18 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
     }
 }
 
-fn connect(client_id: &str) -> Option<std::fs::File> {
+fn connect(client_id: &str) -> Option<(std::fs::File, Arc<AtomicBool>)> {
     for i in 0..10 {
         let path = format!(r"\\.\pipe\discord-ipc-{i}");
         if let Ok(mut f) = std::fs::OpenOptions::new().read(true).write(true).open(&path) {
             let handshake = format!(r#"{{"v":1,"client_id":"{client_id}"}}"#);
             if write_frame(&mut f, 0, handshake.as_bytes()).is_ok() {
                 // continuously drain replies/events on a helper handle so the
-                // pipe buffer never fills up and blocks discord's side
+                // pipe buffer never fills up and blocks discord's side; error
+                // replies set a shared flag the send loop reacts to
+                let err_flag = Arc::new(AtomicBool::new(false));
                 if let Ok(reader) = f.try_clone() {
+                    let flag = Arc::clone(&err_flag);
                     std::thread::Builder::new()
                         .name("discord-drain".into())
                         .spawn(move || {
@@ -228,11 +275,14 @@ fn connect(client_id: &str) -> Option<std::fs::File> {
                                 if reader.read_exact(&mut sink).is_err() {
                                     break;
                                 }
+                                if sink.windows(12).any(|w| w == b"\"evt\":\"ERROR\"") {
+                                    flag.store(true, Ordering::Relaxed);
+                                }
                             }
                         })
                         .ok();
                 }
-                return Some(f);
+                return Some((f, err_flag));
             }
         }
     }
@@ -321,9 +371,10 @@ mod tests {
         assert!(s.contains("\"small_image\":\"tempo_logo\""));
         let no_assets = build_activity("D", None, None, None, None, "n");
         assert!(!no_assets.contains("assets"));
-        let c = build_clear();
+        let c = build_clear("cn");
         assert_eq!(c.matches('{').count(), c.matches('}').count());
         assert!(c.contains("\"activity\":null"));
+        assert!(c.contains("\"nonce\":\"cn\""));
     }
 
     #[test]
@@ -335,9 +386,11 @@ mod tests {
     }
 }
 
-fn build_clear() -> String {
+fn build_clear(nonce: &str) -> String {
     let mut s = String::new();
-    s.push_str("{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":");
+    s.push_str("{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"");
+    s.push_str(&json_escape(nonce));
+    s.push_str("\",\"args\":{\"pid\":");
     s.push_str(&std::process::id().to_string());
     s.push_str(",\"activity\":null}}");
     s
