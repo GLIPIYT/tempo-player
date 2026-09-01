@@ -208,11 +208,13 @@ export function beginTrackDrag(opts: {
   title: string
   coverPath: string | null
   trackId: number
+  /** allow starting the drag from inside a <button> (home page cards are buttons) */
+  allowButtons?: boolean
 }): void {
   const { e, title, coverPath, trackId } = opts
   if (!Number.isInteger(trackId) || trackId <= 0) return
   const el = e.currentTarget
-  if ((e.target as HTMLElement).closest('button')) return
+  if (!opts.allowButtons && (e.target as HTMLElement).closest('button')) return
   e.preventDefault()
   const rect = el.getBoundingClientRect()
   const s: DragSession = {

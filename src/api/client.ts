@@ -90,6 +90,7 @@ export const api = {
     details: string
     state: string | null
     startMs: number | null
+    endMs: number | null
     largeImage: string | null
     smallImage: string | null
   }) => invoke<void>('discord_set_presence', payload),

@@ -463,55 +463,49 @@ export default function Sidebar() {
         </nav>
         <div className="sidebar-favs">
           {!collapsed ? (
-            grouped ? (
-              <>
-                <div className="fav-head">
-                  <span>{t('Favorites')}</span>
-                  <span className="fav-count">{favorites.length}</span>
-                </div>
-                {artists.length > 0 ? (
-                  <div className="fav-head" style={{ marginTop: 10 }}>
-                    <span>{t('Favorite artists')}</span>
-                    <span className="fav-count">{artists.length}</span>
-                  </div>
-                ) : null}
-                {albums.length > 0 ? (
-                  <div className="fav-head" style={{ marginTop: 10 }}>
-                    <span>{t('Favorite albums')}</span>
-                    <span className="fav-count">{albums.length}</span>
-                  </div>
-                ) : null}
-              </>
-            ) : (
-              <div className="fav-head">
-                <span>{t('Favorites')}</span>
-                <span className="fav-count">
-                  {favorites.length + artists.length + albums.length}
-                </span>
-              </div>
-            )
+            <div className="fav-head">
+              <span>{t('Favorites')}</span>
+              <span className="fav-count">
+                {grouped ? favorites.length : favorites.length + artists.length + albums.length}
+              </span>
+            </div>
           ) : null}
           {!collapsed &&
           (grouped
             ? favorites.length === 0
             : favorites.length + artists.length + albums.length === 0) ? (
             <div className="fav-empty">{t('Pin playlists to see them here')}</div>
-          ) : (
-            <div className="fav-list">
-              {favorites.map((f, i) => playlistRow(f, i))}
-              {grouped && artists.length > 0 ? null : artists.map(artistRow)}
-              {grouped && albums.length > 0 ? null : albums.map(albumRow)}
-            </div>
-          )}
-          {grouped && !collapsed && artists.length > 0 ? (
-            <div className="fav-list" style={{ marginTop: 2 }}>
-              {artists.map(artistRow)}
-            </div>
           ) : null}
-          {grouped && !collapsed && albums.length > 0 ? (
-            <div className="fav-list" style={{ marginTop: 2 }}>
-              {albums.map(albumRow)}
-            </div>
+          <div className="fav-list">{favorites.map((f, i) => playlistRow(f, i))}</div>
+          {grouped && !collapsed ? (
+            artists.length > 0 ? (
+              <>
+                <div className="fav-head" style={{ marginTop: 10 }}>
+                  <span>{t('Favorite artists')}</span>
+                  <span className="fav-count">{artists.length}</span>
+                </div>
+                <div className="fav-list" style={{ marginTop: 2 }}>
+                  {artists.map(artistRow)}
+                </div>
+              </>
+            ) : null
+          ) : artists.length > 0 ? (
+            <div className="fav-list">{artists.map(artistRow)}</div>
+          ) : null}
+          {grouped && !collapsed ? (
+            albums.length > 0 ? (
+              <>
+                <div className="fav-head" style={{ marginTop: 10 }}>
+                  <span>{t('Favorite albums')}</span>
+                  <span className="fav-count">{albums.length}</span>
+                </div>
+                <div className="fav-list" style={{ marginTop: 2 }}>
+                  {albums.map(albumRow)}
+                </div>
+              </>
+            ) : null
+          ) : albums.length > 0 ? (
+            <div className="fav-list">{albums.map(albumRow)}</div>
           ) : null}
           <button className="fav-new" title={t('New playlist')} onClick={() => setNewOpen(true)}>
             <Plus size={15} />

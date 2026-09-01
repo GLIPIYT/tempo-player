@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, type PointerEvent as ReactPointerEvent } from 'react'
 import { Clock3, Flame, FolderPlus, RefreshCw } from 'lucide-react'
 import { api } from '../api/client'
 import type { TopTrackItem, Track } from '../types/models'
@@ -14,6 +14,7 @@ import Cover from '../components/common/Cover'
 import CardPlayButton from '../components/common/CardPlayButton'
 import EmptyState from '../components/common/EmptyState'
 import ScanLine from '../components/common/ScanLine'
+import { beginTrackDrag, consumeDragClick } from '../dnd/trackDrag'
 
 function greetingForHour(h: number): string {
   if (h >= 5 && h < 12) return 'Good morning'
@@ -103,6 +104,22 @@ export default function HomePage() {
   const playSection = (tracks: Track[], index: number) => {
     player.playTracks(tracks.map((tr) => trackToUnified(tr)), index)
   }
+
+  // drag a single-track home card into a sidebar playlist
+  const trackCardDrag = (tr: Track) => ({
+    onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) =>
+      beginTrackDrag({
+        e,
+        title: tr.title,
+        coverPath: tr.coverPath,
+        trackId: tr.id,
+        allowButtons: true,
+      }),
+    onClick: () => {
+      if (consumeDragClick()) return
+      player.playTracks([trackToUnified(tr)], 0)
+    },
+  })
 
   return (
     <div className="page">
@@ -208,7 +225,19 @@ export default function HomePage() {
                     key={`top-${item.track.id}`}
                     className="rail-card"
                     title={item.track.title}
-                    onClick={() => playSection(topTracks.map((x) => x.track), i)}
+                    onClick={() => {
+                      if (consumeDragClick()) return
+                      playSection(topTracks.map((x) => x.track), i)
+                    }}
+                    onPointerDown={(e) =>
+                      beginTrackDrag({
+                        e,
+                        title: item.track.title,
+                        coverPath: item.track.coverPath,
+                        trackId: item.track.id,
+                        allowButtons: true,
+                      })
+                    }
                   >
                     <div className="rail-cover">
                       <Cover path={item.track.coverPath} label={item.track.title} size={152} />
@@ -236,7 +265,7 @@ export default function HomePage() {
                   key={tr.id}
                   className="card track-card"
                   title={tr.title}
-                  onClick={() => player.playTracks([trackToUnified(tr)], 0)}
+                  {...trackCardDrag(tr)}
                 >
                   <Cover path={tr.coverPath} label={tr.title} size={120} />
                   <span className="card-title">{tr.title}</span>
@@ -257,7 +286,7 @@ export default function HomePage() {
                     key={`played-${tr.id}`}
                     className="card track-card"
                     title={tr.title}
-                    onClick={() => player.playTracks([trackToUnified(tr)], 0)}
+                    {...trackCardDrag(tr)}
                   >
                     <Cover path={tr.coverPath} label={tr.title} size={120} />
                     <span className="card-title">{tr.title}</span>

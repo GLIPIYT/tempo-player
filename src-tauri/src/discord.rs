@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 const MIN_SEND_INTERVAL: Duration = Duration::from_secs(2);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
+/// periodic resend heals any update discord silently dropped
+const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 pub enum PresenceMsg {
     Set {
@@ -21,6 +23,7 @@ pub enum PresenceMsg {
         details: String,
         state: Option<String>,
         start_ms: Option<u64>,
+        end_ms: Option<u64>,
         large_image: Option<String>,
         small_image: Option<String>,
     },
@@ -44,6 +47,7 @@ pub fn set_presence(
     details: String,
     state: Option<String>,
     start_ms: Option<u64>,
+    end_ms: Option<u64>,
     large_image: Option<String>,
     small_image: Option<String>,
 ) {
@@ -55,6 +59,7 @@ pub fn set_presence(
         details,
         state,
         start_ms,
+        end_ms,
         large_image,
         small_image,
     });
@@ -69,6 +74,10 @@ struct Pending {
     payload: String,
     nonce: String,
 }
+
+/// some discord builds reject the undocumented mp:external image format;
+/// once a payload with it is rejected, fall back to the uploaded logo asset
+static MP_EXTERNAL_DISABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn gen_nonce() -> String {
     format!(
@@ -88,16 +97,23 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
     let mut last_sent_at = Instant::now() - MIN_SEND_INTERVAL;
     let mut last_sent_payload: Option<String> = None;
     // last accepted Set, so a rejected payload can be retried on a fresh session
-    let mut last_set: Option<(String, Option<String>, Option<u64>, Option<String>, Option<String>)> =
-        None;
+    let mut last_set: Option<(
+        String,
+        Option<String>,
+        Option<u64>,
+        Option<u64>,
+        Option<String>,
+        Option<String>,
+    )> = None;
     let mut error_retries: u32 = 0;
+    let mut last_refresh = Instant::now();
     let mut err_flag: Option<Arc<AtomicBool>> = None;
 
     loop {
         // disabled until the first Set carries a client id
         if client_id.is_empty() {
             match rx.recv() {
-                Ok(PresenceMsg::Set { client_id: id, details, state, start_ms, large_image, small_image }) => {
+                Ok(PresenceMsg::Set { client_id: id, details, state, start_ms, end_ms, large_image, small_image }) => {
                     if id.trim().is_empty() {
                         continue;
                     }
@@ -109,13 +125,14 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                             &details,
                             state.clone(),
                             start_ms,
+                            end_ms,
                             large_image.clone(),
                             small_image.clone(),
                             &nonce,
                         ),
                         nonce,
                     });
-                    last_set = Some((details, state, start_ms, large_image, small_image));
+                    last_set = Some((details, state, start_ms, end_ms, large_image, small_image));
                 }
                 Ok(PresenceMsg::Clear) => continue,
                 Err(_) => return,
@@ -143,7 +160,15 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
         let f = file.as_mut().unwrap();
 
         match rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(PresenceMsg::Set { client_id: id, details, state, start_ms, large_image, small_image }) => {
+            Ok(PresenceMsg::Set { client_id: id, details, state, start_ms, end_ms, mut large_image, mut small_image }) => {
+                if std::sync::atomic::AtomicBool::load(&MP_EXTERNAL_DISABLED, Ordering::Relaxed) {
+                    if let Some(l) = &large_image {
+                        if l.starts_with("mp:external/") {
+                            large_image = Some("tempo_logo".into());
+                            small_image = None;
+                        }
+                    }
+                }
                 if id.trim() != client_id {
                     // id changed: drop the connection so the next loop re-handshakes
                     client_id = id;
@@ -158,13 +183,14 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                         &details,
                         state.clone(),
                         start_ms,
+                        end_ms,
                         large_image.clone(),
                         small_image.clone(),
                         &nonce,
                     ),
                     nonce,
                 });
-                last_set = Some((details, state, start_ms, large_image, small_image));
+                last_set = Some((details, state, start_ms, end_ms, large_image, small_image));
                 error_retries = 0;
             }
             Ok(PresenceMsg::Clear) => {
@@ -184,7 +210,7 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
             if flag.swap(false, Ordering::Relaxed) {
                 if error_retries < 2 {
                     error_retries += 1;
-                    if let Some((details, state, start_ms, large_image, small_image)) = &last_set {
+                    if let Some((details, state, start_ms, end_ms, large_image, small_image)) = &last_set {
                         let nonce = gen_nonce();
                         pending = Some(Pending {
                             client_id: client_id.clone(),
@@ -192,6 +218,7 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                                 details,
                                 state.clone(),
                                 *start_ms,
+                                *end_ms,
                                 large_image.clone(),
                                 small_image.clone(),
                                 &nonce,
@@ -212,6 +239,27 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
         }
 
         let now = Instant::now();
+        // periodic resend: heals any update discord silently dropped
+        if now.duration_since(last_refresh) >= REFRESH_INTERVAL {
+            last_refresh = now;
+            if let Some((details, state, start_ms, end_ms, large_image, small_image)) = &last_set {
+                let nonce = gen_nonce();
+                pending = Some(Pending {
+                    client_id: client_id.clone(),
+                    payload: build_activity(
+                        details,
+                        state.clone(),
+                        *start_ms,
+                        *end_ms,
+                        large_image.clone(),
+                        small_image.clone(),
+                        &nonce,
+                    ),
+                    nonce,
+                });
+                last_sent_payload = None; // force the resend past the dedupe
+            }
+        }
         if now.duration_since(last_beat) >= HEARTBEAT_INTERVAL {
             if write_frame(f, 1, b"{}").is_err() {
                 file = None;
@@ -277,6 +325,13 @@ fn connect(client_id: &str) -> Option<(std::fs::File, Arc<AtomicBool>)> {
                                 }
                                 if sink.windows(12).any(|w| w == b"\"evt\":\"ERROR\"") {
                                     flag.store(true, Ordering::Relaxed);
+                                    if sink.windows(14).any(|w| w == b"mp:external/") {
+                                        std::sync::atomic::AtomicBool::store(
+                                            &MP_EXTERNAL_DISABLED,
+                                            true,
+                                            Ordering::Relaxed,
+                                        );
+                                    }
                                 }
                             }
                         })
@@ -309,6 +364,7 @@ fn build_activity(
     details: &str,
     state: Option<String>,
     start_ms: Option<u64>,
+    end_ms: Option<u64>,
     large_image: Option<String>,
     small_image: Option<String>,
     nonce: &str,
@@ -328,8 +384,14 @@ fn build_activity(
             s.push('"');
         }
     }
-    if let Some(ms) = start_ms {
-        s.push_str(&format!(",\"timestamps\":{{\"start\":{}}}}}", ms));
+    match (start_ms, end_ms) {
+        (Some(st), Some(en)) => {
+            s.push_str(&format!(",\"timestamps\":{{\"start\":{st},\"end\":{en}}}}}", st = st, en = en));
+        }
+        (Some(ms), None) => {
+            s.push_str(&format!(",\"timestamps\":{{\"start\":{}}}}}", ms));
+        }
+        _ => {}
     }
     let has_large = large_image.as_deref().map(|v| !v.trim().is_empty()).unwrap_or(false);
     if has_large {
@@ -360,16 +422,17 @@ mod tests {
             "Det \"quote\"",
             Some("St".into()),
             Some(1),
+            Some(181),
             Some("mp:external/aGk".into()),
             Some("tempo_logo".into()),
             "n1",
         );
+        assert!(s.contains("\"timestamps\":{\"start\":1,\"end\":181}"));
         assert_eq!(s.matches('{').count(), s.matches('}').count());
         assert!(s.contains("\"details\":\"Det \\\"quote\\\"\""));
-        assert!(s.contains("\"timestamps\":{\"start\":1}"));
         assert!(s.contains("\"large_image\":\"mp:external/aGk\""));
         assert!(s.contains("\"small_image\":\"tempo_logo\""));
-        let no_assets = build_activity("D", None, None, None, None, "n");
+        let no_assets = build_activity("D", None, None, None, None, None, "n");
         assert!(!no_assets.contains("assets"));
         let c = build_clear("cn");
         assert_eq!(c.matches('{').count(), c.matches('}').count());
@@ -379,8 +442,8 @@ mod tests {
 
     #[test]
     fn nonce_changes_each_call() {
-        let a = build_activity("D", None, None, None, None, "a");
-        let b = build_activity("D", None, None, None, None, "b");
+        let a = build_activity("D", None, None, None, None, None, "a");
+        let b = build_activity("D", None, None, None, None, None, "b");
         assert!(a.contains("\"nonce\":\"a\""));
         assert!(b.contains("\"nonce\":\"b\""));
     }

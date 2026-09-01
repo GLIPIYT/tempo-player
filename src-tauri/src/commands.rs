@@ -658,10 +658,11 @@ pub fn discord_set_presence(
     details: String,
     state: Option<String>,
     start_ms: Option<u64>,
+    end_ms: Option<u64>,
     large_image: Option<String>,
     small_image: Option<String>,
 ) -> Result<(), String> {
-    crate::discord::set_presence(client_id, details, state, start_ms, large_image, small_image);
+    crate::discord::set_presence(client_id, details, state, start_ms, end_ms, large_image, small_image);
     Ok(())
 }
 

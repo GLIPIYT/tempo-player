@@ -59,12 +59,14 @@ export default function PresenceBridge() {
     }
     if (lastTrackKey.current !== track.sourceId) return
     const cover = coverAsset(track.coverPath)
+    const dur = track.durationSec ?? 0
     void api
       .discordSetPresence({
         clientId,
         details: track.title,
         state: track.artists.join(', ') || null,
         startMs: startMs.current,
+        endMs: dur > 0 && startMs.current !== null ? startMs.current + Math.round(dur * 1000) : null,
         largeImage: cover ?? LOGO_ASSET,
         smallImage: cover ? LOGO_ASSET : null,
       })
@@ -84,12 +86,14 @@ export default function PresenceBridge() {
     lastSent.current = now
     lastLine.current = line
     const cover = coverAsset(track.coverPath)
+    const dur = track.durationSec ?? 0
     void api
       .discordSetPresence({
         clientId,
         details: track.title,
         state: line,
         startMs: startMs.current,
+        endMs: dur > 0 && startMs.current !== null ? startMs.current + Math.round(dur * 1000) : null,
         largeImage: cover ?? LOGO_ASSET,
         smallImage: cover ? LOGO_ASSET : null,
       })
