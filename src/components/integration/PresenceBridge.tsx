@@ -1,114 +1,33 @@
-import { useEffect, useRef, useState } from 'react'
-import { api } from '../../api/client'
+import { useEffect } from 'react'
 import { usePlayer } from '../../player'
 import { useSettings } from '../../state/settings'
-import { lyricLineAt, lyricsService } from '../../features/lyrics/lyricsService'
+import { lyricsService } from '../../features/lyrics/lyricsService'
+import { discordSettingsChanged, startDiscordDriver } from '../../integration/discordDriver'
 
 /**
  * Background lyrics prefetch + Discord Rich Presence bridge.
- * Presence details = track title; state = synced lyrics line while it plays,
- * otherwise the artist. Updates are rate-limited (Discord allows ~1 per 15s,
- * the Rust side coalesces as well).
+ * All presence logic lives in the event-driven driver (discordDriver.ts);
+ * this component only mounts it once and feeds it settings changes.
  */
-const LOGO_ASSET = 'tempo_logo'
-
-/** Discord media-proxy reference for a remote image; local files can't be proxied. */
-function coverAsset(coverPath: string | null): string | null {
-  if (coverPath && /^https?:\/\//.test(coverPath)) {
-    return `mp:external/${btoa(unescape(encodeURIComponent(coverPath))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`
-  }
-  return null
-}
-
 export default function PresenceBridge() {
-  const p = usePlayer()
   const { settings } = useSettings()
-  const track = p.currentTrack
-  const enabled = settings.discord.enabled && settings.discord.clientId.trim().length > 0
-  const clientId = settings.discord.clientId.trim()
+  const { currentTrack } = usePlayer()
+  const track = currentTrack
 
-  const lastTrackKey = useRef('')
-  const lastLine = useRef<string | null>(null)
-  const lastSent = useRef(0)
-  const startMs = useRef<number | null>(null)
-  const [, bump] = useState(0)
-
-  // prefetch lyrics for the current track
+  // prefetch lyrics for the current track (the driver + overlay both read them)
   useEffect(() => {
-    if (!track) return
-    lyricsService.ensure(track, settings.lyrics.cacheOnline)
-    lastTrackKey.current = track.sourceId
-    lastLine.current = null
-    lastSent.current = 0
-    startMs.current = Date.now() - Math.round(p.position * 1000)
+    if (track) lyricsService.ensure(track, settings.lyrics.cacheOnline)
     // track identity is the trigger; position is intentionally excluded
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [track?.sourceId])
+  }, [track?.sourceId, settings.lyrics.cacheOnline])
 
-  // resubscribe to lyrics arrival
-  useEffect(() => {
-    return lyricsService.subscribe(() => bump((v: number) => v + 1))
-  }, [])
+  // start the presence driver once
+  useEffect(() => startDiscordDriver(), [])
 
-  // base presence on track change
+  // push enable/disable and language changes into the driver
   useEffect(() => {
-    if (!enabled) return
-    if (!track) {
-      void api.discordClearPresence().catch(() => {})
-      return
-    }
-    if (lastTrackKey.current !== track.sourceId) return
-    const cover = coverAsset(track.coverPath)
-    const dur = track.durationSec ?? 0
-    void api
-      .discordSetPresence({
-        clientId,
-        details: track.title,
-        state: track.artists.join(', ') || null,
-        startMs: startMs.current,
-        endMs: dur > 0 && startMs.current !== null ? startMs.current + Math.round(dur * 1000) : null,
-        largeImage: cover ?? LOGO_ASSET,
-        smallImage: cover ? LOGO_ASSET : null,
-      })
-      .catch(() => {})
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, track?.sourceId, lyricsService.getVersion()])
-
-  // synced lyrics line updates
-  useEffect(() => {
-    if (!enabled || !track) return
-    const cur = lyricsService.getCurrent()
-    if (!cur || cur.trackId !== track.sourceId || !cur.result) return
-    const line = lyricLineAt(cur.result, p.position)
-    if (line === null || line === lastLine.current) return
-    const now = Date.now()
-    if (now - lastSent.current < 5000) return
-    lastSent.current = now
-    lastLine.current = line
-    const cover = coverAsset(track.coverPath)
-    const dur = track.durationSec ?? 0
-    void api
-      .discordSetPresence({
-        clientId,
-        details: track.title,
-        state: line,
-        startMs: startMs.current,
-        endMs: dur > 0 && startMs.current !== null ? startMs.current + Math.round(dur * 1000) : null,
-        largeImage: cover ?? LOGO_ASSET,
-        smallImage: cover ? LOGO_ASSET : null,
-      })
-      .catch(() => {})
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.position, enabled, track?.sourceId])
-
-  // disabled -> clear once
-  const wasEnabled = useRef(enabled)
-  useEffect(() => {
-    if (wasEnabled.current && !enabled) {
-      void api.discordClearPresence().catch(() => {})
-    }
-    wasEnabled.current = enabled
-  }, [enabled])
+    discordSettingsChanged()
+  }, [settings.discord.enabled, settings.discord.clientId, settings.lang])
 
   return null
 }

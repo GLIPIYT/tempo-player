@@ -9,13 +9,15 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-/// discord tolerates up to 5 updates per 20s; anything above this gap is
-/// safety-only, real updates go out as soon as the payload changes
-const MIN_SEND_INTERVAL: Duration = Duration::from_secs(2);
+/// discord tolerates up to 5 updates per 20s; the frontend paces real updates,
+/// this is only a backstop so a buggy caller still cannot spam
+const MIN_SEND_INTERVAL: Duration = Duration::from_secs(1);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 /// periodic resend heals any update discord silently dropped
 const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+/// discord caps the details/state strings at 128 bytes of utf-8
+const FIELD_MAX_BYTES: usize = 128;
 
 pub enum PresenceMsg {
     Set {
@@ -71,7 +73,9 @@ pub fn clear_presence() {
 
 struct Pending {
     client_id: String,
-    payload: String,
+    /// nonce-free SET_ACTIVITY args; the nonce is added when the frame goes
+    /// out, so identical activities can be detected by comparing args
+    args: String,
     nonce: String,
 }
 
@@ -95,7 +99,7 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
     let mut client_id = String::new();
     let mut last_beat = Instant::now() - HEARTBEAT_INTERVAL;
     let mut last_sent_at = Instant::now() - MIN_SEND_INTERVAL;
-    let mut last_sent_payload: Option<String> = None;
+    let mut last_sent_args: Option<String> = None;
     // last accepted Set, so a rejected payload can be retried on a fresh session
     let mut last_set: Option<(
         String,
@@ -118,19 +122,18 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                         continue;
                     }
                     client_id = id;
-                    let nonce = gen_nonce();
+                    let args = activity_args(
+                        &details,
+                        state.clone(),
+                        start_ms,
+                        end_ms,
+                        large_image.clone(),
+                        small_image.clone(),
+                    );
                     pending = Some(Pending {
                         client_id: client_id.clone(),
-                        payload: build_activity(
-                            &details,
-                            state.clone(),
-                            start_ms,
-                            end_ms,
-                            large_image.clone(),
-                            small_image.clone(),
-                            &nonce,
-                        ),
-                        nonce,
+                        args: args.clone(),
+                        nonce: gen_nonce(),
                     });
                     last_set = Some((details, state, start_ms, end_ms, large_image, small_image));
                 }
@@ -176,19 +179,18 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                     pending = None;
                     continue;
                 }
-                let nonce = gen_nonce();
+                let args = activity_args(
+                    &details,
+                    state.clone(),
+                    start_ms,
+                    end_ms,
+                    large_image.clone(),
+                    small_image.clone(),
+                );
                 pending = Some(Pending {
                     client_id: client_id.clone(),
-                    payload: build_activity(
-                        &details,
-                        state.clone(),
-                        start_ms,
-                        end_ms,
-                        large_image.clone(),
-                        small_image.clone(),
-                        &nonce,
-                    ),
-                    nonce,
+                    args: args.clone(),
+                    nonce: gen_nonce(),
                 });
                 last_set = Some((details, state, start_ms, end_ms, large_image, small_image));
                 error_retries = 0;
@@ -196,7 +198,7 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
             Ok(PresenceMsg::Clear) => {
                 pending = Some(Pending {
                     client_id: String::new(),
-                    payload: build_clear(&gen_nonce()),
+                    args: clear_args(),
                     nonce: gen_nonce(),
                 });
                 last_set = None;
@@ -211,19 +213,18 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                 if error_retries < 2 {
                     error_retries += 1;
                     if let Some((details, state, start_ms, end_ms, large_image, small_image)) = &last_set {
-                        let nonce = gen_nonce();
+                        let args = activity_args(
+                            details,
+                            state.clone(),
+                            *start_ms,
+                            *end_ms,
+                            large_image.clone(),
+                            small_image.clone(),
+                        );
                         pending = Some(Pending {
                             client_id: client_id.clone(),
-                            payload: build_activity(
-                                details,
-                                state.clone(),
-                                *start_ms,
-                                *end_ms,
-                                large_image.clone(),
-                                small_image.clone(),
-                                &nonce,
-                            ),
-                            nonce,
+                            args,
+                            nonce: gen_nonce(),
                         });
                     }
                 } else {
@@ -232,7 +233,7 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                     pending = None;
                     last_set = None;
                 }
-                last_sent_payload = None;
+                last_sent_args = None;
                 file = None; // re-handshake on the next loop iteration
                 continue;
             }
@@ -243,21 +244,20 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
         if now.duration_since(last_refresh) >= REFRESH_INTERVAL {
             last_refresh = now;
             if let Some((details, state, start_ms, end_ms, large_image, small_image)) = &last_set {
-                let nonce = gen_nonce();
+                let args = activity_args(
+                    details,
+                    state.clone(),
+                    *start_ms,
+                    *end_ms,
+                    large_image.clone(),
+                    small_image.clone(),
+                );
                 pending = Some(Pending {
                     client_id: client_id.clone(),
-                    payload: build_activity(
-                        details,
-                        state.clone(),
-                        *start_ms,
-                        *end_ms,
-                        large_image.clone(),
-                        small_image.clone(),
-                        &nonce,
-                    ),
-                    nonce,
+                    args,
+                    nonce: gen_nonce(),
                 });
-                last_sent_payload = None; // force the resend past the dedupe
+                last_sent_args = None; // force the resend past the dedupe
             }
         }
         if now.duration_since(last_beat) >= HEARTBEAT_INTERVAL {
@@ -269,7 +269,7 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
         }
         if let Some(p) = pending.take() {
             let is_clear = p.client_id.is_empty();
-            let changed = last_sent_payload.as_deref() != Some(p.payload.as_str());
+            let changed = last_sent_args.as_deref() != Some(p.args.as_str());
             if !is_clear && !changed {
                 // identical to what discord already shows - drop it
                 continue;
@@ -278,7 +278,8 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                 pending = Some(p);
                 continue;
             }
-            if write_frame(f, 1, p.payload.as_bytes()).is_err() {
+            let frame = wrap_set(&p.args, &p.nonce);
+            if write_frame(f, 1, frame.as_bytes()).is_err() {
                 file = None;
                 pending = Some(p);
                 continue;
@@ -287,9 +288,9 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
             if is_clear {
                 client_id = String::new();
                 file = None; // re-handshake when presence returns
-                last_sent_payload = None;
+                last_sent_args = None;
             } else {
-                last_sent_payload = Some(p.payload);
+                last_sent_args = Some(p.args);
             }
         }
     }
@@ -360,36 +361,48 @@ fn json_escape(s: &str) -> String {
     out
 }
 
-fn build_activity(
+/// discord caps the details/state strings at 128 bytes of utf-8
+fn truncate_utf8(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
+}
+
+/// Builds the nonce-free `args` object of a SET_ACTIVITY frame. Deduping
+/// compares this string, so identical activities are dropped even though every
+/// frame carries a fresh nonce.
+fn activity_args(
     details: &str,
     state: Option<String>,
     start_ms: Option<u64>,
     end_ms: Option<u64>,
     large_image: Option<String>,
     small_image: Option<String>,
-    nonce: &str,
 ) -> String {
     let mut s = String::new();
-    s.push_str("{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"");
-    s.push_str(&json_escape(nonce));
-    s.push_str("\",\"args\":{\"pid\":");
+    s.push_str("{\"pid\":");
     s.push_str(&std::process::id().to_string());
     s.push_str(",\"activity\":{\"name\":\"Tempo\",\"type\":2,\"details\":\"");
-    s.push_str(&json_escape(details));
+    s.push_str(&json_escape(&truncate_utf8(details, FIELD_MAX_BYTES)));
     s.push('"');
     if let Some(st) = state {
         if !st.is_empty() {
             s.push_str(",\"state\":\"");
-            s.push_str(&json_escape(&st));
+            s.push_str(&json_escape(&truncate_utf8(&st, FIELD_MAX_BYTES)));
             s.push('"');
         }
     }
     match (start_ms, end_ms) {
         (Some(st), Some(en)) => {
-            s.push_str(&format!(",\"timestamps\":{{\"start\":{st},\"end\":{en}}}}}", st = st, en = en));
+            s.push_str(&format!(",\"timestamps\":{{\"start\":{st},\"end\":{en}}}", st = st, en = en));
         }
         (Some(ms), None) => {
-            s.push_str(&format!(",\"timestamps\":{{\"start\":{}}}}}", ms));
+            s.push_str(&format!(",\"timestamps\":{{\"start\":{ms}}}"));
         }
         _ => {}
     }
@@ -412,51 +425,78 @@ fn build_activity(
     s
 }
 
+fn wrap_set(args: &str, nonce: &str) -> String {
+    let mut s = String::with_capacity(args.len() + 48);
+    s.push_str("{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"");
+    s.push_str(&json_escape(nonce));
+    s.push_str("\",\"args\":");
+    s.push_str(args);
+    s.push('}');
+    s
+}
+
+fn clear_args() -> String {
+    format!("{{\"pid\":{},\"activity\":null}}", std::process::id())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn activity_json_is_balanced() {
-        let s = build_activity(
+        let args = activity_args(
             "Det \"quote\"",
             Some("St".into()),
             Some(1),
             Some(181),
             Some("mp:external/aGk".into()),
             Some("tempo_logo".into()),
-            "n1",
         );
-        assert!(s.contains("\"timestamps\":{\"start\":1,\"end\":181}"));
-        assert_eq!(s.matches('{').count(), s.matches('}').count());
-        assert!(s.contains("\"details\":\"Det \\\"quote\\\"\""));
-        assert!(s.contains("\"large_image\":\"mp:external/aGk\""));
-        assert!(s.contains("\"small_image\":\"tempo_logo\""));
-        let no_assets = build_activity("D", None, None, None, None, None, "n");
+        assert!(args.contains("\"timestamps\":{\"start\":1,\"end\":181}"));
+        let no_assets = activity_args("D", None, None, None, None, None);
         assert!(!no_assets.contains("assets"));
-        let c = build_clear("cn");
-        assert_eq!(c.matches('{').count(), c.matches('}').count());
-        assert!(c.contains("\"activity\":null"));
-        assert!(c.contains("\"nonce\":\"cn\""));
+
+        let frame = wrap_set(&args, "n1");
+        let parsed: serde_json::Value = serde_json::from_str(&frame)
+            .expect("SET_ACTIVITY frame must be valid json");
+        let activity = &parsed["args"]["activity"];
+        assert_eq!(activity["details"], "Det \"quote\"");
+        assert_eq!(activity["state"], "St");
+        assert_eq!(activity["timestamps"]["start"], 1);
+        assert_eq!(activity["timestamps"]["end"], 181);
+        // assets must live INSIDE activity - a stray brace here used to push
+        // them into args where discord silently ignored them
+        assert_eq!(activity["assets"]["large_image"], "mp:external/aGk");
+        assert_eq!(activity["assets"]["small_image"], "tempo_logo");
+        assert_eq!(parsed["cmd"], "SET_ACTIVITY");
+        assert_eq!(parsed["nonce"], "n1");
+
+        let c = wrap_set(&clear_args(), "cn");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&c).expect("clear frame must be valid json");
+        assert!(parsed["args"]["activity"].is_null());
+        assert_eq!(parsed["nonce"], "cn");
     }
 
     #[test]
-    fn nonce_changes_each_call() {
-        let a = build_activity("D", None, None, None, None, None, "a");
-        let b = build_activity("D", None, None, None, None, None, "b");
-        assert!(a.contains("\"nonce\":\"a\""));
-        assert!(b.contains("\"nonce\":\"b\""));
+    fn nonce_is_not_part_of_dedup() {
+        // identical content must produce identical args regardless of nonce,
+        // because dedup compares the nonce-free args string
+        let a = activity_args("D", None, None, None, None, None);
+        let b = activity_args("D", None, None, None, None, None);
+        assert_eq!(a, b);
+        assert_ne!(wrap_set(&a, "x"), wrap_set(&b, "y"));
     }
-}
 
-fn build_clear(nonce: &str) -> String {
-    let mut s = String::new();
-    s.push_str("{\"cmd\":\"SET_ACTIVITY\",\"nonce\":\"");
-    s.push_str(&json_escape(nonce));
-    s.push_str("\",\"args\":{\"pid\":");
-    s.push_str(&std::process::id().to_string());
-    s.push_str(",\"activity\":null}}");
-    s
+    #[test]
+    fn long_fields_are_truncated_on_char_boundary() {
+        let long = "ы".repeat(200); // 400 bytes of utf-8
+        let args = activity_args(&long, Some(long.clone()), None, None, None, None);
+        assert!(args.len() < 600);
+        assert!(args.contains("\"details\":\""));
+        assert!(!args.contains('\u{fffd}')); // no replacement char from a bad cut
+    }
 }
 
 fn write_frame(f: &mut std::fs::File, op: u32, payload: &[u8]) -> std::io::Result<()> {

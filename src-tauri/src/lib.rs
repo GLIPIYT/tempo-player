@@ -112,6 +112,7 @@ pub fn run() {
             commands::get_daily_minutes,
             commands::discord_set_presence,
             commands::discord_clear_presence,
+            commands::catbox_upload_cover,
             commands::set_track_lyrics,
             commands::toggle_favorite_artist,
             commands::list_favorite_artists,

@@ -173,9 +173,17 @@ CREATE TABLE IF NOT EXISTS favorite_albums (
 ALTER TABLE artists ADD COLUMN image_path TEXT;
 "#;
 
+const MIGRATION_9: &str = r#"
+CREATE TABLE IF NOT EXISTS cover_uploads (
+    cover_path TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    uploaded_at INTEGER NOT NULL
+);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
-    MIGRATION_8,
+    MIGRATION_8, MIGRATION_9,
 ];
 
 pub struct Db {
@@ -1242,6 +1250,40 @@ impl Db {
             conn.execute(
                 "UPDATE tracks SET lyrics = ?2 WHERE id = ?1",
                 params![track_id, lyrics],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    /// Cached public URL for a local cover previously uploaded to catbox, so a
+    /// cover is uploaded only once across restarts.
+    pub fn get_cover_upload(&self, cover_path: &str) -> Option<String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT url FROM cover_uploads WHERE cover_path = ?1",
+                params![cover_path],
+                |row| row.get::<_, String>(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(db_err(other)),
+            })
+        })
+        .ok()
+        .flatten()
+    }
+
+    pub fn save_cover_upload(&self, cover_path: &str, url: &str) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO cover_uploads (cover_path, url, uploaded_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(cover_path) DO UPDATE SET url = excluded.url, uploaded_at = excluded.uploaded_at",
+                params![cover_path, url, std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0)],
             )
             .map_err(db_err)?;
             Ok(())

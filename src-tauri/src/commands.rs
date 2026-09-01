@@ -672,6 +672,86 @@ pub fn discord_clear_presence() -> Result<(), String> {
     Ok(())
 }
 
+const CATBOX_API: &str = "https://catbox.moe/user/api.php";
+/// catbox hard limit is 200 MB; covers are tiny, the cap just guards against
+/// accidentally pushing something absurd
+const CATBOX_MAX_BYTES: u64 = 20 * 1024 * 1024;
+
+fn cover_mime(path: &str) -> &'static str {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        _ => "image/jpeg",
+    }
+}
+
+/// Uploads a local cover to catbox.moe (anonymous) and returns the public
+/// HTTPS URL. Discord Rich Presence only renders artwork from public URLs, so
+/// this is the bridge for local covers. The URL is cached in sqlite keyed by
+/// the cover path, so each cover is uploaded exactly once.
+#[tauri::command]
+pub async fn catbox_upload_cover(
+    state: State<'_, AppState>,
+    cover_path: String,
+) -> Result<String, String> {
+    if let Some(url) = state.db.get_cover_upload(&cover_path) {
+        return Ok(url);
+    }
+    let path = PathBuf::from(&cover_path);
+    let meta = tokio::fs::metadata(&path)
+        .await
+        .map_err(|e| format!("cover unreadable: {e}"))?;
+    if !meta.is_file() {
+        return Err("cover path is not a file".into());
+    }
+    if meta.len() > CATBOX_MAX_BYTES {
+        return Err("cover is too large to upload".into());
+    }
+    let data = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("cover unreadable: {e}"))?;
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("cover.jpg")
+        .to_string();
+    let part = reqwest::multipart::Part::bytes(data)
+        .file_name(file_name)
+        .mime_str(cover_mime(&cover_path))
+        .map_err(|e| e.to_string())?;
+    let form = reqwest::multipart::Form::new()
+        .text("reqtype", "fileupload")
+        .part("fileToUpload", part);
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("Tempo/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
+    let resp = client
+        .post(CATBOX_API)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("catbox request failed: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    let url = body.trim().to_string();
+    if !status.is_success() {
+        return Err(format!("catbox responded with HTTP {status}"));
+    }
+    if !url.starts_with("https://") {
+        return Err(format!("catbox returned an unexpected response: {url}"));
+    }
+    let _ = state.db.save_cover_upload(&cover_path, &url);
+    Ok(url)
+}
+
 #[tauri::command]
 pub fn set_track_lyrics(state: State<'_, AppState>, track_id: i64, lyrics: String) -> Result<(), String> {
     state.db.set_track_lyrics(track_id, &lyrics)
