@@ -84,9 +84,35 @@ pub fn clear_presence() {
     let _ = sender().send(PresenceMsg::Clear);
 }
 
-/// some discord builds reject an image url they cannot proxy; once that
-/// happens, drop assets entirely so the activity itself still shows
-static IMAGE_DISABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Some discord builds reject an image url they cannot proxy. Retrying the same
+/// url forever would keep the activity itself hidden, so assets are dropped for
+/// the next few sends and then allowed back: a rejection is usually about one
+/// cover, and latching it permanently left every later track without artwork
+/// until the app was restarted.
+static IMAGE_SKIPS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// how many activities go out without assets after a rejection. A rejected
+/// frame still costs rate budget, so artwork is retried roughly once per this
+/// many sends rather than on the very next one.
+const IMAGE_SKIP_SENDS: u32 = 5;
+
+/// Whether the activity being built right now should omit its assets. Peeks
+/// only - the skip is spent in [`consume_image_skip`] once a frame has actually
+/// reached discord, so a deduped or rate-limited build does not waste it.
+fn image_skip_pending() -> bool {
+    IMAGE_SKIPS.load(std::sync::atomic::Ordering::Relaxed) > 0
+}
+
+fn consume_image_skip() {
+    use std::sync::atomic::Ordering;
+    let _ = IMAGE_SKIPS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+        Some(n.saturating_sub(1))
+    });
+}
+
+fn skip_images_next_sends() {
+    IMAGE_SKIPS.store(IMAGE_SKIP_SENDS, std::sync::atomic::Ordering::Relaxed);
+}
 
 fn gen_nonce() -> String {
     format!(
@@ -175,7 +201,9 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
             Ok(rejected) => {
                 if rejected {
                     last_sent_args = None;
-                    pending = last_set.take().or(pending);
+                    // retry, but never regress: a payload queued while the
+                    // rejection was in flight is newer than the one we sent
+                    pending = pending.or_else(|| last_set.take());
                 }
             }
             Err(()) => {
@@ -220,6 +248,10 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
                 pending = Some(payload);
                 continue;
             }
+            // spent only now: a frame reached discord, so a post-rejection
+            // retry has had one assets-free attempt. Artwork returns after a few
+            // sends instead of ping-ponging between rejected and plain frames.
+            consume_image_skip();
             last_sent_at = Instant::now();
             last_sent_args = Some(args);
             last_set = Some(payload);
@@ -234,10 +266,7 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
 /// Builds the SET_ACTIVITY args, honouring the image-rejected fallback.
 fn build_args(p: &SetPayload) -> String {
     let (details, state, start_ms, end_ms, large_image, small_image) = p;
-    let drop_images = std::sync::atomic::AtomicBool::load(
-        &IMAGE_DISABLED,
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    let drop_images = image_skip_pending();
     activity_args(
         details,
         state.clone(),
@@ -275,14 +304,11 @@ fn drain_replies(c: &mut Conn) -> Result<bool, ()> {
             #[cfg(debug_assertions)]
             eprintln!("[tempo discord] rejected: {}", &text[..text.len().min(300)]);
             rejected = true;
-            // an image url discord cannot proxy fails the whole activity;
-            // remember it and retry without assets
+            // an image url discord cannot proxy fails the whole activity; retry
+            // without assets so the listening status still shows, then let the
+            // next cover try again
             if text.contains("large_image") || text.contains("mp:external") {
-                std::sync::atomic::AtomicBool::store(
-                    &IMAGE_DISABLED,
-                    true,
-                    std::sync::atomic::Ordering::Relaxed,
-                );
+                skip_images_next_sends();
             }
         } else if let Some(reference) = proxy_reference(&text) {
             // discord's media proxy fetches the origin lazily and serves 502
@@ -501,14 +527,44 @@ mod tests {
 
     #[test]
     fn proxy_reference_is_extracted_only_for_mp_external() {
-        let echoed = r#"{"cmd":"SET_ACTIVITY","data":{"assets":{"large_image":"mp:external/abc/https/files.catbox.moe/x.jpg","large_text":"Tempo"}},"evt":null}"#;
+        let echoed = r#"{"cmd":"SET_ACTIVITY","data":{"assets":{"large_image":"mp:external/abc/https/iili.io/x.jpg","large_text":"Tempo"}},"evt":null}"#;
         assert_eq!(
             proxy_reference(echoed),
-            Some("mp:external/abc/https/files.catbox.moe/x.jpg")
+            Some("mp:external/abc/https/iili.io/x.jpg")
         );
         let asset_key = r#"{"data":{"assets":{"large_image":"tempo_logo"}}}"#;
         assert_eq!(proxy_reference(asset_key), None);
         assert_eq!(proxy_reference("{}"), None);
+    }
+
+    #[test]
+    fn image_skip_is_temporary_not_a_latch() {
+        let payload: SetPayload = (
+            "D".into(),
+            None,
+            None,
+            None,
+            Some("https://iili.io/x.jpg".into()),
+            None,
+        );
+        assert!(build_args(&payload).contains("assets"));
+
+        // a rejection drops assets from the retries so the activity itself shows
+        skip_images_next_sends();
+        assert!(image_skip_pending());
+        assert!(!build_args(&payload).contains("assets"));
+        // still dropped until a frame has actually gone out - a deduped or
+        // rate-limited build must not spend the skip
+        assert!(!build_args(&payload).contains("assets"));
+
+        for _ in 0..IMAGE_SKIP_SENDS {
+            consume_image_skip();
+        }
+        assert!(!image_skip_pending());
+        // artwork is allowed back: one bad cover must not kill every later one
+        assert!(build_args(&payload).contains("assets"));
+        consume_image_skip(); // saturates at zero rather than wrapping
+        assert!(!image_skip_pending());
     }
 
     #[test]

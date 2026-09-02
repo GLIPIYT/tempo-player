@@ -187,9 +187,17 @@ const MIGRATION_10: &str = r#"
 DELETE FROM cover_uploads;
 "#;
 
+const MIGRATION_11: &str = r#"
+-- catbox.moe turned out to be an origin discord's media proxy often refuses to
+-- fetch (measured: half the covers stuck at 502, one for over an hour), so
+-- covers now live on freeimage.host. Drop the old links; each cover re-uploads
+-- once on the next presence update.
+DELETE FROM cover_uploads WHERE url LIKE '%catbox.moe%';
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
-    MIGRATION_8, MIGRATION_9, MIGRATION_10,
+    MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11,
 ];
 
 pub struct Db {
@@ -1262,8 +1270,8 @@ impl Db {
         })
     }
 
-    /// Cached public URL for a local cover previously uploaded to catbox, so a
-    /// cover is uploaded only once across restarts.
+    /// Cached public URL for a local cover previously uploaded to the image
+    /// host, so a cover is uploaded only once across restarts.
     pub fn get_cover_upload(&self, cover_path: &str) -> Option<String> {
         self.with_conn(|conn| {
             conn.query_row(
@@ -2846,6 +2854,32 @@ mod tests {
             .unwrap();
         assert_eq!(db.get_track_lyrics(track_id).unwrap(), None);
         drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn migration_11_drops_catbox_cover_urls_only() {
+        let (db, dir) = test_db("covers_v11");
+        db.save_cover_upload(r"C:\covers\a.jpg", "https://files.catbox.moe/vsqz30.jpg")
+            .unwrap();
+        db.save_cover_upload(r"C:\covers\b.jpg", "https://iili.io/nH7ZrWx.jpg")
+            .unwrap();
+        // rewind past migration 11 so reopening replays it over the seeded rows
+        db.with_conn(|c| {
+            c.execute_batch("PRAGMA user_version = 10;").map_err(db_err)
+        })
+        .unwrap();
+        drop(db);
+
+        let reopened = Db::open_at(&dir.join("tempo.db")).unwrap();
+        // catbox is an origin discord's media proxy often refuses; those links
+        // must re-upload, while links already on the new host stay cached
+        assert_eq!(reopened.get_cover_upload(r"C:\covers\a.jpg"), None);
+        assert_eq!(
+            reopened.get_cover_upload(r"C:\covers\b.jpg").as_deref(),
+            Some("https://iili.io/nH7ZrWx.jpg")
+        );
+        drop(reopened);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

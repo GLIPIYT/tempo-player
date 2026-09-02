@@ -61,9 +61,15 @@ let presenceActive = false
 let sendTimer: number | null = null
 let installed = false
 
-/** local cover path -> public catbox URL (uploads happen once per path) */
+/** local cover path -> public image-host URL (uploads happen once per path) */
 const coverUrls = new Map<string, string>()
 const coverPending = new Map<string, Promise<void>>()
+/** paths whose upload failed -> when another attempt is allowed */
+const coverRetryAt = new Map<string, number>()
+/** consecutive failures per path, drives the backoff */
+const coverFailures = new Map<string, number>()
+const UPLOAD_RETRY_BASE_MS = 30_000
+const UPLOAD_RETRY_MAX_MS = 15 * 60_000
 
 function activeLine(trackKey: string, position: number): string | null {
   const cur = lyricsService.getCurrent()
@@ -73,13 +79,16 @@ function activeLine(trackKey: string, position: number): string | null {
 
 /** Public image URL for the presence, or null to send no assets at all
  *  (discord then shows the application icon). Remote covers go out as-is;
- *  local files are uploaded to catbox in the background. */
+ *  local files are uploaded to the image host in the background. */
 function coverImage(track: { coverPath: string | null; sourceId: string }): string | null {
   const path = track.coverPath
   if (!path) return null
   if (/^https?:\/\//.test(path)) return path
   const cached = coverUrls.get(path)
   if (cached) return cached
+  const retryAt = coverRetryAt.get(path)
+  // a failed upload backs off instead of firing on every presence update
+  if (retryAt !== undefined && Date.now() < retryAt) return null
   void uploadCover(path, track.sourceId)
   return null
 }
@@ -87,17 +96,31 @@ function coverImage(track: { coverPath: string | null; sourceId: string }): stri
 function uploadCover(path: string, sourceId: string): Promise<void> {
   const existing = coverPending.get(path)
   if (existing) return existing
-  const pending = invoke<string>('catbox_upload_cover', { coverPath: path })
+  const pending = invoke<string>('upload_cover', { coverPath: path })
     .then(url => {
-      if (typeof url === 'string' && url.startsWith('https://')) {
-        coverUrls.set(path, url)
-        // the presence went out without artwork - push a fresh update now
-        // that the real cover URL exists
-        const snap = playerController.getSnapshot()
-        if (snap.currentTrack?.sourceId === sourceId) requestSend(snap, 'cover', true)
+      if (typeof url !== 'string' || !url.startsWith('https://')) {
+        throw new Error(`image host returned an unusable url: ${String(url)}`)
       }
+      coverUrls.set(path, url)
+      coverRetryAt.delete(path)
+      coverFailures.delete(path)
+      // the presence went out without artwork - push a fresh update now
+      // that the real cover URL exists
+      const snap = playerController.getSnapshot()
+      if (snap.currentTrack?.sourceId === sourceId) requestSend(snap, 'cover', true)
     })
-    .catch(() => {})
+    .catch(err => {
+      const failures = (coverFailures.get(path) ?? 0) + 1
+      coverFailures.set(path, failures)
+      const wait = Math.min(UPLOAD_RETRY_BASE_MS * 2 ** (failures - 1), UPLOAD_RETRY_MAX_MS)
+      coverRetryAt.set(path, Date.now() + wait)
+      // surfaced rather than swallowed: a silent failure here is exactly why the
+      // placeholder was so hard to explain
+      console.warn(
+        `[tempo discord] cover upload failed (attempt ${failures}, retry in ${Math.round(wait / 1000)}s):`,
+        err,
+      )
+    })
     .finally(() => {
       coverPending.delete(path)
     })

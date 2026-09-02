@@ -675,10 +675,21 @@ pub fn discord_clear_presence() -> Result<(), String> {
     Ok(())
 }
 
-const CATBOX_API: &str = "https://catbox.moe/user/api.php";
-/// catbox hard limit is 200 MB; covers are tiny, the cap just guards against
+const IMAGE_HOST_API: &str = "https://freeimage.host/api/1/upload";
+/// Published on <https://freeimage.host/api> for anyone to use, so this is a
+/// default rather than a secret. Measured against Discord's media proxy: every
+/// upload here was proxied on the first try, where catbox answered 502 for half
+/// of them - the proxy needs an origin that sends Content-Length and caches.
+const IMAGE_HOST_KEY: &str = "6d207e02198a847aa98d0a2a901485a5";
+/// identifies Tempo to the image host, as its API guidelines ask for
+const USER_AGENT: &str = concat!(
+    "Tempo/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/GLIPIYT/tempo-player)"
+);
+/// the host accepts 64 MB; covers are tiny, the cap just guards against
 /// accidentally pushing something absurd
-const CATBOX_MAX_BYTES: u64 = 20 * 1024 * 1024;
+const UPLOAD_MAX_BYTES: u64 = 20 * 1024 * 1024;
 /// Discord's media proxy fetches the image itself and gives up on large or slow
 /// origins, so covers are normalised to a small jpeg before upload. Library
 /// artwork is routinely 3000x3000 / 1.7 MB, which the proxy refused to serve.
@@ -727,11 +738,24 @@ fn shrink_cover(data: &[u8]) -> Option<Vec<u8>> {
 /// Warms Discord's media proxy for an `mp:external` reference. The proxy
 /// fetches the origin lazily and answers 502 while that is in flight, so
 /// without this the very first client to look at the presence sees a broken
-/// image placeholder. The same reference is warmed only once per run.
+/// image placeholder.
+///
+/// A reference is remembered only once it has actually been served. A failed
+/// warm is forgotten, so the next presence update carrying the same reference
+/// tries again - the cached url outlives this process, and giving up on it
+/// permanently is what left covers broken until the file itself changed.
 pub(crate) fn warm_media_proxy(url: String) {
     use std::collections::HashSet;
     use std::sync::Mutex;
+    /// references already served, plus the ones being warmed right now
     static WARMED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+    fn forget(url: &str) {
+        if let Ok(mut guard) = WARMED.lock() {
+            if let Some(seen) = guard.as_mut() {
+                seen.remove(url);
+            }
+        }
+    }
     {
         let Ok(mut guard) = WARMED.lock() else { return };
         let seen = guard.get_or_insert_with(HashSet::new);
@@ -741,9 +765,10 @@ pub(crate) fn warm_media_proxy(url: String) {
     }
     tauri::async_runtime::spawn(async move {
         let Ok(client) = reqwest::Client::builder()
-            .user_agent(concat!("Tempo/", env!("CARGO_PKG_VERSION")))
+            .user_agent(USER_AGENT)
             .build()
         else {
+            forget(&url);
             return;
         };
         // the proxy can take well over ten seconds to ingest a fresh origin
@@ -760,17 +785,35 @@ pub(crate) fn warm_media_proxy(url: String) {
                 _ => continue,
             }
         }
-        #[cfg(debug_assertions)]
-        eprintln!("[tempo proxy] could not warm {url}");
+        eprintln!("[tempo proxy] could not warm {url} - will retry on the next update");
+        forget(&url);
     });
 }
 
-/// Uploads a local cover to catbox.moe (anonymous) and returns the public
-/// HTTPS URL. Discord Rich Presence only renders artwork from public URLs, so
-/// this is the bridge for local covers. The URL is cached in sqlite keyed by
-/// the cover path, so each cover is uploaded exactly once.
+/// Pulls `image.url` out of the host's JSON reply, or the error it reported.
+fn parse_upload_reply(body: &str) -> Result<String, String> {
+    let reply: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("image host returned invalid json: {e}"))?;
+    if let Some(url) = reply["image"]["url"].as_str() {
+        if url.starts_with("https://") {
+            return Ok(url.to_string());
+        }
+        return Err(format!("image host returned a non-https url: {url}"));
+    }
+    let reason = reply["error"]["message"]
+        .as_str()
+        .or_else(|| reply["status_txt"].as_str())
+        .unwrap_or("no image url in reply");
+    Err(format!("image host rejected the upload: {reason}"))
+}
+
+/// Uploads a local cover to a public image host and returns the HTTPS URL.
+/// Discord Rich Presence only renders artwork from public URLs, so this is the
+/// bridge for local covers. The URL is cached in sqlite keyed by the cover
+/// path, so each cover is uploaded exactly once; the host also deduplicates by
+/// content, so a cache miss cannot pile up copies of the same artwork.
 #[tauri::command]
-pub async fn catbox_upload_cover(
+pub async fn upload_cover(
     state: State<'_, AppState>,
     cover_path: String,
 ) -> Result<String, String> {
@@ -784,7 +827,7 @@ pub async fn catbox_upload_cover(
     if !meta.is_file() {
         return Err("cover path is not a file".into());
     }
-    if meta.len() > CATBOX_MAX_BYTES {
+    if meta.len() > UPLOAD_MAX_BYTES {
         return Err("cover is too large to upload".into());
     }
     let original = tokio::fs::read(&path)
@@ -811,34 +854,35 @@ pub async fn catbox_upload_cover(
         .mime_str(mime)
         .map_err(|e| e.to_string())?;
     let form = reqwest::multipart::Form::new()
-        .text("reqtype", "fileupload")
-        .part("fileToUpload", part);
+        .text("key", IMAGE_HOST_KEY)
+        .text("action", "upload")
+        .text("format", "json")
+        .part("source", part);
     let client = reqwest::Client::builder()
-        .user_agent(concat!("Tempo/", env!("CARGO_PKG_VERSION")))
+        .user_agent(USER_AGENT)
         .build()
         .map_err(|e| format!("http client: {e}"))?;
     let resp = client
-        .post(CATBOX_API)
+        .post(IMAGE_HOST_API)
         .multipart(form)
         .send()
         .await
-        .map_err(|e| format!("catbox request failed: {e}"))?;
+        .map_err(|e| format!("upload request failed: {e}"))?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
-    let url = body.trim().to_string();
-    if !status.is_success() {
-        return Err(format!("catbox responded with HTTP {status}"));
-    }
-    if !url.starts_with("https://") {
-        return Err(format!("catbox returned an unexpected response: {url}"));
-    }
-    // only trust a url the host actually serves; a cached dead link would show
-    // a broken image in discord until the cover file changes
-    match client.get(&url).send().await {
-        Ok(check) if check.status().is_success() => {}
-        Ok(check) => return Err(format!("uploaded cover is not reachable: HTTP {}", check.status())),
-        Err(e) => return Err(format!("uploaded cover is not reachable: {e}")),
-    }
+    // the host reports "invalid key" / "file too big" as a 400 with the reason
+    // in the body, so parse first and only fall back to the bare status
+    let url = match parse_upload_reply(&body) {
+        Ok(url) if status.is_success() => url,
+        Ok(_) => return Err(format!("image host responded with HTTP {status}")),
+        Err(reason) if !status.is_success() => {
+            return Err(format!("{reason} (HTTP {status})"));
+        }
+        Err(reason) => return Err(reason),
+    };
+    // Cached unconditionally: the host answered 200 with a url, and a freshly
+    // uploaded file can legitimately need a moment before it serves. Probing
+    // the origin here used to discard valid uploads and re-upload them forever.
     let _ = state.db.save_cover_upload(&cover_path, &url);
     Ok(url)
 }
@@ -941,4 +985,105 @@ pub fn import_playlist_m3u8(
 #[tauri::command]
 pub fn get_artist_tracks(state: State<'_, AppState>, artist_id: i64) -> Result<Vec<Track>, String> {
     state.db.get_artist_tracks(artist_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upload_reply_yields_the_image_url() {
+        let ok = r#"{"status_code":200,"image":{"name":"cover","url":"https://iili.io/nH7ZrWx.jpg","size":"22841"},"status_txt":"OK"}"#;
+        assert_eq!(
+            parse_upload_reply(ok).unwrap(),
+            "https://iili.io/nH7ZrWx.jpg"
+        );
+    }
+
+    #[test]
+    fn upload_reply_errors_are_reported_not_cached() {
+        // the host reports failures as a 400 whose body carries the reason
+        let denied = r#"{"status_code":400,"error":{"message":"Invalid API v1 key.","code":100},"status_txt":"Bad Request"}"#;
+        let err = parse_upload_reply(denied).unwrap_err();
+        assert!(err.contains("Invalid API v1 key"), "got: {err}");
+
+        assert!(parse_upload_reply("not json at all").is_err());
+        assert!(parse_upload_reply("{}").is_err());
+
+        // discord only renders https assets, so a plain-http url is a failure
+        let insecure = r#"{"image":{"url":"http://iili.io/x.jpg"}}"#;
+        assert!(parse_upload_reply(insecure).is_err());
+    }
+
+    #[test]
+    fn cover_mime_follows_the_extension() {
+        assert_eq!(cover_mime("C:/covers/a.png"), "image/png");
+        assert_eq!(cover_mime("C:/covers/a.WEBP"), "image/webp");
+        // unknown and extensionless paths fall back to jpeg
+        assert_eq!(cover_mime("C:/covers/a.bin"), "image/jpeg");
+        assert_eq!(cover_mime("C:/covers/a"), "image/jpeg");
+    }
+
+    #[test]
+    fn shrink_cover_downscales_to_the_proxy_friendly_edge() {
+        let wide = image::DynamicImage::new_rgb8(1200, 900);
+        let mut png = Vec::new();
+        wide.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .expect("encode fixture");
+
+        let small = shrink_cover(&png).expect("a valid png must shrink");
+        let decoded = image::ImageReader::new(std::io::Cursor::new(&small))
+            .with_guessed_format()
+            .unwrap()
+            .decode()
+            .unwrap();
+        assert!(decoded.width().max(decoded.height()) <= COVER_MAX_EDGE);
+        assert!(small.len() < png.len());
+
+        // undecodable bytes are uploaded as-is rather than dropped
+        assert!(shrink_cover(b"definitely not an image").is_none());
+    }
+
+    /// Live round trip against the image host, excluded from CI because it needs
+    /// the network. Run it to re-validate the host (or the baked-in key) after a
+    /// broken-cover report:
+    ///   cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "hits the network"]
+    async fn live_upload_round_trip() {
+        let cover = image::DynamicImage::new_rgb8(900, 900);
+        let mut png = Vec::new();
+        cover
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .expect("encode fixture");
+        let jpeg = shrink_cover(&png).expect("shrink");
+
+        let part = reqwest::multipart::Part::bytes(jpeg)
+            .file_name("cover.jpg")
+            .mime_str("image/jpeg")
+            .unwrap();
+        let form = reqwest::multipart::Form::new()
+            .text("key", IMAGE_HOST_KEY)
+            .text("action", "upload")
+            .text("format", "json")
+            .part("source", part);
+        let resp = reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .build()
+            .unwrap()
+            .post(IMAGE_HOST_API)
+            .multipart(form)
+            .send()
+            .await
+            .expect("upload");
+        let status = resp.status();
+        let body = resp.text().await.unwrap();
+        assert!(status.is_success(), "HTTP {status}: {body}");
+        let url = parse_upload_reply(&body).expect("reply carries an image url");
+        println!("uploaded to {url}");
+
+        // the url must be fetchable, otherwise discord's proxy cannot ingest it
+        let check = reqwest::get(&url).await.expect("fetch back");
+        assert!(check.status().is_success(), "origin served {}", check.status());
+    }
 }
