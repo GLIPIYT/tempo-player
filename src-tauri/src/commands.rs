@@ -679,6 +679,10 @@ const CATBOX_API: &str = "https://catbox.moe/user/api.php";
 /// catbox hard limit is 200 MB; covers are tiny, the cap just guards against
 /// accidentally pushing something absurd
 const CATBOX_MAX_BYTES: u64 = 20 * 1024 * 1024;
+/// Discord's media proxy fetches the image itself and gives up on large or slow
+/// origins, so covers are normalised to a small jpeg before upload. Library
+/// artwork is routinely 3000x3000 / 1.7 MB, which the proxy refused to serve.
+const COVER_MAX_EDGE: u32 = 512;
 
 fn cover_mime(path: &str) -> &'static str {
     let ext = Path::new(path)
@@ -693,6 +697,72 @@ fn cover_mime(path: &str) -> &'static str {
         "bmp" => "image/bmp",
         _ => "image/jpeg",
     }
+}
+
+/// Re-encodes a cover as a small jpeg. Returns None when the image cannot be
+/// decoded, in which case the original bytes are uploaded as-is.
+fn shrink_cover(data: &[u8]) -> Option<Vec<u8>> {
+    let decoded = image::ImageReader::new(std::io::Cursor::new(data))
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?;
+    let sized = if decoded.width().max(decoded.height()) > COVER_MAX_EDGE {
+        decoded.resize(
+            COVER_MAX_EDGE,
+            COVER_MAX_EDGE,
+            image::imageops::FilterType::Lanczos3,
+        )
+    } else {
+        decoded
+    };
+    let rgb = sized.to_rgb8();
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85)
+        .encode_image(&rgb)
+        .ok()?;
+    Some(out)
+}
+
+/// Warms Discord's media proxy for an `mp:external` reference. The proxy
+/// fetches the origin lazily and answers 502 while that is in flight, so
+/// without this the very first client to look at the presence sees a broken
+/// image placeholder. The same reference is warmed only once per run.
+pub(crate) fn warm_media_proxy(url: String) {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    static WARMED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+    {
+        let Ok(mut guard) = WARMED.lock() else { return };
+        let seen = guard.get_or_insert_with(HashSet::new);
+        if !seen.insert(url.clone()) {
+            return;
+        }
+    }
+    tauri::async_runtime::spawn(async move {
+        let Ok(client) = reqwest::Client::builder()
+            .user_agent(concat!("Tempo/", env!("CARGO_PKG_VERSION")))
+            .build()
+        else {
+            return;
+        };
+        // the proxy can take well over ten seconds to ingest a fresh origin
+        for attempt in 0..8u32 {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64)).await;
+            }
+            match client.get(&url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("[tempo proxy] warmed after {} attempt(s)", attempt + 1);
+                    return;
+                }
+                _ => continue,
+            }
+        }
+        #[cfg(debug_assertions)]
+        eprintln!("[tempo proxy] could not warm {url}");
+    });
 }
 
 /// Uploads a local cover to catbox.moe (anonymous) and returns the public
@@ -717,17 +787,28 @@ pub async fn catbox_upload_cover(
     if meta.len() > CATBOX_MAX_BYTES {
         return Err("cover is too large to upload".into());
     }
-    let data = tokio::fs::read(&path)
+    let original = tokio::fs::read(&path)
         .await
         .map_err(|e| format!("cover unreadable: {e}"))?;
-    let file_name = path
+    let fallback_name = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("cover.jpg")
         .to_string();
+    let fallback_mime = cover_mime(&cover_path);
+    let (data, name, mime) = match tokio::task::spawn_blocking(move || {
+        let shrunk = shrink_cover(&original);
+        (original, shrunk)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    {
+        (_, Some(small)) => (small, "cover.jpg".to_string(), "image/jpeg"),
+        (raw, None) => (raw, fallback_name, fallback_mime),
+    };
     let part = reqwest::multipart::Part::bytes(data)
-        .file_name(file_name)
-        .mime_str(cover_mime(&cover_path))
+        .file_name(name)
+        .mime_str(mime)
         .map_err(|e| e.to_string())?;
     let form = reqwest::multipart::Form::new()
         .text("reqtype", "fileupload")
@@ -750,6 +831,13 @@ pub async fn catbox_upload_cover(
     }
     if !url.starts_with("https://") {
         return Err(format!("catbox returned an unexpected response: {url}"));
+    }
+    // only trust a url the host actually serves; a cached dead link would show
+    // a broken image in discord until the cover file changes
+    match client.get(&url).send().await {
+        Ok(check) if check.status().is_success() => {}
+        Ok(check) => return Err(format!("uploaded cover is not reachable: HTTP {}", check.status())),
+        Err(e) => return Err(format!("uploaded cover is not reachable: {e}")),
     }
     let _ = state.db.save_cover_upload(&cover_path, &url);
     Ok(url)

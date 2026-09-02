@@ -181,9 +181,15 @@ CREATE TABLE IF NOT EXISTS cover_uploads (
 );
 "#;
 
+const MIGRATION_10: &str = r#"
+-- earlier uploads were full-size artwork (up to 3000x3000); discord's media
+-- proxy refuses those, so drop the cache and let them re-upload downscaled
+DELETE FROM cover_uploads;
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
-    MIGRATION_8, MIGRATION_9,
+    MIGRATION_8, MIGRATION_9, MIGRATION_10,
 ];
 
 pub struct Db {

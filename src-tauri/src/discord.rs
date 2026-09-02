@@ -284,8 +284,24 @@ fn drain_replies(c: &mut Conn) -> Result<bool, ()> {
                     std::sync::atomic::Ordering::Relaxed,
                 );
             }
+        } else if let Some(reference) = proxy_reference(&text) {
+            // discord's media proxy fetches the origin lazily and serves 502
+            // until that finishes; poke it so the artwork is ready by the time
+            // someone opens the profile
+            crate::commands::warm_media_proxy(format!(
+                "https://media.discordapp.net/{}",
+                reference.trim_start_matches("mp:")
+            ));
         }
     }
+}
+
+/// Extracts the `mp:external/...` reference discord echoes back for a proxied
+/// image url, if the reply carries one.
+fn proxy_reference(reply: &str) -> Option<&str> {
+    let after = reply.split("\"large_image\":\"").nth(1)?;
+    let value = after.split('"').next()?;
+    value.starts_with("mp:external/").then_some(value)
 }
 
 /// Bytes currently readable from the pipe without blocking.
@@ -481,6 +497,18 @@ mod tests {
             serde_json::from_str(&wrap_set(&clear_args(), "cn")).unwrap();
         assert!(parsed["args"]["activity"].is_null());
         assert_eq!(parsed["nonce"], "cn");
+    }
+
+    #[test]
+    fn proxy_reference_is_extracted_only_for_mp_external() {
+        let echoed = r#"{"cmd":"SET_ACTIVITY","data":{"assets":{"large_image":"mp:external/abc/https/files.catbox.moe/x.jpg","large_text":"Tempo"}},"evt":null}"#;
+        assert_eq!(
+            proxy_reference(echoed),
+            Some("mp:external/abc/https/files.catbox.moe/x.jpg")
+        );
+        let asset_key = r#"{"data":{"assets":{"large_image":"tempo_logo"}}}"#;
+        assert_eq!(proxy_reference(asset_key), None);
+        assert_eq!(proxy_reference("{}"), None);
     }
 
     #[test]
