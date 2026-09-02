@@ -10,11 +10,13 @@ import { playerController } from '../player/controller'
  * The Rust side is a dumb reliable pipe: it connects, heartbeats, retries.
  */
 
-const LOGO_ASSET = 'tempo_logo'
 const SETTINGS_KEY = 'tempo.settings.v1'
-/** discord accepts ~5 updates / 20s; lyric-heavy tracks must stay inside it */
-const LYRIC_MIN_GAP_MS = 4000
-const SEEK_DEBOUNCE_MS = 300
+/** discord accepts ~5 updates / 20s; non-critical sends wait this long */
+const SEND_MIN_GAP_MS = 4000
+/** critical sends (track/play) may not wait the full gap, but still spaced */
+const SEND_IMMEDIATE_GAP_MS = 1000
+/** merge triggers firing together; the timer picks up the freshest state */
+const SEND_COALESCE_MS = 250
 /** a position jump bigger than this (seek / buffering) re-syncs the timeline */
 const SEEK_DRIFT_SEC = 2
 
@@ -52,10 +54,11 @@ function pausedLabel(lang: DriverSettings['lang']): string {
 let lastTrackKey: string | null = null
 let lastPlaying = false
 let lastLine: string | null = null
-let lastSentAt = 0
-let lastSentElapsed = -1
+let lastInvokeAt = 0
+/** position seen on the previous tick; a jump between ticks means a seek */
+let lastObservedElapsed = -1
 let presenceActive = false
-let seekTimer: number | null = null
+let sendTimer: number | null = null
 let installed = false
 
 /** local cover path -> public catbox URL (uploads happen once per path) */
@@ -68,29 +71,30 @@ function activeLine(trackKey: string, position: number): string | null {
   return lyricLineAt(cur.result, position)
 }
 
-/** Public image URL for the presence. Remote covers go out as-is; local files
- *  are uploaded to catbox in the background and start out as the logo asset. */
-function coverImage(track: { coverPath: string | null; sourceId: string }): string {
+/** Public image URL for the presence, or null to send no assets at all
+ *  (discord then shows the application icon). Remote covers go out as-is;
+ *  local files are uploaded to catbox in the background. */
+function coverImage(track: { coverPath: string | null; sourceId: string }): string | null {
   const path = track.coverPath
-  if (!path) return LOGO_ASSET
+  if (!path) return null
   if (/^https?:\/\//.test(path)) return path
   const cached = coverUrls.get(path)
   if (cached) return cached
   void uploadCover(path, track.sourceId)
-  return LOGO_ASSET
+  return null
 }
 
 function uploadCover(path: string, sourceId: string): Promise<void> {
   const existing = coverPending.get(path)
   if (existing) return existing
-  const pending = invoke<string>('catbox_upload_cover', { path })
+  const pending = invoke<string>('catbox_upload_cover', { coverPath: path })
     .then(url => {
       if (typeof url === 'string' && url.startsWith('https://')) {
         coverUrls.set(path, url)
-        // the presence went out with the logo - push a fresh update now that
-        // the real artwork URL exists
+        // the presence went out without artwork - push a fresh update now
+        // that the real cover URL exists
         const snap = playerController.getSnapshot()
-        if (snap.currentTrack?.sourceId === sourceId) sendPresence(snap)
+        if (snap.currentTrack?.sourceId === sourceId) requestSend(snap, 'cover', true)
       }
     })
     .catch(() => {})
@@ -101,7 +105,7 @@ function uploadCover(path: string, sourceId: string): Promise<void> {
   return pending
 }
 
-function sendPresence(snap: ReturnType<typeof playerController.getSnapshot>): void {
+function doSend(snap: ReturnType<typeof playerController.getSnapshot>, reason: string): void {
   const settings = readSettings()
   const track = snap.currentTrack
   if (!settings || !track) return
@@ -112,8 +116,7 @@ function sendPresence(snap: ReturnType<typeof playerController.getSnapshot>): vo
   const end = playing && dur > 0 && start !== null ? start + Math.round(dur * 1000) : null
   const line = playing ? activeLine(track.sourceId, snap.position) : null
   if (playing) lastLine = line
-  lastSentAt = Date.now()
-  lastSentElapsed = elapsed
+  lastInvokeAt = Date.now()
   presenceActive = true
   void invoke('discord_set_presence', {
     clientId: settings.clientId,
@@ -125,7 +128,41 @@ function sendPresence(snap: ReturnType<typeof playerController.getSnapshot>): vo
     endMs: end,
     largeImage: coverImage(track),
     smallImage: null,
+    reason,
   }).catch(() => {})
+}
+
+/**
+ * Single entry point for every presence push. Critical events (track switch,
+ * play/pause) go out straight away but never more than once a second; all
+ * other triggers (lyric line, seek drift, cover ready) are coalesced and
+ * spaced 4s apart so discord's ~5-updates-per-20s budget is never blown -
+ * that budget is exactly what made track changes invisible before.
+ */
+function requestSend(
+  snap: ReturnType<typeof playerController.getSnapshot>,
+  reason: string,
+  immediate = false,
+): void {
+  if (!snap.currentTrack || !readSettings()) return
+  const since = Date.now() - lastInvokeAt
+  if (immediate && since >= SEND_IMMEDIATE_GAP_MS) {
+    if (sendTimer !== null) {
+      window.clearTimeout(sendTimer)
+      sendTimer = null
+    }
+    doSend(snap, reason)
+    return
+  }
+  // latest wins: a scheduled timer always picks up the freshest snapshot
+  if (sendTimer !== null) return
+  const wait = immediate
+    ? SEND_IMMEDIATE_GAP_MS - since
+    : Math.max(SEND_COALESCE_MS, SEND_MIN_GAP_MS - since)
+  sendTimer = window.setTimeout(() => {
+    sendTimer = null
+    doSend(playerController.getSnapshot(), `${reason}+deferred`)
+  }, wait)
 }
 
 function clearPresence(): void {
@@ -138,10 +175,10 @@ function resetTracking(): void {
   lastTrackKey = null
   lastPlaying = false
   lastLine = null
-  lastSentElapsed = -1
-  if (seekTimer !== null) {
-    window.clearTimeout(seekTimer)
-    seekTimer = null
+  lastObservedElapsed = -1
+  if (sendTimer !== null) {
+    window.clearTimeout(sendTimer)
+    sendTimer = null
   }
 }
 
@@ -162,33 +199,30 @@ function onPlayerChange(): void {
     lyricsService.ensure(track, settings.lyricsCache)
     lastTrackKey = track.sourceId
     lastLine = null
-    lastSentElapsed = -1
+    lastObservedElapsed = -1
     lastPlaying = snap.isPlaying
-    sendPresence(snap) // track switch is critical: always goes out immediately
+    requestSend(snap, 'track', true)
     return
   }
   if (playChanged) {
     lastPlaying = snap.isPlaying
-    sendPresence(snap) // pause/resume must freeze/restart the discord timer
+    requestSend(snap, snap.isPlaying ? 'play' : 'pause', true)
     return
   }
   if (!snap.isPlaying) return
 
   const line = activeLine(track.sourceId, snap.position)
+  const jumped = lastObservedElapsed >= 0 && Math.abs(snap.position - lastObservedElapsed) >= SEEK_DRIFT_SEC
+  lastObservedElapsed = snap.position
   if (line !== lastLine) {
     lastLine = line
-    // rate-limit lyric pushes; a skipped line is fine, the next flip catches up
-    if (Date.now() - lastSentAt >= LYRIC_MIN_GAP_MS) sendPresence(snap)
+    // a skipped line is fine, the deferred send picks up the current one
+    requestSend(snap, 'lyric')
     return
   }
 
-  if (lastSentElapsed >= 0 && Math.abs(snap.position - lastSentElapsed) >= SEEK_DRIFT_SEC) {
-    if (seekTimer === null) {
-      seekTimer = window.setTimeout(() => {
-        seekTimer = null
-        sendPresence(playerController.getSnapshot())
-      }, SEEK_DEBOUNCE_MS)
-    }
+  if (jumped) {
+    requestSend(snap, 'seek')
   }
 }
 

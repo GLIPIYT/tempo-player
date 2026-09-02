@@ -661,7 +661,10 @@ pub fn discord_set_presence(
     end_ms: Option<u64>,
     large_image: Option<String>,
     small_image: Option<String>,
+    // reason: why the frontend pushed this update (debug aid, ignored here)
+    reason: Option<String>,
 ) -> Result<(), String> {
+    let _ = reason;
     crate::discord::set_presence(client_id, details, state, start_ms, end_ms, large_image, small_image);
     Ok(())
 }
