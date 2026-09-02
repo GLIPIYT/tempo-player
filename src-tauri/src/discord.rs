@@ -22,6 +22,8 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 /// discord caps the details/state strings at 128 bytes of utf-8
 const FIELD_MAX_BYTES: usize = 128;
+/// ...and rejects the whole activity when one of them is a single character
+const FIELD_MIN_CHARS: usize = 2;
 
 pub enum PresenceMsg {
     Set {
@@ -404,6 +406,19 @@ fn truncate_utf8(s: &str, max: usize) -> String {
     s[..end].to_string()
 }
 
+/// Fits a user-facing string into discord's bounds: at most
+/// [`FIELD_MAX_BYTES`], and at least [`FIELD_MIN_CHARS`] characters, padded
+/// with spaces when it is shorter. Discord rejects the *whole* activity for a
+/// one-character `details` or `state` ("length must be at least 2 characters
+/// long"), which a one-word lyric line or a single-letter title would hit.
+fn fit_field(s: &str, max_bytes: usize) -> String {
+    let mut out = truncate_utf8(s, max_bytes);
+    while out.chars().count() < FIELD_MIN_CHARS {
+        out.push(' ');
+    }
+    out
+}
+
 /// Builds the nonce-free `args` object of a SET_ACTIVITY frame. Deduping
 /// compares this string, so identical activities are dropped even though every
 /// frame carries a fresh nonce.
@@ -419,12 +434,12 @@ fn activity_args(
     s.push_str("{\"pid\":");
     s.push_str(&std::process::id().to_string());
     s.push_str(",\"activity\":{\"name\":\"Tempo\",\"type\":2,\"details\":\"");
-    s.push_str(&json_escape(&truncate_utf8(details, FIELD_MAX_BYTES)));
+    s.push_str(&json_escape(&fit_field(details, FIELD_MAX_BYTES)));
     s.push('"');
     if let Some(st) = state {
         if !st.is_empty() {
             s.push_str(",\"state\":\"");
-            s.push_str(&json_escape(&truncate_utf8(&st, FIELD_MAX_BYTES)));
+            s.push_str(&json_escape(&fit_field(&st, FIELD_MAX_BYTES)));
             s.push('"');
         }
     }
@@ -439,16 +454,19 @@ fn activity_args(
     }
     let has_large = large_image.as_deref().map(|v| !v.trim().is_empty()).unwrap_or(false);
     if has_large {
-        // large_text must not be an empty string - discord rejects the whole
-        // activity with "large_text is not allowed to be empty"
+        // No large_text/small_text: for a listening activity discord renders
+        // large_text as a third line under details and state, so a constant
+        // "Tempo" there read as a caption on every song. Omitting the field is
+        // accepted - only an *empty* string is rejected ("large_text is not
+        // allowed to be empty"), which is why it used to be filled at all.
         s.push_str(",\"assets\":{\"large_image\":\"");
         s.push_str(&json_escape(large_image.as_deref().unwrap_or("")));
-        s.push_str("\",\"large_text\":\"Tempo\"");
+        s.push('"');
         if let Some(sm) = small_image {
             if !sm.trim().is_empty() {
                 s.push_str(",\"small_image\":\"");
                 s.push_str(&json_escape(&sm));
-                s.push_str("\",\"small_text\":\"Tempo\"");
+                s.push('"');
             }
         }
         s.push('}');
@@ -502,11 +520,16 @@ mod tests {
         assert_eq!(activity["state"], "St");
         assert_eq!(activity["timestamps"]["start"], 1);
         assert_eq!(activity["timestamps"]["end"], 181);
-        // assets must sit INSIDE activity, and large_text must be non-empty -
-        // discord rejects the whole payload otherwise
+        // assets must sit INSIDE activity, or discord rejects the whole payload
         assert_eq!(activity["assets"]["large_image"], "https://example.com/a.png");
-        assert_eq!(activity["assets"]["large_text"], "Tempo");
         assert_eq!(activity["assets"]["small_image"], "tempo_logo");
+        // no asset texts: discord shows large_text as a third line in the
+        // activity, where a constant "Tempo" looked like a caption on the song.
+        // The field must be absent rather than empty - an empty string is what
+        // discord rejects.
+        assert!(activity["assets"]["large_text"].is_null());
+        assert!(activity["assets"]["small_text"].is_null());
+        assert!(!args.contains("_text"));
         assert_eq!(parsed["cmd"], "SET_ACTIVITY");
         assert_eq!(parsed["nonce"], "n1");
 
@@ -585,6 +608,23 @@ mod tests {
         let details = parsed["args"]["activity"]["details"].as_str().unwrap();
         assert!(details.len() <= FIELD_MAX_BYTES);
         assert!(!details.contains('\u{fffd}')); // no replacement char from a bad cut
+    }
+
+    #[test]
+    fn one_char_fields_are_padded_to_the_minimum() {
+        // discord rejects the entire activity when details or state is a single
+        // character, which a one-word lyric line or a "?" title would hit
+        let args = activity_args("O", Some("О".into()), None, None, None, None);
+        let parsed: serde_json::Value = serde_json::from_str(&wrap_set(&args, "n")).unwrap();
+        let activity = &parsed["args"]["activity"];
+        assert_eq!(activity["details"], "O ");
+        assert_eq!(activity["state"], "О ");
+
+        // padding only kicks in below the minimum; normal text is untouched
+        let normal = activity_args("Труляля", Some("строка".into()), None, None, None, None);
+        let parsed: serde_json::Value = serde_json::from_str(&wrap_set(&normal, "n")).unwrap();
+        assert_eq!(parsed["args"]["activity"]["details"], "Труляля");
+        assert_eq!(parsed["args"]["activity"]["state"], "строка");
     }
 }
 

@@ -60,6 +60,33 @@ fn main() {
                 r#"{{"name":"Tempo","type":2,"details":"Probe D timing","state":"start+end","timestamps":{{"start":{start},"end":{}}}}}"#
             , start + 180_000),
         ),
+        // The cases below pin the field rules activity_args relies on. E must be
+        // accepted and F..H must be rejected; if that ever flips, the presence
+        // silently loses its artwork or its whole activity.
+        (
+            "E: assets with large_text OMITTED - accepted, and no caption line",
+            format!(
+                r#"{{"name":"Tempo","type":2,"details":"Probe E no large_text","state":"lyric line","timestamps":{{"start":{start}}},"assets":{{"large_image":"https://i1.sndcdn.com/artworks-000000000000-000000-t500x500.jpg"}}}}"#
+            ),
+        ),
+        (
+            "F: large_text = \"\" - must be REJECTED (why it cannot just be blanked)",
+            format!(
+                r#"{{"name":"Tempo","type":2,"details":"Probe F empty large_text","state":"lyric line","timestamps":{{"start":{start}}},"assets":{{"large_image":"tempo_logo","large_text":""}}}}"#
+            ),
+        ),
+        (
+            "G: one-char details - must be REJECTED (min length is 2)",
+            r#"{"name":"Tempo","type":2,"details":"o","state":"lyric line"}"#.to_string(),
+        ),
+        (
+            "H: one-char state - must be REJECTED (min length is 2)",
+            r#"{"name":"Tempo","type":2,"details":"Probe H","state":"o"}"#.to_string(),
+        ),
+        (
+            "I: one-char fields padded to two - accepted (the fix for G/H)",
+            r#"{"name":"Tempo","type":2,"details":"o ","state":"o "}"#.to_string(),
+        ),
     ];
 
     for (label, activity) in cases {
