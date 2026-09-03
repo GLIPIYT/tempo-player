@@ -8,8 +8,8 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
 use crate::models::{
     Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, FavoriteOrderEntry, FileStamp,
-    HiddenTrack, HistoryEntryDto, LibraryFolder, Playlist, PlaylistTrack, SearchResults,
-    StatsSummary, TopArtistItem, TopTrackItem, Track, TrackInput,
+    HiddenTrack, HistoryEntryDto, LibraryFolder, LyricsOverride, Playlist, PlaylistTrack,
+    SearchResults, StatsSummary, TopArtistItem, TopTrackItem, Track, TrackInput,
 };
 
 const TRACK_COLUMNS: &str =
@@ -1477,6 +1477,97 @@ impl Db {
             conn.execute(
                 "UPDATE tracks SET lyrics = ?2 WHERE id = ?1",
                 params![track_id, lyrics],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    /// The lyrics the user pinned, if any. Read before the automatic cache, so a
+    /// pin wins over both embedded tags and whatever the online providers return.
+    pub fn get_lyrics_override(&self, track_id: i64) -> Result<Option<LyricsOverride>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT provider, source_artist, source_title, lrc, offset_ms, updated_at \
+                 FROM track_lyrics_override WHERE track_id = ?1",
+                params![track_id],
+                |row| {
+                    Ok(LyricsOverride {
+                        provider: row.get(0)?,
+                        source_artist: row.get(1)?,
+                        source_title: row.get(2)?,
+                        lrc: row.get(3)?,
+                        offset_ms: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(db_err)
+        })
+    }
+
+    /// Pins lyrics to a track. One row per track, so re-pinning replaces.
+    pub fn set_lyrics_override(
+        &self,
+        track_id: i64,
+        provider: &str,
+        source_artist: Option<&str>,
+        source_title: Option<&str>,
+        lrc: &str,
+        offset_ms: i64,
+    ) -> Result<(), String> {
+        let now = now();
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO track_lyrics_override \
+                     (track_id, provider, source_artist, source_title, lrc, offset_ms, updated_at) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+                 ON CONFLICT(track_id) DO UPDATE SET \
+                     provider = excluded.provider, \
+                     source_artist = excluded.source_artist, \
+                     source_title = excluded.source_title, \
+                     lrc = excluded.lrc, \
+                     offset_ms = excluded.offset_ms, \
+                     updated_at = excluded.updated_at",
+                params![
+                    track_id,
+                    provider,
+                    source_artist,
+                    source_title,
+                    lrc,
+                    offset_ms,
+                    now
+                ],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    /// Moves the pinned lyrics in time without touching the pinned text. Returns
+    /// false when there is nothing pinned - the caller then has to pin first,
+    /// since an offset for automatic lyrics has nowhere else to live.
+    pub fn set_lyrics_override_offset(&self, track_id: i64, offset_ms: i64) -> Result<bool, String> {
+        let now = now();
+        self.with_conn(|conn| {
+            let changed = conn
+                .execute(
+                    "UPDATE track_lyrics_override SET offset_ms = ?2, updated_at = ?3 \
+                     WHERE track_id = ?1",
+                    params![track_id, offset_ms, now],
+                )
+                .map_err(db_err)?;
+            Ok(changed > 0)
+        })
+    }
+
+    /// Back to automatic lyrics. Idempotent.
+    pub fn clear_lyrics_override(&self, track_id: i64) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM track_lyrics_override WHERE track_id = ?1",
+                params![track_id],
             )
             .map_err(db_err)?;
             Ok(())
@@ -3568,6 +3659,66 @@ mod tests {
         db.upsert_scanned_tracks(&[], &[cleared]).unwrap();
         assert_eq!(db.get_track_lyrics(track_id).unwrap(), None);
         assert_eq!(db.get_track_lyrics(987654).unwrap(), None);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lyrics_override_survives_rescan_and_resets() {
+        let (db, dir) = test_db("lyrover");
+        let folder = db.add_library_folder(r"C:\ov").unwrap();
+        let mut input = track_input(r"C:\ov\s.mp3", folder.id, "Song", Some("Art"), None);
+        input.lyrics = Some("scanned verse".to_string());
+        db.upsert_scanned_tracks(&[input], &[]).unwrap();
+        let track_id: i64 = db
+            .with_conn(|c| c.query_row("SELECT id FROM tracks", [], |r| r.get(0)).map_err(db_err))
+            .unwrap();
+
+        assert_eq!(db.get_lyrics_override(track_id).unwrap(), None);
+        db.set_lyrics_override(
+            track_id,
+            "lrclib",
+            Some("Other Artist"),
+            Some("Other Title"),
+            "[00:01.00]pinned line",
+            -500,
+        )
+        .unwrap();
+
+        // The whole point of the separate table: a rescan rewrites tracks.lyrics
+        // but must not touch what the user pinned.
+        let mut changed = track_input(r"C:\ov\s.mp3", folder.id, "Song", Some("Art"), None);
+        changed.lyrics = Some("rescanned verse".to_string());
+        db.upsert_scanned_tracks(&[], &[changed]).unwrap();
+        assert_eq!(
+            db.get_track_lyrics(track_id).unwrap().as_deref(),
+            Some("rescanned verse")
+        );
+        let pinned = db.get_lyrics_override(track_id).unwrap().unwrap();
+        assert_eq!(pinned.provider, "lrclib");
+        assert_eq!(pinned.source_artist.as_deref(), Some("Other Artist"));
+        assert_eq!(pinned.source_title.as_deref(), Some("Other Title"));
+        assert_eq!(pinned.lrc, "[00:01.00]pinned line");
+        assert_eq!(pinned.offset_ms, -500);
+
+        // Re-pinning replaces rather than duplicating, and the offset can be nudged
+        // on its own once something is pinned.
+        db.set_lyrics_override(track_id, "genius", None, None, "plain words", 0)
+            .unwrap();
+        let repinned = db.get_lyrics_override(track_id).unwrap().unwrap();
+        assert_eq!(repinned.provider, "genius");
+        assert_eq!(repinned.source_artist, None);
+        assert_eq!(repinned.offset_ms, 0);
+        assert!(db.set_lyrics_override_offset(track_id, 1500).unwrap());
+        assert_eq!(db.get_lyrics_override(track_id).unwrap().unwrap().offset_ms, 1500);
+        assert!(!db.set_lyrics_override_offset(987654, 500).unwrap());
+
+        db.clear_lyrics_override(track_id).unwrap();
+        assert_eq!(db.get_lyrics_override(track_id).unwrap(), None);
+        // Idempotent, and unknown ids are not an error.
+        db.clear_lyrics_override(track_id).unwrap();
+        db.clear_lyrics_override(987654).unwrap();
+        assert_eq!(db.get_lyrics_override(987654).unwrap(), None);
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

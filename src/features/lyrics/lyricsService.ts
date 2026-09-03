@@ -42,12 +42,33 @@ export const lyricsService = {
     }
     void run().catch(() => {})
   },
+  /**
+   * Drops the per-track guard so the next `ensure` refetches. Called when the user
+   * pins other lyrics or nudges the offset: without this the presence would keep
+   * the old lines until the track changed.
+   */
+  invalidate: (sourceId?: string): void => {
+    if (sourceId !== undefined && currentKey !== sourceId) return
+    currentKey = ''
+  },
 }
 
 async function fetchLyrics(
   track: { sourceId: string; title: string; artists: string[]; dbId: number | null },
   cacheOnline: boolean,
 ): Promise<LyricsResult | null> {
+  // What the user pinned outranks everything, including embedded tags, so the
+  // overlay and the Discord presence can never show different words.
+  if (track.dbId != null) {
+    try {
+      const pinned = await api.getLyricsOverride(track.dbId)
+      if (pinned && pinned.lrc.trim()) {
+        const lines = parseLrc(pinned.lrc, pinned.offsetMs)
+        if (lines && lines.length > 0) return { kind: 'synced', lines }
+        return { kind: 'plain', text: pinned.lrc.trim() }
+      }
+    } catch {}
+  }
   if (track.dbId != null) {
     try {
       const raw = await api.getTrackLyrics(track.dbId)

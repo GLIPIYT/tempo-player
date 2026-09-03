@@ -194,6 +194,21 @@ export interface FavoriteOrderEntry {
   refId: number
 }
 
+/**
+ * The lyrics the user pinned to a track. `sourceArtist`/`sourceTitle` are what was
+ * searched for, which need not match the track's own tags - pinning another song's
+ * lyrics is the point. Lives apart from the automatic cache so a rescan cannot
+ * clobber it.
+ */
+export interface LyricsOverride {
+  provider: string
+  sourceArtist: string | null
+  sourceTitle: string | null
+  lrc: string
+  offsetMs: number
+  updatedAt: number
+}
+
 export interface DailyMinutes {
   date: string
   minutes: number

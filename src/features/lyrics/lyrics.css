@@ -412,6 +412,82 @@
   flex-shrink: 0;
 }
 
+.lyr-prov-item-glyph {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.lyr-prov-item-auto {
+  border-bottom: 1px solid var(--border);
+  border-radius: 7px 7px 0 0;
+  margin-bottom: 2px;
+  padding-bottom: 9px;
+}
+
+.lyr-prov-item-pin {
+  color: var(--accent-strong);
+  flex-shrink: 0;
+}
+
+/* Pinned marker + offset nudge. Sits left of the provider dropdown, and is the
+   first thing to wrap away on a narrow overlay. */
+.lyr-offset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+}
+
+.lyr-pinned-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  white-space: nowrap;
+}
+
+.lyr-offset-btn {
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 68%, transparent);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.lyr-offset-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+
+.lyr-offset-value {
+  min-width: 40px;
+  text-align: center;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.lyr-offset-value.is-shifted {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .lyr-manual-toggle {
   font-size: 12px;
   color: var(--text-muted);
@@ -856,6 +932,12 @@
   .lyr-head {
     justify-content: center;
     padding: 8px 2px 12px;
+  }
+
+  /* Centred header: the auto-margin that pushes the offset row left on a wide
+     overlay would fight the centring here. */
+  .lyr-offset {
+    margin-right: 0;
   }
 
   .lyr-prov-menu {

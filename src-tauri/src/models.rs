@@ -250,3 +250,17 @@ pub struct FavoriteOrderEntry {
     pub kind: String,
     pub ref_id: i64,
 }
+
+/// The lyrics the user pinned to a track. `source_artist`/`source_title` are what
+/// was searched for, not the track's own tags - the whole point of pinning is that
+/// the two can differ. Kept out of `tracks.lyrics` so a rescan cannot clobber it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LyricsOverride {
+    pub provider: String,
+    pub source_artist: Option<String>,
+    pub source_title: Option<String>,
+    pub lrc: String,
+    pub offset_ms: i64,
+    pub updated_at: i64,
+}

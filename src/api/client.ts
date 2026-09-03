@@ -12,6 +12,7 @@ import type {
   HiddenTrack,
   HistoryEntry,
   LibraryFolder,
+  LyricsOverride,
   Playlist,
   PlaylistTrack,
   ScanSummary,
@@ -90,6 +91,21 @@ export const api = {
 
   getTrackLyrics: (trackId: number) => invoke<string | null>('get_track_lyrics', { trackId }),
   setTrackLyrics: (trackId: number, lyrics: string) => invoke<void>('set_track_lyrics', { trackId, lyrics }),
+
+  getLyricsOverride: (trackId: number) =>
+    invoke<LyricsOverride | null>('get_lyrics_override', { trackId }),
+  setLyricsOverride: (payload: {
+    trackId: number
+    provider: string
+    sourceArtist: string | null
+    sourceTitle: string | null
+    lrc: string
+    offsetMs: number
+  }) => invoke<void>('set_lyrics_override', payload),
+  /** False when nothing is pinned yet - pin first, then the offset has a home. */
+  setLyricsOverrideOffset: (trackId: number, offsetMs: number) =>
+    invoke<boolean>('set_lyrics_override_offset', { trackId, offsetMs }),
+  clearLyricsOverride: (trackId: number) => invoke<void>('clear_lyrics_override', { trackId }),
 
   discordSetPresence: (payload: {
     clientId: string

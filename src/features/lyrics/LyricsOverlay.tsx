@@ -1,17 +1,20 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { Check, ChevronDown, MicVocal, Music2, Pause, Play, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
+import { Check, ChevronDown, MicVocal, Music2, Pause, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 import type { TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from 'react'
 import { usePlayer } from '../../player'
 import { useT } from '../../i18n'
+import { useSettings } from '../../state/settings'
 import Cover from '../../components/common/Cover'
 import { fmtTime } from '../../utils/format'
 import { api } from '../../api/client'
+import type { LyricsOverride } from '../../types/models'
 import { EmbeddedTagsLyricsProvider } from './embeddedProvider'
 import { fetchOnlineLyricsCandidates } from './onlineProvider'
 import type { LyricsCandidate } from './onlineProvider'
 import type { LyricsLine, LyricsResult } from './types'
-import { parseLrc } from './lrc'
+import { formatLrc, parseLrc } from './lrc'
+import { lyricsService } from './lyricsService'
 import './lyrics.css'
 
 interface LyricsOverlayProps {
@@ -32,8 +35,60 @@ const GAP_THRESHOLD_SEC = 5
 const ANCHOR_RATIO = 0.38
 const PAUSE_MS = 4000
 const END_HOLD_SEC = 3
+const OFFSET_STEP_MS = 500
+const OFFSET_LIMIT_MS = 30000
 
 const overlayCache = new Map<string, { candidates: LyricsCandidate[]; selectedIndex: number }>()
+
+/**
+ * The raw text a candidate would be pinned as. Online candidates carry their
+ * original body; an embedded one only ever existed as parsed lines, so it is
+ * written back out. A plain candidate pins as its own text.
+ */
+function candidateLrc(c: LyricsCandidate): string {
+  if (c.syncedLrc && c.syncedLrc.trim()) return c.syncedLrc
+  if (c.result.kind === 'synced') return formatLrc(c.result.lines)
+  if (c.plain && c.plain.trim()) return c.plain
+  return c.result.kind === 'plain' ? c.result.text : ''
+}
+
+/**
+ * Re-times an already-parsed candidate by `offsetMs`. The pinned row keeps the
+ * unshifted body plus an offset, so the offset has to be re-applied whenever the
+ * overlay renders - and re-applied from the original, not stacked on the last
+ * render, which is why this re-parses instead of nudging in place.
+ */
+function shiftCandidate(c: LyricsCandidate, offsetMs: number): LyricsCandidate {
+  if (offsetMs === 0 || c.result.kind !== 'synced') return c
+  const raw = candidateLrc(c)
+  const lines = raw ? parseLrc(raw, offsetMs) : null
+  if (!lines || lines.length === 0) return c
+  return { ...c, result: { kind: 'synced', lines } }
+}
+
+/** A pinned row rendered as a candidate, so the dropdown can show what it is. */
+function overrideCandidate(pinned: LyricsOverride): LyricsCandidate | null {
+  const lines = parseLrc(pinned.lrc)
+  if (lines && lines.length > 0) {
+    return { provider: pinned.provider, result: { kind: 'synced', lines }, plain: null, syncedLrc: pinned.lrc }
+  }
+  const text = pinned.lrc.trim()
+  if (!text) return null
+  return { provider: pinned.provider, result: { kind: 'plain', text }, plain: pinned.lrc, syncedLrc: null }
+}
+
+/**
+ * Whether a candidate is the one currently pinned. Compared on provider plus the
+ * head of the body: a re-fetch of the same provider hands back an equal but not
+ * identical object, and the pinned row's own copy went through the DB.
+ */
+function samePin(c: LyricsCandidate, pinned: LyricsOverride | null): boolean {
+  if (!pinned) return false
+  if (c.provider !== pinned.provider) return false
+  const a = candidateLrc(c).trim().slice(0, 200)
+  const b = pinned.lrc.trim().slice(0, 200)
+  return a === b
+}
 
 function providerLabel(provider: string, t: (k: string) => string): string {
   if (provider === 'embedded') return t('Embedded')
@@ -425,10 +480,17 @@ function ProviderDropdown({
   candidates,
   selectedIndex,
   onSelect,
+  onReset,
+  pinnedIndex,
+  canPin,
 }: {
   candidates: LyricsCandidate[]
   selectedIndex: number
   onSelect: (idx: number) => void
+  onReset: () => void
+  /** index of the candidate that is pinned, or -1 */
+  pinnedIndex: number
+  canPin: boolean
 }) {
   const t = useT()
   const [open, setOpen] = useState(false)
@@ -465,6 +527,25 @@ function ProviderDropdown({
       </button>
       {open && (
         <div className="lyr-prov-menu" role="menu">
+          {/* Selecting a row pins it, so the way back to automatic lyrics has to be
+              a row of its own. Shown only when pinning is possible at all. */}
+          {canPin && (
+            <button
+              role="menuitemradio"
+              aria-checked={pinnedIndex < 0}
+              className={'lyr-prov-item lyr-prov-item-auto' + (pinnedIndex < 0 ? ' is-selected' : '')}
+              onClick={() => {
+                onReset()
+                setOpen(false)
+              }}
+            >
+              <span className="lyr-prov-item-main">
+                <RotateCcw size={13} className="lyr-prov-item-glyph" />
+                <span className="lyr-prov-item-name">{t('Auto (reset)')}</span>
+              </span>
+              {pinnedIndex < 0 && <Check size={14} className="lyr-prov-item-check" />}
+            </button>
+          )}
           {candidates.map((c, i) => {
             const isSelected = i === selectedIndex
             const isSynced = Boolean(c.syncedLrc) || c.result.kind === 'synced'
@@ -484,6 +565,7 @@ function ProviderDropdown({
                   <span className={'lyr-prov-badge' + (isSynced ? ' is-synced' : ' is-plain')}>
                     {isSynced ? t('SYNCED') : t('TEXT')}
                   </span>
+                  {i === pinnedIndex && <Pin size={12} className="lyr-prov-item-pin" />}
                 </span>
                 {isSelected && <Check size={14} className="lyr-prov-item-check" />}
               </button>
@@ -491,6 +573,50 @@ function ProviderDropdown({
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * Pinned marker plus the ±0.5s nudge. Editing the offset of automatic lyrics pins
+ * the current selection first - there is nowhere else to keep an offset.
+ */
+function OffsetControls({
+  offsetMs,
+  pinned,
+  onNudge,
+}: {
+  offsetMs: number
+  pinned: boolean
+  onNudge: (deltaMs: number) => void
+}) {
+  const t = useT()
+  const label = offsetMs === 0 ? '0.0s' : `${offsetMs > 0 ? '+' : '−'}${(Math.abs(offsetMs) / 1000).toFixed(1)}s`
+  return (
+    <div className="lyr-offset">
+      {pinned && (
+        <span className="lyr-pinned-badge" title={t('These lyrics are pinned to this track')}>
+          <Pin size={11} />
+          {t('Pinned')}
+        </span>
+      )}
+      <button
+        className="lyr-offset-btn"
+        onClick={() => onNudge(-OFFSET_STEP_MS)}
+        aria-label={t('Lyrics earlier by 0.5s')}
+        title={t('Lyrics earlier by 0.5s')}
+      >
+        −0.5s
+      </button>
+      <span className={'lyr-offset-value' + (offsetMs === 0 ? '' : ' is-shifted')}>{label}</span>
+      <button
+        className="lyr-offset-btn"
+        onClick={() => onNudge(OFFSET_STEP_MS)}
+        aria-label={t('Lyrics later by 0.5s')}
+        title={t('Lyrics later by 0.5s')}
+      >
+        +0.5s
+      </button>
     </div>
   )
 }
@@ -508,6 +634,35 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   const [manualArtist, setManualArtist] = useState(track?.artists[0] ?? '')
   const [manualTitle, setManualTitle] = useState(track?.title ?? '')
   const [searching, setSearching] = useState(false)
+  const [pinned, setPinned] = useState<LyricsOverride | null>(null)
+  /** the terms the last manual search actually used, for the pinned row's provenance */
+  const [searchedAs, setSearchedAs] = useState<{ artist: string; title: string } | null>(null)
+  const { settings } = useSettings()
+  // Only tracks with a database row can pin - there is nothing to pin to otherwise,
+  // so SoundCloud results that were never cached keep the session-only dropdown.
+  const canPin = track?.dbId != null
+
+  useEffect(() => {
+    let cancelled = false
+    const id = p.currentTrack?.dbId ?? null
+    if (id == null) {
+      setPinned(null)
+      return
+    }
+    api
+      .getLyricsOverride(id)
+      .then((row) => {
+        if (!cancelled) setPinned(row)
+      })
+      .catch(() => {
+        if (!cancelled) setPinned(null)
+      })
+    return () => {
+      cancelled = true
+    }
+    // the track identity is the trigger; dbId is a function of it
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackKey])
 
   useEffect(() => {
     const tr = p.currentTrack
@@ -519,6 +674,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       setManualTitle('')
     }
     setShowManual(false)
+    setSearchedAs(null)
   }, [trackKey, p.currentTrack])
 
   useEffect(() => {
@@ -637,20 +793,133 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const selected = candidates[selectedIndex] ?? null
-  const mode: OverlayMode = loading && candidates.length === 0 ? 'loading' : selected ? selected.result.kind : 'empty'
+  const pinnedIndex = useMemo(
+    () => (pinned ? candidates.findIndex((c) => samePin(c, pinned)) : -1),
+    [candidates, pinned],
+  )
+  const offsetMs = pinned?.offsetMs ?? 0
 
+  /**
+   * A pin whose source is not in the fetched list - pinned from another song's
+   * search, or fetched from a provider that has since stopped answering. It gets
+   * prepended so the dropdown can still show and render it.
+   */
+  const pinnedExtra = useMemo(
+    () => (pinned && pinnedIndex < 0 ? overrideCandidate(pinned) : null),
+    [pinned, pinnedIndex],
+  )
+  const viewPinnedIndex = pinnedExtra ? 0 : pinnedIndex
+  /** The dropdown's list: fetched candidates, with the stray pin in front if any. */
+  const baseCandidates = useMemo(
+    () => (pinnedExtra ? [pinnedExtra, ...candidates] : candidates),
+    [pinnedExtra, candidates],
+  )
+  const viewCandidates = useMemo(() => {
+    if (offsetMs === 0 || viewPinnedIndex < 0) return baseCandidates
+    // Only the pinned row carries the offset; the others are still their own timing.
+    return baseCandidates.map((c, i) => (i === viewPinnedIndex ? shiftCandidate(c, offsetMs) : c))
+  }, [baseCandidates, offsetMs, viewPinnedIndex])
+  // A pin is the selection, by definition - selecting is what pinning is.
+  const viewSelectedIndex =
+    viewPinnedIndex >= 0 ? viewPinnedIndex : selectedIndex + (pinnedExtra ? 1 : 0)
+  const selected = viewCandidates[viewSelectedIndex] ?? null
+  const mode: OverlayMode =
+    loading && viewCandidates.length === 0 ? 'loading' : selected ? selected.result.kind : 'empty'
+
+  /**
+   * Writes the pin and tells the lyrics service to forget what it cached, so the
+   * Discord presence follows the same choice instead of waiting for a track change.
+   */
+  const persistPin = useCallback(
+    async (candidate: LyricsCandidate, nextOffsetMs: number) => {
+      const tr = p.currentTrack
+      if (!tr || tr.dbId == null) return
+      const lrc = candidateLrc(candidate)
+      if (!lrc.trim()) return
+      try {
+        await api.setLyricsOverride({
+          trackId: tr.dbId,
+          provider: candidate.provider,
+          sourceArtist: searchedAs?.artist ?? tr.artists[0] ?? null,
+          sourceTitle: searchedAs?.title ?? tr.title,
+          lrc,
+          offsetMs: nextOffsetMs,
+        })
+        setPinned({
+          provider: candidate.provider,
+          sourceArtist: searchedAs?.artist ?? tr.artists[0] ?? null,
+          sourceTitle: searchedAs?.title ?? tr.title,
+          lrc,
+          offsetMs: nextOffsetMs,
+          updatedAt: Math.floor(Date.now() / 1000),
+        })
+        lyricsService.invalidate(tr.sourceId)
+        lyricsService.ensure(tr, settings.lyrics.cacheOnline)
+      } catch {}
+    },
+    [p.currentTrack, searchedAs, settings.lyrics.cacheOnline],
+  )
+
+  /**
+   * `viewIdx` addresses the rendered list, which may carry a stray pin in front of
+   * the fetched ones. Selecting that row is a no-op - it is already the pin.
+   */
   const handleSelect = useCallback(
-    (idx: number) => {
+    (viewIdx: number) => {
+      const idx = pinnedExtra ? viewIdx - 1 : viewIdx
+      if (idx < 0) return
       setSelectedIndex(idx)
       const tr = p.currentTrack
       const key = tr ? `${tr.source}|${tr.sourceId}|${tr.title}|${tr.artists.join(',')}` : ''
       if (key && candidates.length > 0) {
         overlayCache.set(key, { candidates, selectedIndex: idx })
       }
-      requestAnimationFrame(() => {})
+      // Choosing a provider is the pin gesture - there is no separate confirm.
+      // The offset is dropped, since it was tuned against the previous lines.
+      const candidate = candidates[idx]
+      if (candidate) void persistPin(candidate, 0)
     },
-    [p.currentTrack, candidates],
+    [p.currentTrack, candidates, persistPin, pinnedExtra],
+  )
+
+  /** Back to automatic: drops the row and lets the normal chain resolve again. */
+  const handleResetPin = useCallback(() => {
+    const tr = p.currentTrack
+    if (!tr || tr.dbId == null) return
+    setPinned(null)
+    api
+      .clearLyricsOverride(tr.dbId)
+      .then(() => {
+        lyricsService.invalidate(tr.sourceId)
+        lyricsService.ensure(tr, settings.lyrics.cacheOnline)
+      })
+      .catch(() => {})
+  }, [p.currentTrack, settings.lyrics.cacheOnline])
+
+  /**
+   * Nudging automatic lyrics has to pin them first - `offset_ms` lives on the
+   * pinned row, and there is no other place to keep a per-track offset.
+   */
+  const handleNudgeOffset = useCallback(
+    (deltaMs: number) => {
+      const tr = p.currentTrack
+      if (!tr || tr.dbId == null) return
+      const next = clamp((pinned?.offsetMs ?? 0) + deltaMs, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS)
+      if (pinned) {
+        setPinned({ ...pinned, offsetMs: next })
+        api
+          .setLyricsOverrideOffset(tr.dbId, next)
+          .then(() => {
+            lyricsService.invalidate(tr.sourceId)
+            lyricsService.ensure(tr, settings.lyrics.cacheOnline)
+          })
+          .catch(() => {})
+        return
+      }
+      const candidate = candidates[selectedIndex]
+      if (candidate) void persistPin(candidate, next)
+    },
+    [p.currentTrack, pinned, candidates, selectedIndex, persistPin, settings.lyrics.cacheOnline],
   )
 
   const handleManualSearch = useCallback(
@@ -684,6 +953,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
         }
         const embeddedOnly = candidates.filter((c) => c.provider === 'embedded')
         const combined = [...embeddedOnly, ...out]
+        setSearchedAs({ artist: a, title: tt })
         if (combined.length === 0) {
           setCandidates([])
           setSelectedIndex(0)
@@ -769,18 +1039,28 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           <LyricsVolumeRow />
         </aside>
         <section className="lyr-stage-col">
-          {candidates.length > 0 && (
+          {viewCandidates.length > 0 && (
             <div className="lyr-head">
-              <ProviderDropdown candidates={candidates} selectedIndex={selectedIndex} onSelect={handleSelect} />
+              {canPin && (
+                <OffsetControls offsetMs={offsetMs} pinned={pinned !== null} onNudge={handleNudgeOffset} />
+              )}
+              <ProviderDropdown
+                candidates={viewCandidates}
+                selectedIndex={viewSelectedIndex}
+                onSelect={handleSelect}
+                onReset={handleResetPin}
+                pinnedIndex={viewPinnedIndex}
+                canPin={canPin}
+              />
               <button className="lyr-manual-toggle" onClick={() => setShowManual((v) => !v)}>
                 {showManual ? t('Hide') : t('Search manually')}
               </button>
               {showManual && manualForm}
             </div>
           )}
-          {searching && candidates.length > 0 && <LoadingMark />}
+          {searching && viewCandidates.length > 0 && <LoadingMark />}
           {mode === 'synced' && selected?.result.kind === 'synced' && (
-            <SyncedView key={`${trackKey}-${selectedIndex}`} lines={selected.result.lines} />
+            <SyncedView key={`${trackKey}-${viewSelectedIndex}-${offsetMs}`} lines={selected.result.lines} />
           )}
           {mode === 'plain' && selected?.result.kind === 'plain' && <PlainView text={selected.result.text} />}
           {mode === 'loading' && !searching && <LoadingMark />}

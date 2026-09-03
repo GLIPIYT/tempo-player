@@ -9,8 +9,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::database::Db;
 use crate::models::{
     Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, CoversCacheInfo, FavoriteOrderEntry,
-    HiddenTrack, HistoryEntryDto, LibraryFolder, Playlist, PlaylistTrack, ScanPhase, ScanProgress,
-    ScanSummary, SearchResults, Track,
+    HiddenTrack, HistoryEntryDto, LibraryFolder, LyricsOverride, Playlist, PlaylistTrack, ScanPhase,
+    ScanProgress, ScanSummary, SearchResults, Track,
 };
 use crate::scanner;
 
@@ -913,6 +913,55 @@ pub async fn upload_cover(
 #[tauri::command]
 pub fn set_track_lyrics(state: State<'_, AppState>, track_id: i64, lyrics: String) -> Result<(), String> {
     state.db.set_track_lyrics(track_id, &lyrics)
+}
+
+/// The lyrics the user pinned to this track, if any. Read before the automatic
+/// cache so the overlay and the Discord presence never disagree.
+#[tauri::command]
+pub fn get_lyrics_override(
+    state: State<'_, AppState>,
+    track_id: i64,
+) -> Result<Option<LyricsOverride>, String> {
+    state.db.get_lyrics_override(track_id)
+}
+
+/// Pins lyrics to a track: a provider, what was searched for, and the text itself.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn set_lyrics_override(
+    state: State<'_, AppState>,
+    track_id: i64,
+    provider: String,
+    source_artist: Option<String>,
+    source_title: Option<String>,
+    lrc: String,
+    offset_ms: i64,
+) -> Result<(), String> {
+    state.db.set_lyrics_override(
+        track_id,
+        &provider,
+        source_artist.as_deref(),
+        source_title.as_deref(),
+        &lrc,
+        offset_ms,
+    )
+}
+
+/// Nudges a pinned selection in time. False means nothing is pinned yet, and the
+/// caller has to pin the current lyrics before an offset has anywhere to live.
+#[tauri::command]
+pub fn set_lyrics_override_offset(
+    state: State<'_, AppState>,
+    track_id: i64,
+    offset_ms: i64,
+) -> Result<bool, String> {
+    state.db.set_lyrics_override_offset(track_id, offset_ms)
+}
+
+/// Back to automatic lyrics.
+#[tauri::command]
+pub fn clear_lyrics_override(state: State<'_, AppState>, track_id: i64) -> Result<(), String> {
+    state.db.clear_lyrics_override(track_id)
 }
 
 #[tauri::command]
