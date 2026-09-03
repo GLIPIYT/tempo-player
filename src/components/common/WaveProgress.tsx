@@ -11,6 +11,10 @@ interface WaveProgressProps {
 }
 
 const BAR_COUNT = 90
+/** each bar needs a 2px body plus the 2px gap after it to stay readable */
+const BAR_SLOT_PX = 4
+/** below this many bars the waveform stops reading as one, so it is the floor */
+const BAR_COUNT_MIN = 24
 
 function hashUnit(input: string): number {
   let h = 2166136261
@@ -32,16 +36,39 @@ export default function WaveProgress({ position, duration, seed, onSeek }: WaveP
   const previewRef = useRef(0)
   const [scrubbing, setScrubbing] = useState(false)
   const [previewFrac, setPreviewFrac] = useState(0)
+  const [barCount, setBarCount] = useState(BAR_COUNT)
+
+  // Each bar has a 2px floor plus a 2px gap, so a fixed 90 bars need ~358px and
+  // simply overflow below that - the row is not clipped. Measuring the real
+  // width and dropping bars keeps the waveform inside its column at any size.
+  useEffect(() => {
+    const el = boxRef.current
+    if (!el) return
+    const apply = (w: number) => {
+      const fits = Math.floor(w / BAR_SLOT_PX)
+      const next = Math.max(BAR_COUNT_MIN, Math.min(BAR_COUNT, fits))
+      setBarCount((prev) => (prev === next ? prev : next))
+    }
+    apply(el.getBoundingClientRect().width)
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width
+      if (w !== undefined) apply(w)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   const heights = useMemo(() => {
     const arr: number[] = []
-    for (let i = 0; i < BAR_COUNT; i++) {
-      const u = hashUnit(`${seed}:${i}`)
-      const shaped = u ** 1.3 * (0.38 + 0.62 * bellWeight(i / (BAR_COUNT - 1)))
+    for (let i = 0; i < barCount; i++) {
+      // sampled across the full seed range, so fewer bars still span the track
+      // instead of showing only its opening
+      const u = hashUnit(`${seed}:${Math.round((i * (BAR_COUNT - 1)) / Math.max(1, barCount - 1))}`)
+      const shaped = u ** 1.3 * (0.38 + 0.62 * bellWeight(i / Math.max(1, barCount - 1)))
       arr.push(18 + shaped * 82)
     }
     return arr
-  }, [seed])
+  }, [seed, barCount])
 
   const commit = useCallback(
     (frac: number) => {

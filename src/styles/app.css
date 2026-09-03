@@ -750,12 +750,22 @@
 .playerbar {
   height: var(--playerbar-h);
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) auto minmax(0, 1.5fr) minmax(0, 0.85fr);
+  /* the right column is `auto`, not a fraction: as a fraction it could be
+     squeezed below its content width, and since everything inside is
+     flex-shrink: 0 with justify-content: flex-end, the buttons spilled left
+     underneath the progress bar at narrow widths. Only "now playing" and the
+     progress column give up space now. */
+  grid-template-columns: minmax(0, 1.05fr) auto minmax(0, 1.5fr) auto;
   align-items: center;
   gap: 18px;
   padding: 0 16px;
   background: var(--bg-elevated);
   border-top: 1px solid var(--border);
+  /* width queries below key off the player itself, not the window: the sidebar
+     is resizable (200-340px) and collapsible, so the same window width leaves
+     very different room here */
+  container-type: inline-size;
+  container-name: playerbar;
 }
 
 .pb-now {
@@ -855,6 +865,48 @@
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* Volume: inline slider when there is room, popover under the speaker icon when
+   there is not. Both sliders are always in the DOM and the container query
+   decides which one is visible - that way no JS has to mirror the breakpoint,
+   and the speaker button keeps its only job, toggling mute. */
+.pb-vol {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pb-vol-pop {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 46;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+@container playerbar (max-width: 720px) {
+  .playerbar {
+    gap: 12px;
+  }
+
+  /* frees ~84px for the progress column; the slider moves into the popover */
+  .pb-vol > .pb-volume {
+    display: none;
+  }
+
+  .pb-vol:hover .pb-vol-pop,
+  .pb-vol:focus-within .pb-vol-pop {
+    display: flex;
+  }
 }
 
 .pb-vol-icon {

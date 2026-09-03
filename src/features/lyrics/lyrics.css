@@ -916,6 +916,10 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  /* bars have a 2px floor, so a very narrow player could still push one past
+     the edge; clipping the row keeps that off the controls beside it. Not on
+     .wave itself - the scrub tooltip is positioned above the box. */
+  overflow: hidden;
 }
 
 .wave-bar {

@@ -238,26 +238,45 @@ function PlayerBarContent() {
               <Heart size={16} fill={liked ? 'currentColor' : 'none'} />
             </button>
           ) : null}
-          <button
-            className="icon-btn pb-vol-btn"
-            onClick={toggleMute}
-            aria-label={p.volume === 0 ? t('Unmute') : t('Mute')}
-          >
-            <VolIcon size={16} />
-          </button>
-          <input
-            className="pb-volume"
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={p.volume}
-            onChange={(e) => p.setVolume(e.target.valueAsNumber)}
-            style={{
-              background: `linear-gradient(to right, var(--text) ${volPct}%, var(--border) ${volPct}%)`,
-            }}
-            aria-label={t('Volume')}
-          />
+          <div className="pb-vol">
+            <button
+              className="icon-btn pb-vol-btn"
+              onClick={toggleMute}
+              aria-label={p.volume === 0 ? t('Unmute') : t('Mute')}
+            >
+              <VolIcon size={16} />
+            </button>
+            <input
+              className="pb-volume"
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={p.volume}
+              onChange={(e) => p.setVolume(e.target.valueAsNumber)}
+              style={{
+                background: `linear-gradient(to right, var(--text) ${volPct}%, var(--border) ${volPct}%)`,
+              }}
+              aria-label={t('Volume')}
+            />
+            {/* second copy for the narrow layout; CSS decides which one shows,
+                so the breakpoint lives in exactly one place */}
+            <div className="pb-vol-pop">
+              <input
+                className="pb-volume"
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={p.volume}
+                onChange={(e) => p.setVolume(e.target.valueAsNumber)}
+                style={{
+                  background: `linear-gradient(to right, var(--text) ${volPct}%, var(--border) ${volPct}%)`,
+                }}
+                aria-label={t('Volume')}
+              />
+            </div>
+          </div>
           <button
             className="icon-btn pb-radio-btn"
             onClick={() => void playRadio()}
