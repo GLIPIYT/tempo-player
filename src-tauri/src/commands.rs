@@ -1130,9 +1130,63 @@ pub fn get_artist_tracks(state: State<'_, AppState>, artist_id: i64) -> Result<V
     state.db.get_artist_tracks(artist_id)
 }
 
+/// The `/select,<path>` argument for the file manager. Windows Explorer only honours
+/// backslashes here - a forward-slash path opens the folder without highlighting
+/// anything - so separators are normalised. Built as one argv entry, never a shell
+/// string, so a quote or `&` in a filename is just a character.
+fn reveal_arg(path: &str) -> String {
+    #[cfg(windows)]
+    let path = path.replace('/', "\\");
+    format!("/select,{path}")
+}
+
+/// Opens the OS file manager with the track's file selected. Nothing is written and
+/// nothing is executed from the path - it is only ever handed to the file manager as
+/// a single argument. `Ok(false)` means the file has moved since it was indexed,
+/// which is a normal outcome rather than an error, so the caller can say so in the
+/// user's own language.
+#[tauri::command]
+pub fn reveal_in_file_manager(path: String) -> Result<bool, String> {
+    let file = Path::new(&path);
+    if !file.exists() {
+        return Ok(false);
+    }
+    #[cfg(windows)]
+    {
+        // explorer.exe reports exit code 1 even when it worked, so the status is
+        // deliberately not checked - only a failure to start is an error.
+        std::process::Command::new("explorer")
+            .arg(reveal_arg(&path))
+            .spawn()
+            .map(|_| true)
+            .map_err(|e| format!("failed to open explorer: {e}"))
+    }
+    #[cfg(not(windows))]
+    {
+        let target = file.parent().unwrap_or(file);
+        std::process::Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map(|_| true)
+            .map_err(|e| format!("failed to open the file manager: {e}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reveal_arg_is_one_argv_entry_with_native_separators() {
+        // the whole point: quotes and shell metacharacters stay literal, because
+        // this string is passed as a single argument and never through a shell
+        let arg = reveal_arg(r#"C:/mu sic/a & b "x".mp3"#);
+        #[cfg(windows)]
+        assert_eq!(arg, r#"/select,C:\mu sic\a & b "x".mp3"#);
+        #[cfg(not(windows))]
+        assert_eq!(arg, r#"/select,C:/mu sic/a & b "x".mp3"#);
+        assert!(arg.starts_with("/select,"));
+    }
 
     #[test]
     fn upload_reply_yields_the_image_url() {

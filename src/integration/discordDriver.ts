@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { normalizeLyricText } from '../features/lyrics/lrc'
 import { lyricLineAt, lyricsService } from '../features/lyrics/lyricsService'
 import { playerController } from '../player/controller'
 
@@ -53,6 +54,11 @@ function pausedLabel(lang: DriverSettings['lang']): string {
 
 let lastTrackKey: string | null = null
 let lastPlaying = false
+/**
+ * The last line that went out, in comparison form (see `lineKey`). Null means
+ * nothing has been sent for this track yet - kept distinct from '' so a track
+ * without lyrics does not look like a line flip on its first tick.
+ */
 let lastLine: string | null = null
 let lastInvokeAt = 0
 /** position seen on the previous tick; a jump between ticks means a seek */
@@ -75,6 +81,15 @@ function activeLine(trackKey: string, position: number): string | null {
   const cur = lyricsService.getCurrent()
   if (!cur || cur.trackId !== trackKey) return null
   return lyricLineAt(cur.result, position)
+}
+
+/**
+ * The value `lastLine` is compared on. A repeated chorus line usually differs only
+ * in case or a trailing dot, and each such near-duplicate would otherwise cost one
+ * of the five updates Discord allows per 20s.
+ */
+function lineKey(line: string | null): string {
+  return normalizeLyricText(line)
 }
 
 /** Public image URL for the presence, or null to send no assets at all
@@ -138,7 +153,7 @@ function doSend(snap: ReturnType<typeof playerController.getSnapshot>, reason: s
   const start = playing ? Date.now() - Math.round(elapsed * 1000) : null
   const end = playing && dur > 0 && start !== null ? start + Math.round(dur * 1000) : null
   const line = playing ? activeLine(track.sourceId, snap.position) : null
-  if (playing) lastLine = line
+  if (playing) lastLine = lineKey(line)
   lastInvokeAt = Date.now()
   presenceActive = true
   void invoke('discord_set_presence', {
@@ -237,8 +252,9 @@ function onPlayerChange(): void {
   const line = activeLine(track.sourceId, snap.position)
   const jumped = lastObservedElapsed >= 0 && Math.abs(snap.position - lastObservedElapsed) >= SEEK_DRIFT_SEC
   lastObservedElapsed = snap.position
-  if (line !== lastLine) {
-    lastLine = line
+  const key = lineKey(line)
+  if (key !== lastLine) {
+    lastLine = key
     // a skipped line is fine, the deferred send picks up the current one
     requestSend(snap, 'lyric')
     return

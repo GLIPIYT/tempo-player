@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Check, Heart, MoreHorizontal, Plus, ThumbsDown } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Disc3, FolderOpen, Heart, MoreHorizontal, Plus, ThumbsDown, User } from 'lucide-react'
 import { api } from '../../api/client'
 import type { Playlist, Track } from '../../types/models'
 import { usePlayer } from '../../player'
 import { useLikes } from '../../hooks/useLikes'
+import { useNav } from '../../state/nav'
 import { useT } from '../../i18n'
 import { trackToUnified } from '../../utils/unified'
 import { playlistDisplayName } from '../../utils/playlists'
@@ -35,6 +36,7 @@ export default function TrackMenu({
 }: TrackMenuProps) {
   const player = usePlayer()
   const likes = useLikes()
+  const { navigate } = useNav()
   const t = useT()
   const [open, setOpen] = useState(false)
   const [sub, setSub] = useState(false)
@@ -192,6 +194,67 @@ export default function TrackMenu({
     }
   }
 
+  const goToArtist = () => {
+    if (track.artistId == null) return
+    close()
+    navigate({ name: 'artist', id: track.artistId })
+  }
+
+  const goToAlbum = () => {
+    if (track.albumId == null) return
+    close()
+    navigate({ name: 'album', id: track.albumId })
+  }
+
+  const revealInExplorer = async () => {
+    close()
+    try {
+      const shown = await api.revealInFileManager(track.path)
+      if (!shown) flash(t('File not found on disk'), true)
+    } catch (e: unknown) {
+      flash(errText(e), true)
+    }
+  }
+
+  // Same three rows in two of the three menu bodies; built once so they cannot
+  // drift apart. Each is gated on the datum it needs: a track with no album row
+  // has nowhere to go, and only a local file has a path worth revealing.
+  const navRows =
+    track.artistId != null || track.albumId != null || track.source === 'local' ? (
+      <>
+        <div className="menu-sep" />
+        {track.artistId != null ? (
+          <button className="menu-item" role="menuitem" onClick={goToArtist}>
+            <User size={13} />
+            {t('Go to artist')}
+          </button>
+        ) : null}
+        {track.albumId != null ? (
+          <button className="menu-item" role="menuitem" onClick={goToAlbum}>
+            <Disc3 size={13} />
+            {t('Go to album')}
+          </button>
+        ) : null}
+        {track.source === 'local' ? (
+          <button className="menu-item" role="menuitem" onClick={() => void revealInExplorer()}>
+            <FolderOpen size={13} />
+            {t('Show in Explorer')}
+          </button>
+        ) : null}
+      </>
+    ) : null
+
+  const hideRow =
+    track.source === 'local' ? (
+      <>
+        <div className="menu-sep" />
+        <button className="menu-item menu-item-danger" role="menuitem" onClick={() => void hideTrack()}>
+          <ThumbsDown size={13} />
+          {t("Don't show in library")}
+        </button>
+      </>
+    ) : null
+
   return (
     <div
       ref={rootRef}
@@ -253,15 +316,8 @@ export default function TrackMenu({
               <button className="menu-item" role="menuitem" onClick={addQueue}>
                 {t('Add to queue')}
               </button>
-              {track.source === 'local' ? (
-                <>
-                  <div className="menu-sep" />
-                  <button className="menu-item menu-item-danger" role="menuitem" onClick={() => void hideTrack()}>
-                    <ThumbsDown size={13} />
-                    {t("Don't show in library")}
-                  </button>
-                </>
-              ) : null}
+              {navRows}
+              {hideRow}
             </>
           ) : sub ? (
             <>
@@ -345,15 +401,8 @@ export default function TrackMenu({
               >
                 {t('Add to playlist')}
               </button>
-              {track.source === 'local' ? (
-                <>
-                  <div className="menu-sep" />
-                  <button className="menu-item menu-item-danger" role="menuitem" onClick={() => void hideTrack()}>
-                    <ThumbsDown size={13} />
-                    {t("Don't show in library")}
-                  </button>
-                </>
-              ) : null}
+              {navRows}
+              {hideRow}
             </>
           )}
         </div>

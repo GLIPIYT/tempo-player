@@ -101,7 +101,13 @@ async function fetchLyrics(
   }
 }
 
-/** Active synced line at the given position, or null. */
+/**
+ * Active synced line at the given position, or null.
+ *
+ * An instrumental marker (a timecode with no text) yields null on purpose, so a
+ * caller like the Discord presence falls back to the artist rather than leaving
+ * the last sung line frozen on screen through the whole break.
+ */
 export function lyricLineAt(result: LyricsResult | null, positionSec: number): string | null {
   if (!result || result.kind !== 'synced') return null
   let line: string | null = null
@@ -109,5 +115,5 @@ export function lyricLineAt(result: LyricsResult | null, positionSec: number): s
     if (l.timeSec <= positionSec + 0.3) line = l.text
     else break
   }
-  return line
+  return line && line.trim() ? line : null
 }

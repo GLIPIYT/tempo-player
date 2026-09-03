@@ -131,7 +131,8 @@ pub fn run() {
             commands::import_playlist_m3u8,
             commands::hide_track,
             commands::unhide_track,
-            commands::list_hidden_tracks
+            commands::list_hidden_tracks,
+            commands::reveal_in_file_manager
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

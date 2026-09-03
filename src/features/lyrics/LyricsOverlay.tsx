@@ -105,6 +105,27 @@ function buildSegments(lines: LyricsLine[]): LyricSegment[] {
   for (let i = 0; i < lines.length; i++) {
     const next = lines[i + 1]
     const gap = next ? Math.max(0, next.timeSec - lines[i].timeSec) : 0
+    // a timecode with no text is the file's own instrumental marker - drawn as
+    // notes rather than a blank row, and it needs no gap threshold to qualify
+    if (!lines[i].text.trim()) {
+      const end = next ? next.timeSec : lines[i].timeSec + 6
+      const prev = segs[segs.length - 1]
+      if (prev && prev.kind === 'notes' && prev.endTimeSec >= lines[i].timeSec) {
+        // consecutive markers collapse into one run of notes, and the click target
+        // moves with it so it always lands on the next sung line
+        prev.endTimeSec = end
+        prev.seekToSec = next ? next.timeSec : lines[i].timeSec
+        continue
+      }
+      segs.push({
+        kind: 'notes',
+        timeSec: lines[i].timeSec,
+        endTimeSec: end,
+        text: '',
+        seekToSec: next ? next.timeSec : lines[i].timeSec,
+      })
+      continue
+    }
     if (next && gap > GAP_THRESHOLD_SEC) {
       const dotsAt = lines[i].timeSec + gap * 0.5
       segs.push({ kind: 'line', timeSec: lines[i].timeSec, endTimeSec: dotsAt, text: lines[i].text, seekToSec: lines[i].timeSec })

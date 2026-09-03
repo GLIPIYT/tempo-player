@@ -194,6 +194,12 @@ active, nothing is sent, because it is already on screen. Four fast chorus lines
 cost two requests and all four are visible. Longer runs are cut into pairs:
 (N, N+1), (N+2, N+3).
 
+**A repeated line is not paired with itself.** If N+1 normalises equal to N —
+"Ла ла ла" / "Ла ла ла." — the second slot is left empty and the line is shown
+once, on one line, rather than stacked twice. N+1 is still marked as shown, so
+the repeat costs no extra request either. Same comparator as the send gate
+below.
+
 Today the opposite happens on such a chorus: `requestSend` returns early while a
 timer is live (`discordDriver.ts:181`), and the deferred send takes whichever
 line is current by then. Intermediate lines are never shown at all.

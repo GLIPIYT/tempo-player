@@ -356,4 +356,8 @@ export const ru: Record<string, string> = {
   'Nothing hidden yet.': 'Пока ничего не скрыто.',
   'File is gone - it will return on the next scan':
     'Файла больше нет — он вернётся при следующем сканировании',
+  'Go to artist': 'Перейти к исполнителю',
+  'Go to album': 'Перейти к альбому',
+  'Show in Explorer': 'Показать в проводнике',
+  'File not found on disk': 'Файл не найден на диске',
 }

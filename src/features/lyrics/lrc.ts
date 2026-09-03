@@ -34,15 +34,34 @@ export function parseLrc(raw: string, extraOffsetMs = 0): LyricsLine[] | null {
       rest = rest.slice(m[0].length)
     }
     if (times.length === 0) continue
+    // A timecode with no text is kept, not dropped: that is exactly how LRC marks
+    // an instrumental break, and the overlay draws it while the presence falls
+    // back to the artist instead of holding the last sung line on screen.
     const text = rest.replace(WORD_TAG, '').trim()
-    if (!text) continue
     for (const time of times) {
       out.push({ timeSec: Math.max(0, time - offsetSec + extraSec), text })
     }
   }
   if (out.length === 0) return null
+  // all-empty means padding or a stub file, not lyrics
+  if (!out.some((l) => l.text.length > 0)) return null
   out.sort((a, b) => a.timeSec - b.timeSec)
   return out
+}
+
+/** trailing punctuation and dashes, the only difference between many repeats */
+const TRAILING_PUNCT = /[\s.,!?;:…\-–—"'’)\]]+$/u
+
+/**
+ * Comparison form of a lyric line: case-folded, repeated whitespace collapsed,
+ * trailing punctuation dropped. "Ла ла ла", "Ла ла ла." and "ЛА ЛА ЛА" become one
+ * line rather than three, which is what stops a repeated chorus from spending
+ * three of Discord's five updates per 20s. Only ever compared - the text that
+ * goes out stays verbatim.
+ */
+export function normalizeLyricText(text: string | null | undefined): string {
+  if (!text) return ''
+  return text.trim().toLowerCase().replace(/\s+/g, ' ').replace(TRAILING_PUNCT, '')
 }
 
 /**

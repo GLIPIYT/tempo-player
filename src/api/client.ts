@@ -132,6 +132,8 @@ export const api = {
   hideTrack: (trackId: number) => invoke<string>('hide_track', { trackId }),
   unhideTrack: (path: string) => invoke<boolean>('unhide_track', { path }),
   listHiddenTracks: () => invoke<HiddenTrack[]>('list_hidden_tracks'),
+  /** Opens the OS file manager with the file selected. False when it has moved. */
+  revealInFileManager: (path: string) => invoke<boolean>('reveal_in_file_manager', { path }),
 
   exportPlaylistM3u8: (playlistId: number, path: string) =>
     invoke<number>('export_playlist_m3u8', { playlistId, path }),
