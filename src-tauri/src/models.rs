@@ -240,3 +240,13 @@ pub struct HiddenTrack {
     pub title: Option<String>,
     pub added_at: i64,
 }
+
+/// One slot in the sidebar's favorites order. `kind` is "playlist", "artist" or
+/// "album" and `ref_id` points into that kind's table without being a foreign
+/// key, so an id that no longer resolves is simply skipped by readers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoriteOrderEntry {
+    pub kind: String,
+    pub ref_id: i64,
+}

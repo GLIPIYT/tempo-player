@@ -1,15 +1,17 @@
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import Cover from '../components/common/Cover'
+import type { FavoriteKind } from '../types/models'
 
 /**
  * Pointer-based drag & drop for tracks (into sidebar playlists) and for
- * reordering pinned playlists. Implemented with pointer events instead of
+ * reordering sidebar favorites - playlists, artists and albums share one order,
+ * so one drag kind covers all three. Implemented with pointer events instead of
  * HTML5 drag events because Tauri's native drag-drop hook on Windows swallows
  * the latter. Also powers the floating cover ghost that follows the cursor
  * with a light spring, the drop "suction" animation and the drop highlight.
  */
 
-type DragKind = 'track' | 'playlist'
+type DragKind = 'track' | 'favorite'
 
 export interface DragState {
   kind: DragKind
@@ -21,7 +23,7 @@ export interface DragState {
   scale: number
   opacity: number
   targetId: number | null
-  /** playlist reorder only */
+  /** favorites reorder only */
   draggedIndex: number | null
   insertAt: number | null
 }
@@ -47,11 +49,13 @@ interface DragSession {
   /** true once the drag passed the movement threshold (ghost is visible) */
   activated: boolean
   targetId: number | null
-  // playlist reorder payload
+  // favorites reorder payload
   index?: number
   insertAt?: number | null
+  /** when set, only rows of this kind accept the drop (grouped sidebar) */
+  restrictKind?: FavoriteKind | null
   trackId?: number
-  onPlaylistDrop?: (from: number, to: number) => void
+  onFavoriteDrop?: (from: number, to: number) => void
   onTrackDrop?: (playlistId: number, trackId: number) => void
 }
 
@@ -95,8 +99,8 @@ function readTargets(): DragTargets {
   return {
     kind: session.kind,
     targetId: session.targetId,
-    insertAt: session.kind === 'playlist' ? (session.insertAt ?? null) : null,
-    draggedIndex: session.kind === 'playlist' ? (session.index ?? null) : null,
+    insertAt: session.kind === 'favorite' ? (session.insertAt ?? null) : null,
+    draggedIndex: session.kind === 'favorite' ? (session.index ?? null) : null,
   }
 }
 
@@ -140,8 +144,8 @@ function snapshot(): DragState | null {
     scale: session.scale,
     opacity: session.opacity,
     targetId: session.active ? session.targetId : null,
-    draggedIndex: session.kind === 'playlist' ? (session.index ?? null) : null,
-    insertAt: session.kind === 'playlist' && session.active ? (session.insertAt ?? null) : null,
+    draggedIndex: session.kind === 'favorite' ? (session.index ?? null) : null,
+    insertAt: session.kind === 'favorite' && session.active ? (session.insertAt ?? null) : null,
   }
 }
 
@@ -185,10 +189,21 @@ function hitPlaylist(x: number, y: number): { id: number; el: HTMLElement } | nu
   return { id, el: target }
 }
 
-function hitFavIndex(x: number, y: number): { index: number; after: boolean } | null {
+/**
+ * Resolves the favorites row under the cursor. `restrictKind` is what keeps the
+ * grouped sidebar honest: indices stay global (they address the one flat order),
+ * but a playlist dragged in grouped mode only accepts playlist rows, so it cannot
+ * land in the middle of the artists section. Ungrouped mode passes null.
+ */
+function hitFavIndex(
+  x: number,
+  y: number,
+  restrictKind: FavoriteKind | null,
+): { index: number; after: boolean } | null {
   const el = document.elementFromPoint(x, y)
   const target = el?.closest<HTMLElement>('[data-fav-index]')
   if (!target) return null
+  if (restrictKind && target.dataset.favKind !== restrictKind) return null
   const index = Number(target.dataset.favIndex)
   if (!Number.isInteger(index) || index < 0) return null
   const r = target.getBoundingClientRect()
@@ -289,13 +304,16 @@ export function beginTrackDrag(opts: {
   startWatch(s)
 }
 
-export function beginPlaylistReorder(opts: {
+export function beginFavoriteReorder(opts: {
   e: ReactPointerEvent<HTMLElement>
   index: number
   coverPath: string | null
+  /** null in the ungrouped sidebar: everything reorders against everything */
+  restrictKind?: FavoriteKind | null
   onDrop: (from: number, to: number) => void
 }): void {
   const { e, index, coverPath, onDrop } = opts
+  const restrictKind = opts.restrictKind ?? null
   if ((e.target as HTMLElement).closest('button')) return
   e.preventDefault()
   const el = e.currentTarget
@@ -305,7 +323,7 @@ export function beginPlaylistReorder(opts: {
   const ghostW = coverRect?.width ?? GHOST_SIZE
   const ghostH = coverRect?.height ?? GHOST_SIZE
   const s: DragSession = {
-    kind: 'playlist',
+    kind: 'favorite',
     title: el.title || el.textContent || '',
     coverPath,
     pointerId: e.pointerId,
@@ -325,7 +343,8 @@ export function beginPlaylistReorder(opts: {
     targetId: null,
     index,
     insertAt: null,
-    onPlaylistDrop: onDrop,
+    restrictKind,
+    onFavoriteDrop: onDrop,
   }
   const THRESHOLD = 5
   const onMove = (ev: PointerEvent) => {
@@ -340,7 +359,7 @@ export function beginPlaylistReorder(opts: {
     }
     s.tx = ev.clientX - ghostW / 2
     s.ty = ev.clientY - ghostH / 2
-    const hit = hitFavIndex(ev.clientX, ev.clientY)
+    const hit = hitFavIndex(ev.clientX, ev.clientY, restrictKind)
     const insert = hit ? (hit.after ? hit.index + 1 : hit.index) : null
     if (insert !== s.insertAt) {
       s.insertAt = insert
@@ -368,7 +387,7 @@ export function beginPlaylistReorder(opts: {
     if (to !== null) {
       let t: number = to
       if (from < t) t -= 1
-      if (t !== from) s.onPlaylistDrop?.(from, t)
+      if (t !== from) s.onFavoriteDrop?.(from, t)
     }
     notifyTargets()
   }
@@ -384,7 +403,7 @@ export default function TrackDragLayer() {
   if (!state) return null
   return (
     <div
-      className={'dnd-ghost' + (state.kind === 'playlist' ? ' dnd-ghost-sm' : '')}
+      className={'dnd-ghost' + (state.kind === 'favorite' ? ' dnd-ghost-sm' : '')}
       style={{
         transform: `translate(${state.x}px, ${state.y}px) rotate(${state.rot}deg) scale(${state.scale})`,
         opacity: state.opacity,

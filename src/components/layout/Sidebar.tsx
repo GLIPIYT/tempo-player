@@ -29,7 +29,7 @@ import { useSettings } from '../../state/settings'
 import { useT } from '../../i18n'
 import { toast } from '../common/Toast'
 import { api } from '../../api/client'
-import type { Playlist } from '../../types/models'
+import type { Album, Artist, FavoriteKind, FavoriteOrderEntry, Playlist } from '../../types/models'
 import { playlistDisplayName } from '../../utils/playlists'
 import { useLibraryVersion } from '../../hooks/useLibraryVersion'
 import { useAsync } from '../../hooks/useAsync'
@@ -37,7 +37,7 @@ import { bumpLibraryVersion } from '../../utils/libraryVersion'
 import { tracksToUnified, trackToUnified } from '../../utils/unified'
 import { usePlayer } from '../../player'
 import {
-  beginPlaylistReorder,
+  beginFavoriteReorder,
   consumeDragClick,
   registerPlaylistDropper,
   useDragTargets,
@@ -97,6 +97,44 @@ interface DeleteTarget {
   name: string
 }
 
+/**
+ * One row of the sidebar favorites. Playlists, artists and albums share a single
+ * order (`favorite_order`), so they share one array; the grouped view is that
+ * array filtered per kind, which is what keeps the relative order intact when the
+ * user turns grouping on and off.
+ */
+type FavEntry =
+  | { kind: 'playlist'; id: number; item: Playlist }
+  | { kind: 'artist'; id: number; item: Artist }
+  | { kind: 'album'; id: number; item: Album }
+
+/** A row plus its index into the flat array - the index the drag layer reports. */
+interface FavRow {
+  entry: FavEntry
+  index: number
+}
+
+/** Stable empties, so the favorites memo does not re-run on every render. */
+const EMPTY_ARTISTS: Artist[] = []
+const EMPTY_ALBUMS: Album[] = []
+
+function favKey(kind: FavoriteKind, id: number): string {
+  return `${kind}:${id}`
+}
+
+/**
+ * Where the insertion line goes inside one rendered list. Flat indices are not
+ * contiguous inside a group, so the slot is resolved by comparison rather than by
+ * equality: the line sits before the first row the insert index reaches.
+ */
+function insertSlot(rows: FavRow[], insertAt: number | null): number | null {
+  if (insertAt === null) return null
+  for (let p = 0; p < rows.length; p += 1) {
+    if (insertAt <= rows[p].index) return p
+  }
+  return rows.length
+}
+
 function clampW(v: number): number {
   return Math.min(MAX_W, Math.max(MIN_W, v))
 }
@@ -120,15 +158,20 @@ export default function Sidebar() {
   const version = useLibraryVersion()
   const favArtists = useAsync(() => api.listFavoriteArtists(), [version])
   const favAlbums = useAsync(() => api.listFavoriteAlbums(), [version])
+  const favOrder = useAsync(() => api.listFavoritesOrder(), [version])
   const dragState = useDragTargets()
   const active = activeFor(view)
   const grouped = settings.sidebar.grouped
+  // grouping off is the whole point of the shared order: one list where the three
+  // kinds can be mixed. Grouping on keeps the three sections, still ordered by the
+  // same array.
+  const interleaved = !grouped
 
   const [width, setWidth] = useState(readWidth)
   const [collapsed, setCollapsed] = useState(readCollapsed)
   const [resizing, setResizing] = useState(false)
   const [playlists, setPlaylists] = useState<Playlist[]>([])
-  const [override, setOverride] = useState<number[] | null>(null)
+  const [override, setOverride] = useState<string[] | null>(null)
   const [menu, setMenu] = useState<FavMenu | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
   const [newOpen, setNewOpen] = useState(false)
@@ -147,13 +190,18 @@ export default function Sidebar() {
       .then((ps) => {
         if (cancelled) return
         setPlaylists(ps)
-        setOverride(null)
       })
       .catch(() => undefined)
     return () => {
       cancelled = true
     }
   }, [version])
+
+  // The optimistic order a drag drew is dropped only once the backend hands back a
+  // fresh one, otherwise clearing it early shows the pre-drag order for a frame.
+  useEffect(() => {
+    if (favOrder.data !== null) setOverride(null)
+  }, [favOrder.data])
 
   useEffect(() => {
     if (!menu) return
@@ -192,19 +240,47 @@ export default function Sidebar() {
     [playlists],
   )
 
-  const favorites = useMemo(() => {
-    if (!override) return pinned
-    const map = new Map(pinned.map((p) => [p.id, p]))
-    const kept = override
-      .map((id) => map.get(id))
-      .filter((p): p is Playlist => p !== undefined)
-    const seen = new Set(override)
-    for (const p of pinned) if (!seen.has(p.id)) kept.push(p)
-    return kept
-  }, [pinned, override])
+  const artists = favArtists.data ?? EMPTY_ARTISTS
+  const albums = favAlbums.data ?? EMPTY_ALBUMS
+
+  /**
+   * The three lists merged into the stored order. Anything the order table does
+   * not mention is appended in its own list's order, so a newly pinned playlist
+   * or freshly favorited artist shows up at the end instead of vanishing.
+   * `override` is the optimistic sequence a drag just produced; it wins until the
+   * next reload confirms it.
+   */
+  const favorites = useMemo<FavEntry[]>(() => {
+    const byKey = new Map<string, FavEntry>()
+    for (const p of pinned) byKey.set(favKey('playlist', p.id), { kind: 'playlist', id: p.id, item: p })
+    for (const a of artists) byKey.set(favKey('artist', a.id), { kind: 'artist', id: a.id, item: a })
+    for (const al of albums) byKey.set(favKey('album', al.id), { kind: 'album', id: al.id, item: al })
+
+    const sequence = override ?? (favOrder.data ?? []).map((e) => favKey(e.kind, e.refId))
+    const out: FavEntry[] = []
+    const used = new Set<string>()
+    for (const key of sequence) {
+      const entry = byKey.get(key)
+      if (entry === undefined || used.has(key)) continue
+      used.add(key)
+      out.push(entry)
+    }
+    for (const [key, entry] of byKey) {
+      if (!used.has(key)) out.push(entry)
+    }
+    return out
+  }, [pinned, artists, albums, favOrder.data, override])
 
   const favoritesRef = useRef(favorites)
   favoritesRef.current = favorites
+
+  const rowsOf = useCallback(
+    (kind: FavoriteKind): FavRow[] =>
+      favorites
+        .map((entry, index) => ({ entry, index }))
+        .filter((row) => row.entry.kind === kind),
+    [favorites],
+  )
 
   const playFavorite = useCallback(
     async (id: number) => {
@@ -239,7 +315,10 @@ export default function Sidebar() {
   // track drop target: add the dropped track to the playlist + toast
   useEffect(() => {
     registerPlaylistDropper((playlistId, trackId) => {
-      const pl = favoritesRef.current.find((f) => f.id === playlistId)
+      const found = favoritesRef.current.find(
+        (f) => f.kind === 'playlist' && f.id === playlistId,
+      )
+      const pl = found?.kind === 'playlist' ? found.item : undefined
       void api
         .playlistAddTrack(playlistId, trackId)
         .then(() => {
@@ -252,15 +331,24 @@ export default function Sidebar() {
     return () => registerPlaylistDropper(null)
   }, [t])
 
+  /**
+   * The drag layer reports flat indices, so a move is just a splice on the flat
+   * sequence - the same arithmetic for all three kinds. The whole resulting
+   * sequence is what goes to the backend; it never has to reconstruct a move.
+   */
   const reorderFavorites = useCallback((from: number, to: number) => {
-    const ids = favoritesRef.current.map((f) => f.id)
-    if (from < 0 || from >= ids.length) return
-    const moved = ids[from]
-    ids.splice(from, 1)
-    ids.splice(Math.max(0, Math.min(to, ids.length)), 0, moved)
-    setOverride(ids)
+    const keys = favoritesRef.current.map((f) => favKey(f.kind, f.id))
+    if (from < 0 || from >= keys.length) return
+    const moved = keys[from]
+    keys.splice(from, 1)
+    keys.splice(Math.max(0, Math.min(to, keys.length)), 0, moved)
+    setOverride(keys)
+    const items: FavoriteOrderEntry[] = keys.map((key) => {
+      const [kind, id] = key.split(':')
+      return { kind: kind as FavoriteKind, refId: Number(id) }
+    })
     api
-      .movePinnedPlaylist(moved, to)
+      .setFavoritesOrder(items)
       .then(() => bumpLibraryVersion())
       .catch(() => undefined)
   }, [])
@@ -332,31 +420,58 @@ export default function Sidebar() {
   }
 
   const trackDragActive = dragState?.kind === 'track'
-  const reorderDrag = dragState?.kind === 'playlist' ? dragState : null
+  const reorderDrag = dragState?.kind === 'favorite' ? dragState : null
+  const draggedKind: FavoriteKind | null =
+    reorderDrag?.draggedIndex != null ? (favorites[reorderDrag.draggedIndex]?.kind ?? null) : null
 
-  const playlistRow = (f: Playlist, i: number) => {
+  /**
+   * Drag decorations for one row. `rows`/`pos` are the row's place inside the list
+   * it is rendered in, so the insertion line lands correctly in grouped mode where
+   * flat indices skip; `index` is the flat index the drag layer speaks in. In
+   * grouped mode only the dragged kind's own section is decorated - the insert
+   * index belongs to that section and would read as a bogus slot in the others.
+   */
+  const dragClasses = (index: number, rows: FavRow[], pos: number): string => {
+    if (reorderDrag === null) return ''
+    const isDragged = reorderDrag.draggedIndex === index ? ' is-dragged' : ''
+    const rowKind = rows[pos].entry.kind
+    if (!interleaved && draggedKind !== null && rowKind !== draggedKind) return isDragged
+    const slot = insertSlot(rows, reorderDrag.insertAt)
+    return (
+      isDragged +
+      (slot === pos ? ' drop-before' : '') +
+      (slot === rows.length && pos === rows.length - 1 ? ' drop-after' : '')
+    )
+  }
+
+  const dragProps = (
+    index: number,
+    coverPath: string | null,
+    restrictKind: FavoriteKind | null,
+  ) => ({
+    'data-fav-index': index,
+    onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return
+      beginFavoriteReorder({ e, index, coverPath, restrictKind, onDrop: reorderFavorites })
+    },
+  })
+
+  const playlistRow = (f: Playlist, index: number, rows: FavRow[], pos: number) => {
     const isActive = view.name === 'playlist' && view.id === f.id
     const displayName = playlistDisplayName(f, f.name, t)
     const isDropTarget = trackDragActive && dragState?.targetId === f.id
-    const dropBefore = reorderDrag !== null && reorderDrag.insertAt === i
-    const dropAfter =
-      reorderDrag !== null &&
-      reorderDrag.insertAt === favorites.length &&
-      i === favorites.length - 1
-    const isDragged = reorderDrag !== null && reorderDrag.draggedIndex === i
     return (
       <div
         key={`p${f.id}`}
-        data-fav-index={i}
+        {...dragProps(index, f.coverPath ?? null, grouped ? 'playlist' : null)}
+        data-fav-kind="playlist"
         data-drop-playlist={f.id}
         title={displayName}
         className={
           'fav-item' +
           (isActive ? ' is-active' : '') +
           (isDropTarget ? ' is-drop-target' : '') +
-          (isDragged ? ' is-dragged' : '') +
-          (dropBefore ? ' drop-before' : '') +
-          (dropAfter ? ' drop-after' : '')
+          dragClasses(index, rows, pos)
         }
         onClick={() => {
           // a drag that ends on this row is followed by a click - ignore it
@@ -374,15 +489,6 @@ export default function Sidebar() {
             y: e.clientY,
           })
         }}
-        onPointerDown={(e) => {
-          if (e.button !== 0) return
-          beginPlaylistReorder({
-            e,
-            index: i,
-            coverPath: f.coverPath ?? null,
-            onDrop: reorderFavorites,
-          })
-        }}
       >
         <span className="fav-cover">
           <Cover path={f.coverPath ?? null} label={displayName} size={22} />
@@ -392,12 +498,17 @@ export default function Sidebar() {
     )
   }
 
-  const artistRow = (a: { id: number; name: string; imagePath?: string | null }) => (
+  const artistRow = (a: Artist, index: number, rows: FavRow[], pos: number) => (
     <div
       key={`a${a.id}`}
-      className="fav-item"
+      {...dragProps(index, a.imagePath ?? null, grouped ? 'artist' : null)}
+      data-fav-kind="artist"
+      className={'fav-item' + dragClasses(index, rows, pos)}
       title={a.name}
-      onClick={() => navigate({ name: 'artist', id: a.id })}
+      onClick={() => {
+        if (consumeDragClick()) return
+        navigate({ name: 'artist', id: a.id })
+      }}
       onContextMenu={(e) => {
         e.preventDefault()
         setMenu({ kind: 'artist', id: a.id, name: a.name, isLikes: false, x: e.clientX, y: e.clientY })
@@ -410,12 +521,17 @@ export default function Sidebar() {
     </div>
   )
 
-  const albumRow = (al: { id: number; title: string; coverPath: string | null }) => (
+  const albumRow = (al: Album, index: number, rows: FavRow[], pos: number) => (
     <div
       key={`al${al.id}`}
-      className="fav-item"
+      {...dragProps(index, al.coverPath, grouped ? 'album' : null)}
+      data-fav-kind="album"
+      className={'fav-item' + dragClasses(index, rows, pos)}
       title={al.title}
-      onClick={() => navigate({ name: 'album', id: al.id })}
+      onClick={() => {
+        if (consumeDragClick()) return
+        navigate({ name: 'album', id: al.id })
+      }}
       onContextMenu={(e) => {
         e.preventDefault()
         setMenu({ kind: 'album', id: al.id, name: al.title, isLikes: false, x: e.clientX, y: e.clientY })
@@ -428,8 +544,24 @@ export default function Sidebar() {
     </div>
   )
 
-  const artists = favArtists.data ?? []
-  const albums = favAlbums.data ?? []
+  /** One row dispatched by kind, so both views render from the same array. */
+  const favRow = (rows: FavRow[], pos: number) => {
+    const { entry, index } = rows[pos]
+    if (entry.kind === 'playlist') return playlistRow(entry.item, index, rows, pos)
+    if (entry.kind === 'artist') return artistRow(entry.item, index, rows, pos)
+    return albumRow(entry.item, index, rows, pos)
+  }
+
+  const renderRows = (rows: FavRow[]) => rows.map((_, pos) => favRow(rows, pos))
+
+  const flatRows = useMemo<FavRow[]>(
+    () => favorites.map((entry, index) => ({ entry, index })),
+    [favorites],
+  )
+  const playlistRows = rowsOf('playlist')
+  const artistRows = rowsOf('artist')
+  const albumRows = rowsOf('album')
+  const headerCount = interleaved ? favorites.length : playlistRows.length
 
   return (
     <>
@@ -465,48 +597,47 @@ export default function Sidebar() {
           {!collapsed ? (
             <div className="fav-head">
               <span>{t('Favorites')}</span>
-              <span className="fav-count">
-                {grouped ? favorites.length : favorites.length + artists.length + albums.length}
-              </span>
+              <span className="fav-count">{headerCount}</span>
             </div>
           ) : null}
-          {!collapsed &&
-          (grouped
-            ? favorites.length === 0
-            : favorites.length + artists.length + albums.length === 0) ? (
+          {!collapsed && headerCount === 0 ? (
             <div className="fav-empty">{t('Pin playlists to see them here')}</div>
           ) : null}
-          <div className="fav-list">{favorites.map((f, i) => playlistRow(f, i))}</div>
-          {grouped && !collapsed ? (
-            artists.length > 0 ? (
-              <>
-                <div className="fav-head" style={{ marginTop: 10 }}>
-                  <span>{t('Favorite artists')}</span>
-                  <span className="fav-count">{artists.length}</span>
-                </div>
-                <div className="fav-list" style={{ marginTop: 2 }}>
-                  {artists.map(artistRow)}
-                </div>
-              </>
-            ) : null
-          ) : artists.length > 0 ? (
-            <div className="fav-list">{artists.map(artistRow)}</div>
-          ) : null}
-          {grouped && !collapsed ? (
-            albums.length > 0 ? (
-              <>
-                <div className="fav-head" style={{ marginTop: 10 }}>
-                  <span>{t('Favorite albums')}</span>
-                  <span className="fav-count">{albums.length}</span>
-                </div>
-                <div className="fav-list" style={{ marginTop: 2 }}>
-                  {albums.map(albumRow)}
-                </div>
-              </>
-            ) : null
-          ) : albums.length > 0 ? (
-            <div className="fav-list">{albums.map(albumRow)}</div>
-          ) : null}
+          {interleaved ? (
+            // one continuous list: a playlist, an artist and an album can sit in any
+            // order relative to each other
+            <div className="fav-list">{renderRows(flatRows)}</div>
+          ) : (
+            <>
+              <div className="fav-list">{renderRows(playlistRows)}</div>
+              {artistRows.length > 0 ? (
+                <>
+                  {!collapsed ? (
+                    <div className="fav-head" style={{ marginTop: 10 }}>
+                      <span>{t('Favorite artists')}</span>
+                      <span className="fav-count">{artistRows.length}</span>
+                    </div>
+                  ) : null}
+                  <div className="fav-list" style={{ marginTop: 2 }}>
+                    {renderRows(artistRows)}
+                  </div>
+                </>
+              ) : null}
+              {albumRows.length > 0 ? (
+                <>
+                  {!collapsed ? (
+                    <div className="fav-head" style={{ marginTop: 10 }}>
+                      <span>{t('Favorite albums')}</span>
+                      <span className="fav-count">{albumRows.length}</span>
+                    </div>
+                  ) : null}
+                  <div className="fav-list" style={{ marginTop: 2 }}>
+                    {renderRows(albumRows)}
+                  </div>
+                </>
+              ) : null}
+            </>
+          )}
           <button className="fav-new" title={t('New playlist')} onClick={() => setNewOpen(true)}>
             <Plus size={15} />
             {!collapsed ? <span>{t('New playlist')}</span> : null}

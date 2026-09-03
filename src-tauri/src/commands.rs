@@ -8,9 +8,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::database::Db;
 use crate::models::{
-    Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, CoversCacheInfo, HiddenTrack,
-    HistoryEntryDto, LibraryFolder, Playlist, PlaylistTrack, ScanPhase, ScanProgress, ScanSummary,
-    SearchResults, Track,
+    Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, CoversCacheInfo, FavoriteOrderEntry,
+    HiddenTrack, HistoryEntryDto, LibraryFolder, Playlist, PlaylistTrack, ScanPhase, ScanProgress,
+    ScanSummary, SearchResults, Track,
 };
 use crate::scanner;
 
@@ -427,6 +427,22 @@ pub fn set_playlist_pinned(state: State<'_, AppState>, playlist_id: i64, pinned:
 #[tauri::command]
 pub fn move_pinned_playlist(state: State<'_, AppState>, playlist_id: i64, new_order: i64) -> Result<(), String> {
     state.db.move_pinned_playlist(playlist_id, new_order)
+}
+
+/// The sidebar's shared favorites order. Kinds the sidebar cannot resolve are its
+/// problem, not ours - see `Db::list_favorites_order`.
+#[tauri::command]
+pub fn list_favorites_order(state: State<'_, AppState>) -> Result<Vec<FavoriteOrderEntry>, String> {
+    state.db.list_favorites_order()
+}
+
+/// Takes the whole sequence the sidebar drew, not a single move.
+#[tauri::command]
+pub fn set_favorites_order(
+    state: State<'_, AppState>,
+    items: Vec<FavoriteOrderEntry>,
+) -> Result<(), String> {
+    state.db.set_favorites_order(&items)
 }
 
 #[tauri::command]

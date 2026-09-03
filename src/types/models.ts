@@ -187,6 +187,13 @@ export interface HiddenTrack {
   addedAt: number
 }
 
+export type FavoriteKind = 'playlist' | 'artist' | 'album'
+
+export interface FavoriteOrderEntry {
+  kind: FavoriteKind
+  refId: number
+}
+
 export interface DailyMinutes {
   date: string
   minutes: number

@@ -7,9 +7,9 @@ use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
 use crate::models::{
-    Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, FileStamp, HiddenTrack,
-    HistoryEntryDto, LibraryFolder, Playlist, PlaylistTrack, SearchResults, StatsSummary,
-    TopArtistItem, TopTrackItem, Track, TrackInput,
+    Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, FavoriteOrderEntry, FileStamp,
+    HiddenTrack, HistoryEntryDto, LibraryFolder, Playlist, PlaylistTrack, SearchResults,
+    StatsSummary, TopArtistItem, TopTrackItem, Track, TrackInput,
 };
 
 const TRACK_COLUMNS: &str =
@@ -787,6 +787,97 @@ impl Db {
                 )
                 .map_err(db_err)?;
             }
+        }
+        tx.commit().map_err(db_err)?;
+        Ok(())
+    }
+
+    /// The sidebar's one order for playlists, artists and albums together. Entries
+    /// whose target has since been deleted or unfavorited are left in - the sidebar
+    /// resolves against its own lists and ignores what it cannot find.
+    pub fn list_favorites_order(&self) -> Result<Vec<FavoriteOrderEntry>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT kind, ref_id FROM favorite_order ORDER BY position, kind, ref_id")
+                .map_err(db_err)?;
+            let mapped = stmt
+                .query_map([], |row| {
+                    Ok(FavoriteOrderEntry {
+                        kind: row.get(0)?,
+                        ref_id: row.get(1)?,
+                    })
+                })
+                .map_err(db_err)?;
+            let mut out = Vec::new();
+            for row in mapped {
+                out.push(row.map_err(db_err)?);
+            }
+            Ok(out)
+        })
+    }
+
+    /// Replaces the whole order with what the client sent. Rewriting wholesale is
+    /// what collects rows for favorites that no longer exist, and it means the
+    /// client never has to describe a move - it just sends the sequence it drew.
+    /// `playlists.pin_order` is re-synced to the playlist subsequence so the
+    /// `Playlist` DTO cannot contradict this table.
+    pub fn set_favorites_order(&self, items: &[FavoriteOrderEntry]) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        tx.execute("DELETE FROM favorite_order", []).map_err(db_err)?;
+        let mut position = 0i64;
+        let mut seen: HashSet<(String, i64)> = HashSet::new();
+        let mut playlist_ids: Vec<i64> = Vec::new();
+        for item in items {
+            let kind = item.kind.as_str();
+            if !matches!(kind, "playlist" | "artist" | "album") {
+                return Err(format!("unknown favorite kind: {}", kind));
+            }
+            // A duplicate would hit the primary key; dropping it keeps a buggy or
+            // stale client from failing the whole reorder.
+            if !seen.insert((item.kind.clone(), item.ref_id)) {
+                continue;
+            }
+            tx.execute(
+                "INSERT INTO favorite_order(kind, ref_id, position) VALUES(?1, ?2, ?3)",
+                params![kind, item.ref_id, position],
+            )
+            .map_err(db_err)?;
+            if kind == "playlist" {
+                playlist_ids.push(item.ref_id);
+            }
+            position += 1;
+        }
+        for (index, id) in playlist_ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE playlists SET pin_order = ?1 WHERE id = ?2 AND pinned = 1",
+                params![index as i64, id],
+            )
+            .map_err(db_err)?;
+        }
+        // A pinned playlist the client did not mention still needs a pin_order that
+        // does not collide with the block just written, so it lands after them - the
+        // same place the sidebar puts unknown entries.
+        let mut stmt = tx
+            .prepare("SELECT id FROM playlists WHERE pinned = 1 ORDER BY pin_order, id")
+            .map_err(db_err)?;
+        let mapped = stmt
+            .query_map([], |row| row.get::<_, i64>(0))
+            .map_err(db_err)?;
+        let mut trailing = Vec::new();
+        for row in mapped {
+            let id = row.map_err(db_err)?;
+            if !playlist_ids.contains(&id) {
+                trailing.push(id);
+            }
+        }
+        drop(stmt);
+        for (offset, id) in trailing.iter().enumerate() {
+            tx.execute(
+                "UPDATE playlists SET pin_order = ?1 WHERE id = ?2",
+                params![(playlist_ids.len() + offset) as i64, id],
+            )
+            .map_err(db_err)?;
         }
         tx.commit().map_err(db_err)?;
         Ok(())
@@ -3356,6 +3447,75 @@ mod tests {
 
         db.set_playlist_pinned(a.id, true).unwrap();
         assert_eq!(pinned_rows(&db), vec![(b.id, 0), (a.id, 1)]);
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn favorites_order_mixes_kinds_and_tolerates_unknown_ids() {
+        let (db, dir) = test_db("favorder");
+        let folder = db.add_library_folder(r"C:\music").unwrap();
+        db.upsert_scanned_tracks(
+            &[track_input(r"C:\music\one.mp3", folder.id, "One", Some("Band"), Some("LP"))],
+            &[],
+        )
+        .unwrap();
+        let artist_id = db
+            .with_conn(|c| {
+                c.query_row("SELECT id FROM artists WHERE name = 'Band'", [], |r| r.get(0))
+                    .map_err(db_err)
+            })
+            .unwrap();
+        let album_id: i64 = db
+            .with_conn(|c| {
+                c.query_row("SELECT id FROM albums WHERE title = 'LP'", [], |r| r.get(0))
+                    .map_err(db_err)
+            })
+            .unwrap();
+        db.toggle_favorite_artist(artist_id).unwrap();
+        db.toggle_favorite_album(album_id).unwrap();
+        let pl = db.create_playlist("Mix").unwrap();
+
+        // seeded by MIGRATION_12 for what already existed, then extended by whatever
+        // the sidebar sends - so the only thing worth asserting is the round trip
+        let wanted = vec![
+            FavoriteOrderEntry { kind: "artist".into(), ref_id: artist_id },
+            FavoriteOrderEntry { kind: "playlist".into(), ref_id: pl.id },
+            FavoriteOrderEntry { kind: "album".into(), ref_id: album_id },
+        ];
+        db.set_favorites_order(&wanted).unwrap();
+        assert_eq!(db.list_favorites_order().unwrap(), wanted);
+
+        // a kind interleaved with others still gets a contiguous pin_order, and the
+        // Likes playlist - pinned but never sent - lands after it rather than colliding
+        let likes = db
+            .list_playlists()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.is_likes == Some(true))
+            .expect("likes playlist exists");
+        assert_eq!(pinned_rows(&db), vec![(pl.id, 0), (likes.id, 1)]);
+
+        // an id that no longer resolves survives a round trip: readers skip it, and
+        // the next reorder that omits it is what finally collects it
+        let with_ghost = vec![
+            FavoriteOrderEntry { kind: "album".into(), ref_id: 9999 },
+            FavoriteOrderEntry { kind: "artist".into(), ref_id: artist_id },
+            // a duplicate would break the primary key; it is dropped instead
+            FavoriteOrderEntry { kind: "artist".into(), ref_id: artist_id },
+        ];
+        db.set_favorites_order(&with_ghost).unwrap();
+        assert_eq!(
+            db.list_favorites_order().unwrap(),
+            vec![
+                FavoriteOrderEntry { kind: "album".into(), ref_id: 9999 },
+                FavoriteOrderEntry { kind: "artist".into(), ref_id: artist_id },
+            ]
+        );
+        assert!(db
+            .set_favorites_order(&[FavoriteOrderEntry { kind: "track".into(), ref_id: 1 }])
+            .is_err());
 
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);

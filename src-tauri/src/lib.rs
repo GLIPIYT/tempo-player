@@ -83,6 +83,8 @@ pub fn run() {
             commands::import_avatar,
             commands::set_playlist_pinned,
             commands::move_pinned_playlist,
+            commands::list_favorites_order,
+            commands::set_favorites_order,
             commands::get_app_setting,
             commands::set_app_setting,
             commands::get_track_lyrics,

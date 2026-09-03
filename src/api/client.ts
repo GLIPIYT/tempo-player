@@ -8,6 +8,7 @@ import type {
   ArtistDetail,
   CoversCacheInfo,
   DailyMinutes,
+  FavoriteOrderEntry,
   HiddenTrack,
   HistoryEntry,
   LibraryFolder,
@@ -79,6 +80,10 @@ export const api = {
     invoke<void>('set_playlist_pinned', { playlistId, pinned }),
   movePinnedPlaylist: (playlistId: number, newOrder: number) =>
     invoke<void>('move_pinned_playlist', { playlistId, newOrder }),
+
+  listFavoritesOrder: () => invoke<FavoriteOrderEntry[]>('list_favorites_order'),
+  setFavoritesOrder: (items: FavoriteOrderEntry[]) =>
+    invoke<void>('set_favorites_order', { items }),
 
   getAppSetting: (key: string) => invoke<string | null>('get_app_setting', { key }),
   setAppSetting: (key: string, value: string) => invoke<void>('set_app_setting', { key, value }),
