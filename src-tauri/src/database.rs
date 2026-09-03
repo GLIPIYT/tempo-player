@@ -195,9 +195,65 @@ const MIGRATION_11: &str = r#"
 DELETE FROM cover_uploads WHERE url LIKE '%catbox.moe%';
 "#;
 
+const MIGRATION_12: &str = r#"
+-- One shared order for everything in the sidebar's favorites. Before this the
+-- order only existed for playlists (playlists.pin_order), so with grouping off
+-- the "one continuous list" was really three lists that could not be mixed.
+-- Rows are deliberately NOT foreign keys: readers ignore ids they cannot
+-- resolve, and set_favorites_order rewrites the table wholesale, which collects
+-- stale rows on the next reorder.
+CREATE TABLE IF NOT EXISTS favorite_order (
+    kind TEXT NOT NULL,
+    ref_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (kind, ref_id)
+);
+
+-- The user's pinned lyrics choice. Kept apart from tracks.lyrics (which stays
+-- the automatic cache) because upsert_scanned_tracks overwrites that column
+-- with `lyrics = excluded.lyrics` on every rescan.
+CREATE TABLE IF NOT EXISTS track_lyrics_override (
+    track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    source_artist TEXT,
+    source_title TEXT,
+    lrc TEXT NOT NULL,
+    offset_ms INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+);
+
+-- Locally scanned files the user removed from the library. Keyed by path rather
+-- than track id: the row is deleted, and the path is what the scanner sees on
+-- the next pass, so the file is not silently re-added.
+CREATE TABLE IF NOT EXISTS hidden_tracks (
+    path TEXT PRIMARY KEY,
+    title TEXT,
+    added_at INTEGER NOT NULL
+);
+
+-- Seed the shared order from what the sidebar shows today, so upgrading does
+-- not shuffle anyone's favorites: pinned playlists first (by pin_order), then
+-- favorite artists, then favorite albums (both by added_at).
+INSERT OR IGNORE INTO favorite_order(kind, ref_id, position)
+SELECT 'playlist', id, ROW_NUMBER() OVER (ORDER BY pin_order, id) - 1
+FROM playlists WHERE pinned = 1;
+
+INSERT OR IGNORE INTO favorite_order(kind, ref_id, position)
+SELECT 'artist', artist_id,
+       (SELECT COUNT(*) FROM favorite_order)
+       + ROW_NUMBER() OVER (ORDER BY added_at, artist_id) - 1
+FROM favorite_artists;
+
+INSERT OR IGNORE INTO favorite_order(kind, ref_id, position)
+SELECT 'album', album_id,
+       (SELECT COUNT(*) FROM favorite_order)
+       + ROW_NUMBER() OVER (ORDER BY added_at, album_id) - 1
+FROM favorite_albums;
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
-    MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11,
+    MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12,
 ];
 
 pub struct Db {
