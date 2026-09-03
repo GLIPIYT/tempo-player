@@ -230,3 +230,13 @@ pub struct CoversCacheInfo {
     pub total_bytes: i64,
     pub file_count: i64,
 }
+
+/// A local file the user removed from the library. Keyed by path rather than by
+/// track id, so the entry survives a rescan and a folder being re-added.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HiddenTrack {
+    pub path: String,
+    pub title: Option<String>,
+    pub added_at: i64,
+}

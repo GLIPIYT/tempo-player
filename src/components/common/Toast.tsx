@@ -1,10 +1,16 @@
 import { useSyncExternalStore } from 'react'
-import { CheckCircle2, Info, TriangleAlert } from 'lucide-react'
+import { CheckCircle2, Info, TriangleAlert, Undo2 } from 'lucide-react'
+
+export interface ToastAction {
+  label: string
+  run: () => void
+}
 
 export interface ToastItem {
   id: number
   text: string
   kind: 'success' | 'info' | 'error'
+  action?: ToastAction
 }
 
 let nextId = 1
@@ -28,15 +34,22 @@ function dismiss(id: number): void {
 }
 
 export const toast = {
-  show(text: string, kind: ToastItem['kind'] = 'success', ms = 2600): void {
+  show(
+    text: string,
+    kind: ToastItem['kind'] = 'success',
+    ms = 2600,
+    action?: ToastAction,
+  ): void {
     const trimmed = text.trim()
     if (!trimmed) return
     const id = nextId++
-    items = [...items.slice(-3), { id, text: trimmed, kind }]
+    items = [...items.slice(-3), { id, text: trimmed, kind, action }]
     emit()
     timers.set(
       id,
-      window.setTimeout(() => dismiss(id), ms),
+      // an actionable toast has to outlive a glance, so it gets longer unless the
+      // caller asked for a specific duration
+      window.setTimeout(() => dismiss(id), action && ms === 2600 ? 6000 : ms),
     )
   },
   subscribe(l: () => void): () => void {
@@ -63,6 +76,20 @@ export function ToastHost() {
             <Info size={14} />
           )}
           <span>{t.text}</span>
+          {t.action ? (
+            <button
+              type="button"
+              className="toast-action"
+              onClick={(e) => {
+                e.stopPropagation()
+                t.action?.run()
+                dismiss(t.id)
+              }}
+            >
+              <Undo2 size={12} />
+              {t.action.label}
+            </button>
+          ) : null}
         </div>
       ))}
     </div>

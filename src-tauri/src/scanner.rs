@@ -42,6 +42,7 @@ pub fn scan_incremental(
     root: &Path,
     folder_id: i64,
     known_stamps: &HashMap<String, FileStamp>,
+    hidden_paths: &HashSet<String>,
     covers_dir: &Path,
     on_tick: &dyn Fn(Tick),
 ) -> ScanOutcome {
@@ -59,6 +60,12 @@ pub fn scan_incremental(
 
     for path in collect_audio_files(root) {
         let path_string = path.to_string_lossy().into_owned();
+        // Blacklisted files are walked past entirely - not counted, not stamped, and
+        // never handed to the metadata reader. `hidden_paths` is pre-lowercased
+        // because Windows paths differ only in casing between scans.
+        if !hidden_paths.is_empty() && hidden_paths.contains(&path_string.to_lowercase()) {
+            continue;
+        }
         let title_fallback = fallback_title(&path);
         outcome.scanned_files += 1;
         on_tick(Tick {
@@ -258,7 +265,7 @@ mod tests {
             known.insert(path.to_string_lossy().into_owned(), stamp_of(path));
         }
 
-        let outcome = scan_incremental(&root, 7, &known, &root.join("covers"), &|_| {});
+        let outcome = scan_incremental(&root, 7, &known, &HashSet::new(), &root.join("covers"), &|_| {});
 
         assert_eq!(outcome.scanned_files, 2);
         assert_eq!(outcome.unchanged, 2);
@@ -287,7 +294,7 @@ mod tests {
         place_file(&survivor, b"content changed so this stamp no longer matches");
 
         let deleted_string = deleted.to_string_lossy().into_owned();
-        let outcome = scan_incremental(&root, 9, &known, &root.join("covers"), &|_| {});
+        let outcome = scan_incremental(&root, 9, &known, &HashSet::new(), &root.join("covers"), &|_| {});
 
         assert_eq!(outcome.removed, vec![deleted_string]);
         assert_eq!(outcome.scanned_files, 1);
@@ -297,6 +304,29 @@ mod tests {
         assert_eq!(outcome.updated[0].title, "survivor");
         assert_eq!(outcome.updated[0].folder_id, 9);
         assert!(outcome.updated[0].cover_path.is_none());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_incremental_walks_past_hidden_paths() {
+        let root = unique_temp_root("hidden");
+        let wanted = root.join("keeper.mp3");
+        let junk = root.join("Junk Noise.mp3");
+        place_file(&wanted, b"not audio either");
+        place_file(&junk, b"blacklisted");
+
+        // stored lowercased, and with different casing than on disk, because that is
+        // exactly what a Windows rescan hands us
+        let hidden: HashSet<String> =
+            [junk.to_string_lossy().to_lowercase()].into_iter().collect();
+
+        let outcome = scan_incremental(&root, 3, &HashMap::new(), &hidden, &root.join("covers"), &|_| {});
+
+        assert_eq!(outcome.scanned_files, 1);
+        assert_eq!(outcome.new.len(), 1);
+        assert_eq!(outcome.new[0].title, "keeper");
+        assert!(outcome.removed.is_empty());
 
         let _ = fs::remove_dir_all(&root);
     }

@@ -139,6 +139,7 @@ export const ru: Record<string, string> = {
   'Rescan your library if this seems wrong.': 'Если это ошибка, пересканируйте библиотеку.',
   'Reset overrides': 'Сбросить переопределения',
   'Reset theme': 'Сбросить тему',
+  Restore: 'Восстановить',
   Retry: 'Повторить',
   'Return to current': 'Вернуться к текущей',
   'Results for': 'Результаты для',
@@ -341,4 +342,13 @@ export const ru: Record<string, string> = {
   'Cache limit': 'Лимит кэша',
   'When the cache exceeds the limit, the least recently played tracks are removed first.':
     'Когда кэш превышает лимит, первыми удаляются треки, которые вы слушали давнее всего.',
+  "Don't show in library": 'Не показывать в библиотеке',
+  'Hidden from library': 'Скрыто из библиотеки',
+  Undo: 'Отменить',
+  'Hidden tracks': 'Скрытые треки',
+  'Files you removed from the library. They stay on disk and scans walk past them.':
+    'Файлы, убранные из библиотеки. Они остаются на диске, а сканирование их пропускает.',
+  'Nothing hidden yet.': 'Пока ничего не скрыто.',
+  'File is gone - it will return on the next scan':
+    'Файла больше нет — он вернётся при следующем сканировании',
 }

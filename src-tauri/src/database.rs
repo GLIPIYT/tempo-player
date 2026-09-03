@@ -7,9 +7,9 @@ use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
 use crate::models::{
-    Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, FileStamp, HistoryEntryDto,
-    LibraryFolder, Playlist, PlaylistTrack, SearchResults, StatsSummary, TopArtistItem, TopTrackItem,
-    Track, TrackInput,
+    Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, FileStamp, HiddenTrack,
+    HistoryEntryDto, LibraryFolder, Playlist, PlaylistTrack, SearchResults, StatsSummary,
+    TopArtistItem, TopTrackItem, Track, TrackInput,
 };
 
 const TRACK_COLUMNS: &str =
@@ -383,21 +383,87 @@ impl Db {
         }
         let sql = format!("DELETE FROM tracks WHERE path IN ({})", placeholders);
         let deleted = tx.execute(&sql, params_from_iter(paths)).map_err(db_err)? as u32;
-        tx.execute(
-            "DELETE FROM albums WHERE id NOT IN \
-             (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)",
-            [],
-        )
-        .map_err(db_err)?;
-        tx.execute(
-            "DELETE FROM artists WHERE id NOT IN \
-             (SELECT DISTINCT artist_id FROM tracks WHERE artist_id IS NOT NULL) \
-             AND id NOT IN (SELECT DISTINCT artist_id FROM albums WHERE artist_id IS NOT NULL)",
-            [],
-        )
-        .map_err(db_err)?;
+        prune_orphans(&tx)?;
         tx.commit().map_err(db_err)?;
         Ok(deleted)
+    }
+
+    /// Drops a local file out of the library without touching the file itself: the
+    /// row goes away and the path is remembered, so the next scan walks past it.
+    /// Returns the path so the caller can offer an undo.
+    pub fn hide_track(&self, track_id: i64) -> Result<String, String> {
+        let conn = self.lock_conn()?;
+        let (path, title) = conn
+            .query_row(
+                "SELECT path, title FROM tracks WHERE id = ?1 AND folder_id IS NOT NULL",
+                params![track_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(db_err)?
+            .ok_or_else(|| "only local library files can be hidden".to_string())?;
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        tx.execute(
+            "INSERT INTO hidden_tracks(path, title, added_at) VALUES(?1, ?2, ?3) \
+             ON CONFLICT(path) DO UPDATE SET title = excluded.title, added_at = excluded.added_at",
+            params![path, title, now()],
+        )
+        .map_err(db_err)?;
+        tx.execute("DELETE FROM tracks WHERE id = ?1", params![track_id])
+            .map_err(db_err)?;
+        prune_orphans(&tx)?;
+        tx.commit().map_err(db_err)?;
+        Ok(path)
+    }
+
+    /// Lifts the blacklist entry. Putting the track back is the caller's job - it
+    /// needs the filesystem, which this layer does not touch.
+    pub fn unhide_track(&self, path: &str) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM hidden_tracks WHERE path = ?1 COLLATE NOCASE",
+                params![path],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    pub fn list_hidden_tracks(&self) -> Result<Vec<HiddenTrack>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT path, title, added_at FROM hidden_tracks ORDER BY added_at DESC, path")
+                .map_err(db_err)?;
+            let mapped = stmt
+                .query_map([], |row| {
+                    Ok(HiddenTrack {
+                        path: row.get(0)?,
+                        title: row.get(1)?,
+                        added_at: row.get(2)?,
+                    })
+                })
+                .map_err(db_err)?;
+            let mut rows = Vec::new();
+            for row in mapped {
+                rows.push(row.map_err(db_err)?);
+            }
+            Ok(rows)
+        })
+    }
+
+    /// Lowercased, so the scanner can compare against a Windows path of any casing.
+    pub fn list_hidden_paths(&self) -> Result<HashSet<String>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare("SELECT path FROM hidden_tracks").map_err(db_err)?;
+            let mapped = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(db_err)?;
+            let mut paths = HashSet::new();
+            for row in mapped {
+                paths.insert(row.map_err(db_err)?.to_lowercase());
+            }
+            Ok(paths)
+        })
     }
 
     pub fn list_library_folders(&self) -> Result<Vec<LibraryFolder>, String> {
@@ -2299,6 +2365,25 @@ fn fetch_history_entries(
     Ok(entries)
 }
 
+/// Albums and artists exist only to hang tracks off, so a removal that empties one
+/// should take it with it. Shared by every path that deletes tracks.
+fn prune_orphans(conn: &Connection) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM albums WHERE id NOT IN \
+         (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)",
+        [],
+    )
+    .map_err(db_err)?;
+    conn.execute(
+        "DELETE FROM artists WHERE id NOT IN \
+         (SELECT DISTINCT artist_id FROM tracks WHERE artist_id IS NOT NULL) \
+         AND id NOT IN (SELECT DISTINCT artist_id FROM albums WHERE artist_id IS NOT NULL)",
+        [],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
 fn upsert_track_input(conn: &Connection, input: &TrackInput) -> Result<(), String> {
     let artist_id = match &input.artist {
         Some(name) => Some(get_or_create_artist(conn, name)?),
@@ -2540,6 +2625,49 @@ mod tests {
             modified_at: 111,
             lyrics: None,
         }
+    }
+
+    #[test]
+    fn hide_track_blacklists_the_path_and_prunes_orphans() {
+        let (db, dir) = test_db("hide");
+        let folder = db.add_library_folder(r"C:\music").unwrap();
+        let junk = track_input(r"C:\music\junk.mp3", folder.id, "Junk", Some("Noise"), Some("Sounds"));
+        let keeper = track_input(r"C:\music\keep.mp3", folder.id, "Keeper", Some("Band"), Some("LP"));
+        db.upsert_scanned_tracks(&[junk, keeper], &[]).unwrap();
+        let junk_id = db.find_track_id_by_path(r"C:\music\junk.mp3").unwrap().unwrap();
+
+        let path = db.hide_track(junk_id).unwrap();
+
+        assert_eq!(path, r"C:\music\junk.mp3");
+        assert_eq!(db.count_tracks().unwrap(), 1);
+        assert!(db.find_track_id_by_path(r"C:\music\junk.mp3").unwrap().is_none());
+        // "Noise"/"Sounds" only existed for that track, so they go with it, while the
+        // keeper's own album and artist stay
+        let hidden = db.list_hidden_tracks().unwrap();
+        assert_eq!(hidden.len(), 1);
+        assert_eq!(hidden[0].title.as_deref(), Some("Junk"));
+        let counts: (i64, i64) = db
+            .with_conn(|c| {
+                Ok((
+                    c.query_row("SELECT COUNT(*) FROM artists", [], |r| r.get(0)).map_err(db_err)?,
+                    c.query_row("SELECT COUNT(*) FROM albums", [], |r| r.get(0)).map_err(db_err)?,
+                ))
+            })
+            .unwrap();
+        assert_eq!(counts, (1, 1));
+
+        // the scanner gets lowercased paths, whatever the row was stored as
+        let lowered = db.list_hidden_paths().unwrap();
+        assert!(lowered.contains(&r"c:\music\junk.mp3".to_string()));
+
+        // hiding is idempotent and a second hide of a gone id is an error, not a panic
+        assert!(db.hide_track(junk_id).is_err());
+
+        db.unhide_track(r"C:\MUSIC\JUNK.MP3").unwrap();
+        assert!(db.list_hidden_tracks().unwrap().is_empty());
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

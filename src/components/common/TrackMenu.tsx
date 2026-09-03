@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Check, Heart, MoreHorizontal, Plus } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Heart, MoreHorizontal, Plus, ThumbsDown } from 'lucide-react'
 import { api } from '../../api/client'
 import type { Playlist, Track } from '../../types/models'
 import { usePlayer } from '../../player'
@@ -7,6 +7,7 @@ import { useLikes } from '../../hooks/useLikes'
 import { useT } from '../../i18n'
 import { trackToUnified } from '../../utils/unified'
 import { playlistDisplayName } from '../../utils/playlists'
+import { bumpLibraryVersion } from '../../utils/libraryVersion'
 import { toast } from './Toast'
 
 interface TrackMenuProps {
@@ -164,6 +165,33 @@ export default function TrackMenu({
     close()
   }
 
+  // "Gone from the library" is a deleted row plus a blacklisted path - the file on
+  // disk is never touched. Undo re-reads that one file rather than rescanning.
+  const hideTrack = async () => {
+    close()
+    if (player.currentTrack?.dbId === track.id) player.next()
+    try {
+      const path = await api.hideTrack(track.id)
+      bumpLibraryVersion()
+      onChanged?.()
+      toast.show(`${t('Hidden from library')}: ${track.title}`, 'info', 2600, {
+        label: t('Undo'),
+        run: () => {
+          api
+            .unhideTrack(path)
+            .then((restored) => {
+              bumpLibraryVersion()
+              onChanged?.()
+              if (!restored) flash(t('File is gone - it will return on the next scan'), false)
+            })
+            .catch((e: unknown) => flash(errText(e), true))
+        },
+      })
+    } catch (e: unknown) {
+      flash(errText(e), true)
+    }
+  }
+
   return (
     <div
       ref={rootRef}
@@ -225,6 +253,15 @@ export default function TrackMenu({
               <button className="menu-item" role="menuitem" onClick={addQueue}>
                 {t('Add to queue')}
               </button>
+              {track.source === 'local' ? (
+                <>
+                  <div className="menu-sep" />
+                  <button className="menu-item menu-item-danger" role="menuitem" onClick={() => void hideTrack()}>
+                    <ThumbsDown size={13} />
+                    {t("Don't show in library")}
+                  </button>
+                </>
+              ) : null}
             </>
           ) : sub ? (
             <>
@@ -308,6 +345,15 @@ export default function TrackMenu({
               >
                 {t('Add to playlist')}
               </button>
+              {track.source === 'local' ? (
+                <>
+                  <div className="menu-sep" />
+                  <button className="menu-item menu-item-danger" role="menuitem" onClick={() => void hideTrack()}>
+                    <ThumbsDown size={13} />
+                    {t("Don't show in library")}
+                  </button>
+                </>
+              ) : null}
             </>
           )}
         </div>

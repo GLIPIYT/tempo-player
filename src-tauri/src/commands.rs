@@ -8,9 +8,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::database::Db;
 use crate::models::{
-    Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, CoversCacheInfo, HistoryEntryDto,
-    LibraryFolder, Playlist, PlaylistTrack, ScanPhase, ScanProgress, ScanSummary, SearchResults,
-    Track,
+    Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, CoversCacheInfo, HiddenTrack,
+    HistoryEntryDto, LibraryFolder, Playlist, PlaylistTrack, ScanPhase, ScanProgress, ScanSummary,
+    SearchResults, Track,
 };
 use crate::scanner;
 
@@ -116,7 +116,14 @@ fn scan_folder_blocking(
         }
     };
 
-    let outcome = scanner::scan_incremental(Path::new(root), folder_id, &known, covers_dir, &on_tick);
+    let outcome = scanner::scan_incremental(
+        Path::new(root),
+        folder_id,
+        &known,
+        &db.list_hidden_paths()?,
+        covers_dir,
+        &on_tick,
+    );
 
     let (added, updated) = db.upsert_scanned_tracks(&outcome.new, &outcome.updated)?;
     let removed_count = db.delete_tracks_by_paths(&outcome.removed)?;
@@ -895,6 +902,77 @@ pub fn set_track_lyrics(state: State<'_, AppState>, track_id: i64, lyrics: Strin
 #[tauri::command]
 pub fn toggle_favorite_artist(state: State<'_, AppState>, artist_id: i64) -> Result<bool, String> {
     state.db.toggle_favorite_artist(artist_id)
+}
+
+/// Removes a local track from the library and blacklists its path. The file itself
+/// is left alone. Returns the path so the frontend can offer an undo.
+#[tauri::command]
+pub fn hide_track(state: State<'_, AppState>, track_id: i64) -> Result<String, String> {
+    state.db.hide_track(track_id)
+}
+
+#[tauri::command]
+pub fn list_hidden_tracks(state: State<'_, AppState>) -> Result<Vec<HiddenTrack>, String> {
+    state.db.list_hidden_tracks()
+}
+
+/// Lifts the blacklist and re-reads that one file, so a restore does not cost a
+/// full folder rescan. A file that has since been moved or deleted just comes back
+/// on the next scan of its folder instead.
+#[tauri::command]
+pub fn unhide_track(state: State<'_, AppState>, path: String) -> Result<bool, String> {
+    state.db.unhide_track(&path)?;
+    let folder_id = state
+        .db
+        .list_library_folders()?
+        .into_iter()
+        .find(|f| is_under(&path, &f.path))
+        .map(|f| f.id);
+    let Some(folder_id) = folder_id else {
+        return Ok(false);
+    };
+    let file = Path::new(&path);
+    if !file.is_file() {
+        return Ok(false);
+    }
+    let title_fallback = file
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.clone());
+    let (file_size, modified_at) = std::fs::metadata(file)
+        .map(|meta| {
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|delta| delta.as_secs() as i64)
+                .unwrap_or(0);
+            (meta.len() as i64, mtime)
+        })
+        .unwrap_or((0, 0));
+    let meta = crate::metadata::read_metadata(file, &state.covers_dir).ok();
+    let input = crate::models::TrackInput {
+        path: path.clone(),
+        folder_id,
+        title: meta
+            .as_ref()
+            .and_then(|m| m.title.clone())
+            .unwrap_or(title_fallback),
+        artist: meta.as_ref().and_then(|m| m.artist.clone()),
+        album: meta.as_ref().and_then(|m| m.album.clone()),
+        album_artist: meta.as_ref().and_then(|m| m.album_artist.clone()),
+        track_number: meta.as_ref().and_then(|m| m.track_number),
+        disc_number: meta.as_ref().and_then(|m| m.disc_number),
+        duration_sec: meta.as_ref().and_then(|m| m.duration_sec),
+        year: meta.as_ref().and_then(|m| m.year),
+        genre: meta.as_ref().and_then(|m| m.genre.clone()),
+        cover_path: meta.as_ref().and_then(|m| m.cover_path.clone()),
+        file_size,
+        modified_at,
+        lyrics: meta.as_ref().and_then(|m| m.lyrics.clone()),
+    };
+    state.db.upsert_scanned_tracks(&[input], &[])?;
+    Ok(true)
 }
 
 #[tauri::command]

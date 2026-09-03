@@ -3,6 +3,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import {
   ChevronDown,
+  EyeOff,
   FolderOpen,
   FolderPlus,
   Globe,
@@ -33,6 +34,7 @@ const PAGE_LABELS: Record<StartupPage, string> = {
 }
 import ScanLine from '../components/common/ScanLine'
 import ConfirmModal from '../components/common/ConfirmModal'
+import { toast } from '../components/common/Toast'
 import type { CustomTheme, ThemeTokens } from '../types/theme'
 import { TOKEN_VARS } from '../types/theme'
 import { CUSTOM_DEFAULT_BASE, PRESETS, getPreset } from '../theme/presets'
@@ -389,6 +391,61 @@ function Card(props: { title: string; desc?: string; children: ReactNode }) {
       {props.desc ? <div className="set-card-desc">{props.desc}</div> : null}
       {props.children}
     </section>
+  )
+}
+
+function HiddenTracksCard() {
+  const t = useT()
+  const hidden = useAsync(() => api.listHiddenTracks(), [])
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const restore = async (path: string) => {
+    setBusy(path)
+    try {
+      const restored = await api.unhideTrack(path)
+      bumpLibraryVersion()
+      hidden.reload()
+      if (!restored) toast.show(t('File is gone - it will return on the next scan'), 'info')
+    } catch {} finally {
+      setBusy(null)
+    }
+  }
+
+  const rows = hidden.data ?? []
+
+  return (
+    <Card
+      title={t('Hidden tracks')}
+      desc={t('Files you removed from the library. They stay on disk and scans walk past them.')}
+    >
+      {hidden.loading ? (
+        <div className="muted" style={{ marginTop: 14, fontSize: 12.5 }}>{t('Loading…')}</div>
+      ) : rows.length === 0 ? (
+        <div className="muted" style={{ marginTop: 14, fontSize: 12.5 }}>{t('Nothing hidden yet.')}</div>
+      ) : (
+        <div className="folder-list">
+          {rows.map((h) => (
+            <div key={h.path} className="folder-row">
+              <EyeOff size={16} className="muted" />
+              <div className="folder-info">
+                <span className="folder-path" title={h.path}>
+                  {h.title ?? h.path}
+                </span>
+                <span className="folder-count">{h.path}</span>
+              </div>
+              <button
+                className="icon-btn"
+                aria-label={t('Restore') + ' ' + h.path}
+                disabled={busy === h.path}
+                onClick={() => void restore(h.path)}
+              >
+                <RotateCcw size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   )
 }
 
@@ -1170,6 +1227,8 @@ export default function SettingsPage() {
                   </button>
                 </div>
               </Card>
+
+              <HiddenTracksCard />
             </>
           ) : null}
 

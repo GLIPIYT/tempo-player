@@ -8,6 +8,7 @@ import type {
   ArtistDetail,
   CoversCacheInfo,
   DailyMinutes,
+  HiddenTrack,
   HistoryEntry,
   LibraryFolder,
   Playlist,
@@ -106,6 +107,10 @@ export const api = {
 
   importArtistImage: (artistId: number, path: string) =>
     invoke<void>('import_artist_image', { artistId, path }),
+
+  hideTrack: (trackId: number) => invoke<string>('hide_track', { trackId }),
+  unhideTrack: (path: string) => invoke<boolean>('unhide_track', { path }),
+  listHiddenTracks: () => invoke<HiddenTrack[]>('list_hidden_tracks'),
 
   exportPlaylistM3u8: (playlistId: number, path: string) =>
     invoke<number>('export_playlist_m3u8', { playlistId, path }),

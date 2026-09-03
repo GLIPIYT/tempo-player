@@ -180,6 +180,13 @@ export interface CoversCacheInfo {
   fileCount: number
 }
 
+/** A local file removed from the library. Keyed by path so it survives a rescan. */
+export interface HiddenTrack {
+  path: string
+  title: string | null
+  addedAt: number
+}
+
 export interface DailyMinutes {
   date: string
   minutes: number
