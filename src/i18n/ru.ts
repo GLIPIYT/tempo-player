@@ -263,8 +263,11 @@ export const ru: Record<string, string> = {
   TEXT: 'ТЕКСТ',
   'Search manually': 'Искать вручную',
   'Auto (reset)': 'Авто (сбросить)',
-  Pinned: 'Закреплено',
   'These lyrics are pinned to this track': 'Этот текст закреплён за треком',
+  'Edit lyrics': 'Редактировать текст',
+  'Lyrics timing': 'Тайминг текста',
+  'Shifting the timing pins these lyrics to the track.':
+    'Сдвиг тайминга закрепит этот текст за треком.',
   'Lyrics earlier by 0.5s': 'Текст раньше на 0,5 с',
   'Lyrics later by 0.5s': 'Текст позже на 0,5 с',
   Hide: 'Скрыть',
@@ -347,7 +350,8 @@ export const ru: Record<string, string> = {
   'Cache limit': 'Лимит кэша',
   'When the cache exceeds the limit, the least recently played tracks are removed first.':
     'Когда кэш превышает лимит, первыми удаляются треки, которые вы слушали давнее всего.',
-  "Don't show in library": 'Не показывать в библиотеке',
+  'Remove from library': 'Убрать из библиотеки',
+  'The file stays on disk': 'Файл останется на диске',
   'Hidden from library': 'Скрыто из библиотеки',
   Undo: 'Отменить',
   'Hidden tracks': 'Скрытые треки',

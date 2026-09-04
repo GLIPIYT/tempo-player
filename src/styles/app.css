@@ -1185,10 +1185,13 @@
   justify-content: flex-end;
 }
 
+/* Visible at rest, not just on hover: the row menu is the only way to reach
+   "Remove from library", and a control that appears only under the cursor is a
+   control nobody finds. Hover still lifts it to full strength. */
 .tm-btn {
   width: 26px;
   height: 26px;
-  opacity: 0;
+  opacity: 0.45;
   transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 

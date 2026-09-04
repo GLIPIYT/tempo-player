@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { Play } from 'lucide-react'
 import type { Track } from '../../types/models'
 import { usePlayer } from '../../player'
@@ -7,6 +8,7 @@ import { trackToUnified } from '../../utils/unified'
 import { beginTrackDrag } from '../../dnd/trackDrag'
 import Cover from './Cover'
 import TrackMenu from './TrackMenu'
+import type { TrackMenuHandle } from './TrackMenu'
 
 interface TrackListProps {
   tracks: Track[]
@@ -18,6 +20,8 @@ interface TrackListProps {
 export default function TrackList({ tracks, showAlbum = true, showIndex = true, onPlayAt }: TrackListProps) {
   const t = useT()
   const player = usePlayer()
+  // one handle per rendered row, so right-clicking a row opens that row's menu
+  const menus = useRef(new Map<number, TrackMenuHandle | null>())
 
   const playAt = (index: number) => {
     if (onPlayAt) onPlayAt(index)
@@ -49,6 +53,12 @@ export default function TrackList({ tracks, showAlbum = true, showIndex = true, 
               })
             }}
             onDoubleClick={() => playAt(i)}
+            onContextMenu={(e) => {
+              const handle = menus.current.get(t.id)
+              if (!handle) return
+              e.preventDefault()
+              handle.open()
+            }}
           >
             {showIndex ? (
               <div className="tl-index">
@@ -79,7 +89,15 @@ export default function TrackList({ tracks, showAlbum = true, showIndex = true, 
             </div>
             {showAlbum ? <div className="tl-album">{t.albumTitle ?? '—'}</div> : null}
             <div className="tl-duration">{fmtTime(t.durationSec)}</div>
-            <TrackMenu track={t} tracks={tracks} index={i} />
+            <TrackMenu
+              ref={(h) => {
+                if (h) menus.current.set(t.id, h)
+                else menus.current.delete(t.id)
+              }}
+              track={t}
+              tracks={tracks}
+              index={i}
+            />
           </div>
         )
       })}

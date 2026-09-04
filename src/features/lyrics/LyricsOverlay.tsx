@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { Check, ChevronDown, MicVocal, Music2, Pause, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
+import { Check, ChevronDown, MicVocal, Music2, Pause, Pencil, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 import type { TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from 'react'
 import { usePlayer } from '../../player'
 import { useT } from '../../i18n'
@@ -599,44 +599,94 @@ function ProviderDropdown({
 }
 
 /**
- * Pinned marker plus the ±0.5s nudge. Editing the offset of automatic lyrics pins
- * the current selection first - there is nowhere else to keep an offset.
+ * Icon only: the pin glyph in the header says "these words are pinned" at a
+ * glance, and the word next to it said the same thing twice. The full sentence
+ * lives in the tooltip.
  */
-function OffsetControls({
+function PinnedBadge() {
+  const t = useT()
+  return (
+    <span className="lyr-pinned-badge" title={t('These lyrics are pinned to this track')}>
+      <Pin size={12} />
+    </span>
+  )
+}
+
+/**
+ * The ±0.5s nudge, behind a deliberately faint pencil in the bottom-right corner.
+ * Timing is something you touch once for a badly synced file and never again, so
+ * it earns a corner rather than a permanent seat in the header.
+ *
+ * Nudging automatic lyrics pins the current selection first - the offset has
+ * nowhere else to live.
+ */
+function LyricsEditMenu({
   offsetMs,
-  pinned,
   onNudge,
 }: {
   offsetMs: number
-  pinned: boolean
   onNudge: (deltaMs: number) => void
 }) {
   const t = useT()
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    // Escape closes the menu before the overlay's own handler closes the overlay
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey, true)
+    }
+  }, [open])
+
   const label = offsetMs === 0 ? '0.0s' : `${offsetMs > 0 ? '+' : '−'}${(Math.abs(offsetMs) / 1000).toFixed(1)}s`
+
   return (
-    <div className="lyr-offset">
-      {pinned && (
-        <span className="lyr-pinned-badge" title={t('These lyrics are pinned to this track')}>
-          <Pin size={11} />
-          {t('Pinned')}
-        </span>
+    <div className="lyr-edit" ref={wrapRef}>
+      {open && (
+        <div className="lyr-edit-menu" role="dialog" aria-label={t('Lyrics timing')}>
+          <div className="lyr-edit-title">{t('Lyrics timing')}</div>
+          <div className="lyr-offset">
+            <button
+              className="lyr-offset-btn"
+              onClick={() => onNudge(-OFFSET_STEP_MS)}
+              aria-label={t('Lyrics earlier by 0.5s')}
+              title={t('Lyrics earlier by 0.5s')}
+            >
+              −0.5s
+            </button>
+            <span className={'lyr-offset-value' + (offsetMs === 0 ? '' : ' is-shifted')}>{label}</span>
+            <button
+              className="lyr-offset-btn"
+              onClick={() => onNudge(OFFSET_STEP_MS)}
+              aria-label={t('Lyrics later by 0.5s')}
+              title={t('Lyrics later by 0.5s')}
+            >
+              +0.5s
+            </button>
+          </div>
+          <p className="lyr-edit-hint">{t('Shifting the timing pins these lyrics to the track.')}</p>
+        </div>
       )}
       <button
-        className="lyr-offset-btn"
-        onClick={() => onNudge(-OFFSET_STEP_MS)}
-        aria-label={t('Lyrics earlier by 0.5s')}
-        title={t('Lyrics earlier by 0.5s')}
+        className={'lyr-edit-btn' + (open || offsetMs !== 0 ? ' is-active' : '')}
+        onClick={() => setOpen((v) => !v)}
+        aria-label={t('Edit lyrics')}
+        title={t('Edit lyrics')}
+        aria-expanded={open}
       >
-        −0.5s
-      </button>
-      <span className={'lyr-offset-value' + (offsetMs === 0 ? '' : ' is-shifted')}>{label}</span>
-      <button
-        className="lyr-offset-btn"
-        onClick={() => onNudge(OFFSET_STEP_MS)}
-        aria-label={t('Lyrics later by 0.5s')}
-        title={t('Lyrics later by 0.5s')}
-      >
-        +0.5s
+        <Pencil size={15} />
       </button>
     </div>
   )
@@ -1062,9 +1112,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
         <section className="lyr-stage-col">
           {viewCandidates.length > 0 && (
             <div className="lyr-head">
-              {canPin && (
-                <OffsetControls offsetMs={offsetMs} pinned={pinned !== null} onNudge={handleNudgeOffset} />
-              )}
+              {canPin && pinned !== null && <PinnedBadge />}
               <ProviderDropdown
                 candidates={viewCandidates}
                 selectedIndex={viewSelectedIndex}
@@ -1093,6 +1141,9 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           )}
         </section>
       </div>
+      {canPin && viewCandidates.length > 0 && (
+        <LyricsEditMenu offsetMs={offsetMs} onNudge={handleNudgeOffset} />
+      )}
     </div>
   )
 }

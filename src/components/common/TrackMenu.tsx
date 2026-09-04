@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Check, Disc3, FolderOpen, Heart, MoreHorizontal, Plus, ThumbsDown, User } from 'lucide-react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { ArrowDown, ArrowUp, Check, Disc3, FolderOpen, Heart, MoreHorizontal, Plus, Trash2, User } from 'lucide-react'
 import { api } from '../../api/client'
 import type { Playlist, Track } from '../../types/models'
 import { usePlayer } from '../../player'
@@ -21,19 +21,19 @@ interface TrackMenuProps {
   onMove?: (delta: 1 | -1) => void
 }
 
+/** Lets a row open its own menu on right-click without owning the open state. */
+export interface TrackMenuHandle {
+  open: () => void
+}
+
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
-export default function TrackMenu({
-  track,
-  tracks,
-  index,
-  playlistMode = false,
-  playlistId,
-  onChanged,
-  onMove,
-}: TrackMenuProps) {
+const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu(
+  { track, tracks, index, playlistMode = false, playlistId, onChanged, onMove },
+  ref,
+) {
   const player = usePlayer()
   const likes = useLikes()
   const { navigate } = useNav()
@@ -89,16 +89,22 @@ export default function TrackMenu({
     setPlaylists(null)
   }, [])
 
-  const toggleOpen = () => {
-    if (open) {
-      close()
-      return
-    }
+  const openFresh = useCallback(() => {
     setSub(false)
     setCreating(false)
     setNewName('')
     setPlaylists(null)
     setOpen(true)
+  }, [])
+
+  useImperativeHandle(ref, () => ({ open: openFresh }), [openFresh])
+
+  const toggleOpen = () => {
+    if (open) {
+      close()
+      return
+    }
+    openFresh()
   }
 
   const unified = trackToUnified(track)
@@ -248,9 +254,14 @@ export default function TrackMenu({
     track.source === 'local' ? (
       <>
         <div className="menu-sep" />
-        <button className="menu-item menu-item-danger" role="menuitem" onClick={() => void hideTrack()}>
-          <ThumbsDown size={13} />
-          {t("Don't show in library")}
+        <button
+          className="menu-item menu-item-danger"
+          role="menuitem"
+          onClick={() => void hideTrack()}
+          title={t('The file stays on disk')}
+        >
+          <Trash2 size={13} />
+          {t('Remove from library')}
         </button>
       </>
     ) : null
@@ -409,4 +420,6 @@ export default function TrackMenu({
       ) : null}
     </div>
   )
-}
+})
+
+export default TrackMenu

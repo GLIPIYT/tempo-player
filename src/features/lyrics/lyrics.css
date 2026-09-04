@@ -429,30 +429,28 @@
   flex-shrink: 0;
 }
 
-/* Pinned marker + offset nudge. Sits left of the provider dropdown, and is the
-   first thing to wrap away on a narrow overlay. */
+/* The ±0.5s row, inside the edit popover. */
 .lyr-offset {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-right: auto;
 }
 
+/* Icon-only chip: a round accent dot next to the provider name. The wording it
+   used to carry is in the tooltip. */
 .lyr-pinned-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px 3px 7px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: auto;
+  border-radius: 50%;
   line-height: 1;
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .lyr-offset-btn {
@@ -486,6 +484,87 @@
 .lyr-offset-value.is-shifted {
   color: var(--accent);
   font-weight: 600;
+}
+
+/* Bottom-right corner, mirroring .lyr-close at the top. Deliberately faint at
+   rest: it is a repair tool, not something to look at while reading along. */
+.lyr-edit {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.lyr-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--surface) 52%, transparent);
+  color: var(--text-muted);
+  opacity: 0.32;
+  backdrop-filter: blur(10px);
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.lyr-edit-btn:hover,
+.lyr-edit-btn:focus-visible,
+.lyr-edit-btn.is-active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--surface-hover) 88%, transparent);
+  color: var(--text);
+}
+
+/* A non-zero offset is worth admitting to: the pencil picks up the accent so the
+   shifted timing is not invisible state. */
+.lyr-edit-btn.is-active {
+  color: var(--accent);
+}
+
+.lyr-edit-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 11px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--bg) 74%, transparent);
+  backdrop-filter: blur(14px);
+  animation: lyr-edit-in 0.16s ease both;
+}
+
+.lyr-edit-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.lyr-edit-hint {
+  max-width: 190px;
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+@keyframes lyr-edit-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .lyr-manual-toggle {
@@ -934,9 +1013,9 @@
     padding: 8px 2px 12px;
   }
 
-  /* Centred header: the auto-margin that pushes the offset row left on a wide
+  /* Centred header: the auto-margin that pushes the pin chip left on a wide
      overlay would fight the centring here. */
-  .lyr-offset {
+  .lyr-pinned-badge {
     margin-right: 0;
   }
 
