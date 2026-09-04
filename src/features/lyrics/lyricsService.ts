@@ -101,19 +101,44 @@ async function fetchLyrics(
   }
 }
 
+/** The active line plus the one after it, for the paired-lines presence. */
+export interface LyricSlice {
+  /** active line, or null on an instrumental marker / no synced lyrics */
+  text: string | null
+  /** the line after the active one, or null when there is none to show */
+  nextText: string | null
+  /** seconds between the two; Infinity when there is no next line */
+  gapSec: number
+}
+
+const NO_SLICE: LyricSlice = { text: null, nextText: null, gapSec: Infinity }
+
 /**
- * Active synced line at the given position, or null.
+ * Active synced line and its successor at the given position.
  *
- * An instrumental marker (a timecode with no text) yields null on purpose, so a
- * caller like the Discord presence falls back to the artist rather than leaving
- * the last sung line frozen on screen through the whole break.
+ * `gapSec` is what decides pairing: two lines a second apart cannot each get
+ * their own Discord update, since Discord accepts about five per 20s, so the
+ * caller sends them together as two rows of one activity. An instrumental marker
+ * (a timecode with no text) yields null in either slot on purpose, so a caller
+ * like the Discord presence falls back to the artist rather than leaving the last
+ * sung line frozen on screen through the whole break.
  */
-export function lyricLineAt(result: LyricsResult | null, positionSec: number): string | null {
-  if (!result || result.kind !== 'synced') return null
-  let line: string | null = null
-  for (const l of result.lines) {
-    if (l.timeSec <= positionSec + 0.3) line = l.text
+export function lyricSliceAt(result: LyricsResult | null, positionSec: number): LyricSlice {
+  if (!result || result.kind !== 'synced') return NO_SLICE
+  let i = -1
+  for (let k = 0; k < result.lines.length; k += 1) {
+    if (result.lines[k].timeSec <= positionSec + 0.3) i = k
     else break
   }
-  return line && line.trim() ? line : null
+  if (i < 0) return NO_SLICE
+  const cur = result.lines[i]
+  const next = i + 1 < result.lines.length ? result.lines[i + 1] : null
+  const text = cur.text.trim() ? cur.text : null
+  return {
+    text,
+    // pairing only runs forward from a real line: with no current line there is
+    // nothing for the second row to sit under
+    nextText: text && next && next.text.trim() ? next.text : null,
+    gapSec: next ? Math.max(0, next.timeSec - cur.timeSec) : Infinity,
+  }
 }

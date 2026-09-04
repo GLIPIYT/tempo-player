@@ -676,10 +676,13 @@ pub fn get_daily_minutes(state: State<'_, AppState>, days: i64) -> Result<Vec<cr
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn discord_set_presence(
     client_id: String,
     details: String,
     state: Option<String>,
+    // large_text: the next lyric line, shown as a third row under state
+    large_text: Option<String>,
     start_ms: Option<u64>,
     end_ms: Option<u64>,
     large_image: Option<String>,
@@ -688,7 +691,16 @@ pub fn discord_set_presence(
     reason: Option<String>,
 ) -> Result<(), String> {
     let _ = reason;
-    crate::discord::set_presence(client_id, details, state, start_ms, end_ms, large_image, small_image);
+    crate::discord::set_presence(
+        client_id,
+        details,
+        state,
+        large_text,
+        start_ms,
+        end_ms,
+        large_image,
+        small_image,
+    );
     Ok(())
 }
 

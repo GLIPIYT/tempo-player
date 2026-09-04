@@ -87,6 +87,18 @@ fn main() {
             "I: one-char fields padded to two - accepted (the fix for G/H)",
             r#"{"name":"Tempo","type":2,"details":"o ","state":"o "}"#.to_string(),
         ),
+        // J answers the one question the paired-lines design rests on. large_text
+        // is the second text slot, but it lives inside `assets` next to the
+        // artwork - so does it render on its own, with no large_image? That is the
+        // normal case for the first seconds of a track, while the cover is still
+        // uploading. If the reply is accepted but nothing appears in Discord,
+        // pairing has to disable itself until artwork exists.
+        (
+            "J: assets with ONLY large_text, no large_image - does the second line render?",
+            format!(
+                r#"{{"name":"Tempo","type":2,"details":"Probe J no cover","state":"current line","timestamps":{{"start":{start}}},"assets":{{"large_text":"next line"}}}}"#
+            ),
+        ),
     ];
 
     for (label, activity) in cases {

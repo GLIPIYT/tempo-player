@@ -30,6 +30,7 @@ pub enum PresenceMsg {
         client_id: String,
         details: String,
         state: Option<String>,
+        large_text: Option<String>,
         start_ms: Option<u64>,
         end_ms: Option<u64>,
         large_image: Option<String>,
@@ -38,14 +39,22 @@ pub enum PresenceMsg {
     Clear,
 }
 
-type SetPayload = (
-    String,
-    Option<String>,
-    Option<u64>,
-    Option<u64>,
-    Option<String>,
-    Option<String>,
-);
+/// One requested activity. A named struct rather than a tuple: the fields are all
+/// `Option<String>`, so a positional swap would compile and quietly send the wrong
+/// text in the wrong slot.
+#[derive(Clone)]
+struct SetPayload {
+    details: String,
+    state: Option<String>,
+    /// Second text slot. For a listening activity Discord renders `large_text` as a
+    /// third line under `details` and `state`, which is how the next lyric line is
+    /// shown alongside the current one.
+    large_text: Option<String>,
+    start_ms: Option<u64>,
+    end_ms: Option<u64>,
+    large_image: Option<String>,
+    small_image: Option<String>,
+}
 
 fn sender() -> &'static Sender<PresenceMsg> {
     static SENDER: OnceLock<Sender<PresenceMsg>> = OnceLock::new();
@@ -59,10 +68,12 @@ fn sender() -> &'static Sender<PresenceMsg> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn set_presence(
     client_id: String,
     details: String,
     state: Option<String>,
+    large_text: Option<String>,
     start_ms: Option<u64>,
     end_ms: Option<u64>,
     large_image: Option<String>,
@@ -75,6 +86,7 @@ pub fn set_presence(
         client_id,
         details,
         state,
+        large_text,
         start_ms,
         end_ms,
         large_image,
@@ -146,12 +158,12 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
         // block until the first Set carries a client id (rpc disabled otherwise)
         if client_id.is_empty() {
             match rx.recv() {
-                Ok(PresenceMsg::Set { client_id: id, details, state, start_ms, end_ms, large_image, small_image }) => {
+                Ok(PresenceMsg::Set { client_id: id, details, state, large_text, start_ms, end_ms, large_image, small_image }) => {
                     if id.trim().is_empty() {
                         continue;
                     }
                     client_id = id;
-                    pending = Some((details, state, start_ms, end_ms, large_image, small_image));
+                    pending = Some(SetPayload { details, state, large_text, start_ms, end_ms, large_image, small_image });
                 }
                 Ok(PresenceMsg::Clear) => continue,
                 Err(_) => return,
@@ -161,13 +173,13 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
         // drain everything queued so only the freshest activity goes out
         loop {
             match rx.try_recv() {
-                Ok(PresenceMsg::Set { client_id: id, details, state, start_ms, end_ms, large_image, small_image }) => {
+                Ok(PresenceMsg::Set { client_id: id, details, state, large_text, start_ms, end_ms, large_image, small_image }) => {
                     if id.trim() != client_id {
                         client_id = id;
                         conn = None; // re-handshake under the new application id
                         last_sent_args = None;
                     }
-                    pending = Some((details, state, start_ms, end_ms, large_image, small_image));
+                    pending = Some(SetPayload { details, state, large_text, start_ms, end_ms, large_image, small_image });
                     clear_requested = false;
                 }
                 Ok(PresenceMsg::Clear) => {
@@ -267,15 +279,15 @@ fn run_loop(rx: mpsc::Receiver<PresenceMsg>) {
 
 /// Builds the SET_ACTIVITY args, honouring the image-rejected fallback.
 fn build_args(p: &SetPayload) -> String {
-    let (details, state, start_ms, end_ms, large_image, small_image) = p;
     let drop_images = image_skip_pending();
     activity_args(
-        details,
-        state.clone(),
-        *start_ms,
-        *end_ms,
-        if drop_images { None } else { large_image.clone() },
-        if drop_images { None } else { small_image.clone() },
+        &p.details,
+        p.state.clone(),
+        p.large_text.clone(),
+        p.start_ms,
+        p.end_ms,
+        if drop_images { None } else { p.large_image.clone() },
+        if drop_images { None } else { p.small_image.clone() },
     )
 }
 
@@ -422,9 +434,11 @@ fn fit_field(s: &str, max_bytes: usize) -> String {
 /// Builds the nonce-free `args` object of a SET_ACTIVITY frame. Deduping
 /// compares this string, so identical activities are dropped even though every
 /// frame carries a fresh nonce.
+#[allow(clippy::too_many_arguments)]
 fn activity_args(
     details: &str,
     state: Option<String>,
+    large_text: Option<String>,
     start_ms: Option<u64>,
     end_ms: Option<u64>,
     large_image: Option<String>,
@@ -453,21 +467,38 @@ fn activity_args(
         _ => {}
     }
     let has_large = large_image.as_deref().map(|v| !v.trim().is_empty()).unwrap_or(false);
-    if has_large {
-        // No large_text/small_text: for a listening activity discord renders
-        // large_text as a third line under details and state, so a constant
-        // "Tempo" there read as a caption on every song. Omitting the field is
-        // accepted - only an *empty* string is rejected ("large_text is not
-        // allowed to be empty"), which is why it used to be filled at all.
-        s.push_str(",\"assets\":{\"large_image\":\"");
-        s.push_str(&json_escape(large_image.as_deref().unwrap_or("")));
-        s.push('"');
-        if let Some(sm) = small_image {
-            if !sm.trim().is_empty() {
-                s.push_str(",\"small_image\":\"");
-                s.push_str(&json_escape(&sm));
-                s.push('"');
+    let caption = large_text.filter(|v| !v.trim().is_empty());
+    // `assets` carries the artwork AND the second text slot, so it is emitted for
+    // either one. A caption with no artwork is the normal case in the first seconds
+    // of a track, while the cover is still uploading - see case J in
+    // examples/discord_probe.rs for the measurement that this renders.
+    if has_large || caption.is_some() {
+        s.push_str(",\"assets\":{");
+        let mut first = true;
+        if has_large {
+            s.push_str("\"large_image\":\"");
+            s.push_str(&json_escape(large_image.as_deref().unwrap_or("")));
+            s.push('"');
+            first = false;
+            if let Some(sm) = small_image {
+                if !sm.trim().is_empty() {
+                    s.push_str(",\"small_image\":\"");
+                    s.push_str(&json_escape(&sm));
+                    s.push('"');
+                }
             }
+        }
+        // Omitted unless the frontend actually sends a second line: an *empty*
+        // large_text is rejected outright ("large_text is not allowed to be empty"),
+        // and a constant one - "Tempo", as it used to be - reads as a caption on
+        // every song. Present only when it carries the next lyric line.
+        if let Some(cap) = caption {
+            if !first {
+                s.push(',');
+            }
+            s.push_str("\"large_text\":\"");
+            s.push_str(&json_escape(&fit_field(&cap, FIELD_MAX_BYTES)));
+            s.push('"');
         }
         s.push('}');
     }
@@ -507,6 +538,7 @@ mod tests {
         let args = activity_args(
             "Det \"quote\"",
             Some("St".into()),
+            None,
             Some(1),
             Some(181),
             Some("https://example.com/a.png".into()),
@@ -523,21 +555,63 @@ mod tests {
         // assets must sit INSIDE activity, or discord rejects the whole payload
         assert_eq!(activity["assets"]["large_image"], "https://example.com/a.png");
         assert_eq!(activity["assets"]["small_image"], "tempo_logo");
-        // no asset texts: discord shows large_text as a third line in the
-        // activity, where a constant "Tempo" looked like a caption on the song.
-        // The field must be absent rather than empty - an empty string is what
-        // discord rejects.
+        // large_text is absent when the frontend sends no second line - an empty
+        // string is what discord rejects, and a constant one looked like a caption
         assert!(activity["assets"]["large_text"].is_null());
         assert!(activity["assets"]["small_text"].is_null());
         assert!(!args.contains("_text"));
         assert_eq!(parsed["cmd"], "SET_ACTIVITY");
         assert_eq!(parsed["nonce"], "n1");
 
-        let no_assets = activity_args("D", None, None, None, None, None);
+        let no_assets = activity_args("D", None, None, None, None, None, None);
         assert!(!no_assets.contains("assets"));
         let paused: serde_json::Value =
             serde_json::from_str(&wrap_set(&no_assets, "n2")).unwrap();
         assert!(paused["args"]["activity"]["timestamps"].is_null());
+    }
+
+    #[test]
+    fn large_text_is_the_second_line_and_survives_a_missing_cover() {
+        // sent -> present, next to the artwork
+        let with_cover = activity_args(
+            "Song",
+            Some("current line".into()),
+            Some("next line".into()),
+            None,
+            None,
+            Some("https://example.com/a.png".into()),
+            None,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&wrap_set(&with_cover, "n")).unwrap();
+        let assets = &parsed["args"]["activity"]["assets"];
+        assert_eq!(assets["large_image"], "https://example.com/a.png");
+        assert_eq!(assets["large_text"], "next line");
+
+        // the case the pairing depends on: no cover yet (still uploading in the
+        // first seconds of a track) must not cost the second line
+        let no_cover = activity_args(
+            "Song",
+            Some("current line".into()),
+            Some("next line".into()),
+            None,
+            None,
+            None,
+            None,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&wrap_set(&no_cover, "n")).unwrap();
+        let assets = &parsed["args"]["activity"]["assets"];
+        assert_eq!(assets["large_text"], "next line");
+        assert!(assets["large_image"].is_null());
+
+        // whitespace-only is treated as absent, never emitted as an empty string
+        let blank = activity_args("Song", None, Some("   ".into()), None, None, None, None);
+        assert!(!blank.contains("assets"));
+
+        // a one-word next line is padded like the other fields, or discord rejects
+        // the whole activity
+        let short = activity_args("Song", None, Some("О".into()), None, None, None, None);
+        let parsed: serde_json::Value = serde_json::from_str(&wrap_set(&short, "n")).unwrap();
+        assert_eq!(parsed["args"]["activity"]["assets"]["large_text"], "О ");
     }
 
     #[test]
@@ -562,14 +636,15 @@ mod tests {
 
     #[test]
     fn image_skip_is_temporary_not_a_latch() {
-        let payload: SetPayload = (
-            "D".into(),
-            None,
-            None,
-            None,
-            Some("https://iili.io/x.jpg".into()),
-            None,
-        );
+        let payload = SetPayload {
+            details: "D".into(),
+            state: None,
+            large_text: None,
+            start_ms: None,
+            end_ms: None,
+            large_image: Some("https://iili.io/x.jpg".into()),
+            small_image: None,
+        };
         assert!(build_args(&payload).contains("assets"));
 
         // a rejection drops assets from the retries so the activity itself shows
@@ -594,8 +669,8 @@ mod tests {
     fn nonce_is_not_part_of_dedup() {
         // dedup compares the nonce-free args, so identical content must yield
         // an identical string while the wrapped frames still differ
-        let a = activity_args("D", None, None, None, None, None);
-        let b = activity_args("D", None, None, None, None, None);
+        let a = activity_args("D", None, None, None, None, None, None);
+        let b = activity_args("D", None, None, None, None, None, None);
         assert_eq!(a, b);
         assert_ne!(wrap_set(&a, "x"), wrap_set(&b, "y"));
     }
@@ -603,25 +678,30 @@ mod tests {
     #[test]
     fn long_fields_are_truncated_on_char_boundary() {
         let long = "ы".repeat(200); // 400 bytes of utf-8
-        let args = activity_args(&long, Some(long.clone()), None, None, None, None);
+        let args = activity_args(&long, Some(long.clone()), Some(long.clone()), None, None, None, None);
         let parsed: serde_json::Value = serde_json::from_str(&wrap_set(&args, "n")).unwrap();
         let details = parsed["args"]["activity"]["details"].as_str().unwrap();
         assert!(details.len() <= FIELD_MAX_BYTES);
         assert!(!details.contains('\u{fffd}')); // no replacement char from a bad cut
+        let caption = parsed["args"]["activity"]["assets"]["large_text"]
+            .as_str()
+            .unwrap();
+        assert!(caption.len() <= FIELD_MAX_BYTES);
+        assert!(!caption.contains('\u{fffd}'));
     }
 
     #[test]
     fn one_char_fields_are_padded_to_the_minimum() {
         // discord rejects the entire activity when details or state is a single
         // character, which a one-word lyric line or a "?" title would hit
-        let args = activity_args("O", Some("О".into()), None, None, None, None);
+        let args = activity_args("O", Some("О".into()), None, None, None, None, None);
         let parsed: serde_json::Value = serde_json::from_str(&wrap_set(&args, "n")).unwrap();
         let activity = &parsed["args"]["activity"];
         assert_eq!(activity["details"], "O ");
         assert_eq!(activity["state"], "О ");
 
         // padding only kicks in below the minimum; normal text is untouched
-        let normal = activity_args("Труляля", Some("строка".into()), None, None, None, None);
+        let normal = activity_args("Труляля", Some("строка".into()), None, None, None, None, None);
         let parsed: serde_json::Value = serde_json::from_str(&wrap_set(&normal, "n")).unwrap();
         assert_eq!(parsed["args"]["activity"]["details"], "Труляля");
         assert_eq!(parsed["args"]["activity"]["state"], "строка");
