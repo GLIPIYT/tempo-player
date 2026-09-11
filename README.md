@@ -46,6 +46,7 @@ Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLi
 
 ### Look and feel
 
+- **Floating mini player** — a compact always-on-top window that rests as a pill at the top edge of the screen. Click to expand into cover, transport, seek, volume, like, repeat and shuffle; it can pop open on its own when the track changes and collapse again. Off by default.
 - **Ten built-in themes** — plus a custom mode where you pick base colours and override individual tokens.
 - **Your own font and background** — import a font file, set a background image with adjustable dim and blur, scale the whole UI.
 - **Bilingual UI** — English and Russian out of the box, or follow the system language.

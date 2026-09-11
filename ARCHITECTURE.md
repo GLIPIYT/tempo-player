@@ -9,13 +9,17 @@ feature-level tour see [README.md](README.md).
 
 ## Runtime shape
 
-Three things run at once:
+Four things run at once:
 
-1. **The webview** — the whole UI, plus playback. Audio is a single HTML5 `<audio>` element owned by
-   a module-level singleton, not a React-managed node, so it survives re-renders and route changes.
-2. **The Rust core** — the SQLite database, the filesystem scanner, tag/cover extraction, and all
+1. **The main webview** — the whole UI, plus playback. Audio is a single HTML5 `<audio>` element
+   owned by a module-level singleton, not a React-managed node, so it survives re-renders and route
+   changes.
+2. **The mini player webview** — a second, transparent, always-on-top window that renders a
+   compact view of the player. It owns no state of its own: it draws what the main window sends and
+   sends commands back. See [Mini player](#mini-player).
+3. **The Rust core** — the SQLite database, the filesystem scanner, tag/cover extraction, and all
    network calls that need to bypass browser CORS (SoundCloud, lyrics providers, image hosting).
-3. **Detached worker threads** — library scans and SoundCloud downloads. They never block the
+4. **Detached worker threads** — library scans and SoundCloud downloads. They never block the
    webview; they report back by emitting Tauri events.
 
 The frontend never touches SQLite or the filesystem directly. Every crossing goes through a Tauri
@@ -28,12 +32,13 @@ src/                      React frontend (~11.7k LOC)
   api/                      typed wrappers over Tauri commands (client.ts) + event subscriptions (events.ts)
   components/common/        TrackList, Cover, Modal, ConfirmModal, Toast, TrackMenu, WaveProgress, …
   components/layout/        TitleBar, Sidebar, TopBar, PlayerBar, QueuePanel, BackgroundLayer
-  components/integration/   PresenceBridge — pushes player state into the Discord driver
+  components/integration/   PresenceBridge (Discord) + MiniPlayerBridge (mini player window)
   components/onboarding/    first-run flow
   dnd/                      drag-and-drop for tracks and sidebar favorites
   features/lyrics/          providers, LRC parsing, overlay, React context
   hooks/                    useAsync, useLikes, useFolders, useScanProgress, useLibraryVersion, useSearchQuery
   i18n/                     EN / RU dictionaries + provider
+  mini-player/              the second window: contract, bootstrap, UI, styles
   pages/                    11 screens (see below)
   player/                   playback engine: controller, queue, engine, React bindings
   providers/                music source abstraction (local, SoundCloud)
@@ -444,6 +449,64 @@ The window runs with `decorations: false` and a custom in-app title bar
 minimize / maximize-restore / close buttons on the Tauri window API, double-click to toggle
 maximize. Capabilities live in `src-tauri/capabilities/default.json`.
 
+### Mini player
+
+A second webview showing a compact view of the player, resting as a 124×20 pill at the top edge of
+the screen and expanding to 428×136. Off by default; toggled in Settings → General. `mini-player/`
+holds the window's own code, `components/integration/MiniPlayerBridge.tsx` is the main window's side
+of the conversation.
+
+**The window is created from JS, not declared in `tauri.conf.json`.** `ensureMiniWindow()` in
+`mini-player/contract.ts` builds it with `transparent`, `decorations: false`, `alwaysOnTop`,
+`skipTaskbar` and — importantly — `focus: false`, because the window pops up on every track change
+and would otherwise steal focus from whatever is being typed in the main window. Nothing is created
+while the feature is off.
+
+**The main window is the only source of truth.** The two webviews share no JS context, so everything
+crosses as a Tauri event, all defined in `mini-player/contract.ts`:
+
+| Event | Direction | Payload |
+|---|---|---|
+| `mini-player:state` | main → mini | `MiniPlayerState` (slim track, flags, theme, language) |
+| `mini-player:tick` | main → mini | current position in seconds |
+| `mini-player:peek` | main → mini | expand for N ms (track change) |
+| `mini-player:action` | mini → main | `MiniPlayerAction` |
+| `mini-player:ready` | mini → main | the window came up; main answers with a full sync |
+
+**State and position are deliberately separate channels.** `PlayerController.emit()` fires about
+sixty times a second while playing, because `AudioEngine` drives a `requestAnimationFrame` ticker and
+every emit rebuilds the whole snapshot including the queue. Mirroring that directly would push sixty
+full payloads per second over IPC. Instead the bridge compares a cheap signature of the fields the
+window actually draws and sends state only on a real change, while position gets its own event
+throttled to 180 ms playing / 900 ms paused. Note that `PlayerSnapshot.version` must **not** be used
+as the change signal — it increments on every audio frame, not on every track change.
+
+**Covers are sent resolved, and preloaded.** The payload carries an already-converted
+`convertFileSrc` URL plus the artwork of the *next* queue entry, so the window can warm that image
+while the current track plays. The window keeps its `<img>` mounted and swaps `src` only after
+`onload`, which removes the blank square on track change.
+
+**Cold start.** The window can come up before the bridge has attached its listeners, so it pings
+`mini-player:ready` up to ten times at 250 ms, and falls back to a `localStorage` snapshot written by
+the bridge (`tempo.mini.snapshot.v1`). Both windows share an origin, so no filesystem plugin is
+needed.
+
+**Two pieces of configuration exist because of this window:**
+
+- `tauri.conf.json` sets `backgroundThrottling: "disabled"` on the main window. Tauri's default
+  policy is `suspend`, which freezes a minimised webview outright; since the position ticker runs on
+  `requestAnimationFrame`, the mini player's progress would simply stop while the main window is
+  minimised.
+- `lib.rs` excludes `mini-player` from `tauri-plugin-window-state` via `with_denylist`. That plugin
+  remembers the geometry of every window and would otherwise restore the pill at whatever size it was
+  last left — expanded, or off-screen.
+
+The window needs its own capability file (`capabilities/mini-player.json`, matched on the label
+`mini-player`) and the main window needs `core:window:allow-create` plus
+`core:webview:allow-create-webview-window`, without which `new WebviewWindow(...)` fails silently.
+
+A one-off welcome "island" on startup is not implemented.
+
 ## Conventions
 
 - Rust commands return `Result<T, String>`; serde structs use `#[serde(rename_all = "camelCase")]`.
@@ -460,6 +523,9 @@ maximize. Capabilities live in `src-tauri/capabilities/default.json`.
 ## Performance rules
 
 - No polling loops. The UI reacts to events and state changes only.
+- Anything mirrored out of the player goes through a change check first. `PlayerController.emit()`
+  runs at frame rate; consumers must compare the fields they care about rather than acting on every
+  notification, and position-like data belongs on its own throttled channel.
 - Track lists page server-side (500 per page) with "load more"; search results are capped.
 - Lists stay virtualization-ready: flat rows, fixed heights, paged loads.
 - Scanning and downloading happen on Rust threads and must never block the webview.
