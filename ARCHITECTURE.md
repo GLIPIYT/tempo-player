@@ -457,11 +457,22 @@ holds the window's own code, `components/integration/MiniPlayerBridge.tsx` is th
 of the conversation.
 
 **The pill parks itself off-screen.** Left alone it slides up out of view, and the window shrinks
-with it to a 4px strip at the very top — that strip is the hover target, kept small on purpose so an
-always-on-top window is not sitting there swallowing clicks. Moving the pointer onto the strip grows
-the window back to 124×20 and the pill slides down. The window grows immediately but only shrinks
-once the slide-up has finished, so the pill is never clipped mid-animation. `alwaysShowButton` keeps
-it on screen instead.
+with it to a 10px strip at the very top — that strip is the hover target, kept short so an
+always-on-top window is not swallowing clicks, but tall enough to be easy to hit. Moving the pointer
+onto it grows the window back to 124×20 and the pill slides down. The window grows immediately but
+only shrinks once the slide-up has finished, so the pill is never clipped mid-animation.
+`alwaysShowButton` keeps it on screen instead.
+
+Leaving a transparent always-on-top window does not reliably deliver a `mouseleave`, which used to
+leave the pill stuck on screen after the first hover. So while the pill is showing, the window polls
+the OS cursor position against its own bounds and parks itself once the cursor has gone. That poll
+only runs while the pill is visible.
+
+**The window is larger than the card.** `MINI_CARD_INSET` (12px) of transparent margin sits between
+the window bounds and the card, because a card that filled its window exactly had its own drop
+shadow clipped at the window edges, which showed up as dark smudges in the four corners. The pill is
+centred with `left: calc(50% - 62px)` rather than stretched to the window width, so it does not flash
+wide during the handover between the two shapes.
 
 The card is three rows: cover, title and artist; a centred transport flanked by the secondary
 controls and the volume; and the progress bar along the bottom. The transport sits in the middle
@@ -503,7 +514,7 @@ as the change signal — it increments on every audio frame, not on every track 
 while the current track plays. The window keeps its `<img>` mounted and swaps `src` only after
 `onload`, which removes the blank square on track change.
 
-**Captions take turns.** The pill alternates the track name (4s) and the artist (2s), sliding one
+**Captions take turns.** The pill alternates the track name (8s) and the artist (4s), sliding one
 out to the left while the other arrives from the right. On an automatic peek the card can head with
 "Now playing" instead of the title, for the first half of the time it stays open — `showNowPlaying`,
 available only while `autoShowOnTrackChange` is on. Both use the same `SwapText` helper, whose two

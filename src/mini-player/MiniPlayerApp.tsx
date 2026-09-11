@@ -6,7 +6,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { cursorPosition, getCurrentWindow } from '@tauri-apps/api/window'
 import {
   ChevronDown,
   ChevronUp,
@@ -57,8 +57,10 @@ const READY_PING_MS = 250
 /** Must match the transform transition on `.mini-pill` in the stylesheet. */
 const PILL_SLIDE_MS = 220
 /** Pill caption cycle: the track name holds longer than the artist. */
-const PILL_TITLE_MS = 4000
-const PILL_ARTIST_MS = 2000
+const PILL_TITLE_MS = 8000
+const PILL_ARTIST_MS = 4000
+/** How often the cursor is checked while the pill is on screen. */
+const HOVER_POLL_MS = 300
 
 type Shape = 'pill' | 'hidden' | 'card'
 
@@ -185,6 +187,45 @@ export default function MiniPlayerApp() {
     const timer = window.setTimeout(() => void applyShape('hidden'), PILL_SLIDE_MS)
     return () => window.clearTimeout(timer)
   }, [pillVisible, renderExpanded, applyShape])
+
+  /**
+   * Safety net for `onMouseLeave`.
+   *
+   * Leaving a transparent always-on-top window does not reliably deliver a
+   * mouseleave, which left the pill stuck on screen after the first hover. So
+   * while it is showing, ask the OS where the cursor actually is and park the
+   * pill once it has gone. Only runs while the pill is visible.
+   */
+  useEffect(() => {
+    if (renderExpanded || !pillVisible) return
+    let cancelled = false
+    let timer = 0
+    const win = getCurrentWindow()
+    const check = async () => {
+      if (cancelled) return
+      try {
+        const [cursor, origin, size] = await Promise.all([
+          cursorPosition(),
+          win.outerPosition(),
+          win.outerSize(),
+        ])
+        const inside =
+          cursor.x >= origin.x &&
+          cursor.x <= origin.x + size.width &&
+          cursor.y >= origin.y &&
+          cursor.y <= origin.y + size.height
+        if (!cancelled && !inside) setHovering(false)
+      } catch {
+        /* window may be gone while the app shuts down */
+      }
+      if (!cancelled) timer = window.setTimeout(check, HOVER_POLL_MS)
+    }
+    timer = window.setTimeout(check, HOVER_POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [pillVisible, renderExpanded])
 
   // --- events from the main window ---------------------------------------
 
@@ -436,7 +477,7 @@ export default function MiniPlayerApp() {
             <div className="mini-meta">
               <SwapText
                 className="mini-title"
-                first={t('Now playing')}
+                first={t('Now playing:')}
                 second={track?.title ?? t('Nothing playing')}
                 showSecond={!nowPlaying}
               />
@@ -484,7 +525,7 @@ export default function MiniPlayerApp() {
                 onClick={() => emitAction({ type: 'prev' })}
                 title={t('Previous')}
               >
-                <SkipBack size={15} />
+                <SkipBack size={17} />
               </button>
               <button
                 type="button"
@@ -492,7 +533,7 @@ export default function MiniPlayerApp() {
                 onClick={() => emitAction({ type: 'toggle_play' })}
                 title={state?.isPlaying ? t('Pause') : t('Play')}
               >
-                {state?.isPlaying ? <Pause size={16} /> : <Play size={16} />}
+                {state?.isPlaying ? <Pause size={18} /> : <Play size={18} />}
               </button>
               <button
                 type="button"
@@ -500,7 +541,7 @@ export default function MiniPlayerApp() {
                 onClick={() => emitAction({ type: 'next' })}
                 title={t('Next')}
               >
-                <SkipForward size={15} />
+                <SkipForward size={17} />
               </button>
             </div>
 

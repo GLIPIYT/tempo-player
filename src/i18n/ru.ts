@@ -371,7 +371,7 @@ export const ru: Record<string, string> = {
   'Show it when the track changes': 'Показывать при смене трека',
   'Always show the expand button': 'Всегда показывать кнопку разворачивания',
   'Show "Now playing" when it opens': 'Показывать «Сейчас играет» при открытии',
-  'Now playing': 'Сейчас играет',
+  'Now playing:': 'Сейчас играет:',
   'Stay open for': 'Оставаться открытым',
   'The mini player rests at the top edge of the screen. Click the pill to expand it, click the cover to jump back to Tempo.':
     'Мини-плеер прижат к верхней кромке экрана. Клик по «пилюле» разворачивает его, клик по обложке возвращает в Tempo.',

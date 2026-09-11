@@ -24,13 +24,26 @@ export const MAIN_WINDOW_LABEL = 'main'
 /** Pill resting at the top edge of the screen. */
 export const MINI_COLLAPSED_SIZE = { width: 124, height: 20 } as const
 /**
- * What the window shrinks to while the pill is parked off-screen. Only a few
- * pixels stay behind as the hover trigger, so the window does not sit there
- * swallowing clicks meant for whatever is underneath.
+ * What the window shrinks to while the pill is parked off-screen. Only a strip
+ * at the very top stays behind as the hover trigger - kept short so the window
+ * is not swallowing clicks, but tall enough to be easy to hit.
  */
-export const MINI_HIDDEN_SIZE = { width: 124, height: 4 } as const
-/** Expanded card: head row, centred transport row, progress row. */
-export const MINI_EXPANDED_SIZE = { width: 428, height: 112 } as const
+export const MINI_HIDDEN_SIZE = { width: 124, height: 10 } as const
+/** Card body, without the inset that gives the drop shadow room to breathe. */
+export const MINI_CARD_BODY_SIZE = { width: 428, height: 112 } as const
+/**
+ * Transparent margin around the card inside its window.
+ *
+ * The card used to fill the window exactly, which clipped its own drop shadow
+ * at the window bounds and left dark smudges in the four corners. The window is
+ * now larger than the card so the shadow has somewhere to fall.
+ */
+export const MINI_CARD_INSET = 12
+/** Expanded window = card body plus the inset on both sides. */
+export const MINI_EXPANDED_SIZE = {
+  width: MINI_CARD_BODY_SIZE.width + MINI_CARD_INSET * 2,
+  height: MINI_CARD_BODY_SIZE.height + MINI_CARD_INSET * 2,
+} as const
 /**
  * Collapsed and expanded windows are anchored to the very top of the work area
  * rather than inset: the pill slides out from under the screen edge, and the

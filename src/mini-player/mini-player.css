@@ -45,8 +45,11 @@ body,
 .mini-pill {
   position: absolute;
   top: 0;
-  left: 0;
-  width: 100%;
+  /* centred rather than stretched: the window is much wider than the pill
+     while the card is open, and a percentage width would flash wide during
+     the handover */
+  left: calc(50% - 62px);
+  width: 124px;
   height: 20px;
   padding: 0;
   border: 1px solid var(--mini-border);
@@ -106,12 +109,14 @@ body,
 
 .mini-card {
   position: absolute;
-  inset: 0;
+  /* must match MINI_CARD_INSET: the margin is what keeps the drop shadow
+     inside the window instead of being clipped into dark corners */
+  inset: 12px;
   box-sizing: border-box;
   padding: 12px 10px 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   border: 1px solid var(--mini-border);
   border-radius: var(--mini-radius);
   background: var(--mini-surface);
@@ -273,8 +278,8 @@ body,
 /* --- buttons ------------------------------------------------------------ */
 
 .mini-btn {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 0;
   border-radius: 7px;
@@ -307,8 +312,8 @@ body,
 }
 
 .mini-btn-play {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   background: color-mix(in srgb, var(--mini-accent) 24%, transparent);
   color: var(--mini-text);
