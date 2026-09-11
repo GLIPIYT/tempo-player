@@ -17,6 +17,8 @@ export interface DragState {
   kind: DragKind
   title: string
   coverPath: string | null
+  /** Rendered size of the ghost; the sidebar's covers are much smaller. */
+  size: number
   x: number
   y: number
   rot: number
@@ -32,12 +34,13 @@ interface DragSession {
   kind: DragKind
   title: string
   coverPath: string | null
+  size: number
   pointerId: number
   startX: number
   startY: number
   ox: number
   oy: number
-  // animated position
+  // animated position: the point the ghost is centred on
   x: number
   y: number
   tx: number
@@ -138,6 +141,7 @@ function snapshot(): DragState | null {
     kind: session.kind,
     title: session.title,
     coverPath: session.coverPath,
+    size: session.size,
     x: session.x,
     y: session.y,
     rot: session.rot,
@@ -236,15 +240,17 @@ export function beginTrackDrag(opts: {
     kind: 'track',
     title,
     coverPath,
+    size: GHOST_SIZE,
     pointerId: e.pointerId,
     startX: e.clientX,
     startY: e.clientY,
     ox: rect.left + rect.width / 2,
     oy: rect.top + rect.height / 2,
-    x: e.clientX - GHOST_SIZE / 2,
-    y: e.clientY - GHOST_SIZE / 2,
-    tx: e.clientX - GHOST_SIZE / 2,
-    ty: e.clientY - GHOST_SIZE / 2,
+    // the ghost is centred on this point by CSS, so no size arithmetic here
+    x: e.clientX,
+    y: e.clientY,
+    tx: e.clientX,
+    ty: e.clientY,
     rot: 0,
     scale: 1,
     opacity: 0,
@@ -264,8 +270,8 @@ export function beginTrackDrag(opts: {
       s.active = true
       s.activated = true
     }
-    s.tx = ev.clientX - GHOST_SIZE / 2
-    s.ty = ev.clientY - GHOST_SIZE / 2
+    s.tx = ev.clientX
+    s.ty = ev.clientY
     const hit = hitPlaylist(ev.clientX, ev.clientY)
     const changed = (hit?.id ?? null) !== s.targetId
     s.targetId = hit?.id ?? null
@@ -287,13 +293,13 @@ export function beginTrackDrag(opts: {
     if (hit) {
       // suction: fly into the target row and shrink away
       const r = hit.el.getBoundingClientRect()
-      s.tx = r.left + r.width / 2 - GHOST_SIZE / 2
-      s.ty = r.top + r.height / 2 - GHOST_SIZE / 2
+      s.tx = r.left + r.width / 2
+      s.ty = r.top + r.height / 2
       s.active = false
       s.onTrackDrop?.(hit.id, s.trackId ?? 0)
     } else {
-      s.tx = s.ox - GHOST_SIZE / 2
-      s.ty = s.oy - GHOST_SIZE / 2
+      s.tx = s.ox
+      s.ty = s.oy
       s.active = false
     }
     notifyTargets()
@@ -320,21 +326,23 @@ export function beginFavoriteReorder(opts: {
   const rect = el.getBoundingClientRect()
   const coverEl = el.querySelector<HTMLElement>('.fav-cover')
   const coverRect = coverEl?.getBoundingClientRect()
-  const ghostW = coverRect?.width ?? GHOST_SIZE
-  const ghostH = coverRect?.height ?? GHOST_SIZE
+  // the ghost is drawn at the sidebar cover's own size, so it matches what the
+  // user grabbed; it used to be a fixed 52px positioned by this smaller number
+  const ghostSize = coverRect?.width ?? GHOST_SIZE
   const s: DragSession = {
     kind: 'favorite',
     title: el.title || el.textContent || '',
     coverPath,
+    size: ghostSize,
     pointerId: e.pointerId,
     startX: e.clientX,
     startY: e.clientY,
     ox: coverRect ? coverRect.left + coverRect.width / 2 : rect.left + 16,
     oy: coverRect ? coverRect.top + coverRect.height / 2 : rect.top + rect.height / 2,
-    x: e.clientX - ghostW / 2,
-    y: e.clientY - ghostH / 2,
-    tx: e.clientX - ghostW / 2,
-    ty: e.clientY - ghostH / 2,
+    x: e.clientX,
+    y: e.clientY,
+    tx: e.clientX,
+    ty: e.clientY,
     rot: 0,
     scale: 1,
     opacity: 0,
@@ -357,8 +365,8 @@ export function beginFavoriteReorder(opts: {
       s.activated = true
       el.classList.add('is-dragged')
     }
-    s.tx = ev.clientX - ghostW / 2
-    s.ty = ev.clientY - ghostH / 2
+    s.tx = ev.clientX
+    s.ty = ev.clientY
     const hit = hitFavIndex(ev.clientX, ev.clientY, restrictKind)
     const insert = hit ? (hit.after ? hit.index + 1 : hit.index) : null
     if (insert !== s.insertAt) {
@@ -381,8 +389,8 @@ export function beginFavoriteReorder(opts: {
     lastDragEnd = Date.now()
     const from = s.index ?? 0
     const to = s.insertAt ?? null
-    s.tx = s.ox - ghostW / 2
-    s.ty = s.oy - ghostH / 2
+    s.tx = s.ox
+    s.ty = s.oy
     s.active = false
     if (to !== null) {
       let t: number = to
@@ -403,13 +411,16 @@ export default function TrackDragLayer() {
   if (!state) return null
   return (
     <div
-      className={'dnd-ghost' + (state.kind === 'favorite' ? ' dnd-ghost-sm' : '')}
+      className="dnd-ghost"
       style={{
-        transform: `translate(${state.x}px, ${state.y}px) rotate(${state.rot}deg) scale(${state.scale})`,
+        // Centring happens here rather than with size arithmetic in the drag
+        // session, so the ghost cannot drift off the cursor again if the
+        // rendered size and the assumed size ever disagree.
+        transform: `translate(${state.x}px, ${state.y}px) translate(-50%, -50%) rotate(${state.rot}deg) scale(${state.scale})`,
         opacity: state.opacity,
       }}
     >
-      <Cover path={state.coverPath} label={state.title} size={GHOST_SIZE} />
+      <Cover path={state.coverPath} label={state.title} size={state.size} />
     </div>
   )
 }

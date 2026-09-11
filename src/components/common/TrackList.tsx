@@ -57,7 +57,7 @@ export default function TrackList({ tracks, showAlbum = true, showIndex = true, 
               const handle = menus.current.get(t.id)
               if (!handle) return
               e.preventDefault()
-              handle.open()
+              handle.openAt(e.clientX, e.clientY)
             }}
           >
             {showIndex ? (

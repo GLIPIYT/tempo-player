@@ -1214,6 +1214,33 @@
   box-shadow: 0 8px 22px rgba(5, 7, 12, 0.45);
 }
 
+/* Opened by right-click: pinned to the cursor rather than to the trigger cell.
+   Fixed so it escapes any clipping or scrolling ancestor, and clamped to the
+   viewport in the component. */
+.menu-pop-at-point {
+  position: fixed;
+  top: auto;
+  right: auto;
+  z-index: 220;
+}
+
+.home-restore {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 2px;
+}
+
+/* Zero-size home for a menu that positions itself at the cursor. Lives outside
+   any grid or rail so it never becomes a layout cell. */
+.ctx-anchor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  z-index: 220;
+}
+
 .menu-title {
   padding: 6px 9px 4px;
   font-size: 10.5px;

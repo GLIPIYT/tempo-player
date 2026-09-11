@@ -114,6 +114,14 @@ export default function MiniPlayerApp() {
   const [pillPhase, setPillPhase] = useState<'title' | 'artist'>('title')
 
   const gotStateRef = useRef(boot !== null)
+  /**
+   * Set once the user touches the card. Every command sent from here changes the
+   * track, and the bridge answers a track change with a peek - which would
+   * restart the auto-collapse timer and re-show the "now playing" heading while
+   * the user is still driving. Once engaged, peeks are ignored until the card
+   * folds away.
+   */
+  const engagedRef = useRef(false)
   const stateRef = useRef(state)
   stateRef.current = state
   const seekLockRef = useRef(0)
@@ -166,6 +174,9 @@ export default function MiniPlayerApp() {
       setNowPlaying(false)
       setPillHold(false)
       setUnfold(withUnfold)
+      // a manual open is a deliberate act, so peeks are ignored from then on;
+      // a peek-driven open stays peek-driven, so an auto-advance can refresh it
+      engagedRef.current = withUnfold
       // grow the window first: mounting the card into a 124px-wide window and
       // resizing afterwards is what made the automatic open feel like a jump
       await applyShape('card')
@@ -187,6 +198,7 @@ export default function MiniPlayerApp() {
       // shrink the window only after the closing animation has played
       closeTimerRef.current = window.setTimeout(() => {
         setRenderExpanded(false)
+        engagedRef.current = false
         void applyShape('pill')
         // after an automatic peek the pill stays put for a while instead of
         // vanishing the moment the card folds away
@@ -314,6 +326,9 @@ export default function MiniPlayerApp() {
     let unlisten: (() => void) | null = null
     let disposed = false
     void listenFor<MiniPeek>(EV_PEEK, (peek) => {
+      // the user is driving the card: the track change came from their own
+      // click, so leave the card alone
+      if (engagedRef.current) return
       const current = stateRef.current
       void expand(false)
       window.clearTimeout(collapseTimerRef.current)
@@ -486,6 +501,9 @@ export default function MiniPlayerApp() {
       {renderExpanded && (
         <div
           className={`mini-card${expanded ? ' is-open' : ''}${unfold ? ' is-unfold' : ''}`}
+          onPointerDown={() => {
+            engagedRef.current = true
+          }}
         >
           <button type="button" className="mini-grabber" onClick={() => collapse()} title={t('Collapse')}>
             <ChevronUp size={13} />

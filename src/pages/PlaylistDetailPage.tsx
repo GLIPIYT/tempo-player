@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { save } from '@tauri-apps/plugin-dialog'
 import { ChevronLeft, Download, FileDown, ListMusic, Pencil, Play, Star, StarOff, Trash2, X } from 'lucide-react'
 import { useNav } from '../state/nav'
@@ -16,7 +16,7 @@ import Cover from '../components/common/Cover'
 import { toast } from '../components/common/Toast'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
-import TrackMenu from '../components/common/TrackMenu'
+import TrackMenu, { type TrackMenuHandle } from '../components/common/TrackMenu'
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
@@ -88,6 +88,8 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const baseItems = detail.data ?? []
   const items = orderOverride ?? baseItems
   const tracks: Track[] = items.map((p) => p.track)
+  // one handle per row, so right-clicking a row opens that row's own menu
+  const menus = useRef(new Map<number, TrackMenuHandle | null>())
   const playlist = (lists.data ?? []).find((pl) => pl.id === playlistId)
 
   const reloadAll = () => {
@@ -333,6 +335,12 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                   setDropEdge(null)
                 }}
                 onDoubleClick={() => player.playTracks(tracks.map((x) => trackToUnified(x)), i)}
+                onContextMenu={(e) => {
+                  const handle = menus.current.get(t.id)
+                  if (!handle) return
+                  e.preventDefault()
+                  handle.openAt(e.clientX, e.clientY)
+                }}
               >
                 <div className="tl-index">
                   <span className="tl-num">{i + 1}</span>
@@ -367,6 +375,10 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                   <X size={14} />
                 </button>
                 <TrackMenu
+                  ref={(h) => {
+                    if (h) menus.current.set(t.id, h)
+                    else menus.current.delete(t.id)
+                  }}
                   track={t}
                   tracks={tracks}
                   index={i}

@@ -369,6 +369,8 @@ export const ru: Record<string, string> = {
     'Небольшое окно поверх всех окон с управлением воспроизведением.',
   'Floating mini player': 'Плавающий мини-плеер',
   'Show it when the track changes': 'Показывать при смене трека',
+  'Hide until tomorrow': 'Скрыть до завтра',
+  'Show hidden sections': 'Показать скрытые разделы',
   'Always show the expand button': 'Всегда показывать кнопку разворачивания',
   'Show "Now playing" when it opens': 'Показывать «Сейчас играет» при открытии',
   'Now playing:': 'Сейчас играет:',

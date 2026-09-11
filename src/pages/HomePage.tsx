@@ -1,5 +1,10 @@
-import { useMemo, type PointerEvent as ReactPointerEvent } from 'react'
-import { Clock3, Flame, FolderPlus, RefreshCw } from 'lucide-react'
+import {
+  useMemo,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
+import { Clock3, Eye, EyeOff, Flame, FolderPlus, Play, RefreshCw } from 'lucide-react'
 import { api } from '../api/client'
 import type { TopTrackItem, Track } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
@@ -15,6 +20,15 @@ import CardPlayButton from '../components/common/CardPlayButton'
 import EmptyState from '../components/common/EmptyState'
 import ScanLine from '../components/common/ScanLine'
 import { beginTrackDrag, consumeDragClick } from '../dnd/trackDrag'
+import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
+import TrackContextMenu, { type TrackContextRequest } from '../components/common/TrackContextMenu'
+import {
+  anySectionHidden,
+  hideSectionUntilTomorrow,
+  isSectionHidden,
+  unhideAllSections,
+  useHiddenSections,
+} from '../utils/hiddenSections'
 
 function greetingForHour(h: number): string {
   if (h >= 5 && h < 12) return 'Good morning'
@@ -79,6 +93,10 @@ export default function HomePage() {
     return mixes
   }, [hourPicksList, unknownArtist, t])
 
+  // right-click on a home card re-targets this one menu, so the grids and rails
+  // do not need an extra element per card
+  const [ctx, setCtx] = useState<TrackContextRequest | null>(null)
+  useHiddenSections()
 
   if (recent.loading) {
     return (
@@ -100,6 +118,8 @@ export default function HomePage() {
   const totalTracks = total.data ?? 0
   const topTracks: TopTrackItem[] = top.data ?? []
   const recentPlays = played.data ?? []
+  const topTrackList = topTracks.map((x) => x.track)
+  const recentAdded = recent.data ?? []
 
   const playSection = (tracks: Track[], index: number) => {
     player.playTracks(tracks.map((tr) => trackToUnified(tr)), index)
@@ -120,6 +140,46 @@ export default function HomePage() {
       player.playTracks([trackToUnified(tr)], 0)
     },
   })
+
+  /**
+   * Right-click menu for a section header or a generated mix: play the lot, or
+   * hide it for the rest of the day.
+   */
+  const sectionMenu = (e: ReactMouseEvent, opts: { title: string; id: string; tracks: Track[] }) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const items: ContextMenuItem[] = [
+      {
+        id: 'play',
+        label: t('Play all'),
+        icon: <Play size={13} />,
+        disabled: opts.tracks.length === 0,
+        onSelect: () => playSection(opts.tracks, 0),
+      },
+      {
+        id: 'hide',
+        label: t('Hide until tomorrow'),
+        icon: <EyeOff size={13} />,
+        onSelect: () => hideSectionUntilTomorrow(opts.id),
+      },
+    ]
+    if (anySectionHidden()) {
+      items.push({
+        id: 'unhide',
+        label: t('Show hidden sections'),
+        icon: <Eye size={13} />,
+        onSelect: () => unhideAllSections(),
+      })
+    }
+    openContextMenu({ x: e.clientX, y: e.clientY, title: opts.title, items })
+  }
+
+  const trackContext = (e: ReactMouseEvent, track: Track, tracks: Track[], index: number) => {
+    e.preventDefault()
+    setCtx({ x: e.clientX, y: e.clientY, track, tracks, index })
+  }
+
+  const hidden = (id: string) => isSectionHidden(id)
 
   return (
     <div className="page">
@@ -171,9 +231,14 @@ export default function HomePage() {
         />
       ) : (
         <>
-          {hourMixes.length > 0 ? (
+          {hourMixes.length > 0 && !hidden('home.hour') ? (
             <section className="home-section">
-              <div className="home-section-head">
+              <div
+                className="home-section-head"
+                onContextMenu={(e) =>
+                  sectionMenu(e, { title: t('For this hour'), id: 'home.hour', tracks: hourPicksList })
+                }
+              >
                 <span className="home-section-title">
                   <Clock3 size={15} />
                   {t('For this hour')}
@@ -183,7 +248,7 @@ export default function HomePage() {
                 </span>
               </div>
               <div className="cards-grid cards-grid-tight">
-                {hourMixes.map((mix) => {
+                {hourMixes.filter((mix) => !hidden(`home.mix:${mix.key}`)).map((mix) => {
                   const cover = mix.tracks.find((tr) => tr.coverPath)?.coverPath ?? null
                   return (
                     <button
@@ -191,6 +256,9 @@ export default function HomePage() {
                       className="card"
                       title={mix.title}
                       onClick={() => playSection(mix.tracks, 0)}
+                      onContextMenu={(e) =>
+                        sectionMenu(e, { title: mix.title, id: `home.mix:${mix.key}`, tracks: mix.tracks })
+                      }
                     >
                       <div className="hour-mix-tile">
                         <Cover path={cover} label={mix.title} size={150} />
@@ -210,9 +278,14 @@ export default function HomePage() {
             </section>
           ) : null}
 
-          {topTracks.length > 0 ? (
+          {topTracks.length > 0 && !hidden('home.top') ? (
             <section className="home-section">
-              <div className="home-section-head">
+              <div
+                className="home-section-head"
+                onContextMenu={(e) =>
+                  sectionMenu(e, { title: t('Most played'), id: 'home.top', tracks: topTrackList })
+                }
+              >
                 <span className="home-section-title">
                   <Flame size={15} />
                   {t('Most played')}
@@ -227,8 +300,9 @@ export default function HomePage() {
                     title={item.track.title}
                     onClick={() => {
                       if (consumeDragClick()) return
-                      playSection(topTracks.map((x) => x.track), i)
+                      playSection(topTrackList, i)
                     }}
+                    onContextMenu={(e) => trackContext(e, item.track, topTrackList, i)}
                     onPointerDown={(e) =>
                       beginTrackDrag({
                         e,
@@ -255,38 +329,24 @@ export default function HomePage() {
             </section>
           ) : null}
 
-          <section className="home-section">
-            <div className="home-section-head">
-              <span className="home-section-title">{t('Recently added')}</span>
-            </div>
-            <div className="cards-grid cards-grid-tight">
-              {(recent.data ?? []).map((tr) => (
-                <button
-                  key={tr.id}
-                  className="card track-card"
-                  title={tr.title}
-                  {...trackCardDrag(tr)}
-                >
-                  <Cover path={tr.coverPath} label={tr.title} size={120} />
-                  <span className="card-title">{tr.title}</span>
-                  <span className="card-sub">{tr.artistName ?? unknownArtist}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          {recentPlays.length > 0 ? (
+          {!hidden('home.recent') ? (
             <section className="home-section">
-              <div className="home-section-head">
-                <span className="home-section-title">{t('Recently played')}</span>
+              <div
+                className="home-section-head"
+                onContextMenu={(e) =>
+                  sectionMenu(e, { title: t('Recently added'), id: 'home.recent', tracks: recentAdded })
+                }
+              >
+                <span className="home-section-title">{t('Recently added')}</span>
               </div>
               <div className="cards-grid cards-grid-tight">
-                {recentPlays.map((tr) => (
+                {recentAdded.map((tr, i) => (
                   <button
-                    key={`played-${tr.id}`}
+                    key={tr.id}
                     className="card track-card"
                     title={tr.title}
                     {...trackCardDrag(tr)}
+                    onContextMenu={(e) => trackContext(e, tr, recentAdded, i)}
                   >
                     <Cover path={tr.coverPath} label={tr.title} size={120} />
                     <span className="card-title">{tr.title}</span>
@@ -296,8 +356,48 @@ export default function HomePage() {
               </div>
             </section>
           ) : null}
+
+          {recentPlays.length > 0 && !hidden('home.played') ? (
+            <section className="home-section">
+              <div
+                className="home-section-head"
+                onContextMenu={(e) =>
+                  sectionMenu(e, { title: t('Recently played'), id: 'home.played', tracks: recentPlays })
+                }
+              >
+                <span className="home-section-title">{t('Recently played')}</span>
+              </div>
+              <div className="cards-grid cards-grid-tight">
+                {recentPlays.map((tr, i) => (
+                  <button
+                    key={`played-${tr.id}`}
+                    className="card track-card"
+                    title={tr.title}
+                    {...trackCardDrag(tr)}
+                    onContextMenu={(e) => trackContext(e, tr, recentPlays, i)}
+                  >
+                    <Cover path={tr.coverPath} label={tr.title} size={120} />
+                    <span className="card-title">{tr.title}</span>
+                    <span className="card-sub">{tr.artistName ?? unknownArtist}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {/* without this, hiding every section would leave nothing to
+              right-click and no way back */}
+          {anySectionHidden() ? (
+            <div className="home-restore">
+              <button className="btn btn-ghost" onClick={() => unhideAllSections()}>
+                <Eye size={15} />
+                {t('Show hidden sections')}
+              </button>
+            </div>
+          ) : null}
         </>
       )}
+      <TrackContextMenu req={ctx} onClose={() => setCtx(null)} />
     </div>
   )
 }

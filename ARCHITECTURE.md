@@ -546,6 +546,47 @@ The window needs its own capability file (`capabilities/mini-player.json`, match
 
 A one-off welcome "island" on startup is not implemented.
 
+### Context menus
+
+Two implementations, deliberately:
+
+- **`TrackMenu`** owns the track actions — a dozen of them plus a playlist
+  submenu — and is used both by the `…` button and by right-click. Right-click
+  opens it through `openAt(x, y)`, which renders the popup at the cursor
+  (`.menu-pop-at-point`, fixed and clamped to the viewport) instead of anchored
+  to the cell. Pages that lay tracks out in grids or rails render a single
+  `TrackContextMenu` at the page root and re-target it on every right-click,
+  because a menu per card would become an extra grid cell.
+- **`ContextMenu`** is a small global menu for everything that is not a track:
+  section headers, album and artist cards. `openContextMenu({ x, y, items })`
+  from anywhere, one host at the app root closes it on outside click, Escape,
+  resize or window blur.
+
+Right-click works on: library, album, artist, playlist and search rows; home
+cards; album and artist cards; and the sidebar's playlists, artists and albums
+(which bring their own).
+
+**Home sections can be hidden until tomorrow.** `utils/hiddenSections.ts` stores
+only a calendar day per section id, so a hidden section reappears on its own
+when the date changes — no timer, no migration. Because every section can be
+hidden, the page always renders a "show hidden sections" escape hatch; without
+it, hiding the last section would leave nothing to right-click.
+
+### Drag and drop
+
+Pointer events rather than HTML5 drag events, because Tauri's native drag-drop
+hook on Windows swallows the latter. The floating ghost is centred on the
+cursor with `translate(-50%, -50%)` rather than by subtracting half a hardcoded
+size, so it cannot drift off the cursor when the rendered size and the assumed
+one disagree — that is exactly what used to happen, since the "small" ghost
+class had no CSS rule at all while the drag session positioned using the
+sidebar cover's size.
+
+Fixed-position overlays (`TrackDragLayer`, `ToastHost`, `Onboarding`,
+`ContextMenuHost`) are rendered **outside** `.app-root`. `applyFont()` sets a
+zoom on that element for the UI scale preference, and a zoomed ancestor makes
+`position: fixed` resolve against it instead of the viewport.
+
 ## Conventions
 
 - Rust commands return `Result<T, String>`; serde structs use `#[serde(rename_all = "camelCase")]`.

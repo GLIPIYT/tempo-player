@@ -17,6 +17,7 @@ import PlaylistDetailPage from './pages/PlaylistDetailPage'
 import Onboarding from './components/onboarding/Onboarding'
 import PresenceBridge from './components/integration/PresenceBridge'
 import MiniPlayerBridge from './components/integration/MiniPlayerBridge'
+import ContextMenuHost from './components/common/ContextMenu'
 import TrackDragLayer from './dnd/trackDrag'
 import { NavProvider, useNav } from './state/nav'
 import { usePlayer } from './player'
@@ -174,29 +175,36 @@ function Shell() {
     likesStore.ensureLoaded()
   }, [])
   return (
-    <div className="app-root">
-      <TitleBar />
-      <div className="app-shell">
-        <Sidebar />
-        <div className="app-main">
-          <TopBar />
-          <main className="app-content">
-            <CurrentPage />
-          </main>
+    <>
+      <div className="app-root">
+        <TitleBar />
+        <div className="app-shell">
+          <Sidebar />
+          <div className="app-main">
+            <TopBar />
+            <main className="app-content">
+              <CurrentPage />
+            </main>
+          </div>
+          <PlayerBar />
         </div>
-        <PlayerBar />
+        <Shortcuts />
+        <ScanWatcher />
+        <LibraryChangeWatcher />
+        <FolderDropWatcher />
+        <TaskbarProgress />
+        <PresenceBridge />
+        <MiniPlayerBridge />
       </div>
-      <Shortcuts />
-      <ScanWatcher />
-      <LibraryChangeWatcher />
-      <FolderDropWatcher />
-      <TaskbarProgress />
-      <PresenceBridge />
-      <MiniPlayerBridge />
+      {/* Fixed-position overlays live outside .app-root: applyFont() sets a zoom
+          on it for the UI scale preference, and a zoomed ancestor makes
+          position:fixed resolve against that ancestor instead of the viewport,
+          which dragged the ghost away from the cursor. */}
       <TrackDragLayer />
       <ToastHost />
       <Onboarding />
-    </div>
+      <ContextMenuHost />
+    </>
   )
 }
 

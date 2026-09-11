@@ -1,10 +1,15 @@
+import type { MouseEvent as ReactMouseEvent } from 'react'
+import { Play, Star, StarOff } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
+import type { Album } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { useT } from '../i18n'
 import { usePlayer } from '../player'
 import { tracksToUnified } from '../utils/unified'
+import { bumpLibraryVersion } from '../utils/libraryVersion'
+import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import Cover from '../components/common/Cover'
 import CardPlayButton from '../components/common/CardPlayButton'
 import EmptyState from '../components/common/EmptyState'
@@ -21,6 +26,38 @@ export default function AlbumsPage() {
       const detail = await api.getAlbum(albumId)
       if (detail.tracks.length > 0) player.playTracks(tracksToUnified(detail.tracks), 0)
     } catch {}
+  }
+
+  // the favourite state has to be asked for, so the menu opens once it lands
+  const albumMenu = (e: ReactMouseEvent, a: Album) => {
+    e.preventDefault()
+    const x = e.clientX
+    const y = e.clientY
+    void api
+      .isFavoriteAlbum(a.id)
+      .then((isFav) => {
+        const items: ContextMenuItem[] = [
+          {
+            id: 'play',
+            label: t('Play all'),
+            icon: <Play size={13} />,
+            onSelect: () => void playAlbum(a.id),
+          },
+          {
+            id: 'fav',
+            label: isFav ? t('Remove from favorites') : t('Add to favorites'),
+            icon: isFav ? <StarOff size={13} /> : <Star size={13} />,
+            onSelect: () => {
+              void api
+                .toggleFavoriteAlbum(a.id)
+                .then(() => bumpLibraryVersion())
+                .catch(() => undefined)
+            },
+          },
+        ]
+        openContextMenu({ x, y, title: a.title, items })
+      })
+      .catch(() => undefined)
   }
 
   return (
@@ -44,6 +81,7 @@ export default function AlbumsPage() {
               key={a.id}
               className="card"
               onClick={() => navigate({ name: 'album', id: a.id })}
+              onContextMenu={(e) => albumMenu(e, a)}
               title={a.title}
             >
               <span className="card-cover">

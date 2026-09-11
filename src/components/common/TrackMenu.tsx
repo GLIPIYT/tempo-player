@@ -1,4 +1,12 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { ArrowDown, ArrowUp, Check, Disc3, FolderOpen, Heart, MoreHorizontal, Plus, Trash2, User } from 'lucide-react'
 import { api } from '../../api/client'
 import type { Playlist, Track } from '../../types/models'
@@ -17,6 +25,8 @@ interface TrackMenuProps {
   index: number
   playlistMode?: boolean
   playlistId?: number
+  /** Render without the trigger button - for surfaces that only open on right-click. */
+  hideTrigger?: boolean
   onChanged?: () => void
   onMove?: (delta: 1 | -1) => void
 }
@@ -24,6 +34,21 @@ interface TrackMenuProps {
 /** Lets a row open its own menu on right-click without owning the open state. */
 export interface TrackMenuHandle {
   open: () => void
+  /** Opens at a point in viewport coordinates, for right-click. */
+  openAt: (x: number, y: number) => void
+}
+
+/** Keeps the menu inside the viewport when it is opened at the cursor. */
+const EDGE_GAP = 8
+
+function clampToViewport(x: number, y: number, el: HTMLElement | null): { x: number; y: number } {
+  if (!el) return { x, y }
+  const w = el.offsetWidth
+  const h = el.offsetHeight
+  return {
+    x: Math.min(Math.max(EDGE_GAP, x), Math.max(EDGE_GAP, window.innerWidth - w - EDGE_GAP)),
+    y: Math.min(Math.max(EDGE_GAP, y), Math.max(EDGE_GAP, window.innerHeight - h - EDGE_GAP)),
+  }
 }
 
 function errText(e: unknown): string {
@@ -31,7 +56,7 @@ function errText(e: unknown): string {
 }
 
 const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu(
-  { track, tracks, index, playlistMode = false, playlistId, onChanged, onMove },
+  { track, tracks, index, playlistMode = false, playlistId, hideTrigger = false, onChanged, onMove },
   ref,
 ) {
   const player = usePlayer()
@@ -39,11 +64,25 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
   const { navigate } = useNav()
   const t = useT()
   const [open, setOpen] = useState(false)
+  /** Null means anchored to the trigger button; a point means opened at the cursor. */
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const [sub, setSub] = useState(false)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const popRef = useRef<HTMLDivElement | null>(null)
+
+  // the menu is measured once it exists, then pulled back inside the window if
+  // it would hang off the right or bottom edge
+  useLayoutEffect(() => {
+    if (!open || !pos) return
+    const el = popRef.current
+    if (!el) return
+    const clamped = clampToViewport(pos.x, pos.y, el)
+    if (clamped.x !== pos.x || clamped.y !== pos.y) setPos(clamped)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, pos !== null])
 
   const flash = useCallback((text: string, bad: boolean) => {
     toast.show(text, bad ? 'error' : 'success')
@@ -83,6 +122,7 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
 
   const close = useCallback(() => {
     setOpen(false)
+    setPos(null)
     setSub(false)
     setCreating(false)
     setNewName('')
@@ -94,10 +134,20 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
     setCreating(false)
     setNewName('')
     setPlaylists(null)
+    setPos(null)
     setOpen(true)
   }, [])
 
-  useImperativeHandle(ref, () => ({ open: openFresh }), [openFresh])
+  const openAtPoint = useCallback((x: number, y: number) => {
+    setSub(false)
+    setCreating(false)
+    setNewName('')
+    setPlaylists(null)
+    setPos({ x, y })
+    setOpen(true)
+  }, [])
+
+  useImperativeHandle(ref, () => ({ open: openFresh, openAt: openAtPoint }), [openFresh, openAtPoint])
 
   const toggleOpen = () => {
     if (open) {
@@ -273,15 +323,22 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
     >
-      <button
-        className="icon-btn tm-btn"
-        aria-label={`${t('More actions for')} ${track.title}`}
-        onClick={toggleOpen}
-      >
-        <MoreHorizontal size={15} />
-      </button>
+      {hideTrigger ? null : (
+        <button
+          className="icon-btn tm-btn"
+          aria-label={`${t('More actions for')} ${track.title}`}
+          onClick={toggleOpen}
+        >
+          <MoreHorizontal size={15} />
+        </button>
+      )}
       {open ? (
-        <div className="menu-pop" role="menu">
+        <div
+          ref={popRef}
+          className={'menu-pop' + (pos ? ' menu-pop-at-point' : '')}
+          role="menu"
+          style={pos ? { left: pos.x, top: pos.y } : undefined}
+        >
           <button className="menu-item" role="menuitem" onClick={toggleLike}>
             <Heart size={13} fill={likes.isLiked(track.id) ? 'currentColor' : 'none'} />
             {likes.isLiked(track.id) ? t('Remove from Likes') : t('Add to Likes')}
