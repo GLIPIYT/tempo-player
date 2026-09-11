@@ -452,9 +452,26 @@ maximize. Capabilities live in `src-tauri/capabilities/default.json`.
 ### Mini player
 
 A second webview showing a compact view of the player, resting as a 124×20 pill at the top edge of
-the screen and expanding to 428×136. Off by default; toggled in Settings → General. `mini-player/`
+the screen and expanding to 428×112. Off by default; toggled in Settings → General. `mini-player/`
 holds the window's own code, `components/integration/MiniPlayerBridge.tsx` is the main window's side
 of the conversation.
+
+**The pill parks itself off-screen.** Left alone it slides up out of view, and the window shrinks
+with it to a 4px strip at the very top — that strip is the hover target, kept small on purpose so an
+always-on-top window is not sitting there swallowing clicks. Moving the pointer onto the strip grows
+the window back to 124×20 and the pill slides down. The window grows immediately but only shrinks
+once the slide-up has finished, so the pill is never clipped mid-animation. `alwaysShowButton` keeps
+it on screen instead.
+
+The card is three rows: cover, title and artist; a centred transport flanked by the secondary
+controls and the volume; and the progress bar along the bottom. The transport sits in the middle
+column of a `1fr auto 1fr` grid so it lands on the card's midline whatever the flanks contain.
+
+**Opening and closing are asymmetric on purpose.** A manual open unfolds out of the pill
+(`transform-origin: top center` plus a scale), while an automatic peek only fades in — the unfolding
+would be distracting on every track change. Either way the window is resized *before* the card is
+mounted, because mounting into a 124px-wide window and resizing afterwards is what makes the open
+look like a jump.
 
 **The window is created from JS, not declared in `tauri.conf.json`.** `ensureMiniWindow()` in
 `mini-player/contract.ts` builds it with `transparent`, `decorations: false`, `alwaysOnTop`,
@@ -485,6 +502,12 @@ as the change signal — it increments on every audio frame, not on every track 
 `convertFileSrc` URL plus the artwork of the *next* queue entry, so the window can warm that image
 while the current track plays. The window keeps its `<img>` mounted and swaps `src` only after
 `onload`, which removes the blank square on track change.
+
+**Captions take turns.** The pill alternates the track name (4s) and the artist (2s), sliding one
+out to the left while the other arrives from the right. On an automatic peek the card can head with
+"Now playing" instead of the title, for the first half of the time it stays open — `showNowPlaying`,
+available only while `autoShowOnTrackChange` is on. Both use the same `SwapText` helper, whose two
+labels are absolutely positioned so nothing reflows mid-transition.
 
 **Cold start.** The window can come up before the bridge has attached its listeners, so it pings
 `mini-player:ready` up to ten times at 250 ms, and falls back to a `localStorage` snapshot written by

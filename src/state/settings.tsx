@@ -45,6 +45,10 @@ export interface AppSettings {
     autoShowOnTrackChange: boolean
     /** How long the mini player stays expanded after a track change. */
     autoShowDurationMs: number
+    /** Keep the pill on screen instead of parking it above the top edge. */
+    alwaysShowButton: boolean
+    /** Head the card with "Now playing" for the first half of an automatic peek. */
+    showNowPlaying: boolean
   }
 }
 
@@ -61,7 +65,13 @@ export const defaultSettings: AppSettings = {
   sidebar: { grouped: true },
   // off by default: an always-on-top window appearing unprompted after an
   // update is worse than a feature nobody notices
-  miniPlayer: { enabled: false, autoShowOnTrackChange: true, autoShowDurationMs: 3000 },
+  miniPlayer: {
+    enabled: false,
+    autoShowOnTrackChange: true,
+    autoShowDurationMs: 3000,
+    alwaysShowButton: false,
+    showNowPlaying: true,
+  },
 }
 
 const MINI_SHOW_MS_MIN = 1000

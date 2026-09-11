@@ -80,6 +80,9 @@ function signatureOf(state: MiniPlayerState): string {
     state.volume.toFixed(3),
     state.buffering ? 1 : 0,
     state.lang,
+    state.alwaysShowButton ? 1 : 0,
+    state.showNowPlaying ? 1 : 0,
+    String(state.autoShowDurationMs),
   ].join('|')
 }
 
@@ -120,6 +123,9 @@ export default function MiniPlayerBridge(): null {
       buffering: snap.bufferPct !== null,
       theme: current.theme,
       lang: resolveLang(current.lang),
+      alwaysShowButton: current.miniPlayer.alwaysShowButton,
+      showNowPlaying: current.miniPlayer.showNowPlaying,
+      autoShowDurationMs: current.miniPlayer.autoShowDurationMs,
     }
   }
 

@@ -23,12 +23,24 @@ export const MAIN_WINDOW_LABEL = 'main'
 
 /** Pill resting at the top edge of the screen. */
 export const MINI_COLLAPSED_SIZE = { width: 124, height: 20 } as const
-/** Expanded card. Taller than the source project's 108px so the three rows breathe. */
-export const MINI_EXPANDED_SIZE = { width: 428, height: 136 } as const
-/** Distance from the top of the work area, so the pill hugs the edge. */
-export const MINI_TOP_MARGIN = 2
+/**
+ * What the window shrinks to while the pill is parked off-screen. Only a few
+ * pixels stay behind as the hover trigger, so the window does not sit there
+ * swallowing clicks meant for whatever is underneath.
+ */
+export const MINI_HIDDEN_SIZE = { width: 124, height: 4 } as const
+/** Expanded card: head row, centred transport row, progress row. */
+export const MINI_EXPANDED_SIZE = { width: 428, height: 112 } as const
+/**
+ * Collapsed and expanded windows are anchored to the very top of the work area
+ * rather than inset: the pill slides out from under the screen edge, and the
+ * hover strip has to stay inside the window when the window grows.
+ */
+export const MINI_TOP_MARGIN = 0
 /** Window resize happens once the open/close animation has finished. */
 export const OPEN_ANIMATION_MS = 180
+/** Unfold/fold of the card itself. */
+export const UNFOLD_ANIMATION_MS = 220
 
 export const EV_STATE = 'mini-player:state'
 export const EV_TICK = 'mini-player:tick'
@@ -71,6 +83,12 @@ export interface MiniPlayerState {
   buffering: boolean
   theme: ActiveTheme
   lang: 'ru' | 'en'
+  /** Keep the pill visible instead of parking it off-screen. */
+  alwaysShowButton: boolean
+  /** Show a "now playing" heading for the first half of an automatic peek. */
+  showNowPlaying: boolean
+  /** How long an automatic peek lasts; the heading uses half of it. */
+  autoShowDurationMs: number
 }
 
 export type MiniPlayerAction =

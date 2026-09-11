@@ -930,6 +930,20 @@ export default function SettingsPage() {
                 {settings.miniPlayer.enabled ? (
                   <>
                     <div className="set-row" style={{ marginTop: 6 }}>
+                      <span className="set-row-label">{t('Always show the expand button')}</span>
+                      <button
+                        className={settings.miniPlayer.alwaysShowButton ? 'switch is-on' : 'switch'}
+                        role="switch"
+                        aria-checked={settings.miniPlayer.alwaysShowButton}
+                        aria-label={t('Always show the expand button')}
+                        onClick={() =>
+                          update({
+                            miniPlayer: { alwaysShowButton: !settings.miniPlayer.alwaysShowButton },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="set-row" style={{ marginTop: 6 }}>
                       <span className="set-row-label">{t('Show it when the track changes')}</span>
                       <button
                         className={settings.miniPlayer.autoShowOnTrackChange ? 'switch is-on' : 'switch'}
@@ -944,15 +958,31 @@ export default function SettingsPage() {
                       />
                     </div>
                     {settings.miniPlayer.autoShowOnTrackChange ? (
-                      <CommitSlider
-                        label={t('Stay open for')}
-                        min={1}
-                        max={15}
-                        step={1}
-                        value={Math.round(settings.miniPlayer.autoShowDurationMs / 1000)}
-                        format={(v) => `${v}s`}
-                        onCommit={(v) => update({ miniPlayer: { autoShowDurationMs: clampMiniShowMs(v * 1000) } })}
-                      />
+                      <>
+                        <CommitSlider
+                          label={t('Stay open for')}
+                          min={1}
+                          max={15}
+                          step={1}
+                          value={Math.round(settings.miniPlayer.autoShowDurationMs / 1000)}
+                          format={(v) => `${v}s`}
+                          onCommit={(v) => update({ miniPlayer: { autoShowDurationMs: clampMiniShowMs(v * 1000) } })}
+                        />
+                        <div className="set-row">
+                          <span className="set-row-label">{t('Show "Now playing" when it opens')}</span>
+                          <button
+                            className={settings.miniPlayer.showNowPlaying ? 'switch is-on' : 'switch'}
+                            role="switch"
+                            aria-checked={settings.miniPlayer.showNowPlaying}
+                            aria-label={t('Show "Now playing" when it opens')}
+                            onClick={() =>
+                              update({
+                                miniPlayer: { showNowPlaying: !settings.miniPlayer.showNowPlaying },
+                              })
+                            }
+                          />
+                        </div>
+                      </>
                     ) : null}
                     <div className="set-note">
                       {t('The mini player rests at the top edge of the screen. Click the pill to expand it, click the cover to jump back to Tempo.')}
