@@ -109,21 +109,21 @@ body,
 
 .mini-card {
   position: absolute;
-  /* must match MINI_CARD_INSET: the margin is what keeps the drop shadow
-     inside the window instead of being clipped into dark corners */
-  inset: 12px;
+  /* must match MINI_CARD_INSET. No inset at the top: the card sits flush
+     against the screen edge, and the margin on the other three sides is what
+     keeps the drop shadow inside the window instead of being clipped into
+     dark corners */
+  inset: 0 12px 12px;
   box-sizing: border-box;
   padding: 12px 10px 10px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   border: 1px solid var(--mini-border);
-  border-radius: var(--mini-radius);
+  border-radius: 0 0 var(--mini-radius) var(--mini-radius);
   background: var(--mini-surface);
   backdrop-filter: blur(22px) saturate(1.4);
-  box-shadow:
-    0 12px 34px rgba(0, 0, 0, 0.46),
-    0 1px 0 rgba(255, 255, 255, 0.06) inset;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   /* unfolds out of the pill and folds back into it */
   transform-origin: top center;
   opacity: 0;

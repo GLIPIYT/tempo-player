@@ -59,8 +59,17 @@ const PILL_SLIDE_MS = 220
 /** Pill caption cycle: the track name holds longer than the artist. */
 const PILL_TITLE_MS = 8000
 const PILL_ARTIST_MS = 4000
-/** How often the cursor is checked while the pill is on screen. */
-const HOVER_POLL_MS = 300
+/** How often the cursor is checked while the mini player is collapsed. */
+const HOVER_POLL_MS = 250
+/**
+ * The reveal zone is virtual - it is only used by the cursor poll, not by the
+ * window - so it can be generous without the window swallowing any more clicks.
+ */
+const TRIGGER_MARGIN_X = 60
+const TRIGGER_MIN_HEIGHT = 12
+const TRIGGER_BOTTOM_MARGIN = 6
+/** How long the pill lingers after an automatic peek, relative to the peek. */
+const PILL_LINGER_FACTOR = 1.5
 
 type Shape = 'pill' | 'hidden' | 'card'
 
@@ -95,6 +104,8 @@ export default function MiniPlayerApp() {
   /** Manual opens unfold out of the pill; automatic peeks just fade in. */
   const [unfold, setUnfold] = useState(false)
   const [hovering, setHovering] = useState(false)
+  /** Keeps the pill on screen for a while after an automatic peek. */
+  const [pillHold, setPillHold] = useState(false)
   const [position, setPosition] = useState(boot?.position ?? 0)
   const [visual, setVisual] = useState(boot?.position ?? 0)
   const [volumeOpen, setVolumeOpen] = useState(false)
@@ -110,6 +121,7 @@ export default function MiniPlayerApp() {
   const collapseTimerRef = useRef(0)
   const closeTimerRef = useRef(0)
   const nowPlayingTimerRef = useRef(0)
+  const pillHoldTimerRef = useRef(0)
   const barRef = useRef<HTMLDivElement | null>(null)
   const volumeRef = useRef<HTMLDivElement | null>(null)
   const scrubbingRef = useRef(false)
@@ -118,7 +130,7 @@ export default function MiniPlayerApp() {
   const duration = track?.durationSec ?? 0
   const artist = track?.artist ?? ''
   const alwaysShowButton = state?.alwaysShowButton === true
-  const pillVisible = !renderExpanded && (alwaysShowButton || hovering)
+  const pillVisible = !renderExpanded && (alwaysShowButton || hovering || pillHold)
 
   const t = useMemo(() => {
     const dict = state?.lang === 'ru' ? ru : en
@@ -145,12 +157,14 @@ export default function MiniPlayerApp() {
     window.clearTimeout(collapseTimerRef.current)
     window.clearTimeout(closeTimerRef.current)
     window.clearTimeout(nowPlayingTimerRef.current)
+    window.clearTimeout(pillHoldTimerRef.current)
   }, [])
 
   const expand = useCallback(
     async (withUnfold: boolean) => {
       clearTimers()
       setNowPlaying(false)
+      setPillHold(false)
       setUnfold(withUnfold)
       // grow the window first: mounting the card into a 124px-wide window and
       // resizing afterwards is what made the automatic open feel like a jump
@@ -165,16 +179,25 @@ export default function MiniPlayerApp() {
     [applyShape, clearTimers],
   )
 
-  const collapse = useCallback(() => {
-    clearTimers()
-    setExpanded(false)
-    setNowPlaying(false)
-    // shrink the window only after the closing animation has played
-    closeTimerRef.current = window.setTimeout(() => {
-      setRenderExpanded(false)
-      void applyShape('pill')
-    }, OPEN_ANIMATION_MS)
-  }, [applyShape, clearTimers])
+  const collapse = useCallback(
+    (holdPillMs = 0) => {
+      clearTimers()
+      setExpanded(false)
+      setNowPlaying(false)
+      // shrink the window only after the closing animation has played
+      closeTimerRef.current = window.setTimeout(() => {
+        setRenderExpanded(false)
+        void applyShape('pill')
+        // after an automatic peek the pill stays put for a while instead of
+        // vanishing the moment the card folds away
+        if (holdPillMs > 0) {
+          setPillHold(true)
+          pillHoldTimerRef.current = window.setTimeout(() => setPillHold(false), holdPillMs)
+        }
+      }, OPEN_ANIMATION_MS)
+    },
+    [applyShape, clearTimers],
+  )
 
   // The window follows the pill. It grows immediately but only shrinks after
   // the slide-up has finished, so the pill is never clipped mid-animation.
@@ -189,19 +212,21 @@ export default function MiniPlayerApp() {
   }, [pillVisible, renderExpanded, applyShape])
 
   /**
-   * Safety net for `onMouseLeave`.
+   * The hover state comes from polling the OS cursor, not from mouse events.
    *
-   * Leaving a transparent always-on-top window does not reliably deliver a
-   * mouseleave, which left the pill stuck on screen after the first hover. So
-   * while it is showing, ask the OS where the cursor actually is and park the
-   * pill once it has gone. Only runs while the pill is visible.
+   * A transparent always-on-top window delivers `mouseenter`/`mouseleave`
+   * unreliably on Windows - which is why the pill sometimes failed to appear on
+   * hover and never parked again once it had. Polling the cursor against a
+   * virtual zone is deterministic, and because the zone lives here rather than
+   * in the window geometry it can be generous without the window intercepting
+   * any extra clicks.
    */
   useEffect(() => {
-    if (renderExpanded || !pillVisible) return
+    if (renderExpanded) return
     let cancelled = false
     let timer = 0
     const win = getCurrentWindow()
-    const check = async () => {
+    const tick = async () => {
       if (cancelled) return
       try {
         const [cursor, origin, size] = await Promise.all([
@@ -209,23 +234,25 @@ export default function MiniPlayerApp() {
           win.outerPosition(),
           win.outerSize(),
         ])
+        if (cancelled) return
         const inside =
-          cursor.x >= origin.x &&
-          cursor.x <= origin.x + size.width &&
+          cursor.x >= origin.x - TRIGGER_MARGIN_X &&
+          cursor.x <= origin.x + size.width + TRIGGER_MARGIN_X &&
           cursor.y >= origin.y &&
-          cursor.y <= origin.y + size.height
-        if (!cancelled && !inside) setHovering(false)
+          cursor.y <=
+            origin.y + Math.max(size.height, TRIGGER_MIN_HEIGHT) + TRIGGER_BOTTOM_MARGIN
+        setHovering(inside)
       } catch {
         /* window may be gone while the app shuts down */
       }
-      if (!cancelled) timer = window.setTimeout(check, HOVER_POLL_MS)
+      if (!cancelled) timer = window.setTimeout(tick, HOVER_POLL_MS)
     }
-    timer = window.setTimeout(check, HOVER_POLL_MS)
+    timer = window.setTimeout(tick, HOVER_POLL_MS)
     return () => {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [pillVisible, renderExpanded])
+  }, [renderExpanded])
 
   // --- events from the main window ---------------------------------------
 
@@ -300,7 +327,10 @@ export default function MiniPlayerApp() {
         )
       }
       if (peek.autoCollapseMs > 0) {
-        collapseTimerRef.current = window.setTimeout(() => collapse(), peek.autoCollapseMs)
+        collapseTimerRef.current = window.setTimeout(
+          () => collapse(peek.autoCollapseMs * PILL_LINGER_FACTOR),
+          peek.autoCollapseMs,
+        )
       }
     }).then((fn) => {
       if (disposed) fn()
@@ -452,16 +482,12 @@ export default function MiniPlayerApp() {
   const repeat = state?.repeat ?? 'off'
 
   return (
-    <div
-      className="mini-root"
-      onMouseEnter={() => setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
-    >
+    <div className="mini-root">
       {renderExpanded && (
         <div
           className={`mini-card${expanded ? ' is-open' : ''}${unfold ? ' is-unfold' : ''}`}
         >
-          <button type="button" className="mini-grabber" onClick={collapse} title={t('Collapse')}>
+          <button type="button" className="mini-grabber" onClick={() => collapse()} title={t('Collapse')}>
             <ChevronUp size={13} />
           </button>
 

@@ -35,14 +35,15 @@ export const MINI_CARD_BODY_SIZE = { width: 428, height: 112 } as const
  * Transparent margin around the card inside its window.
  *
  * The card used to fill the window exactly, which clipped its own drop shadow
- * at the window bounds and left dark smudges in the four corners. The window is
- * now larger than the card so the shadow has somewhere to fall.
+ * at the window bounds and left dark smudges in the four corners. It now has
+ * room - but none at the top, so the card still sits flush against the screen
+ * edge instead of floating below it.
  */
-export const MINI_CARD_INSET = 12
-/** Expanded window = card body plus the inset on both sides. */
+export const MINI_CARD_INSET = { top: 0, right: 12, bottom: 12, left: 12 } as const
+/** Expanded window = card body plus the inset on each side. */
 export const MINI_EXPANDED_SIZE = {
-  width: MINI_CARD_BODY_SIZE.width + MINI_CARD_INSET * 2,
-  height: MINI_CARD_BODY_SIZE.height + MINI_CARD_INSET * 2,
+  width: MINI_CARD_BODY_SIZE.width + MINI_CARD_INSET.left + MINI_CARD_INSET.right,
+  height: MINI_CARD_BODY_SIZE.height + MINI_CARD_INSET.top + MINI_CARD_INSET.bottom,
 } as const
 /**
  * Collapsed and expanded windows are anchored to the very top of the work area

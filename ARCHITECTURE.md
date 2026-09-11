@@ -456,23 +456,28 @@ the screen and expanding to 428×112. Off by default; toggled in Settings → Ge
 holds the window's own code, `components/integration/MiniPlayerBridge.tsx` is the main window's side
 of the conversation.
 
-**The pill parks itself off-screen.** Left alone it slides up out of view, and the window shrinks
-with it to a 10px strip at the very top — that strip is the hover target, kept short so an
-always-on-top window is not swallowing clicks, but tall enough to be easy to hit. Moving the pointer
-onto it grows the window back to 124×20 and the pill slides down. The window grows immediately but
-only shrinks once the slide-up has finished, so the pill is never clipped mid-animation.
-`alwaysShowButton` keeps it on screen instead.
+**The pill parks itself off-screen.** Left alone it slides up out of view and the window shrinks
+with it to a 10px strip at the very top. Moving the pointer near that strip grows the window back to
+124×20 and the pill slides down. The window grows immediately but only shrinks once the slide-up has
+finished, so the pill is never clipped mid-animation. `alwaysShowButton` keeps it on screen instead.
 
-Leaving a transparent always-on-top window does not reliably deliver a `mouseleave`, which used to
-leave the pill stuck on screen after the first hover. So while the pill is showing, the window polls
-the OS cursor position against its own bounds and parks itself once the cursor has gone. That poll
-only runs while the pill is visible.
+**Hover is decided by polling the cursor, not by mouse events.** A transparent always-on-top window
+delivers `mouseenter`/`mouseleave` unreliably on Windows: the pill would sometimes fail to appear on
+hover, and once shown it would never park again. The window therefore asks the OS where the cursor is
+every 250ms and compares it against a *virtual* trigger zone — the window bounds widened by 60px on
+each side, reaching 12px down from the top. Because the zone lives in the poll rather than in the
+window geometry, it can be generous without the window intercepting a single extra click. The poll
+only runs while the mini player is collapsed.
 
-**The window is larger than the card.** `MINI_CARD_INSET` (12px) of transparent margin sits between
-the window bounds and the card, because a card that filled its window exactly had its own drop
-shadow clipped at the window edges, which showed up as dark smudges in the four corners. The pill is
-centred with `left: calc(50% - 62px)` rather than stretched to the window width, so it does not flash
-wide during the handover between the two shapes.
+After an automatic peek the pill lingers for 1.5× the peek duration before parking, so the track that
+just changed stays reachable for a moment after the card folds away.
+
+**The window is wider and taller than the card.** `MINI_CARD_INSET` leaves transparent margin on the
+left, right and bottom, because a card that filled its window exactly had its own drop shadow clipped
+at the window edges, which showed up as dark smudges in the corners. There is deliberately no margin
+at the top, so the card still sits flush against the screen edge. The pill is centred with
+`left: calc(50% - 62px)` rather than stretched to the window width, so it does not flash wide during
+the handover between the two shapes.
 
 The card is three rows: cover, title and artist; a centred transport flanked by the secondary
 controls and the volume; and the progress bar along the bottom. The transport sits in the middle
