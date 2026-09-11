@@ -16,6 +16,7 @@ import ArtistDetailPage from './pages/ArtistDetailPage'
 import PlaylistDetailPage from './pages/PlaylistDetailPage'
 import Onboarding from './components/onboarding/Onboarding'
 import PresenceBridge from './components/integration/PresenceBridge'
+import MiniPlayerBridge from './components/integration/MiniPlayerBridge'
 import TrackDragLayer from './dnd/trackDrag'
 import { NavProvider, useNav } from './state/nav'
 import { usePlayer } from './player'
@@ -191,6 +192,7 @@ function Shell() {
       <FolderDropWatcher />
       <TaskbarProgress />
       <PresenceBridge />
+      <MiniPlayerBridge />
       <TrackDragLayer />
       <ToastHost />
       <Onboarding />

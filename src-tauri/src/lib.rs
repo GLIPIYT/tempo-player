@@ -23,6 +23,10 @@ pub fn run() {
                     tauri_plugin_window_state::StateFlags::all()
                         & !tauri_plugin_window_state::StateFlags::DECORATIONS,
                 )
+                // the mini player sizes and positions itself on every launch
+                // (pill at the top edge); restoring a remembered geometry would
+                // bring it back expanded or off-screen
+                .with_denylist(&["mini-player"])
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())

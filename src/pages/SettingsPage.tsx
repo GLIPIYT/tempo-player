@@ -20,7 +20,7 @@ import { api } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useScanProgress } from '../hooks/useScanProgress'
-import { useSettings, type StartupPage } from '../state/settings'
+import { clampMiniShowMs, useSettings, type StartupPage } from '../state/settings'
 import { resolveLang, useT } from '../i18n'
 
 const STARTUP_PAGE_OPTIONS: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists']
@@ -912,6 +912,53 @@ export default function SettingsPage() {
                 <div className="set-note">
                   {t('Lyrics found online are stored with the track and keep working offline. Lyrics are fetched automatically in the background.')}
                 </div>
+              </Card>
+              <Card
+                title={t('Mini player')}
+                desc={t('A small always-on-top window with playback controls.')}
+              >
+                <div className="set-row">
+                  <span className="set-row-label">{t('Floating mini player')}</span>
+                  <button
+                    className={settings.miniPlayer.enabled ? 'switch is-on' : 'switch'}
+                    role="switch"
+                    aria-checked={settings.miniPlayer.enabled}
+                    aria-label={t('Floating mini player')}
+                    onClick={() => update({ miniPlayer: { enabled: !settings.miniPlayer.enabled } })}
+                  />
+                </div>
+                {settings.miniPlayer.enabled ? (
+                  <>
+                    <div className="set-row" style={{ marginTop: 6 }}>
+                      <span className="set-row-label">{t('Show it when the track changes')}</span>
+                      <button
+                        className={settings.miniPlayer.autoShowOnTrackChange ? 'switch is-on' : 'switch'}
+                        role="switch"
+                        aria-checked={settings.miniPlayer.autoShowOnTrackChange}
+                        aria-label={t('Show it when the track changes')}
+                        onClick={() =>
+                          update({
+                            miniPlayer: { autoShowOnTrackChange: !settings.miniPlayer.autoShowOnTrackChange },
+                          })
+                        }
+                      />
+                    </div>
+                    {settings.miniPlayer.autoShowOnTrackChange ? (
+                      <CommitSlider
+                        label={t('Stay open for')}
+                        min={1}
+                        max={15}
+                        step={1}
+                        value={Math.round(settings.miniPlayer.autoShowDurationMs / 1000)}
+                        format={(v) => `${v}s`}
+                        onCommit={(v) => update({ miniPlayer: { autoShowDurationMs: clampMiniShowMs(v * 1000) } })}
+                      />
+                    ) : null}
+                    <div className="set-note">
+                      {t('The mini player rests at the top edge of the screen. Click the pill to expand it, click the cover to jump back to Tempo.')}
+                    </div>
+                  </>
+                ) : null}
               </Card>
             </>
           ) : null}

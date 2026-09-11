@@ -12,5 +12,13 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: false,
+    rollupOptions: {
+      // two webviews: the main window and the floating mini player.
+      // without the second entry the mini player window loads an empty page.
+      input: {
+        main: 'index.html',
+        miniPlayer: 'mini-player.html',
+      },
+    },
   },
 })

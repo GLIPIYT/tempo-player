@@ -364,4 +364,17 @@ export const ru: Record<string, string> = {
   'Go to album': 'Перейти к альбому',
   'Show in Explorer': 'Показать в проводнике',
   'File not found on disk': 'Файл не найден на диске',
+  'Mini player': 'Мини-плеер',
+  'A small always-on-top window with playback controls.':
+    'Небольшое окно поверх всех окон с управлением воспроизведением.',
+  'Floating mini player': 'Плавающий мини-плеер',
+  'Show it when the track changes': 'Показывать при смене трека',
+  'Stay open for': 'Оставаться открытым',
+  'The mini player rests at the top edge of the screen. Click the pill to expand it, click the cover to jump back to Tempo.':
+    'Мини-плеер прижат к верхней кромке экрана. Клик по «пилюле» разворачивает его, клик по обложке возвращает в Tempo.',
+  Collapse: 'Свернуть',
+  Expand: 'Развернуть',
+  Like: 'Нравится',
+  Repeat: 'Повтор',
+  'Show Tempo': 'Открыть Tempo',
 }

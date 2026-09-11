@@ -40,6 +40,12 @@ export interface AppSettings {
   sidebar: {
     grouped: boolean
   }
+  miniPlayer: {
+    enabled: boolean
+    autoShowOnTrackChange: boolean
+    /** How long the mini player stays expanded after a track change. */
+    autoShowDurationMs: number
+  }
 }
 
 export const defaultSettings: AppSettings = {
@@ -53,6 +59,17 @@ export const defaultSettings: AppSettings = {
   background: { path: null, dimPct: 45, blurPx: 0 },
   player: { waveform: false },
   sidebar: { grouped: true },
+  // off by default: an always-on-top window appearing unprompted after an
+  // update is worse than a feature nobody notices
+  miniPlayer: { enabled: false, autoShowOnTrackChange: true, autoShowDurationMs: 3000 },
+}
+
+const MINI_SHOW_MS_MIN = 1000
+const MINI_SHOW_MS_MAX = 15000
+
+export function clampMiniShowMs(value: number): number {
+  if (!Number.isFinite(value)) return defaultSettings.miniPlayer.autoShowDurationMs
+  return Math.max(MINI_SHOW_MS_MIN, Math.min(MINI_SHOW_MS_MAX, Math.round(value)))
 }
 
 const STORAGE_KEY = 'tempo.settings.v1'
@@ -86,6 +103,13 @@ function load(): AppSettings {
       background: { ...defaultSettings.background, ...parsed.background },
       player: { ...defaultSettings.player, ...parsed.player },
       sidebar: { ...defaultSettings.sidebar, ...parsed.sidebar },
+      miniPlayer: {
+        ...defaultSettings.miniPlayer,
+        ...parsed.miniPlayer,
+        autoShowDurationMs: clampMiniShowMs(
+          parsed.miniPlayer?.autoShowDurationMs ?? defaultSettings.miniPlayer.autoShowDurationMs,
+        ),
+      },
     }
   } catch {
     return defaultSettings
@@ -122,6 +146,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       background: { ...prev.background, ...patch.background },
       player: { ...prev.player, ...patch.player },
       sidebar: { ...prev.sidebar, ...patch.sidebar },
+      miniPlayer: {
+        ...prev.miniPlayer,
+        ...patch.miniPlayer,
+        autoShowDurationMs: clampMiniShowMs(
+          patch.miniPlayer?.autoShowDurationMs ?? prev.miniPlayer.autoShowDurationMs,
+        ),
+      },
     }))
   }, [])
 
