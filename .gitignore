@@ -5,3 +5,6 @@ src-tauri/gen/schemas/
 *.log
 .DS_Store
 graphify-out/
+
+# Local AI assistant workspace (project memory, session data) - keep out of the repo
+.workbuddy-ai/

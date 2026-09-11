@@ -480,3 +480,23 @@ CI runs both on every push and pull request to `main`.
 The frontend currently has no automated tests. The highest-value targets are the pure modules —
 `player/queue.ts` (shuffle permutation, repeat transitions), `features/lyrics/lrc.ts` (parsing),
 `utils/format.ts` and `utils/unified.ts`.
+
+## Code graph
+
+`graphify-out/` holds a persistent knowledge graph of this repository (~1270 nodes, ~3740 edges,
+~100 communities). It is built from the AST, so it needs no API key, and it is gitignored —
+local-only.
+
+Use it to navigate instead of reading files one by one:
+
+```bash
+graphify query "<question>"      # BFS over the graph; returns nodes with file:line
+graphify explain "<Symbol>"      # one node and its neighbours
+graphify path "A" "B"            # shortest path between two concepts
+graphify affected "<Symbol>"     # reverse traversal: what depends on this
+graphify update .                # re-extract changed files (fast, no LLM)
+```
+
+`graphify-out/GRAPH_REPORT.md` carries the god nodes, the community map and the knowledge gaps.
+The graph records the commit it was built from, so treat it as stale after a batch of code changes
+and refresh it with `graphify update .`.
