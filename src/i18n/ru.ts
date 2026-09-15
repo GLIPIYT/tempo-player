@@ -399,6 +399,10 @@ export const ru: Record<string, string> = {
   'Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest are measured automatically a few tracks ahead of what is playing, so there is nothing to start by hand.':
     'Треки выравниваются к общей громкости. Файлы с тегами ReplayGain используют их сразу, остальные измеряются автоматически на несколько треков вперёд от играющего — запускать вручную ничего не нужно.',
   'Player bar layout': 'Вид плейбара',
+  Crossfade: 'Кроссфейд',
+  Off: 'Выключено',
+  'Fades the end of a track into the start of the next one, so they overlap instead of stopping and starting.':
+    'Плавно сводит конец трека с началом следующего: они накладываются друг на друга, а не сменяются рывком.',
   Classic: 'Классический',
   Modern: 'Современный',
   'Classic keeps the progress bar between the transport and the volume controls. Modern centres the transport and runs the progress line along the top edge of the bar.':

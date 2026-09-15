@@ -1306,6 +1306,18 @@ export default function SettingsPage() {
                 <div className="set-note">
                   {t('Classic keeps the progress bar between the transport and the volume controls. Modern centres the transport and runs the progress line along the top edge of the bar.')}
                 </div>
+                <CommitSlider
+                  label={t('Crossfade')}
+                  min={0}
+                  max={12}
+                  step={1}
+                  value={settings.audio.crossfadeSec}
+                  format={(v) => (v === 0 ? t('Off') : `${v}s`)}
+                  onCommit={(v) => update({ audio: { crossfadeSec: v } })}
+                />
+                <div className="set-note">
+                  {t('Fades the end of a track into the start of the next one, so they overlap instead of stopping and starting.')}
+                </div>
               </Card>
             </>
           ) : null}

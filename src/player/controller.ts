@@ -72,6 +72,20 @@ function normalizationEnabled(): boolean {
   }
 }
 
+/** Crossfade length in seconds; 0 disables it. */
+function crossfadeSeconds(): number {
+  try {
+    const raw = window.localStorage.getItem('tempo.settings.v1')
+    if (!raw) return 0
+    const parsed = JSON.parse(raw) as { audio?: { crossfadeSec?: number } }
+    const value = parsed.audio?.crossfadeSec
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 0
+    return Math.min(12, Math.max(0, value))
+  } catch {
+    return 0
+  }
+}
+
 function clampUnit(v: number): number {
   return Math.min(1, Math.max(0, v))
 }
@@ -154,6 +168,7 @@ export class PlayerController {
     this.loadSnapshot()
     this.engine.onTime = t => {
       this.position = t
+      this.maybeCrossfade()
       this.emit()
     }
     this.engine.onLoaded = d => {
@@ -397,7 +412,7 @@ export class PlayerController {
     this.stop()
   }
 
-  private startTrack(track: UnifiedTrack, resolved: ResolvedTrack): void {
+  private startTrack(track: UnifiedTrack, resolved: ResolvedTrack, fadeSec = 0): void {
     this.loadedSourceId = track.sourceId
     this.playedSourceIds.add(track.sourceId)
     this.position = 0
@@ -409,16 +424,67 @@ export class PlayerController {
     this.engine.setTrackGain(
       normalizationEnabled() && track.gainDb !== null ? dbToLinear(track.gainDb) : 1,
     )
-    void this.engine
-      .loadWithFormat(resolved.url, resolved.format, resolved.channel)
-      .catch(() => {})
-    this.engine.play()
+    if (fadeSec > 0) {
+      // starts the incoming track without stopping the outgoing one; the engine
+      // ramps between them
+      void this.engine
+        .crossfadeTo(resolved.url, resolved.format, resolved.channel, fadeSec)
+        .catch(() => {})
+    } else {
+      void this.engine
+        .loadWithFormat(resolved.url, resolved.format, resolved.channel)
+        .catch(() => {})
+      this.engine.play()
+    }
     this.isPlaying = true
     if (track.dbId !== null) {
       api.bumpPlayCount(track.dbId).catch(() => {})
     }
     this.emit()
   }
+
+  /**
+   * Starts the next track early, so it overlaps the tail of the current one.
+   *
+   * Called from the position ticker once the remaining time drops below the
+   * configured fade. The queue is advanced here rather than by `handleEnded`,
+   * and the outgoing element's own `ended` event is ignored by the engine's
+   * active-channel check, so the advance cannot happen twice.
+   */
+  private maybeCrossfade(): void {
+    if (this.crossfading || !this.isPlaying) return
+    const seconds = crossfadeSeconds()
+    if (seconds <= 0) return
+    const remaining = this.duration - this.position
+    if (!Number.isFinite(remaining) || remaining <= 0 || remaining > seconds) return
+    void this.beginCrossfade(seconds)
+  }
+
+  private async beginCrossfade(seconds: number): Promise<void> {
+    if (this.crossfading) return
+    this.crossfading = true
+    try {
+      const cur = this.queueCtl.current()
+      if (cur && cur.dbId !== null) {
+        const dur = this.duration > 0 ? this.duration : cur.durationSec ?? 0
+        api.recordHistory(cur.dbId, Math.round(dur), true, false).catch(() => {})
+      }
+      if (!this.queueCtl.next(this.repeat)) {
+        const picked = await this.autoPick()
+        if (!picked) return
+      }
+      const next = this.queueCtl.current()
+      if (!next) return
+      const resolved = await this.resolveTrackUrl(next)
+      if (!resolved) return
+      this.beginTransition(next)
+      this.startTrack(next, resolved, seconds)
+    } finally {
+      this.crossfading = false
+    }
+  }
+
+  private crossfading = false
 
   /**
    * Auto-extend: when the queue runs dry, continue with the rest of the same

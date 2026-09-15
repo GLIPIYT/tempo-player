@@ -66,6 +66,8 @@ export interface AppSettings {
   audio: {
     /** Level every track towards a common loudness using its measured gain. */
     normalize: boolean
+    /** Seconds of overlap between tracks; 0 disables crossfade. */
+    crossfadeSec: number
   }
 }
 
@@ -90,7 +92,7 @@ export const defaultSettings: AppSettings = {
     showNowPlaying: true,
   },
   system: { autostart: false, closeToTray: false },
-  audio: { normalize: false },
+  audio: { normalize: false, crossfadeSec: 0 },
 }
 
 const MINI_SHOW_MS_MIN = 1000

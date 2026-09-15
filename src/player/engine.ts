@@ -37,6 +37,11 @@ export class AudioEngine {
   /** Set once the graph has been abandoned; it is never rebuilt afterwards. */
   private graphDisabled = false
   private lastLoad: { url: string; format: string | null; channel: AudioChannel } | null = null
+  /** The element being faded out, while a crossfade is in flight. */
+  private fading: { el: HTMLAudioElement; gain: GainNode | null } | null = null
+  private fadeTimer = 0
+  /** 0..1 ramp applied on top of the volume, so the fade never fights applyGain. */
+  private fadeLevel = 1
   private volumeLevel = 1
   /** Per-track loudness correction, linear. Only meaningful on the local path. */
   private trackGain = 1
@@ -102,6 +107,8 @@ export class AudioEngine {
 
   stop(): void {
     this.destroyHls()
+    this.detachFade()
+    this.fadeLevel = 1
     const el = this.active()
     if (!el) return
     this.stopTicker()
@@ -185,16 +192,91 @@ export class AudioEngine {
   private applyGain(): void {
     const local = this.channels.local
     const stream = this.channels.stream
+    const level = this.fadeLevel
     if (this.gainNode) {
       // the whole local level lives in the graph, so it can exceed 1.0
       if (local) local.volume = 1
-      this.gainNode.gain.value = this.volumeLevel * this.trackGain
+      this.gainNode.gain.value = this.volumeLevel * this.trackGain * level
     } else if (local) {
       // graph unavailable: fall back to attenuation only
-      local.volume = this.volumeLevel * Math.min(1, this.trackGain)
+      local.volume = this.volumeLevel * Math.min(1, this.trackGain) * level
     }
     // never routed, so it carries its own volume
-    if (stream) stream.volume = this.volumeLevel
+    if (stream) stream.volume = this.volumeLevel * level
+  }
+
+  /**
+   * Starts the next track while the current one is still playing, ramping one
+   * down as the other comes up.
+   *
+   * The outgoing element cannot be reused - a media element has one source -
+   * so it is handed to `fading` and the channel is left empty, which makes
+   * `ensure` build a fresh element for the incoming track. The ramp is driven
+   * from JS rather than the Web Audio scheduler because the stream channel has
+   * no graph, and both channels should fade the same way.
+   */
+  async crossfadeTo(
+    url: string,
+    format: string | null,
+    channel: AudioChannel,
+    seconds: number,
+  ): Promise<void> {
+    const outgoing = this.active()
+    if (!outgoing || outgoing.paused || seconds <= 0) {
+      await this.loadWithFormat(url, format, channel)
+      return
+    }
+    this.destroyHls()
+    this.detachFade()
+    this.fading = { el: outgoing, gain: this.gainNode }
+    this.gainNode = null
+    this.channels[channel] = null
+    this.activeChannel = channel
+    this.fadeLevel = 0
+
+    await this.loadWithFormat(url, format, channel)
+    const el = this.active()
+    if (!el) return
+    void el.play().catch(() => {})
+    this.startTicker(el)
+    this.rampFade(seconds)
+  }
+
+  private rampFade(seconds: number): void {
+    const started = performance.now()
+    const total = Math.max(120, seconds * 1000)
+    const step = (): void => {
+      const t = Math.min(1, (performance.now() - started) / total)
+      this.fadeLevel = t
+      this.applyGain()
+      const fade = this.fading
+      if (fade) {
+        const level = 1 - t
+        if (fade.gain) fade.gain.gain.value = this.volumeLevel * this.trackGain * level
+        else fade.el.volume = Math.max(0, Math.min(1, this.volumeLevel * level))
+      }
+      if (t < 1) {
+        this.fadeTimer = window.setTimeout(step, 40)
+      } else {
+        this.fadeLevel = 1
+        this.applyGain()
+        this.detachFade()
+      }
+    }
+    step()
+  }
+
+  private detachFade(): void {
+    if (this.fadeTimer !== 0) {
+      window.clearTimeout(this.fadeTimer)
+      this.fadeTimer = 0
+    }
+    const fade = this.fading
+    if (!fade) return
+    this.fading = null
+    fade.el.pause()
+    fade.el.removeAttribute('src')
+    fade.el.load()
   }
 
   private applySeek(sec: number): void {
@@ -333,6 +415,10 @@ export class AudioEngine {
       this.onError(this.describeError(el))
     })
     this.channels[channel] = el
+    // A crossfade replaces the channel's element while the graph is already
+    // running, so the replacement has to be routed as well - otherwise the
+    // incoming track would play outside the graph and ignore the fade.
+    if (channel === 'local' && (this.ctx !== null || this.trackGain !== 1)) this.attachGain(el)
     this.applyGain()
     return el
   }
@@ -401,25 +487,31 @@ export class AudioEngine {
    * falls back to plain volume.
    */
   private attachGain(el: HTMLAudioElement): void {
-    if (this.ctx || this.graphDisabled) return
+    // one active gain at a time; during a crossfade the outgoing element keeps
+    // its own, held by `fading`
+    if (this.gainNode || this.graphDisabled) return
     try {
       const Ctor =
         window.AudioContext ??
         (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!Ctor) return
-      const ctx = new Ctor()
+      const ctx = this.ctx ?? new Ctor()
       const source = ctx.createMediaElementSource(el)
       const gain = ctx.createGain()
       source.connect(gain)
       gain.connect(ctx.destination)
-      // a tap on the output, for the silence watchdog; not connected onward
-      const analyser = ctx.createAnalyser()
-      analyser.fftSize = 512
-      gain.connect(analyser)
+      if (this.analyser) {
+        gain.connect(this.analyser)
+      } else {
+        // a tap on the output, for the silence watchdog; not connected onward
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 512
+        gain.connect(analyser)
+        this.analyser = analyser
+        this.analyserBuf = new Uint8Array(analyser.fftSize)
+      }
       this.ctx = ctx
       this.gainNode = gain
-      this.analyser = analyser
-      this.analyserBuf = new Uint8Array(analyser.fftSize)
       this.silentMs = 0
     } catch {
       this.ctx = null
