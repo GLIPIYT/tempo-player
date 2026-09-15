@@ -77,6 +77,12 @@ input {
 }
 
 .app-root {
+  /* The background layer is a fixed, z-indexed sibling of this element. Without
+     a stacking context of its own the whole app stays in the static layer,
+     which the positioned background paints over - that is why the title bar
+     vanished as soon as a background image was set. */
+  position: relative;
+  z-index: 1;
   height: 100%;
   display: flex;
   flex-direction: column;

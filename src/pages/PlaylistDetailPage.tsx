@@ -38,6 +38,10 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const [orderOverride, setOrderOverride] = useState<PlaylistTrack[] | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
   const [downloadBusy, setDownloadBusy] = useState(false)
+  // One handle per row, so right-clicking a row opens that row's own menu.
+  // Must stay above the loading early-return below: a hook called after it
+  // would run on some renders and not others, which unmounts the whole tree.
+  const menus = useRef(new Map<number, TrackMenuHandle | null>())
 
   const exportM3u8 = async () => {
     setExportBusy(true)
@@ -88,8 +92,6 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const baseItems = detail.data ?? []
   const items = orderOverride ?? baseItems
   const tracks: Track[] = items.map((p) => p.track)
-  // one handle per row, so right-clicking a row opens that row's own menu
-  const menus = useRef(new Map<number, TrackMenuHandle | null>())
   const playlist = (lists.data ?? []).find((pl) => pl.id === playlistId)
 
   const reloadAll = () => {
