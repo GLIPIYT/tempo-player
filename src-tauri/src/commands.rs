@@ -1184,6 +1184,40 @@ pub fn reveal_in_file_manager(path: String) -> Result<bool, String> {
     }
 }
 
+/// Turns "closing the window keeps Tempo in the tray" on or off.
+///
+/// Only a flag: the window-event hook in `lib.rs` reads it when a close is
+/// requested. Kept out of the settings table because it is a live runtime
+/// switch rather than persisted data - the frontend owns the saved preference
+/// and pushes it here on startup.
+#[tauri::command]
+pub fn set_close_to_tray(enabled: bool) {
+    crate::tray::set_close_to_tray(enabled);
+}
+
+/// Pushes translated tray-menu labels in, so the menu follows the UI language.
+#[tauri::command]
+pub fn set_tray_labels(
+    app: AppHandle,
+    show: String,
+    toggle: String,
+    prev: String,
+    next: String,
+    quit: String,
+) -> Result<(), String> {
+    crate::tray::set_labels(
+        &app,
+        crate::tray::TrayLabels {
+            show,
+            toggle,
+            prev,
+            next,
+            quit,
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

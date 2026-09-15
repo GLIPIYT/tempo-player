@@ -27,8 +27,9 @@ body,
   --mini-muted: var(--text-muted, #9aa3b2);
   --mini-accent: var(--accent, #5b8cff);
   /* no window-vibrancy: a translucent surface plus a hairline border is what
-     keeps the window legible over arbitrary desktop content */
-  --mini-surface: color-mix(in srgb, var(--bg-elevated, #14161d) 84%, transparent);
+     keeps the window legible over arbitrary desktop content. Kept light on
+     purpose - the blur carries the legibility, not the fill. */
+  --mini-surface: color-mix(in srgb, var(--bg-elevated, #14161d) 58%, transparent);
   --mini-border: color-mix(in srgb, var(--text, #ffffff) 18%, transparent);
 }
 

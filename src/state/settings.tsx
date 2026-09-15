@@ -50,6 +50,12 @@ export interface AppSettings {
     /** Head the card with "Now playing" for the first half of an automatic peek. */
     showNowPlaying: boolean
   }
+  system: {
+    /** Register Tempo as a login item so it starts with Windows. */
+    autostart: boolean
+    /** Closing the main window parks Tempo in the tray instead of quitting. */
+    closeToTray: boolean
+  }
 }
 
 export const defaultSettings: AppSettings = {
@@ -72,6 +78,7 @@ export const defaultSettings: AppSettings = {
     alwaysShowButton: false,
     showNowPlaying: true,
   },
+  system: { autostart: false, closeToTray: false },
 }
 
 const MINI_SHOW_MS_MIN = 1000
@@ -120,6 +127,7 @@ function load(): AppSettings {
           parsed.miniPlayer?.autoShowDurationMs ?? defaultSettings.miniPlayer.autoShowDurationMs,
         ),
       },
+      system: { ...defaultSettings.system, ...parsed.system },
     }
   } catch {
     return defaultSettings
@@ -163,6 +171,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
           patch.miniPlayer?.autoShowDurationMs ?? prev.miniPlayer.autoShowDurationMs,
         ),
       },
+      system: { ...prev.system, ...patch.system },
     }))
   }, [])
 

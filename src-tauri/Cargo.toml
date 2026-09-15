@@ -14,7 +14,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # common-controls-v6 is off: it imports TaskDialogIndirect, which needs a
 # Common-Controls v6 manifest that tauri-build embeds into bins only — test
-# binaries then fail to load. Nothing in Tempo uses TaskDialog tray/menus.
+# binaries then fail to load, and CI runs cargo test. The tray below does not
+# need it: it is an optional enhancement that only applies when both features
+# are on, so tray-icon works without it (menus render in the classic style).
 tauri = { version = "2", default-features = false, features = [
     "wry",
     "compression",
@@ -22,6 +24,7 @@ tauri = { version = "2", default-features = false, features = [
     "x11",
     "dbus",
     "protocol-asset",
+    "tray-icon",
 ] }
 tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
@@ -36,6 +39,7 @@ futures-util = "0.3"
 regex = "1"
 # covers are downscaled before upload so discord's media proxy can fetch them reliably
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+tauri-plugin-autostart = "2.5.1"
 
 [profile.release]
 lto = "thin"

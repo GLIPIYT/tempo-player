@@ -7,6 +7,7 @@ mod models;
 mod scanner;
 mod soundcloud;
 mod soundcloud_store;
+mod tray;
 
 use std::sync::Arc;
 
@@ -30,6 +31,12 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        // autostart is opt-in from Settings; registering the plugin only makes
+        // the capability available
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let covers_dir = app.path().app_cache_dir()?.join("covers");
@@ -52,6 +59,7 @@ pub fn run() {
                 sc_cache_dir,
             });
             let handle = app.handle().clone();
+            tray::build(&handle)?;
             std::thread::spawn(move || {
                 let state = handle.state::<commands::AppState>();
                 soundcloud_store::startup_maintenance(&state.db, &state.sc_cache_dir, &state.covers_dir);
@@ -136,8 +144,21 @@ pub fn run() {
             commands::hide_track,
             commands::unhide_track,
             commands::list_hidden_tracks,
-            commands::reveal_in_file_manager
+            commands::reveal_in_file_manager,
+            commands::set_close_to_tray,
+            commands::set_tray_labels
         ])
+        .on_window_event(|window, event| {
+            // With "stay in tray" on, closing the main window parks it instead of
+            // quitting: the webview keeps running, so playback and the mini
+            // player carry on and the tray brings the window back.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" && tray::close_to_tray() {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

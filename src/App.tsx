@@ -17,6 +17,7 @@ import PlaylistDetailPage from './pages/PlaylistDetailPage'
 import Onboarding from './components/onboarding/Onboarding'
 import PresenceBridge from './components/integration/PresenceBridge'
 import MiniPlayerBridge from './components/integration/MiniPlayerBridge'
+import SystemBridge from './components/integration/SystemBridge'
 import ContextMenuHost from './components/common/ContextMenu'
 import TrackDragLayer from './dnd/trackDrag'
 import { NavProvider, useNav } from './state/nav'
@@ -195,6 +196,7 @@ function Shell() {
         <TaskbarProgress />
         <PresenceBridge />
         <MiniPlayerBridge />
+        <SystemBridge />
       </div>
       {/* Fixed-position overlays live outside .app-root: applyFont() sets a zoom
           on it for the UI scale preference, and a zoomed ancestor makes

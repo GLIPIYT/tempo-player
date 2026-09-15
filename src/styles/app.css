@@ -840,6 +840,12 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
+  /* Capped and centred in its column: as a bare 1.5fr track it ran from the
+     transport all the way to the right-hand controls, which read as a bar
+     starting in the middle of the window. */
+  width: 100%;
+  max-width: 460px;
+  justify-self: center;
 }
 
 .pb-progress input[type='range'] {

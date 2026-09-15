@@ -990,6 +990,32 @@ export default function SettingsPage() {
                   </>
                 ) : null}
               </Card>
+              <Card title={t('System integration')} desc={t('How Tempo behaves as a desktop application.')}>
+                <div className="set-row">
+                  <span className="set-row-label">{t('Launch at startup')}</span>
+                  <button
+                    className={settings.system.autostart ? 'switch is-on' : 'switch'}
+                    role="switch"
+                    aria-checked={settings.system.autostart}
+                    aria-label={t('Launch at startup')}
+                    onClick={() => update({ system: { autostart: !settings.system.autostart } })}
+                  />
+                </div>
+                <div className="set-note">{t('Tempo launches automatically when you sign in.')}</div>
+                <div className="set-row" style={{ marginTop: 6 }}>
+                  <span className="set-row-label">{t('Keep running in the tray')}</span>
+                  <button
+                    className={settings.system.closeToTray ? 'switch is-on' : 'switch'}
+                    role="switch"
+                    aria-checked={settings.system.closeToTray}
+                    aria-label={t('Keep running in the tray')}
+                    onClick={() => update({ system: { closeToTray: !settings.system.closeToTray } })}
+                  />
+                </div>
+                <div className="set-note">
+                  {t('Closing the window hides Tempo instead of quitting, so playback and the mini player keep running. Right-click the tray icon to bring the window back or quit.')}
+                </div>
+              </Card>
             </>
           ) : null}
 

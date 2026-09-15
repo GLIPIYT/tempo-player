@@ -382,4 +382,15 @@ export const ru: Record<string, string> = {
   Like: 'Нравится',
   Repeat: 'Повтор',
   'Show Tempo': 'Открыть Tempo',
+  'Play / Pause': 'Играть / Пауза',
+  Quit: 'Выход',
+  'System integration': 'Системная интеграция',
+  'How Tempo behaves as a desktop application.':
+    'Поведение Tempo как приложения для рабочего стола.',
+  'Launch at startup': 'Запускать при входе в систему',
+  'Tempo launches automatically when you sign in.':
+    'Tempo будет запускаться автоматически при входе в систему.',
+  'Keep running in the tray': 'Оставаться в трее',
+  'Closing the window hides Tempo instead of quitting, so playback and the mini player keep running. Right-click the tray icon to bring the window back or quit.':
+    'Закрытие окна скрывает Tempo, а не завершает его: воспроизведение и мини-плеер продолжают работать. Правый клик по значку в трее вернёт окно или завершит приложение.',
 }

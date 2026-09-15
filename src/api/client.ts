@@ -158,6 +158,16 @@ export const api = {
   setTaskbarProgress: (position: number, duration: number, playing: boolean) =>
     invoke<void>('set_taskbar_progress', { position, duration, playing }),
 
+  setCloseToTray: (enabled: boolean) => invoke<void>('set_close_to_tray', { enabled }),
+
+  setTrayLabels: (labels: {
+    show: string
+    toggle: string
+    prev: string
+    next: string
+    quit: string
+  }) => invoke<void>('set_tray_labels', labels),
+
   scSearchTracks: (query: string, limit: number, offset: number) =>
     invoke<ScTrack[]>('sc_search_tracks', { query, limit, offset }),
 

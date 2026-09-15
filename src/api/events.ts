@@ -12,3 +12,13 @@ export function onScanProgress(handler: (p: ScanProgress) => void): Promise<Unli
 export function onLibraryChanged(handler: () => void): Promise<UnlistenFn> {
   return listen(LIBRARY_CHANGED_EVENT, () => handler())
 }
+
+export const TRAY_EVENT = 'tray://command'
+
+/**
+ * Playback commands from the tray menu. The tray lives in Rust and has no
+ * access to the queue, so it forwards the command here instead.
+ */
+export function onTrayCommand(handler: (command: string) => void): Promise<UnlistenFn> {
+  return listen<string>(TRAY_EVENT, (e) => handler(e.payload))
+}
