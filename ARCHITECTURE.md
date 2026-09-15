@@ -403,6 +403,75 @@ pure class holding the order, the shuffle permutation and the repeat mode (`off`
 React context only mirrors state through a subscription, so playback never depends on the component
 tree staying mounted.
 
+#### Two audio channels
+
+`AudioEngine` keeps one element per channel and picks per track:
+
+| Channel | Routed through | Used for |
+|---|---|---|
+| `local` | `AudioContext` → `GainNode` → destination | local files, cached SoundCloud, HLS |
+| `stream` | nothing | progressive remote SoundCloud streams |
+
+The split exists because `createMediaElementSource` routes an element **permanently**, and a
+cross-origin source without CORS headers comes out as **silence** once routed. Uncached SoundCloud
+tracks play from a remote URL — `toScPlayback` reports that as `cached: false` — so they must stay
+off the graph. Cached files are local, and HLS reaches the element through MediaSource (a blob URL),
+which is same-origin and therefore safe.
+
+The `GainNode` is what makes a gain **above 1.0** possible, which `HTMLAudioElement.volume` cannot
+express. It is built **lazily**, only when a non-unity track gain is actually requested: with
+normalisation off the local path is unrouted and behaves exactly as it did before, so a context that
+fails to start cannot silence playback — it just falls back to plain volume.
+
+Every element handler checks `isActive()` before doing anything, so a parked element cannot drive the
+UI, and loading on one channel silences the other so two elements never play at once.
+
+#### Loudness normalisation
+
+Tracks are levelled towards a common loudness. `gain_db` is the correction to apply, `peak_db` caps
+it so nothing clips.
+
+- **ReplayGain tags** are read at scan time by `metadata.rs` and cost nothing. The gain tag is
+  written as `-7.25 dB`, the peak as a bare linear ratio; both are normalised to dB here.
+- **Everything else is measured** by a background analyser the user starts from Settings. It runs in
+  its **own `AudioContext`**, decoding through the browser's own decoder — that covers every format
+  the app supports without pulling a decoding library into Rust, and it never touches the playback
+  graph. It works in small batches with a pause between them and writes each result immediately, so
+  an interrupted run resumes rather than starting over.
+
+Storage is a side table, `track_loudness`, not columns on `tracks`. Migrations are **replayed in
+tests by rewinding `user_version`**, and `ALTER TABLE ADD COLUMN` is not idempotent while
+`CREATE TABLE IF NOT EXISTS` is. It also keeps the hot `tracks` table narrow for data that is derived
+and recomputable. A row is only created for a track that has a value, so "needs analysis" stays an
+absence check, and `checked` records an attempt so a file the decoder cannot handle is not retried
+forever.
+
+Two traps live here, both found by the test suite:
+
+- **No `--` comments inside a SQL string built with `\` line continuations.** The continuations
+  collapse it to one line, so the comment swallows every clause after it and SQLite reports
+  `incomplete input`.
+- **Never index past `TRACK_COLUMNS` with a literal.** `fetch_track_candidates` read `search_text`
+  at a hardcoded `21`; adding two columns silently moved that field and it started reading
+  `gain_db`. Use `TRACK_COLUMN_COUNT`.
+
+#### System integration
+
+`tray.rs` builds the tray icon and its menu (show, play/pause, previous, next, quit). It owns no
+playback state: menu items are emitted to the webview as `tray://command`, which is the only place
+that knows the queue, and the frontend pushes translated labels back so the menu follows the UI
+language.
+
+Closing the main window hides it instead of quitting when "stay in tray" is on, so playback and the
+mini player keep running. The flag lives in Rust because the `CloseRequested` hook needs it; the
+frontend owns the saved preference and pushes it over. Launch-at-login uses
+`tauri-plugin-autostart`, touched only when the OS actually disagrees with the setting.
+
+Enabling `tray-icon` does **not** pull in `common-controls-v6` — that is an optional enhancement
+applied only when both features are on, and this crate builds with `default-features = false`. That
+matters because `common-controls-v6` imports `TaskDialogIndirect`, whose manifest `tauri-build` embeds
+into binaries only, so test binaries fail to load and CI runs `cargo test`.
+
 Local files are resolved with `convertFileSrc(path)`; SoundCloud HLS goes through `hls.js`.
 
 Stat writes happen on well-defined edges: `bumpPlayCount(dbId)` when a local track starts,
