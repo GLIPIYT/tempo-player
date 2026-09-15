@@ -1,6 +1,11 @@
 const SEEK_SETTLE_MS = 250
 const RESYNC_GAP_SEC = 1.5
 const BUFFER_DONE_FRAC = 0.999
+/** How often the graph's output is sampled, and when to give up on it. */
+const SILENCE_CHECK_MS = 500
+const SILENCE_GIVE_UP_MS = 3000
+/** Peak deviation from silence, on the 0-255 byte scale, treated as audible. */
+const SILENCE_PEAK = 1
 
 /**
  * Two playback paths, chosen per track.
@@ -24,6 +29,14 @@ export class AudioEngine {
   private hls: unknown = null
   private ctx: AudioContext | null = null
   private gainNode: GainNode | null = null
+  private analyser: AnalyserNode | null = null
+  private analyserBuf: Uint8Array<ArrayBuffer> | null = null
+  /** Accumulated time the graph has been silent while the element advanced. */
+  private silentMs = 0
+  private lastSilenceCheck = 0
+  /** Set once the graph has been abandoned; it is never rebuilt afterwards. */
+  private graphDisabled = false
+  private lastLoad: { url: string; format: string | null; channel: AudioChannel } | null = null
   private volumeLevel = 1
   /** Per-track loudness correction, linear. Only meaningful on the local path. */
   private trackGain = 1
@@ -61,6 +74,7 @@ export class AudioEngine {
     this.destroyHls()
     this.silenceOther(channel)
     this.activeChannel = channel
+    this.lastLoad = { url, format, channel }
     const el = this.ensure(channel)
     this.epoch += 1
     this.pendingSeek = null
@@ -164,7 +178,7 @@ export class AudioEngine {
   }
 
   private ensureGainGraph(): void {
-    if (this.ctx) return
+    if (this.ctx || this.graphDisabled) return
     this.attachGain(this.channels.local ?? this.ensure('local'))
   }
 
@@ -199,6 +213,7 @@ export class AudioEngine {
         return
       }
       this.reportPosition(el)
+      this.checkSilence(el)
       this.rafId = requestAnimationFrame(tick)
     }
     this.rafId = requestAnimationFrame(tick)
@@ -264,6 +279,19 @@ export class AudioEngine {
     if (existing) return existing
     const el = new Audio()
     el.preload = 'auto'
+    if (channel === 'local') {
+      // Local files come from the asset protocol, which is a different origin
+      // from the app itself. Tauri does send Access-Control-Allow-Origin for
+      // it, but a media element only gets a non-opaque response if it asks for
+      // CORS - and Web Audio silences an opaque one. Without this, enabling
+      // normalisation (which is what first builds the audio graph) muted every
+      // local track.
+      //
+      // Deliberately not set on the stream channel: a remote SoundCloud URL
+      // without CORS headers would then fail to load at all, and that element
+      // is never routed anyway.
+      el.crossOrigin = 'anonymous'
+    }
     // handlers are bound to this element, so every one checks it is still the
     // active channel - a parked element must not drive the UI
     const isActive = () => this.active() === el
@@ -310,13 +338,70 @@ export class AudioEngine {
   }
 
   /**
+   * Web Audio turns an opaque source - cross-origin, no CORS - into silence,
+   * and it does so *quietly*: the element still reports normal progress, no
+   * error fires, and the only symptom is that nothing comes out. That is
+   * exactly how enabling normalisation muted every local track once.
+   *
+   * So watch what the graph actually emits. If it stays flat while the element
+   * is advancing, give up on the graph permanently and rebuild an unrouted
+   * element: normalisation then degrades to plain volume instead of leaving the
+   * user with no sound at all.
+   */
+  private checkSilence(el: HTMLAudioElement): void {
+    if (!this.analyser || !this.analyserBuf || this.graphDisabled) return
+    const now = performance.now()
+    if (now - this.lastSilenceCheck < SILENCE_CHECK_MS) return
+    this.lastSilenceCheck = now
+    this.analyser.getByteTimeDomainData(this.analyserBuf)
+    let peak = 0
+    for (let i = 0; i < this.analyserBuf.length; i += 8) {
+      const deviation = Math.abs(this.analyserBuf[i] - 128)
+      if (deviation > peak) peak = deviation
+    }
+    // a little tolerance: material can be genuinely quiet for a moment
+    if (peak > SILENCE_PEAK || el.currentTime < 1) {
+      this.silentMs = 0
+      return
+    }
+    this.silentMs += SILENCE_CHECK_MS
+    if (this.silentMs >= SILENCE_GIVE_UP_MS) this.disableGraph()
+  }
+
+  private disableGraph(): void {
+    this.graphDisabled = true
+    this.silentMs = 0
+    this.analyser = null
+    this.analyserBuf = null
+    this.gainNode = null
+
+    const el = this.channels.local
+    if (!el) return
+    const resumeAt = el.currentTime
+    const load = this.lastLoad
+    // a routed element can never be un-routed, so it has to be replaced
+    this.channels.local = null
+    el.pause()
+    el.removeAttribute('src')
+    el.load()
+
+    if (this.activeChannel !== 'local' || !load) return
+    void this.loadWithFormat(load.url, load.format, 'local')
+      .then(() => {
+        this.setCurrentTime(resumeAt)
+        this.play()
+      })
+      .catch(() => {})
+  }
+
+  /**
    * Routes the local element through a GainNode. Called lazily, and only for
    * the same-origin channel, the first time a non-unity gain is requested. If
    * the graph cannot be built the element is left unrouted and `applyGain`
    * falls back to plain volume.
    */
   private attachGain(el: HTMLAudioElement): void {
-    if (this.ctx) return
+    if (this.ctx || this.graphDisabled) return
     try {
       const Ctor =
         window.AudioContext ??
@@ -327,11 +412,20 @@ export class AudioEngine {
       const gain = ctx.createGain()
       source.connect(gain)
       gain.connect(ctx.destination)
+      // a tap on the output, for the silence watchdog; not connected onward
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 512
+      gain.connect(analyser)
       this.ctx = ctx
       this.gainNode = gain
+      this.analyser = analyser
+      this.analyserBuf = new Uint8Array(analyser.fftSize)
+      this.silentMs = 0
     } catch {
       this.ctx = null
       this.gainNode = null
+      this.analyser = null
+      this.analyserBuf = null
     }
   }
 

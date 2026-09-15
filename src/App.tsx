@@ -18,6 +18,7 @@ import Onboarding from './components/onboarding/Onboarding'
 import PresenceBridge from './components/integration/PresenceBridge'
 import MiniPlayerBridge from './components/integration/MiniPlayerBridge'
 import SystemBridge from './components/integration/SystemBridge'
+import LoudnessBridge from './components/integration/LoudnessBridge'
 import ContextMenuHost from './components/common/ContextMenu'
 import TrackDragLayer from './dnd/trackDrag'
 import { NavProvider, useNav } from './state/nav'
@@ -197,6 +198,7 @@ function Shell() {
         <PresenceBridge />
         <MiniPlayerBridge />
         <SystemBridge />
+        <LoudnessBridge />
       </div>
       {/* Fixed-position overlays live outside .app-root: applyFont() sets a zoom
           on it for the UI scale preference, and a zoomed ancestor makes

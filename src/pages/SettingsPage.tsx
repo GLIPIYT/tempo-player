@@ -417,7 +417,7 @@ function LoudnessCard() {
         />
       </div>
       <div className="set-note">
-        {t('Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest need a one-off analysis, which runs in the background.')}
+        {t('Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest are measured automatically a few tracks ahead of what is playing, so nothing has to be scanned up front. The button below measures the whole library instead.')}
       </div>
       <div className="set-row" style={{ marginTop: 6 }}>
         <span className="set-row-label">
