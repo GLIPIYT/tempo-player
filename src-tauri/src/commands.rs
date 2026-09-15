@@ -1188,13 +1188,14 @@ pub fn reveal_in_file_manager(path: String) -> Result<bool, String> {
 
 /// Turns "closing the window keeps Tempo in the tray" on or off.
 ///
-/// Only a flag: the window-event hook in `lib.rs` reads it when a close is
-/// requested. Kept out of the settings table because it is a live runtime
-/// switch rather than persisted data - the frontend owns the saved preference
-/// and pushes it here on startup.
+/// This also owns the tray icon itself: it is only created while the setting is
+/// on, because on Windows a tray icon keeps the process alive after its last
+/// window closes. An always-present icon meant `tauri dev` left the previous
+/// process running on every restart, and each leftover instance opened its own
+/// Discord presence.
 #[tauri::command]
-pub fn set_close_to_tray(enabled: bool) {
-    crate::tray::set_close_to_tray(enabled);
+pub fn set_close_to_tray(app: AppHandle, enabled: bool) -> Result<(), String> {
+    crate::tray::set_enabled(&app, enabled).map_err(|e| e.to_string())
 }
 
 /// Pushes translated tray-menu labels in, so the menu follows the UI language.

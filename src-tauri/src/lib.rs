@@ -59,7 +59,6 @@ pub fn run() {
                 sc_cache_dir,
             });
             let handle = app.handle().clone();
-            tray::build(&handle)?;
             std::thread::spawn(move || {
                 let state = handle.state::<commands::AppState>();
                 soundcloud_store::startup_maintenance(&state.db, &state.sc_cache_dir, &state.covers_dir);

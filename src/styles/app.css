@@ -864,8 +864,7 @@
   pointer-events: none;
 }
 
-.pb-modern .pb-progress input[type='range'],
-.pb-modern .pb-progress .wave {
+.pb-modern .pb-progress input[type='range'] {
   position: absolute;
   top: 0;
   left: 0;
@@ -876,6 +875,22 @@
   pointer-events: auto;
 }
 
+/* The waveform keeps its own height: bar heights are percentages of this box,
+   so collapsing it to the line's 4px flattened every bar into a line. It is
+   centred on the bar's top edge instead, half of it above the border. */
+.pb-modern .pb-progress .wave {
+  position: absolute;
+  top: -13px;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 26px;
+  min-width: 0;
+  pointer-events: auto;
+}
+
+/* With the waveform off the same slot holds a plain range input, which reads
+   best as a hairline track along the edge. */
 .pb-modern .pb-progress input[type='range'] {
   -webkit-appearance: none;
   appearance: none;

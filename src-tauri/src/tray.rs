@@ -47,6 +47,25 @@ pub fn set_close_to_tray(enabled: bool) {
     CLOSE_TO_TRAY.store(enabled, Ordering::Relaxed);
 }
 
+/// Creates or removes the tray icon to match the setting.
+///
+/// The tray is not built at startup on purpose. On Windows a tray icon keeps
+/// the process alive after its last window closes, so an always-present icon
+/// meant the app never exited: `tauri dev` left the old process and its icon
+/// behind on every run, and each of those lingering instances opened its own
+/// Discord presence, which is what stacked up in the status.
+pub fn set_enabled<R: Runtime>(app: &AppHandle<R>, enabled: bool) -> tauri::Result<()> {
+    set_close_to_tray(enabled);
+    if enabled {
+        if app.tray_by_id(TRAY_ID).is_none() {
+            build(app)?;
+        }
+    } else {
+        app.remove_tray_by_id(TRAY_ID);
+    }
+    Ok(())
+}
+
 pub fn close_to_tray() -> bool {
     CLOSE_TO_TRAY.load(Ordering::Relaxed)
 }
