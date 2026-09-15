@@ -20,6 +20,10 @@ pub struct MetaParsed {
     pub genre: Option<String>,
     pub cover_path: Option<String>,
     pub lyrics: Option<String>,
+    /// From ReplayGain tags, when the file carries them. The analyser fills the
+    /// gap for everything else.
+    pub gain_db: Option<f64>,
+    pub peak_db: Option<f64>,
 }
 
 const LYRICS_MAX_BYTES: usize = 64 * 1024;
@@ -46,6 +50,8 @@ pub fn read_metadata(path: &Path, covers_dir: &Path) -> Result<MetaParsed, Strin
     let duration_sec = if seconds > 0.0 { Some(seconds) } else { None };
     let cover_path = tag.and_then(|t| store_largest_picture(t, covers_dir));
     let lyrics = clean_string(tag.and_then(|t| t.get_string(&ItemKey::Lyrics))).map(cap_lyrics);
+    let gain_db = parse_gain_db(tag.and_then(|t| t.get_string(&ItemKey::ReplayGainTrackGain)));
+    let peak_db = parse_peak_db(tag.and_then(|t| t.get_string(&ItemKey::ReplayGainTrackPeak)));
 
     Ok(MetaParsed {
         title,
@@ -59,7 +65,30 @@ pub fn read_metadata(path: &Path, covers_dir: &Path) -> Result<MetaParsed, Strin
         genre,
         cover_path,
         lyrics,
+        gain_db,
+        peak_db,
     })
+}
+
+/// ReplayGain tags are free-form strings; the gain is normally written as
+/// "-7.25 dB", so only the leading number is taken.
+fn parse_gain_db(value: Option<&str>) -> Option<f64> {
+    let number = value?.trim().split_whitespace().next()?.parse::<f64>().ok()?;
+    if number.is_finite() {
+        Some(number)
+    } else {
+        None
+    }
+}
+
+/// The peak tag is a bare linear ratio (e.g. "0.987654"), stored here in dBFS so
+/// the frontend can cap a boost without knowing about the tag's format.
+fn parse_peak_db(value: Option<&str>) -> Option<f64> {
+    let linear = value?.trim().split_whitespace().next()?.parse::<f64>().ok()?;
+    if !linear.is_finite() || linear <= 0.0 {
+        return None;
+    }
+    Some(20.0 * linear.log10())
 }
 
 fn clean_string(value: Option<&str>) -> Option<String> {
@@ -110,4 +139,37 @@ fn store_cover_bytes(
         fs::write(&target, data).ok()?;
     }
     Some(target.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_gain_db, parse_peak_db};
+
+    #[test]
+    fn gain_accepts_the_usual_unit_suffix() {
+        assert_eq!(parse_gain_db(Some("-7.25 dB")), Some(-7.25));
+        assert_eq!(parse_gain_db(Some("+3.0 dB")), Some(3.0));
+        // some taggers write a bare number
+        assert_eq!(parse_gain_db(Some("-1.5")), Some(-1.5));
+    }
+
+    #[test]
+    fn gain_rejects_junk_instead_of_defaulting_to_zero() {
+        assert_eq!(parse_gain_db(None), None);
+        assert_eq!(parse_gain_db(Some("")), None);
+        assert_eq!(parse_gain_db(Some("loud")), None);
+        assert_eq!(parse_gain_db(Some("inf")), None);
+    }
+
+    #[test]
+    fn peak_is_a_linear_ratio_converted_to_dbfs() {
+        // full scale
+        let full = parse_peak_db(Some("1.0")).unwrap();
+        assert!(full.abs() < 1e-9, "expected 0 dBFS, got {full}");
+        // half amplitude is about -6 dBFS
+        let half = parse_peak_db(Some("0.5")).unwrap();
+        assert!((half + 6.0206).abs() < 0.001, "expected -6.02, got {half}");
+        assert_eq!(parse_peak_db(Some("0")), None);
+        assert_eq!(parse_peak_db(None), None);
+    }
 }

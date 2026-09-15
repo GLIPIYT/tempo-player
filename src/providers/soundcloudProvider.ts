@@ -15,6 +15,8 @@ export function scTrackToUnified(t: ScTrack): UnifiedTrack {
     playable: t.streamable && (t.hasProgressive || t.hasHls),
     localPath: null,
     externalUrl: t.permalinkUrl,
+    // streams are never levelled: the gain path is same-origin only
+    gainDb: null,
   }
 }
 

@@ -16,6 +16,7 @@ export function localTrackToUnified(t: Track): UnifiedTrack {
       playable: true,
       localPath: null,
       externalUrl: null,
+      gainDb: null,
     }
   }
   return {
@@ -30,6 +31,7 @@ export function localTrackToUnified(t: Track): UnifiedTrack {
     playable: true,
     localPath: t.path,
     externalUrl: null,
+    gainDb: t.gainDb ?? null,
   }
 }
 

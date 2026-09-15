@@ -146,7 +146,10 @@ pub fn run() {
             commands::list_hidden_tracks,
             commands::reveal_in_file_manager,
             commands::set_close_to_tray,
-            commands::set_tray_labels
+            commands::set_tray_labels,
+            commands::list_tracks_needing_loudness,
+            commands::count_tracks_needing_loudness,
+            commands::set_track_loudness
         ])
         .on_window_event(|window, event| {
             // With "stay in tray" on, closing the main window parks it instead of

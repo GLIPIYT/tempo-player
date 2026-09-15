@@ -9,8 +9,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::database::Db;
 use crate::models::{
     Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, CoversCacheInfo, FavoriteOrderEntry,
-    HiddenTrack, HistoryEntryDto, LibraryFolder, LyricsOverride, Playlist, PlaylistTrack, ScanPhase,
-    ScanProgress, ScanSummary, SearchResults, Track,
+    HiddenTrack, HistoryEntryDto, LibraryFolder, LoudnessJob, LyricsOverride, Playlist,
+    PlaylistTrack, ScanPhase, ScanProgress, ScanSummary, SearchResults, Track,
 };
 use crate::scanner;
 
@@ -1047,6 +1047,8 @@ pub fn unhide_track(state: State<'_, AppState>, path: String) -> Result<bool, St
         file_size,
         modified_at,
         lyrics: meta.as_ref().and_then(|m| m.lyrics.clone()),
+        gain_db: meta.as_ref().and_then(|m| m.gain_db),
+        peak_db: meta.as_ref().and_then(|m| m.peak_db),
     };
     state.db.upsert_scanned_tracks(&[input], &[])?;
     Ok(true)
@@ -1216,6 +1218,40 @@ pub fn set_tray_labels(
         },
     )
     .map_err(|e| e.to_string())
+}
+
+/// Local tracks the loudness analyser has not measured yet.
+///
+/// The measurement itself runs in the webview - it can decode every format the
+/// app supports through the browser's own decoder, which saves pulling a
+/// decoding library into the Rust side.
+#[tauri::command]
+pub fn list_tracks_needing_loudness(
+    state: State<AppState>,
+    limit: i64,
+) -> Result<Vec<LoudnessJob>, String> {
+    let rows = state.db.list_tracks_needing_loudness(limit.clamp(1, 500))?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, path)| LoudnessJob { id, path })
+        .collect())
+}
+
+#[tauri::command]
+pub fn count_tracks_needing_loudness(state: State<AppState>) -> Result<i64, String> {
+    state.db.count_tracks_needing_loudness()
+}
+
+/// Stores one analyser result. Passing nulls still marks the file as attempted,
+/// so one the decoder chokes on is not retried forever.
+#[tauri::command]
+pub fn set_track_loudness(
+    state: State<AppState>,
+    track_id: i64,
+    gain_db: Option<f64>,
+    peak_db: Option<f64>,
+) -> Result<(), String> {
+    state.db.set_track_loudness(track_id, gain_db, peak_db)
 }
 
 #[cfg(test)]

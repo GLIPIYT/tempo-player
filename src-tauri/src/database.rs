@@ -15,15 +15,23 @@ use crate::models::{
 const TRACK_COLUMNS: &str =
     "t.id, t.path, t.title, t.artist_id, COALESCE(a.name, t.artist_name), t.album_id, al.title, t.track_number, \
      t.disc_number, t.duration_sec, t.year, t.genre, t.cover_path, t.file_size, t.modified_at, \
-     t.added_at, t.source, t.external_id, t.last_played_at, t.play_count, t.skip_count";
+     t.added_at, t.source, t.external_id, t.last_played_at, t.play_count, t.skip_count, \
+     tl.gain_db, tl.peak_db";
+
+/// How many columns TRACK_COLUMNS selects. Anything a query appends after it
+/// starts at this index - use this rather than a literal, so adding a column
+/// here cannot silently shift a caller onto the wrong field.
+const TRACK_COLUMN_COUNT: usize = 23;
 
 const TRACK_FROM: &str =
-    "tracks t LEFT JOIN artists a ON a.id = t.artist_id LEFT JOIN albums al ON al.id = t.album_id";
+    "tracks t LEFT JOIN artists a ON a.id = t.artist_id LEFT JOIN albums al ON al.id = t.album_id \
+     LEFT JOIN track_loudness tl ON tl.track_id = t.id";
 
 const HISTORY_TRACKS_FROM: &str = "listening_history h \
      JOIN tracks t ON t.id = h.track_id \
      LEFT JOIN artists a ON a.id = t.artist_id \
-     LEFT JOIN albums al ON al.id = t.album_id";
+     LEFT JOIN albums al ON al.id = t.album_id \
+     LEFT JOIN track_loudness tl ON tl.track_id = t.id";
 
 const TRACK_SEARCH_PRED: &str = r"(t.folder_id IS NOT NULL OR (t.source = 'soundcloud' AND t.cached_at IS NOT NULL)) AND t.search_text LIKE ?1 ESCAPE '\'";
 
@@ -251,9 +259,33 @@ SELECT 'album', album_id,
 FROM favorite_albums;
 "#;
 
+const MIGRATION_13: &str = r#"
+-- Loudness normalisation.
+--
+-- gain_db is the correction to apply to the track, positive to lift a quiet
+-- one; peak_db is its peak level, which caps the boost so nothing clips. Both
+-- are filled either from ReplayGain tags at scan time (free, but only present
+-- on files that have been tagged) or by the background analyser, which only
+-- looks at tracks that have no row here yet.
+--
+-- `checked` records that the analyser has been over the file, so one it cannot
+-- decode is not re-attempted on every pass.
+--
+-- A side table rather than columns on `tracks`: migrations are replayed in
+-- tests by rewinding user_version, and ALTER TABLE ADD COLUMN is not
+-- idempotent, while CREATE TABLE IF NOT EXISTS is. It also keeps the hot
+-- tracks table narrow for data that is derived and can be recomputed.
+CREATE TABLE IF NOT EXISTS track_loudness (
+    track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+    gain_db REAL,
+    peak_db REAL,
+    checked INTEGER NOT NULL DEFAULT 0
+);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
-    MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12,
+    MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_13,
 ];
 
 pub struct Db {
@@ -1003,6 +1035,7 @@ impl Db {
                  JOIN tracks t ON t.id = picks.tid \
                  LEFT JOIN artists a ON a.id = t.artist_id \
                  LEFT JOIN albums al ON al.id = t.album_id \
+                 LEFT JOIN track_loudness tl ON tl.track_id = t.id \
                  ORDER BY picks.plays DESC, picks.last_play DESC",
                 cols = TRACK_COLUMNS,
                 lim = limit,
@@ -1615,6 +1648,7 @@ impl Db {
                  JOIN tracks t ON t.id = pt.track_id \
                  LEFT JOIN artists a ON a.id = t.artist_id \
                  LEFT JOIN albums al ON al.id = t.album_id \
+                 LEFT JOIN track_loudness tl ON tl.track_id = t.id \
                  WHERE pt.playlist_id = ?1 ORDER BY pt.position",
                 TRACK_COLUMNS
             );
@@ -1719,6 +1753,64 @@ impl Db {
             conn.execute(
                 "UPDATE tracks SET play_count = play_count + 1, last_played_at = ?1 WHERE id = ?2",
                 params![now(), track_id],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    /// Local tracks the analyser has not been over yet.
+    ///
+    /// A row in `track_loudness` means either ReplayGain tags supplied a value
+    /// at scan time or the analyser has already been here, so those are skipped.
+    pub fn list_tracks_needing_loudness(&self, limit: i64) -> Result<Vec<(i64, String)>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT t.id, t.path FROM tracks t \
+                     LEFT JOIN track_loudness tl ON tl.track_id = t.id \
+                     WHERE t.source = 'local' AND t.folder_id IS NOT NULL AND tl.track_id IS NULL \
+                     ORDER BY t.added_at DESC LIMIT ?1",
+                )
+                .map_err(db_err)?;
+            let rows = stmt
+                .query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(db_err)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)
+        })
+    }
+
+    /// How many local tracks still have no measurement, for progress reporting.
+    pub fn count_tracks_needing_loudness(&self) -> Result<i64, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM tracks t \
+                 LEFT JOIN track_loudness tl ON tl.track_id = t.id \
+                 WHERE t.source = 'local' AND t.folder_id IS NOT NULL AND tl.track_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(db_err)
+        })
+    }
+
+    /// Records an analyser result.
+    ///
+    /// `checked` is set even when nothing could be measured, so a file the
+    /// decoder cannot handle is not re-attempted on every pass.
+    pub fn set_track_loudness(
+        &self,
+        track_id: i64,
+        gain_db: Option<f64>,
+        peak_db: Option<f64>,
+    ) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO track_loudness(track_id, gain_db, peak_db, checked) \
+                 VALUES(?1, ?2, ?3, 1) \
+                 ON CONFLICT(track_id) DO UPDATE SET \
+                 gain_db = excluded.gain_db, peak_db = excluded.peak_db, checked = 1",
+                params![track_id, gain_db, peak_db],
             )
             .map_err(db_err)?;
             Ok(())
@@ -2124,7 +2216,7 @@ fn fetch_track_candidates(conn: &Connection) -> Result<Vec<(Track, String)>, Str
     let mut stmt = conn.prepare(&sql).map_err(db_err)?;
     let mapped = stmt
         .query_map(params![TRACK_CANDIDATE_LIMIT], |row| {
-            Ok((map_track_at(row, 0)?, row.get::<_, String>(21)?))
+            Ok((map_track_at(row, 0)?, row.get::<_, String>(TRACK_COLUMN_COUNT)?))
         })
         .map_err(db_err)?;
     let mut out = Vec::new();
@@ -2275,6 +2367,8 @@ fn map_track_at(row: &rusqlite::Row, base: usize) -> rusqlite::Result<Track> {
         last_played_at: row.get(base + 18)?,
         play_count: row.get(base + 19)?,
         skip_count: row.get(base + 20)?,
+        gain_db: row.get::<_, Option<f64>>(base + 21)?,
+        peak_db: row.get::<_, Option<f64>>(base + 22)?,
     })
 }
 
@@ -2627,6 +2721,22 @@ fn upsert_track_input(conn: &Connection, input: &TrackInput) -> Result<(), Strin
         ],
     )
     .map_err(db_err)?;
+
+    // ReplayGain tags, when the file carries them. A row is only created for a
+    // track that actually has a value, so "needs analysis" stays a simple
+    // absence check for everything else. COALESCE on the conflict arm keeps a
+    // rescan of an untagged file from wiping what the analyser measured.
+    if input.gain_db.is_some() || input.peak_db.is_some() {
+        conn.execute(
+            "INSERT INTO track_loudness(track_id, gain_db, peak_db, checked) \
+             SELECT id, ?2, ?3, 0 FROM tracks WHERE path = ?1 \
+             ON CONFLICT(track_id) DO UPDATE SET \
+             gain_db = COALESCE(excluded.gain_db, track_loudness.gain_db), \
+             peak_db = COALESCE(excluded.peak_db, track_loudness.peak_db)",
+            params![input.path, input.gain_db, input.peak_db],
+        )
+        .map_err(db_err)?;
+    }
     Ok(())
 }
 
@@ -2806,6 +2916,8 @@ mod tests {
             file_size: 1024,
             modified_at: 111,
             lyrics: None,
+            gain_db: None,
+            peak_db: None,
         }
     }
 

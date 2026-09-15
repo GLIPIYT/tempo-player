@@ -3,6 +3,7 @@ import { api } from '../api/client'
 import type { RepeatMode, UnifiedTrack } from '../types/models'
 import { trackToUnified } from '../utils/unified'
 import { AudioEngine, type AudioChannel } from './engine'
+import { dbToLinear } from '../audio/loudness'
 import { QueueController } from './queue'
 
 export interface PlayerSnapshot {
@@ -53,6 +54,22 @@ function writePref(key: string, value: string): void {
   try {
     window.localStorage.setItem(key, value)
   } catch {}
+}
+
+/**
+ * The controller is a module singleton with no access to React context, so it
+ * reads the one setting it needs straight out of the persisted settings blob -
+ * the same way it already does for volume.
+ */
+function normalizationEnabled(): boolean {
+  try {
+    const raw = window.localStorage.getItem('tempo.settings.v1')
+    if (!raw) return false
+    const parsed = JSON.parse(raw) as { audio?: { normalize?: boolean } }
+    return parsed.audio?.normalize === true
+  } catch {
+    return false
+  }
 }
 
 function clampUnit(v: number): number {
@@ -387,6 +404,11 @@ export class PlayerController {
     this.duration = track.durationSec ?? 0
     this.bufferPct = null
     this.engine.setVolume(this.volume)
+    // Level this track. Unmeasured tracks and streamed sources pass 1, which
+    // leaves the audio path exactly as it was.
+    this.engine.setTrackGain(
+      normalizationEnabled() && track.gainDb !== null ? dbToLinear(track.gainDb) : 1,
+    )
     void this.engine
       .loadWithFormat(resolved.url, resolved.format, resolved.channel)
       .catch(() => {})

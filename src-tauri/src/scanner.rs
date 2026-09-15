@@ -166,6 +166,8 @@ fn build_track_input(
         file_size,
         modified_at,
         lyrics: meta.lyrics,
+        gain_db: meta.gain_db,
+        peak_db: meta.peak_db,
     }
 }
 
@@ -192,6 +194,8 @@ fn build_fallback_input(
         file_size,
         modified_at,
         lyrics: None,
+        gain_db: None,
+        peak_db: None,
     }
 }
 

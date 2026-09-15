@@ -60,6 +60,9 @@ export interface Track {
   lastPlayedAt: number | null
   playCount: number
   skipCount: number
+  /** Loudness correction in dB from ReplayGain tags or the analyser; null if unmeasured. */
+  gainDb: number | null
+  peakDb: number | null
 }
 
 export interface Playlist {
@@ -133,6 +136,8 @@ export interface UnifiedTrack {
   playable: boolean
   localPath: string | null
   externalUrl: string | null
+  /** Loudness correction in dB, carried so the engine can level the track. */
+  gainDb: number | null
   /** appended automatically by queue auto-extend */
   auto?: boolean
 }

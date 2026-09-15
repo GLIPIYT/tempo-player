@@ -62,6 +62,11 @@ pub struct Track {
     pub last_played_at: Option<i64>,
     pub play_count: i64,
     pub skip_count: i64,
+    /// Loudness correction in dB, positive to lift a quiet track. Null means the
+    /// track has neither ReplayGain tags nor an analyser measurement yet.
+    pub gain_db: Option<f64>,
+    /// Peak level in dBFS, used to cap a boost so nothing clips.
+    pub peak_db: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +174,16 @@ pub struct TrackInput {
     pub file_size: i64,
     pub modified_at: i64,
     pub lyrics: Option<String>,
+    /// Read from ReplayGain tags when present; the analyser covers the rest.
+    pub gain_db: Option<f64>,
+    pub peak_db: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoudnessJob {
+    pub id: i64,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

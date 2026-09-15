@@ -393,4 +393,13 @@ export const ru: Record<string, string> = {
   'Keep running in the tray': 'Оставаться в трее',
   'Closing the window hides Tempo instead of quitting, so playback and the mini player keep running. Right-click the tray icon to bring the window back or quit.':
     'Закрытие окна скрывает Tempo, а не завершает его: воспроизведение и мини-плеер продолжают работать. Правый клик по значку в трее вернёт окно или завершит приложение.',
+  'Volume normalization': 'Нормализация громкости',
+  'Evens out loudness differences between tracks.': 'Выравнивает громкость между треками.',
+  'Normalize volume': 'Нормализовать громкость',
+  'Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest need a one-off analysis, which runs in the background.':
+    'Треки выравниваются к общей громкости. Файлы с тегами ReplayGain используют их сразу, остальным нужен разовый анализ — он идёт в фоне.',
+  'Tracks left to analyze': 'Осталось проанализировать',
+  'Every track has been analyzed': 'Все треки проанализированы',
+  'Analyzing…': 'Анализ…',
+  'Analyze library': 'Проанализировать библиотеку',
 }

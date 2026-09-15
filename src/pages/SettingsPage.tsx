@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSPropert
 import { open } from '@tauri-apps/plugin-dialog'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import {
+  Activity,
   ChevronDown,
   EyeOff,
   FolderOpen,
@@ -21,6 +22,12 @@ import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useScanProgress } from '../hooks/useScanProgress'
 import { clampMiniShowMs, useSettings, type StartupPage } from '../state/settings'
+import {
+  analyzeLibraryLoudness,
+  loudnessAnalysisState,
+  refreshLoudnessRemaining,
+  subscribeLoudnessAnalysis,
+} from '../audio/loudnessRunner'
 import { resolveLang, useT } from '../i18n'
 
 const STARTUP_PAGE_OPTIONS: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists']
@@ -381,6 +388,53 @@ function ColorField(props: { value: string | undefined; onChange: (v: string) =>
       />
       <span className="color-hex">{props.value ? props.value : t('auto')}</span>
     </div>
+  )
+}
+
+function LoudnessCard() {
+  const t = useT()
+  const { settings, update } = useSettings()
+  const [state, setState] = useState(loudnessAnalysisState)
+
+  useEffect(() => {
+    void refreshLoudnessRemaining()
+    return subscribeLoudnessAnalysis(() => setState(loudnessAnalysisState()))
+  }, [])
+
+  return (
+    <Card
+      title={t('Volume normalization')}
+      desc={t('Evens out loudness differences between tracks.')}
+    >
+      <div className="set-row">
+        <span className="set-row-label">{t('Normalize volume')}</span>
+        <button
+          className={settings.audio.normalize ? 'switch is-on' : 'switch'}
+          role="switch"
+          aria-checked={settings.audio.normalize}
+          aria-label={t('Normalize volume')}
+          onClick={() => update({ audio: { normalize: !settings.audio.normalize } })}
+        />
+      </div>
+      <div className="set-note">
+        {t('Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest need a one-off analysis, which runs in the background.')}
+      </div>
+      <div className="set-row" style={{ marginTop: 6 }}>
+        <span className="set-row-label">
+          {state.remaining > 0
+            ? `${t('Tracks left to analyze')}: ${state.remaining}`
+            : t('Every track has been analyzed')}
+        </span>
+        <button
+          className="btn btn-ghost"
+          disabled={state.running || state.remaining === 0}
+          onClick={() => void analyzeLibraryLoudness()}
+        >
+          <Activity size={15} />
+          {state.running ? t('Analyzing…') : t('Analyze library')}
+        </button>
+      </div>
+    </Card>
   )
 }
 
@@ -1016,6 +1070,7 @@ export default function SettingsPage() {
                   {t('Closing the window hides Tempo instead of quitting, so playback and the mini player keep running. Right-click the tray icon to bring the window back or quit.')}
                 </div>
               </Card>
+              <LoudnessCard />
             </>
           ) : null}
 

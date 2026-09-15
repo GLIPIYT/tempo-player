@@ -56,6 +56,10 @@ export interface AppSettings {
     /** Closing the main window parks Tempo in the tray instead of quitting. */
     closeToTray: boolean
   }
+  audio: {
+    /** Level every track towards a common loudness using its measured gain. */
+    normalize: boolean
+  }
 }
 
 export const defaultSettings: AppSettings = {
@@ -79,6 +83,7 @@ export const defaultSettings: AppSettings = {
     showNowPlaying: true,
   },
   system: { autostart: false, closeToTray: false },
+  audio: { normalize: false },
 }
 
 const MINI_SHOW_MS_MIN = 1000
@@ -128,6 +133,7 @@ function load(): AppSettings {
         ),
       },
       system: { ...defaultSettings.system, ...parsed.system },
+      audio: { ...defaultSettings.audio, ...parsed.audio },
     }
   } catch {
     return defaultSettings
@@ -172,6 +178,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         ),
       },
       system: { ...prev.system, ...patch.system },
+      audio: { ...prev.audio, ...patch.audio },
     }))
   }, [])
 

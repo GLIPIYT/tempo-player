@@ -168,6 +168,14 @@ export const api = {
     quit: string
   }) => invoke<void>('set_tray_labels', labels),
 
+  listTracksNeedingLoudness: (limit: number) =>
+    invoke<{ id: number; path: string }[]>('list_tracks_needing_loudness', { limit }),
+
+  countTracksNeedingLoudness: () => invoke<number>('count_tracks_needing_loudness'),
+
+  setTrackLoudness: (trackId: number, gainDb: number | null, peakDb: number | null) =>
+    invoke<void>('set_track_loudness', { trackId, gainDb, peakDb }),
+
   scSearchTracks: (query: string, limit: number, offset: number) =>
     invoke<ScTrack[]>('sc_search_tracks', { query, limit, offset }),
 
