@@ -6,7 +6,7 @@
 
 Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLite** under the hood. No Electron, no backend server, no telemetry.
 
-![Version](https://img.shields.io/badge/version-0.4.0-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-0.5.0-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ![Tempo — home screen](docs/screenshot.png)
 
@@ -26,6 +26,8 @@ Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLi
 - **Persistent player** — the audio element lives outside the React tree, so navigating around the app never interrupts a track.
 - **Taskbar progress** — playback position mirrored onto the Windows taskbar.
 - **Optional waveform** — a wave-style progress bar instead of the plain one.
+- **Crossfade** — overlap the end of a track with the start of the next, anywhere from 1 to 12 seconds. Off by default.
+- **Spectrum visualiser** — a live spectrum on a band above the player bar, drawn as bars, a wave or a line in the theme accent, with adjustable detail, height, opacity and smoothing. It reads the same analyser the silence watchdog uses, so it reflects what you actually hear: after loudness normalisation and after the crossfade ramp. Tracks streamed without a cache play outside the audio graph, so the band stays blank on those.
 
 ### Playlists & favorites
 
@@ -49,6 +51,7 @@ Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLi
 
 - **Floating mini player** — a compact always-on-top window that rests as a pill at the top edge of the screen. Click to expand into cover, transport, seek, volume, like, repeat and shuffle; it can pop open on its own when the track changes and collapse again. Off by default.
 - **Ten built-in themes** — plus a custom mode where you pick base colours and override individual tokens.
+- **Two player bar layouts** — classic keeps the progress bar between the transport and the volume controls; modern centres the transport and runs the progress line along the top edge of the bar.
 - **Your own font and background** — import a font file, set a background image with adjustable dim and blur, scale the whole UI.
 - **Bilingual UI** — English and Russian out of the box, or follow the system language.
 
@@ -120,7 +123,7 @@ The full architecture, data model and module contracts are documented in [ARCHIT
 
 ## 🗺️ Status
 
-`v0.4.0` — alpha, Windows-first. Playback, library scanning, playlists, favorites, lyrics, search, SoundCloud, Discord presence, a floating mini player and right-click menus throughout all work. The release pipeline currently ships a Windows NSIS installer only; the codebase itself has no Windows-specific dependencies beyond the Discord IPC pipe path and taskbar progress.
+`v0.5.0` — alpha, Windows-first. Playback, library scanning, playlists, favorites, lyrics, search, SoundCloud, Discord presence, a floating mini player, right-click menus throughout, two player bar layouts, crossfade and a spectrum visualiser all work. The release pipeline currently ships a Windows NSIS installer only; the codebase itself has no Windows-specific dependencies beyond the Discord IPC pipe path and taskbar progress.
 
 Known gaps: the frontend has no automated tests yet, and there is no linter in CI.
 
