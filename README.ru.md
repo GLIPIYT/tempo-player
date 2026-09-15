@@ -6,7 +6,7 @@
 
 Собран на **Tauri 2 + React 18 + TypeScript** во фронтенде и **Rust + SQLite** под капотом. Ни Electron, ни бэкенд-сервера, ни телеметрии.
 
-![Version](https://img.shields.io/badge/version-0.3.0-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-0.4.0-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ![Tempo — главный экран](docs/screenshot.png)
 
@@ -18,6 +18,7 @@
 - **Быстрое инкрементальное сканирование** — теги читаются через `lofty`, обложки альбомов извлекаются в каталог данных приложения. Неизменённые файлы (тот же размер + mtime) пропускаются, поэтому повторное сканирование почти мгновенное. Сканирование выполняется в потоках Rust и никогда не блокирует интерфейс.
 - **Убрать, не удаляя** — трек можно скрыть из библиотеки: он останется скрытым и после пересканирования, а сам файл на диске не тронут.
 - **Показать в проводнике** — переход от трека к его папке одним действием.
+- **Контекстные меню везде** — по правому клику на треках, карточках альбомов и исполнителей и разделах главной доступны те же действия, что и в меню строки. Разделы можно скрыть до завтра.
 
 ### Воспроизведение
 
@@ -119,7 +120,7 @@ src-tauri/            # бэкенд на Rust
 
 ## 🗺️ Статус
 
-`v0.3.0` — альфа, в первую очередь под Windows. Воспроизведение, сканирование библиотеки, плейлисты, избранное, лирика, поиск, SoundCloud и Discord-презенс работают. Релизный пайплайн пока собирает только установщик NSIS для Windows; при этом сам код не завязан на Windows нигде, кроме пути к IPC-пайпу Discord и прогресса на панели задач.
+`v0.4.0` — альфа, в первую очередь под Windows. Воспроизведение, сканирование библиотеки, плейлисты, избранное, лирика, поиск, SoundCloud, Discord-презенс, плавающий мини-плеер и контекстные меню по правому клику — всё работает. Релизный пайплайн пока собирает только установщик NSIS для Windows; при этом сам код не завязан на Windows нигде, кроме пути к IPC-пайпу Discord и прогресса на панели задач.
 
 Что ещё предстоит: у фронтенда пока нет автотестов, а в CI нет линтера.
 

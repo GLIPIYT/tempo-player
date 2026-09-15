@@ -6,7 +6,7 @@
 
 Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLite** under the hood. No Electron, no backend server, no telemetry.
 
-![Version](https://img.shields.io/badge/version-0.3.0-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-0.4.0-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ![Tempo — home screen](docs/screenshot.png)
 
@@ -18,6 +18,7 @@ Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLi
 - **Fast incremental scanning** — files are parsed by tag (via `lofty`), album covers are extracted to the app data folder. Unchanged files (same size + mtime) are skipped, so rescans are near-instant. Scanning runs in Rust threads and never blocks the UI.
 - **Remove without deleting** — hide a local track from the library and it stays hidden across rescans, while the file itself is left untouched on disk.
 - **Reveal in file manager** — jump straight from a track to its folder.
+- **Right-click menus everywhere** — tracks, album and artist cards, and home sections, all offering the same actions as the row menu. Sections can be hidden until tomorrow.
 
 ### Playback
 
@@ -119,7 +120,7 @@ The full architecture, data model and module contracts are documented in [ARCHIT
 
 ## 🗺️ Status
 
-`v0.3.0` — alpha, Windows-first. Playback, library scanning, playlists, favorites, lyrics, search, SoundCloud and Discord presence all work. The release pipeline currently ships a Windows NSIS installer only; the codebase itself has no Windows-specific dependencies beyond the Discord IPC pipe path and taskbar progress.
+`v0.4.0` — alpha, Windows-first. Playback, library scanning, playlists, favorites, lyrics, search, SoundCloud, Discord presence, a floating mini player and right-click menus throughout all work. The release pipeline currently ships a Windows NSIS installer only; the codebase itself has no Windows-specific dependencies beyond the Discord IPC pipe path and taskbar progress.
 
 Known gaps: the frontend has no automated tests yet, and there is no linter in CI.
 
