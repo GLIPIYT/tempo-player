@@ -11,6 +11,7 @@ import { toast } from '../common/Toast'
 import Cover from '../common/Cover'
 import WaveProgress from '../common/WaveProgress'
 import QueuePanel from './QueuePanel'
+import PlayerVisualizer from '../player/PlayerVisualizer'
 import { LyricsContextProvider, useLyrics } from '../../features/lyrics'
 
 let lastNonZeroVolume = 0.8
@@ -90,6 +91,7 @@ function PlayerBarContent() {
   return (
     <>
       <footer className={'playerbar' + (modern ? ' pb-modern' : '')}>
+        <PlayerVisualizer />
         <div className="pb-now">
           {p.currentTrack ? (
             <>

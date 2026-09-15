@@ -20,7 +20,14 @@ import { api } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useScanProgress } from '../hooks/useScanProgress'
-import { clampMiniShowMs, useSettings, type StartupPage } from '../state/settings'
+import {
+  VISUALIZER_BARS_MAX,
+  VISUALIZER_BARS_MIN,
+  clampMiniShowMs,
+  useSettings,
+  type StartupPage,
+  type VisualizerStyle,
+} from '../state/settings'
 import { resolveLang, useT } from '../i18n'
 
 const STARTUP_PAGE_OPTIONS: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists']
@@ -1317,6 +1324,82 @@ export default function SettingsPage() {
                 />
                 <div className="set-note">
                   {t('Fades the end of a track into the start of the next one, so they overlap instead of stopping and starting.')}
+                </div>
+              </Card>
+
+              <Card title={t('Visualizer')} desc={t('Live spectrum above the player bar.')}>
+                <Segmented<VisualizerStyle>
+                  value={settings.visualizer.style}
+                  options={[
+                    { value: 'off', label: t('Off') },
+                    { value: 'bars', label: t('Bars') },
+                    { value: 'wave', label: t('Wave') },
+                    { value: 'line', label: t('Line') },
+                  ]}
+                  onChange={(style) => update({ visualizer: { style } })}
+                />
+                <div className={settings.visualizer.style === 'off' ? 'set-block is-dim' : 'set-block'}>
+                  <CommitSlider
+                    label={t('Detail')}
+                    min={VISUALIZER_BARS_MIN}
+                    max={VISUALIZER_BARS_MAX}
+                    step={4}
+                    value={settings.visualizer.bars}
+                    format={(v) => String(v)}
+                    onCommit={(bars) => update({ visualizer: { bars } })}
+                  />
+                  <CommitSlider
+                    label={t('Height')}
+                    min={24}
+                    max={160}
+                    step={4}
+                    value={settings.visualizer.heightPx}
+                    format={(v) => `${v}px`}
+                    onCommit={(heightPx) => update({ visualizer: { heightPx } })}
+                  />
+                  <CommitSlider
+                    label={t('Opacity')}
+                    min={10}
+                    max={100}
+                    step={5}
+                    value={settings.visualizer.opacityPct}
+                    format={(v) => `${v}%`}
+                    onCommit={(opacityPct) => update({ visualizer: { opacityPct } })}
+                  />
+                  <CommitSlider
+                    label={t('Smoothing')}
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={settings.visualizer.smoothing}
+                    format={(v) => `${v}%`}
+                    onCommit={(smoothing) => update({ visualizer: { smoothing } })}
+                  />
+                  <div className="set-row" style={{ marginTop: 6 }}>
+                    <span className="set-row-label">{t('Theme colour')}</span>
+                    <button
+                      className={settings.visualizer.useThemeColor ? 'switch is-on' : 'switch'}
+                      role="switch"
+                      aria-checked={settings.visualizer.useThemeColor}
+                      aria-label={t('Theme colour')}
+                      onClick={() =>
+                        update({ visualizer: { useThemeColor: !settings.visualizer.useThemeColor } })
+                      }
+                    />
+                  </div>
+                  <div className="set-row" style={{ marginTop: 6 }}>
+                    <span className="set-row-label">{t('Mirror')}</span>
+                    <button
+                      className={settings.visualizer.mirror ? 'switch is-on' : 'switch'}
+                      role="switch"
+                      aria-checked={settings.visualizer.mirror}
+                      aria-label={t('Mirror')}
+                      onClick={() => update({ visualizer: { mirror: !settings.visualizer.mirror } })}
+                    />
+                  </div>
+                </div>
+                <div className="set-note">
+                  {t('Draws the spectrum of what is playing on a band above the player bar. Tracks streamed without a cache play outside the audio graph, so the band stays blank on those.')}
                 </div>
               </Card>
             </>

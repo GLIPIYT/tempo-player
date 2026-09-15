@@ -748,6 +748,11 @@
 }
 
 .playerbar {
+  /* The spectrum band is positioned against the bar, and has to paint above
+     the page content it reaches over. Well below the menus (220) and modals
+     (1000+) that are supposed to cover it. */
+  position: relative;
+  z-index: 3;
   height: var(--playerbar-h);
   display: grid;
   /* the right column is `auto`, not a fraction: as a fraction it could be
@@ -766,6 +771,40 @@
      very different room here */
   container-type: inline-size;
   container-name: playerbar;
+}
+
+/* ── Spectrum band ────────────────────────────────────────────────────────
+   Rests on top of the bar and reaches up over the page content. The height is
+   fixed on purpose: the height setting moves the amplitude inside the band, so
+   dragging that slider never makes the bar itself jump. Absolutely positioned,
+   so it is not a fifth grid cell of the bar. */
+.pb-viz {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  margin-bottom: -1px;
+  height: 140px;
+  pointer-events: none;
+  overflow: hidden;
+  contain: paint;
+  transform: translateZ(0);
+  /* Two gradients intersected: the spectrum dies away at the side edges and
+     towards its top, so the canvas never reads as a rectangle. */
+  -webkit-mask-image:
+    linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%),
+    linear-gradient(to top, black 0%, black 45%, transparent 100%);
+  mask-image:
+    linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%),
+    linear-gradient(to top, black 0%, black 45%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+
+.pb-viz-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .pb-now {

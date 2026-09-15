@@ -202,6 +202,14 @@ html.has-bg .page {
   color: var(--text-muted);
 }
 
+/* Controls that have nothing to act on - the visualiser block with the band
+   switched off. Kept visible rather than hidden, so the card does not resize
+   as the style changes. */
+.set-block.is-dim {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
 .seg {
   display: inline-flex;
   gap: 2px;

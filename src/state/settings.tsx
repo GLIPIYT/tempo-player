@@ -5,6 +5,11 @@ export type StartupPage = 'home' | 'library' | 'albums' | 'artists' | 'playlists
 
 const STARTUP_PAGES: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists']
 
+/** What the spectrum band above the player bar draws. */
+export type VisualizerStyle = 'off' | 'bars' | 'wave' | 'line'
+
+const VISUALIZER_STYLES: VisualizerStyle[] = ['off', 'bars', 'wave', 'line']
+
 export interface ProfileSettings {
   nickname: string | null
   avatarPath: string | null
@@ -69,6 +74,20 @@ export interface AppSettings {
     /** Seconds of overlap between tracks; 0 disables crossfade. */
     crossfadeSec: number
   }
+  visualizer: {
+    style: VisualizerStyle
+    /** Bar count. The 64 incoming bins are interpolated up or down to this. */
+    bars: number
+    /** Peak amplitude in pixels. Does not change the band's own height. */
+    heightPx: number
+    /** Peak opacity, 10-100. */
+    opacityPct: number
+    /** 0 is twitchy, 100 is very smooth. */
+    smoothing: number
+    mirror: boolean
+    /** Draw in the theme accent rather than the plain text colour. */
+    useThemeColor: boolean
+  }
 }
 
 export const defaultSettings: AppSettings = {
@@ -93,6 +112,17 @@ export const defaultSettings: AppSettings = {
   },
   system: { autostart: false, closeToTray: false },
   audio: { normalize: false, crossfadeSec: 0 },
+  // On by default: the band is the whole point of the setting, and it only
+  // ever routes the same-origin channel - the same thing normalisation does.
+  visualizer: {
+    style: 'bars',
+    bars: 56,
+    heightPx: 56,
+    opacityPct: 80,
+    smoothing: 45,
+    mirror: false,
+    useThemeColor: true,
+  },
 }
 
 const MINI_SHOW_MS_MIN = 1000
@@ -101,6 +131,38 @@ const MINI_SHOW_MS_MAX = 15000
 export function clampMiniShowMs(value: number): number {
   if (!Number.isFinite(value)) return defaultSettings.miniPlayer.autoShowDurationMs
   return Math.max(MINI_SHOW_MS_MIN, Math.min(MINI_SHOW_MS_MAX, Math.round(value)))
+}
+
+export const VISUALIZER_BARS_MIN = 8
+export const VISUALIZER_BARS_MAX = 192
+const VIZ_BARS_RANGE = [VISUALIZER_BARS_MIN, VISUALIZER_BARS_MAX] as const
+const VIZ_HEIGHT_RANGE = [24, 160] as const
+const VIZ_OPACITY_RANGE = [10, 100] as const
+const VIZ_SMOOTHING_RANGE = [0, 100] as const
+
+function clampInt(value: unknown, [min, max]: readonly [number, number], fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.max(min, Math.min(max, Math.round(value)))
+}
+
+/**
+ * Normalises the visualiser block. The values come from localStorage and can
+ * be anything at all, and the canvas trusts them - clamping on the way in is
+ * cheaper than defending in the render loop.
+ */
+export function clampVisualizer(value: Partial<AppSettings['visualizer']>): AppSettings['visualizer'] {
+  const base = defaultSettings.visualizer
+  return {
+    style: VISUALIZER_STYLES.includes(value.style as VisualizerStyle)
+      ? (value.style as VisualizerStyle)
+      : base.style,
+    bars: clampInt(value.bars, VIZ_BARS_RANGE, base.bars),
+    heightPx: clampInt(value.heightPx, VIZ_HEIGHT_RANGE, base.heightPx),
+    opacityPct: clampInt(value.opacityPct, VIZ_OPACITY_RANGE, base.opacityPct),
+    smoothing: clampInt(value.smoothing, VIZ_SMOOTHING_RANGE, base.smoothing),
+    mirror: value.mirror === true,
+    useThemeColor: value.useThemeColor !== false,
+  }
 }
 
 const STORAGE_KEY = 'tempo.settings.v1'
@@ -143,6 +205,7 @@ function load(): AppSettings {
       },
       system: { ...defaultSettings.system, ...parsed.system },
       audio: { ...defaultSettings.audio, ...parsed.audio },
+      visualizer: clampVisualizer(parsed.visualizer ?? {}),
     }
   } catch {
     return defaultSettings
@@ -188,6 +251,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       },
       system: { ...prev.system, ...patch.system },
       audio: { ...prev.audio, ...patch.audio },
+      visualizer: clampVisualizer({ ...prev.visualizer, ...patch.visualizer }),
     }))
   }, [])
 

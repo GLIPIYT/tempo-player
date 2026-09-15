@@ -6,6 +6,17 @@ const SILENCE_CHECK_MS = 500
 const SILENCE_GIVE_UP_MS = 3000
 /** Peak deviation from silence, on the 0-255 byte scale, treated as audible. */
 const SILENCE_PEAK = 1
+/**
+ * Frequency resolution of the analyser tap: 1024 samples, so 512 bins. Enough
+ * to keep the low end of the 64 log-spaced bins the visualiser reads apart.
+ */
+const FFT_SIZE = 1024
+/**
+ * dB window the analyser maps onto its 0-255 byte scale. The -100..-30 default
+ * pins most musical content at 255, which flattens the spectrum into a wall.
+ */
+const ANALYSER_MIN_DB = -85
+const ANALYSER_MAX_DB = -15
 
 /**
  * Two playback paths, chosen per track.
@@ -22,6 +33,19 @@ const SILENCE_PEAK = 1
  * same-origin and safe on the local path.
  */
 export type AudioChannel = 'local' | 'stream'
+
+/**
+ * The engine currently playing, published for read-only taps.
+ *
+ * The spectrum needs a live analyser but must not reach into the controller,
+ * so the dependency stays one-way - `spectrum` imports `engine`, never the
+ * reverse. There is exactly one engine per app.
+ */
+let engineInstance: AudioEngine | null = null
+
+export function getEngine(): AudioEngine | null {
+  return engineInstance
+}
 
 export class AudioEngine {
   private channels: Record<AudioChannel, HTMLAudioElement | null> = { local: null, stream: null }
@@ -52,6 +76,10 @@ export class AudioEngine {
   private pendingSeek: number | null = null
   private lastBufferPct: number | null = null
 
+  constructor() {
+    engineInstance = this
+  }
+
   onTime: (time: number, epoch: number) => void = () => {}
   onEnded: () => void = () => {}
   onLoaded: (duration: number) => void = () => {}
@@ -60,6 +88,25 @@ export class AudioEngine {
 
   getSeekEpoch(): number {
     return this.epoch
+  }
+
+  /**
+   * Builds the audio graph even though no gain needs applying yet, so the
+   * visualiser has an analyser to read from. Only ever the local channel -
+   * routing a cross-origin stream is exactly what silences it.
+   */
+  enableGraph(): void {
+    this.ensureGainGraph()
+  }
+
+  /**
+   * The live analyser, or null when nothing is routed. Null on the stream
+   * channel, and null again once the silence watchdog has given up on the
+   * graph - which is how the visualiser ends up idle rather than drawing a
+   * frozen frame.
+   */
+  getAnalyser(): AnalyserNode | null {
+    return this.analyser
   }
 
   /** The element currently producing sound; everything acts on this one. */
@@ -503,9 +550,13 @@ export class AudioEngine {
       if (this.analyser) {
         gain.connect(this.analyser)
       } else {
-        // a tap on the output, for the silence watchdog; not connected onward
+        // A tap on the output, deliberately not connected onward - it feeds
+        // both the silence watchdog and the spectrum the visualiser draws.
+        // Connecting it to the destination as well would double the signal.
         const analyser = ctx.createAnalyser()
-        analyser.fftSize = 512
+        analyser.fftSize = FFT_SIZE
+        analyser.minDecibels = ANALYSER_MIN_DB
+        analyser.maxDecibels = ANALYSER_MAX_DB
         gain.connect(analyser)
         this.analyser = analyser
         this.analyserBuf = new Uint8Array(analyser.fftSize)

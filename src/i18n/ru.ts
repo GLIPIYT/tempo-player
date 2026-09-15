@@ -411,4 +411,26 @@ export const ru: Record<string, string> = {
   'Every track has been analyzed': 'Все треки проанализированы',
   'Analyzing…': 'Анализ…',
   'Analyze library': 'Проанализировать библиотеку',
+  Visualizer: 'Визуализатор',
+  'Live spectrum above the player bar.': 'Живой спектр над панелью плеера.',
+  'Draws the spectrum of what is playing on a band above the player bar. Tracks streamed without a cache play outside the audio graph, so the band stays blank on those.':
+    'Рисует спектр играющего трека на полосе над плейбаром. Потоковые треки без кеша воспроизводятся мимо аудиографа, поэтому на них полоса остаётся пустой.',
+  Bars: 'Столбики',
+  Wave: 'Волна',
+  Line: 'Линия',
+  Detail: 'Детализация',
+  'How many bars the spectrum is split into.': 'На сколько столбиков разбивается спектр.',
+  Height: 'Высота',
+  'How far a peak may rise. The band keeps its own height, so this never moves the player bar.':
+    'Насколько высоко может подняться пик. Полоса сохраняет собственную высоту, поэтому плейбар не сдвигается.',
+  Opacity: 'Непрозрачность',
+  'Peak brightness of the spectrum.': 'Максимальная яркость спектра.',
+  Smoothing: 'Сглаживание',
+  'Higher values make the bars glide, lower values make them snap.':
+    'Чем выше, тем плавнее движутся столбики; чем ниже, тем резче.',
+  Mirror: 'Зеркало',
+  'Flips the spectrum left to right.': 'Отражает спектр слева направо.',
+  'Theme colour': 'Цвет темы',
+  'Draw the spectrum in the theme accent instead of the plain text colour.':
+    'Рисовать спектр акцентным цветом темы, а не обычным цветом текста.',
 }
