@@ -36,6 +36,13 @@ export interface AppSettings {
   }
   player: {
     waveform: boolean
+    /**
+     * Player bar layout. `classic` is the original: progress fills its column
+     * between the transport and the right-hand controls. `modern` moves the
+     * transport to the middle and runs the progress line along the bar's top
+     * edge.
+     */
+    barStyle: 'classic' | 'modern'
   }
   sidebar: {
     grouped: boolean
@@ -71,7 +78,7 @@ export const defaultSettings: AppSettings = {
   lyrics: { cacheOnline: true },
   font: { family: null, importedPath: null, sizePx: 13, uiScalePct: 100 },
   background: { path: null, dimPct: 45, blurPx: 0 },
-  player: { waveform: false },
+  player: { waveform: false, barStyle: 'classic' },
   sidebar: { grouped: true },
   // off by default: an always-on-top window appearing unprompted after an
   // update is worse than a feature nobody notices

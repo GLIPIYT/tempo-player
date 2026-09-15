@@ -396,8 +396,13 @@ export const ru: Record<string, string> = {
   'Volume normalization': 'Нормализация громкости',
   'Evens out loudness differences between tracks.': 'Выравнивает громкость между треками.',
   'Normalize volume': 'Нормализовать громкость',
-  'Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest are measured automatically a few tracks ahead of what is playing, so nothing has to be scanned up front. The button below measures the whole library instead.':
-    'Треки выравниваются к общей громкости. Файлы с тегами ReplayGain используют их сразу, остальные измеряются автоматически на несколько треков вперёд от играющего — заранее сканировать ничего не нужно. Кнопка ниже измеряет всю библиотеку целиком.',
+  'Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest are measured automatically a few tracks ahead of what is playing, so there is nothing to start by hand.':
+    'Треки выравниваются к общей громкости. Файлы с тегами ReplayGain используют их сразу, остальные измеряются автоматически на несколько треков вперёд от играющего — запускать вручную ничего не нужно.',
+  'Player bar layout': 'Вид плейбара',
+  Classic: 'Классический',
+  Modern: 'Современный',
+  'Classic keeps the progress bar between the transport and the volume controls. Modern centres the transport and runs the progress line along the top edge of the bar.':
+    'В классическом виде полоса прогресса идёт между кнопками управления и громкостью. В современном кнопки управления переезжают в центр, а полоса прогресса идёт по верхней кромке плейбара.',
   'Tracks left to analyze': 'Осталось проанализировать',
   'Every track has been analyzed': 'Все треки проанализированы',
   'Analyzing…': 'Анализ…',

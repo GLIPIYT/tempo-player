@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSPropert
 import { open } from '@tauri-apps/plugin-dialog'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import {
-  Activity,
   ChevronDown,
   EyeOff,
   FolderOpen,
@@ -22,12 +21,6 @@ import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useScanProgress } from '../hooks/useScanProgress'
 import { clampMiniShowMs, useSettings, type StartupPage } from '../state/settings'
-import {
-  analyzeLibraryLoudness,
-  loudnessAnalysisState,
-  refreshLoudnessRemaining,
-  subscribeLoudnessAnalysis,
-} from '../audio/loudnessRunner'
 import { resolveLang, useT } from '../i18n'
 
 const STARTUP_PAGE_OPTIONS: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists']
@@ -394,12 +387,6 @@ function ColorField(props: { value: string | undefined; onChange: (v: string) =>
 function LoudnessCard() {
   const t = useT()
   const { settings, update } = useSettings()
-  const [state, setState] = useState(loudnessAnalysisState)
-
-  useEffect(() => {
-    void refreshLoudnessRemaining()
-    return subscribeLoudnessAnalysis(() => setState(loudnessAnalysisState()))
-  }, [])
 
   return (
     <Card
@@ -417,22 +404,7 @@ function LoudnessCard() {
         />
       </div>
       <div className="set-note">
-        {t('Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest are measured automatically a few tracks ahead of what is playing, so nothing has to be scanned up front. The button below measures the whole library instead.')}
-      </div>
-      <div className="set-row" style={{ marginTop: 6 }}>
-        <span className="set-row-label">
-          {state.remaining > 0
-            ? `${t('Tracks left to analyze')}: ${state.remaining}`
-            : t('Every track has been analyzed')}
-        </span>
-        <button
-          className="btn btn-ghost"
-          disabled={state.running || state.remaining === 0}
-          onClick={() => void analyzeLibraryLoudness()}
-        >
-          <Activity size={15} />
-          {state.running ? t('Analyzing…') : t('Analyze library')}
-        </button>
+        {t('Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest are measured automatically a few tracks ahead of what is playing, so there is nothing to start by hand.')}
       </div>
     </Card>
   )
@@ -1319,6 +1291,20 @@ export default function SettingsPage() {
                     aria-label={t('Waveform progress bar')}
                     onClick={() => update({ player: { waveform: !settings.player.waveform } })}
                   />
+                </div>
+                <div className="set-row" style={{ marginTop: 6 }}>
+                  <span className="set-row-label">{t('Player bar layout')}</span>
+                  <Segmented<'classic' | 'modern'>
+                    value={settings.player.barStyle}
+                    options={[
+                      { value: 'classic', label: t('Classic') },
+                      { value: 'modern', label: t('Modern') },
+                    ]}
+                    onChange={(barStyle) => update({ player: { barStyle } })}
+                  />
+                </div>
+                <div className="set-note">
+                  {t('Classic keeps the progress bar between the transport and the volume controls. Modern centres the transport and runs the progress line along the top edge of the bar.')}
                 </div>
               </Card>
             </>

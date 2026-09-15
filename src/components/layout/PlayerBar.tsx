@@ -26,6 +26,9 @@ export default function PlayerBar() {
 function PlayerBarContent() {
   const p = usePlayer()
   const { settings } = useSettings()
+  // In the modern layout the progress line runs along the bar's top edge, so
+  // the times move in beside the transport instead.
+  const modern = settings.player.barStyle === 'modern'
   const likes = useLikes()
   const t = useT()
   const lyrics = useLyrics()
@@ -86,7 +89,7 @@ function PlayerBarContent() {
 
   return (
     <>
-      <footer className="playerbar">
+      <footer className={'playerbar' + (modern ? ' pb-modern' : '')}>
         <div className="pb-now">
           {p.currentTrack ? (
             <>
@@ -146,6 +149,11 @@ function PlayerBarContent() {
         </div>
 
         <div className="pb-controls">
+          {modern ? (
+            <span className="pb-time pb-time-cur">
+              {fmtTime(scrubbing && scrubVal !== null ? Math.min(scrubVal, maxDur) : p.position)}
+            </span>
+          ) : null}
           <button
             className={'icon-btn' + (p.shuffle ? ' is-active' : '')}
             onClick={() => p.toggleShuffle()}
@@ -188,12 +196,15 @@ function PlayerBarContent() {
           >
             {p.repeat === 'one' ? <Repeat1 size={16} /> : <Repeat size={15} />}
           </button>
+          {modern ? <span className="pb-time">{fmtTime(dur)}</span> : null}
         </div>
 
         <div className="pb-progress">
-          <span className="pb-time pb-time-cur">
-            {fmtTime(scrubbing && scrubVal !== null ? Math.min(scrubVal, maxDur) : p.position)}
-          </span>
+          {modern ? null : (
+            <span className="pb-time pb-time-cur">
+              {fmtTime(scrubbing && scrubVal !== null ? Math.min(scrubVal, maxDur) : p.position)}
+            </span>
+          )}
           {settings.player.waveform ? (
             <WaveProgress
               seed={p.currentTrack?.sourceId ?? 'none'}
@@ -224,7 +235,7 @@ function PlayerBarContent() {
               aria-label={t('Seek')}
             />
           )}
-          <span className="pb-time">{fmtTime(dur)}</span>
+          {modern ? null : <span className="pb-time">{fmtTime(dur)}</span>}
         </div>
 
         <div className="pb-right">
