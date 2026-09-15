@@ -2,7 +2,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '../api/client'
 import type { RepeatMode, UnifiedTrack } from '../types/models'
 import { trackToUnified } from '../utils/unified'
-import { AudioEngine } from './engine'
+import { AudioEngine, type AudioChannel } from './engine'
 import { QueueController } from './queue'
 
 export interface PlayerSnapshot {
@@ -22,6 +22,12 @@ export interface PlayerSnapshot {
 interface ResolvedTrack {
   url: string
   format: string | null
+  /**
+   * Which engine path to play on. Remote SoundCloud streams must not go
+   * through the Web Audio graph - a cross-origin source without CORS headers
+   * comes out silent once routed.
+   */
+  channel: AudioChannel
 }
 
 interface ScPlayback {
@@ -318,7 +324,7 @@ export class PlayerController {
   private startSeq = 0
 
   private async resolveTrackUrl(t: UnifiedTrack): Promise<ResolvedTrack | null> {
-    if (t.localPath) return { url: convertFileSrc(t.localPath), format: null }
+    if (t.localPath) return { url: convertFileSrc(t.localPath), format: null, channel: 'local' }
     if (t.source === 'soundcloud') {
       if (t.dbId === null) {
         // tracks started from search have no library row yet - create one so the
@@ -335,7 +341,11 @@ export class PlayerController {
       }
       const playback = await fetchScPlayback(t.sourceId)
       if (!playback) return null
-      return { url: playback.url, format: playback.format }
+      // Cached files are local; HLS reaches the element through MediaSource,
+      // i.e. a blob URL, which is same-origin too. Only a progressive remote
+      // stream has to stay off the graph.
+      const channel: AudioChannel = playback.cached || playback.format === 'hls' ? 'local' : 'stream'
+      return { url: playback.url, format: playback.format, channel }
     }
     return null
   }
@@ -377,7 +387,9 @@ export class PlayerController {
     this.duration = track.durationSec ?? 0
     this.bufferPct = null
     this.engine.setVolume(this.volume)
-    void this.engine.loadWithFormat(resolved.url, resolved.format).catch(() => {})
+    void this.engine
+      .loadWithFormat(resolved.url, resolved.format, resolved.channel)
+      .catch(() => {})
     this.engine.play()
     this.isPlaying = true
     if (track.dbId !== null) {
