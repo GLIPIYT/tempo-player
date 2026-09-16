@@ -828,6 +828,11 @@ export default function SettingsPage() {
     await foldersApi.removeFolder(id)
   }
 
+  // The rule is off across this block on purpose. `resolvedTokens` reads the
+  // CSS variables the theme writes rather than React state, so the theme has to
+  // be named as a dependency even though the memo body never mentions it. Drop
+  // it and the resolved tokens freeze on whichever theme was active first.
+  /* eslint-disable react-hooks/exhaustive-deps */
   const resolvedTokens = (): Record<keyof ThemeTokens, string> => {
     const cs = getComputedStyle(document.documentElement)
     const out = {} as Record<keyof ThemeTokens, string>
@@ -842,6 +847,7 @@ export default function SettingsPage() {
     () => (advancedOpen ? resolvedTokens() : null),
     [advancedOpen, settings.theme],
   )
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   return (
     <div className="page set-page">

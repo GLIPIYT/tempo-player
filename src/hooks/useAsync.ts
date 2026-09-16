@@ -34,6 +34,10 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): AsyncState<T
     return () => {
       cancelled = true
     }
+    // The dependency list is this hook's own API - callers hand it in, so the
+    // rule has nothing it can verify. `fn` is deliberately absent for the same
+    // reason it is read through a ref: a new closure every render is the norm.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- callers own the dep list
   }, [...deps, tick])
 
   const reload = useCallback(() => setTick((t) => t + 1), [])

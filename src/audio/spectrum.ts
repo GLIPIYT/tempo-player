@@ -58,43 +58,60 @@ let lastSampleAt = 0
 let silentForMs = 0
 
 /**
- * Folds the analyser's linearly spaced bins into 64 log-spaced ones and
- * returns the peak, which is what tells the loop whether to keep running.
+ * Folds the analyser's linearly spaced bins into `SPECTRUM_BINS` log-spaced
+ * ones, writing into `out` and returning the peak.
+ *
+ * Linear spacing leaves almost all the energy in the first few bins, which
+ * reads as two bars stuck to the left edge; log spacing is what makes it look
+ * like music. Kept pure and exported so it can be exercised without an
+ * AnalyserNode.
+ *
+ * The peak is taken *before* the low cut, deliberately: rumble below `MIN_HZ`
+ * is still sound, and the loop only uses the peak to decide whether there is
+ * anything left to draw.
  */
-function readAnalyser(analyser: AnalyserNode): number {
-  const count = analyser.frequencyBinCount
-  if (!freq || freq.length !== count) freq = new Uint8Array(count)
-  analyser.getByteFrequencyData(freq)
-
-  const nyquist = Math.max(1, analyser.context.sampleRate / 2)
+export function foldSpectrum(
+  values: Uint8Array | readonly number[],
+  sampleRate: number,
+  out: Float32Array,
+): number {
+  const count = values.length
+  const nyquist = Math.max(1, sampleRate / 2)
   const logMin = Math.log(MIN_HZ)
   const logRange = Math.max(1e-3, Math.log(nyquist) - logMin)
 
-  raw.fill(0)
+  out.fill(0)
   let peak = 0
   for (let i = 0; i < count; i += 1) {
-    const value = freq[i]
+    const value = values[i]
     if (value === 0) continue
     if (value > peak) peak = value
-    // Linear spacing leaves almost all the energy in the first few bins, which
-    // reads as two bars stuck to the left edge. Log spacing is what makes it
-    // look like music.
     const hz = (i * nyquist) / count
     if (hz < MIN_HZ) continue
     const pos = Math.min(0.999, (Math.log(hz) - logMin) / logRange)
     const idx = (pos * SPECTRUM_BINS) | 0
-    if (value > raw[idx]) raw[idx] = value
+    if (value > out[idx]) out[idx] = value
   }
   return peak
 }
 
-/** Log compression, then inertia: bars jump up and settle back down. */
-function compressAndSmooth(): void {
+/**
+ * Log-compresses one folded frame and blends it into the running values, so a
+ * bar jumps up and settles back down rather than snapping.
+ */
+export function blendSpectrum(frame: Float32Array | readonly number[], out: Float32Array): void {
   for (let i = 0; i < SPECTRUM_BINS; i += 1) {
-    const v = Math.min(1, raw[i] / BYTE_SCALE)
+    const v = Math.min(1, frame[i] / BYTE_SCALE)
     const logV = Math.log(1 + v * 9) * INV_LOG_9
-    bins[i] = bins[i] * SMOOTH_KEEP + logV * SMOOTH_NEW
+    out[i] = out[i] * SMOOTH_KEEP + logV * SMOOTH_NEW
   }
+}
+
+function readAnalyser(analyser: AnalyserNode): number {
+  const count = analyser.frequencyBinCount
+  if (!freq || freq.length !== count) freq = new Uint8Array(count)
+  analyser.getByteFrequencyData(freq)
+  return foldSpectrum(freq, analyser.context.sampleRate, raw)
 }
 
 function emit(): void {
@@ -109,7 +126,7 @@ function sample(): boolean {
   // abandoned. Decay to zero rather than freezing on the last frame.
   if (analyser) peak = readAnalyser(analyser)
   else raw.fill(0)
-  compressAndSmooth()
+  blendSpectrum(raw, bins)
   emit()
   return peak >= ENERGY_PEAK
 }

@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 0",
     "check:hooks": "node scripts/check-hook-order.cjs",
     "check": "npm run typecheck && npm run check:hooks && npm run lint && npm test",
     "tauri": "tauri"

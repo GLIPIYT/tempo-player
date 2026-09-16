@@ -846,6 +846,10 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
     return () => {
       cancelled = true
     }
+    // Keyed on the track's identity rather than on `p.currentTrack`, so a
+    // player snapshot does not restart a lyrics fetch, and so a track that
+    // gains a dbId after being cached does not either.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- trackKey is the deliberate key
   }, [trackKey])
 
   useEffect(() => {
