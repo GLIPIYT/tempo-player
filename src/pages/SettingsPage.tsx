@@ -216,9 +216,17 @@ function CommitSlider(props: {
     props.onCommit(d)
   }
 
+  // The pointer listeners are installed once per drag, so they would otherwise
+  // close over the onCommit from that one render. PlayerBar solves the same
+  // problem with a ref, and the scrubbing code should read the same way.
+  const commitRef = useRef(commit)
+  useEffect(() => {
+    commitRef.current = commit
+  })
+
   useEffect(() => {
     if (draft === null) return
-    const onUp = () => commit()
+    const onUp = () => commitRef.current()
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
     return () => {

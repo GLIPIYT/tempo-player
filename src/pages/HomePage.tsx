@@ -62,7 +62,10 @@ export default function HomePage() {
   const top = useAsync(() => api.getTopTracks(12), [version])
   const played = useAsync(async () => dedupeRecent((await api.getAnalytics('30d')).recent, 10), [version])
   const unknownArtist = t('Unknown artist')
-  const hourPicksList = hourPicks.data ?? []
+  // Memoised so the fallback keeps one identity: a bare `?? []` handed the
+  // hour-mixes memo a fresh array every render, which re-ran it - and re-ran
+  // the shuffle inside it - for nothing.
+  const hourPicksList = useMemo(() => hourPicks.data ?? [], [hourPicks.data])
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
   const nickname = settings.profile.nickname
   const hourMixes = useMemo(() => {

@@ -31,7 +31,11 @@ function audioContextCtor(): typeof AudioContext | null {
   )
 }
 
-function analyse(buffer: AudioBuffer): LoudnessResult | null {
+/**
+ * Measures one decoded buffer. Exported so the gain rules can be exercised
+ * without an AudioContext - `measureLoudness` is only the I/O wrapped around it.
+ */
+export function analyse(buffer: AudioBuffer): LoudnessResult | null {
   const channels = buffer.numberOfChannels
   if (channels === 0 || buffer.length === 0) return null
 
