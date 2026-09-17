@@ -33,6 +33,12 @@ export interface ScArtist {
   verified: boolean
 }
 
+/** A playlist read straight from SoundCloud, with nothing written to the library. */
+export interface ScPlaylistDetail {
+  playlist: ScPlaylist
+  tracks: ScTrack[]
+}
+
 export interface LibraryFolder {
   id: number
   path: string

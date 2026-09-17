@@ -569,6 +569,38 @@ pub async fn sc_search_artists(
     crate::soundcloud::search_artists(&query, limit, offset).await
 }
 
+// The three below read straight from SoundCloud and write nothing to the
+// library: they are what lets a playlist or artist be looked at before deciding
+// whether to keep it.
+
+#[tauri::command]
+pub async fn sc_get_playlist(id: String) -> Result<crate::soundcloud::ScPlaylistDetail, String> {
+    crate::soundcloud::get_playlist(&id).await
+}
+
+#[tauri::command]
+pub async fn sc_get_artist(id: String) -> Result<crate::soundcloud::ScArtist, String> {
+    crate::soundcloud::get_user(&id).await
+}
+
+#[tauri::command]
+pub async fn sc_artist_tracks(
+    id: String,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<crate::soundcloud::ScTrack>, String> {
+    crate::soundcloud::user_tracks(&id, limit, offset).await
+}
+
+#[tauri::command]
+pub async fn sc_artist_playlists(
+    id: String,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<crate::soundcloud::ScPlaylist>, String> {
+    crate::soundcloud::user_playlists(&id, limit, offset).await
+}
+
 #[tauri::command]
 pub async fn sc_stream_url(track_id: String) -> Result<String, String> {
     crate::soundcloud::get_stream_url(&track_id).await

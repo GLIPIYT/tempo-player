@@ -437,6 +437,9 @@ export const ru: Record<string, string> = {
   'Preparing…': 'Подготовка…',
   All: 'Все',
   'Search scope': 'Что искать',
+  'Back to search': 'Назад к поиску',
+  'Could not load this playlist.': 'Не удалось загрузить этот плейлист.',
+  'Could not load this artist.': 'Не удалось загрузить этого артиста.',
   'Downloads a track in full before starting it. The first play waits, but the track then plays from disk instead of streaming, which is what lets it show a spectrum.':
     'Скачивает трек целиком до начала воспроизведения. Первый запуск придётся подождать, зато дальше трек играет с диска, а не потоком — именно поэтому на нём появляется спектр.',
   Updates: 'Обновления',

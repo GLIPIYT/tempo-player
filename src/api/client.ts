@@ -18,6 +18,7 @@ import type {
   ScanSummary,
   ScArtist,
   ScPlaylist,
+  ScPlaylistDetail,
   ScTrack,
   SearchResults,
   TopTrackItem,
@@ -186,6 +187,18 @@ export const api = {
 
   scSearchArtists: (query: string, limit: number, offset: number) =>
     invoke<ScArtist[]>('sc_search_artists', { query, limit, offset }),
+
+  // Read straight from SoundCloud; nothing is written to the library, which is
+  // what lets a playlist or artist be browsed before deciding to keep it.
+  scGetPlaylist: (id: string) => invoke<ScPlaylistDetail>('sc_get_playlist', { id }),
+
+  scGetArtist: (id: string) => invoke<ScArtist>('sc_get_artist', { id }),
+
+  scArtistTracks: (id: string, limit: number, offset: number) =>
+    invoke<ScTrack[]>('sc_artist_tracks', { id, limit, offset }),
+
+  scArtistPlaylists: (id: string, limit: number, offset: number) =>
+    invoke<ScPlaylist[]>('sc_artist_playlists', { id, limit, offset }),
 
   scGetPlayback: (trackId: string, waitForCache = false) =>
     invoke<{ url: string | null; cachedPath: string | null; format: string | null }>('sc_get_playback', {

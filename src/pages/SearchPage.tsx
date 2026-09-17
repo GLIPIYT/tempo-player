@@ -7,6 +7,8 @@ import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import TrackList from '../components/common/TrackList'
 import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
+import ScArtwork from '../components/common/ScArtwork'
+import { ScArtistRow, ScPlaylistCard } from '../components/common/ScCards'
 import { useNav } from '../state/nav'
 import { usePlayer } from '../player'
 import { useT } from '../i18n'
@@ -242,76 +244,6 @@ function ScRowMenu({ track }: { track: ScTrack }) {
             </>
           )}
         </div>
-      ) : null}
-    </div>
-  )
-}
-
-function ScArtwork({ url, title }: { url: string | null; title: string }) {
-  const [broken, setBroken] = useState(false)
-  useEffect(() => {
-    setBroken(false)
-  }, [url])
-  if (!url || broken) {
-    return <span className="sc-art sc-art-fallback">{(title.trim()[0] ?? '?').toUpperCase()}</span>
-  }
-  return <img className="sc-art" src={url} alt="" draggable={false} onError={() => setBroken(true)} />
-}
-
-/**
- * A SoundCloud playlist or release.
- *
- * Opening it on the web is the only action for now; the in-app page and the
- * cache action are the next stage.
- */
-function ScPlaylistCard({ playlist }: { playlist: ScPlaylist }) {
-  const t = useT()
-  return (
-    <div className="card sc-card" title={playlist.title}>
-      <span className="sc-card-art">
-        <ScArtwork url={playlist.artworkUrl} title={playlist.title} />
-      </span>
-      <span className="card-title">{playlist.title}</span>
-      <span className="card-sub">{playlist.user}</span>
-      <span className="card-sub">
-        {playlist.trackCount} {t('tracks')}
-        {playlist.isAlbum ? ` · ${t('Album')}` : ''}
-      </span>
-      {playlist.permalinkUrl ? (
-        <button
-          className="icon-btn sc-card-open"
-          aria-label={t('Open on SoundCloud')}
-          onClick={() => window.open(playlist.permalinkUrl ?? '', '_blank')}
-        >
-          <ExternalLink size={14} />
-        </button>
-      ) : null}
-    </div>
-  )
-}
-
-function ScArtistRow({ artist }: { artist: ScArtist }) {
-  const t = useT()
-  return (
-    <div className="arow">
-      <span className="arow-art">
-        <ScArtwork url={artist.avatarUrl} title={artist.username} />
-      </span>
-      <span className="arow-name">
-        {artist.username}
-        {artist.verified ? <Check size={13} className="sc-verified" /> : null}
-      </span>
-      <span className="arow-meta">
-        {artist.trackCount} {t('tracks')}
-      </span>
-      {artist.permalinkUrl ? (
-        <button
-          className="icon-btn"
-          aria-label={t('Open on SoundCloud')}
-          onClick={() => window.open(artist.permalinkUrl ?? '', '_blank')}
-        >
-          <ExternalLink size={14} />
-        </button>
       ) : null}
     </div>
   )

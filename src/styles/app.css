@@ -851,6 +851,34 @@
   vertical-align: -2px;
 }
 
+/* Hero artwork on the live SoundCloud pages. Square for a playlist, round for
+   an artist, both fed by the same remote-image component. */
+.sc-hero-art,
+.sc-hero-avatar {
+  flex: none;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.sc-hero-art {
+  width: 180px;
+  height: 180px;
+  border-radius: var(--radius);
+}
+
+.sc-hero-avatar {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+}
+
+.sc-hero-art .sc-art,
+.sc-hero-avatar .sc-art {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
 .text-input {
   width: 100%;
   height: 32px;

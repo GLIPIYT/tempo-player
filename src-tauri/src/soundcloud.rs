@@ -261,42 +261,105 @@ fn map_artist(item: &Value) -> Option<ScArtist> {
     })
 }
 
-/// Every `/search/*` endpoint answers with the same envelope: a `collection`
+/// Every listing endpoint here answers with the same envelope: a `collection`
 /// array of items of one kind. Mapping is passed in so the response is never
 /// cloned just to outlive the borrow.
-async fn search_map<T>(
+async fn collection_map<T>(
     path: &str,
-    query: &str,
+    query: Option<&str>,
     limit: u32,
     offset: u32,
     map: fn(&Value) -> Option<T>,
 ) -> Result<Vec<T>, String> {
-    let url = format!(
-        "{API}{path}?q={}&limit={}&offset={}&client_id=",
-        queryencode(query),
-        limit.clamp(1, 200),
-        offset
-    );
+    let mut params = format!("limit={}&offset={}", limit.clamp(1, 200), offset);
+    if let Some(q) = query {
+        params = format!("q={}&{params}", queryencode(q));
+    }
+    let url = format!("{API}{path}?{params}&client_id=");
     let json = get_json_with_fresh_client(&url).await?;
     let collection = json
         .get("collection")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| "unexpected search response".to_string())?;
+        .ok_or_else(|| "unexpected listing response".to_string())?;
     Ok(collection.iter().filter_map(map).collect())
 }
 
 /// The per-kind endpoints rather than the mixed `/search`, so `limit` is a
 /// count of the thing that was asked for rather than a share of a mixture.
 pub async fn search_tracks(query: &str, limit: u32, offset: u32) -> Result<Vec<ScTrack>, String> {
-    search_map("/search/tracks", query, limit, offset, map_track).await
+    collection_map("/search/tracks", Some(query), limit, offset, map_track).await
 }
 
 pub async fn search_playlists(query: &str, limit: u32, offset: u32) -> Result<Vec<ScPlaylist>, String> {
-    search_map("/search/playlists", query, limit, offset, map_playlist).await
+    collection_map("/search/playlists", Some(query), limit, offset, map_playlist).await
 }
 
 pub async fn search_artists(query: &str, limit: u32, offset: u32) -> Result<Vec<ScArtist>, String> {
-    search_map("/search/users", query, limit, offset, map_artist).await
+    collection_map("/search/users", Some(query), limit, offset, map_artist).await
+}
+
+pub async fn get_user(id: &str) -> Result<ScArtist, String> {
+    let json = get_json_with_fresh_client(&format!("{API}/users/{id}?client_id=")).await?;
+    map_artist(&json).ok_or_else(|| "that is not a SoundCloud user".to_string())
+}
+
+pub async fn user_tracks(id: &str, limit: u32, offset: u32) -> Result<Vec<ScTrack>, String> {
+    collection_map(&format!("/users/{id}/tracks"), None, limit, offset, map_track).await
+}
+
+/// A user's playlists, which is where SoundCloud keeps their releases too -
+/// `/users/{id}/playlists` returns both, split by `playlist_type`.
+pub async fn user_playlists(id: &str, limit: u32, offset: u32) -> Result<Vec<ScPlaylist>, String> {
+    collection_map(&format!("/users/{id}/playlists"), None, limit, offset, map_playlist).await
+}
+
+/// A playlist's tracks, paged in.
+///
+/// The playlist object itself carries a `tracks` array, but it is truncated for
+/// anything of size, so the paged endpoint is the only reliable source. Capped
+/// rather than crawled to the end: nobody wants to wait for a two-thousand
+/// track playlist to page in before seeing any of it.
+async fn fetch_playlist_tracks(id: &str, want: u32) -> Result<Vec<ScTrack>, String> {
+    const PAGE: u32 = 200;
+    const CAP: u32 = 600;
+    let want = want.clamp(1, CAP);
+    let mut out: Vec<ScTrack> = Vec::new();
+    let mut offset = 0u32;
+    while (out.len() as u32) < want {
+        let page = collection_map(
+            &format!("/playlists/{id}/tracks"),
+            None,
+            PAGE,
+            offset,
+            map_track,
+        )
+        .await?;
+        if page.is_empty() {
+            break;
+        }
+        let short = page.len() < PAGE as usize;
+        out.extend(page);
+        if short {
+            break;
+        }
+        offset += PAGE;
+    }
+    out.truncate(want as usize);
+    Ok(out)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScPlaylistDetail {
+    pub playlist: ScPlaylist,
+    pub tracks: Vec<ScTrack>,
+}
+
+pub async fn get_playlist(id: &str) -> Result<ScPlaylistDetail, String> {
+    let json = get_json_with_fresh_client(&format!("{API}/playlists/{id}?client_id=")).await?;
+    let playlist = map_playlist(&json).ok_or_else(|| "that is not a SoundCloud playlist".to_string())?;
+    let tracks = fetch_playlist_tracks(id, playlist.track_count).await?;
+    Ok(ScPlaylistDetail { playlist, tracks })
 }
 
 fn stream_cache() -> &'static tokio::sync::Mutex<HashMap<String, (StreamInfo, Instant)>> {

@@ -13,6 +13,9 @@ export type View =
   | { name: 'album'; id: number }
   | { name: 'artist'; id: number }
   | { name: 'playlist'; id: number }
+  /** SoundCloud pages, browsed live and not written to the library. */
+  | { name: 'sc-playlist'; id: string }
+  | { name: 'sc-artist'; id: string }
 
 interface NavState {
   view: View

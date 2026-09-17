@@ -28,6 +28,8 @@ import { SettingsProvider } from './state/settings'
 import { I18nProvider } from './i18n'
 import { ThemeApply } from './theme/engine'
 import UpdateWatcher from './updater/UpdateWatcher'
+import ScPlaylistPage from './pages/ScPlaylistPage'
+import ScArtistPage from './pages/ScArtistPage'
 import BackgroundLayer from './components/layout/BackgroundLayer'
 import { ToastHost } from './components/common/Toast'
 import { onScanProgress, onLibraryChanged } from './api/events'
@@ -62,6 +64,10 @@ function CurrentPage() {
       return <ArtistDetailPage artistId={view.id} />
     case 'playlist':
       return <PlaylistDetailPage playlistId={view.id} />
+    case 'sc-playlist':
+      return <ScPlaylistPage playlistId={view.id} />
+    case 'sc-artist':
+      return <ScArtistPage artistId={view.id} />
   }
 }
 
