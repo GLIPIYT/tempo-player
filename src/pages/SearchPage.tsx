@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Cloud, Ellipsis, ExternalLink, Lock, Plus, Search } from 'lucide-react'
 import { api } from '../api/client'
-import type { Playlist, ScTrack, SearchResults } from '../types/models'
+import type { Playlist, ScArtist, ScPlaylist, ScTrack, SearchResults } from '../types/models'
 import { useSearchQuery } from '../hooks/useSearchQuery'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import TrackList from '../components/common/TrackList'
@@ -14,6 +14,24 @@ import { fmtTime } from '../utils/format'
 import { scTrackToUnified, scTracksToUnified } from '../utils/unified'
 
 type ScStatus = 'idle' | 'loading' | 'error' | 'done'
+
+/**
+ * What the search is looking for. Tabs rather than a dropdown, so the scope is
+ * visible at a glance and switching costs one click.
+ *
+ * Albums are their own tab even though the request only named tracks,
+ * playlists and artists: local albums are already a search category, and
+ * without a tab of their own they would be reachable only from "All".
+ */
+type SearchTab = 'all' | 'tracks' | 'albums' | 'playlists' | 'artists'
+
+const SEARCH_TABS: { id: SearchTab; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'tracks', label: 'Tracks' },
+  { id: 'albums', label: 'Albums' },
+  { id: 'playlists', label: 'Playlists' },
+  { id: 'artists', label: 'Artists' },
+]
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
@@ -240,6 +258,65 @@ function ScArtwork({ url, title }: { url: string | null; title: string }) {
   return <img className="sc-art" src={url} alt="" draggable={false} onError={() => setBroken(true)} />
 }
 
+/**
+ * A SoundCloud playlist or release.
+ *
+ * Opening it on the web is the only action for now; the in-app page and the
+ * cache action are the next stage.
+ */
+function ScPlaylistCard({ playlist }: { playlist: ScPlaylist }) {
+  const t = useT()
+  return (
+    <div className="card sc-card" title={playlist.title}>
+      <span className="sc-card-art">
+        <ScArtwork url={playlist.artworkUrl} title={playlist.title} />
+      </span>
+      <span className="card-title">{playlist.title}</span>
+      <span className="card-sub">{playlist.user}</span>
+      <span className="card-sub">
+        {playlist.trackCount} {t('tracks')}
+        {playlist.isAlbum ? ` · ${t('Album')}` : ''}
+      </span>
+      {playlist.permalinkUrl ? (
+        <button
+          className="icon-btn sc-card-open"
+          aria-label={t('Open on SoundCloud')}
+          onClick={() => window.open(playlist.permalinkUrl ?? '', '_blank')}
+        >
+          <ExternalLink size={14} />
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function ScArtistRow({ artist }: { artist: ScArtist }) {
+  const t = useT()
+  return (
+    <div className="arow">
+      <span className="arow-art">
+        <ScArtwork url={artist.avatarUrl} title={artist.username} />
+      </span>
+      <span className="arow-name">
+        {artist.username}
+        {artist.verified ? <Check size={13} className="sc-verified" /> : null}
+      </span>
+      <span className="arow-meta">
+        {artist.trackCount} {t('tracks')}
+      </span>
+      {artist.permalinkUrl ? (
+        <button
+          className="icon-btn"
+          aria-label={t('Open on SoundCloud')}
+          onClick={() => window.open(artist.permalinkUrl ?? '', '_blank')}
+        >
+          <ExternalLink size={14} />
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
 export default function SearchPage() {
   const t = useT()
   const query = useSearchQuery()
@@ -251,6 +328,9 @@ export default function SearchPage() {
   const [error, setError] = useState<string | null>(null)
   const [scStatus, setScStatus] = useState<ScStatus>('idle')
   const [scTracks, setScTracks] = useState<ScTrack[]>([])
+  const [scPlaylists, setScPlaylists] = useState<ScPlaylist[]>([])
+  const [scArtists, setScArtists] = useState<ScArtist[]>([])
+  const [tab, setTab] = useState<SearchTab>('all')
   const trimmed = query.trim()
 
   useEffect(() => {
@@ -286,16 +366,25 @@ export default function SearchPage() {
     if (trimmed.length === 0) {
       setScStatus('idle')
       setScTracks([])
+      setScPlaylists([])
+      setScArtists([])
       return
     }
     let cancelled = false
     const timer = window.setTimeout(() => {
       setScStatus('loading')
-      api
-        .scSearchTracks(trimmed, 50, 0)
-        .then((rows) => {
+      // All three kinds at once, so switching tabs never waits. Searches are
+      // debounced, so a burst of typing still only costs one round.
+      Promise.all([
+        api.scSearchTracks(trimmed, 50, 0),
+        api.scSearchPlaylists(trimmed, 24, 0),
+        api.scSearchArtists(trimmed, 24, 0),
+      ])
+        .then(([tracks, playlists, artists]) => {
           if (cancelled) return
-          setScTracks(rows)
+          setScTracks(tracks)
+          setScPlaylists(playlists)
+          setScArtists(artists)
           setScStatus('done')
         })
         .catch(() => {
@@ -316,6 +405,13 @@ export default function SearchPage() {
     results.tracks.length === 0 &&
     results.albums.length === 0 &&
     results.artists.length === 0
+
+  /** "All" shows everything; any other tab narrows to just its own kind. */
+  const showTab = (id: SearchTab): boolean => tab === 'all' || tab === id
+  // SoundCloud models a release as a playlist with `playlist_type: "album"`, so
+  // the two are split here rather than in the API layer.
+  const scAlbums = scPlaylists.filter((p) => p.isAlbum)
+  const scPlaylistOnly = scPlaylists.filter((p) => !p.isAlbum)
 
   const playableTracks = scTracks.filter(t => t.streamable && (t.hasProgressive || t.hasHls))
   const playableIdx = new Map<string, number>()
@@ -348,6 +444,23 @@ export default function SearchPage() {
         </div>
       </div>
 
+      {trimmed.length > 0 ? (
+        <div className="seg search-tabs" role="tablist" aria-label={t('Search scope')}>
+          {SEARCH_TABS.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === entry.id}
+              className={tab === entry.id ? 'seg-btn is-active' : 'seg-btn'}
+              onClick={() => setTab(entry.id)}
+            >
+              {t(entry.label)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {trimmed.length === 0 ? (
         <EmptyState
           icon={<Search size={34} />}
@@ -362,14 +475,14 @@ export default function SearchPage() {
         <EmptyState title={`${t('No results for')} "${trimmed}"`} hint={t('Check the spelling or try a shorter term.')} />
       ) : results ? (
         <>
-          {results.tracks.length > 0 ? (
+          {showTab('tracks') && results.tracks.length > 0 ? (
             <>
               <div className="section-label">{t('Tracks')}</div>
               <TrackList tracks={results.tracks} showAlbum showIndex />
             </>
           ) : null}
 
-          {results.albums.length > 0 ? (
+          {showTab('albums') && results.albums.length > 0 ? (
             <>
               <div className="section-label">{t('Albums')}</div>
               <div className="cards-grid cards-grid-tight">
@@ -389,7 +502,7 @@ export default function SearchPage() {
             </>
           ) : null}
 
-          {results.artists.length > 0 ? (
+          {showTab('artists') && results.artists.length > 0 ? (
             <>
               <div className="section-label">{t('Artists')}</div>
               <div className="arow-list">
@@ -422,11 +535,15 @@ export default function SearchPage() {
             <div className="muted sc-status">{t('Searching SoundCloud…')}</div>
           ) : scStatus === 'error' ? (
             <div className="muted sc-status">{t('SoundCloud is unavailable')}</div>
-          ) : scStatus === 'done' && scTracks.length === 0 ? (
+          ) : scStatus === 'done' &&
+            scTracks.length === 0 &&
+            scPlaylists.length === 0 &&
+            scArtists.length === 0 ? (
             <div className="muted sc-status">{t('Nothing found on SoundCloud')}</div>
           ) : scStatus === 'done' ? (
             <>
-              <div className="sc-list">
+              {showTab('tracks') && scTracks.length > 0 ? (
+                <div className="sc-list">
                 {scTracks.map((trk) => {
                   const unified = scTrackToUnified(trk)
                   const idx = playableIdx.get(trk.id)
@@ -466,7 +583,42 @@ export default function SearchPage() {
                   </div>
                 )
               })}
-              </div>
+                </div>
+              ) : null}
+
+              {showTab('albums') && scAlbums.length > 0 ? (
+                <>
+                  <div className="sc-sub-label">{t('Albums')}</div>
+                  <div className="cards-grid cards-grid-tight">
+                    {scAlbums.map((pl) => (
+                      <ScPlaylistCard key={pl.id} playlist={pl} />
+                    ))}
+                  </div>
+                </>
+              ) : null}
+
+              {showTab('playlists') && scPlaylistOnly.length > 0 ? (
+                <>
+                  <div className="sc-sub-label">{t('Playlists')}</div>
+                  <div className="cards-grid cards-grid-tight">
+                    {scPlaylistOnly.map((pl) => (
+                      <ScPlaylistCard key={pl.id} playlist={pl} />
+                    ))}
+                  </div>
+                </>
+              ) : null}
+
+              {showTab('artists') && scArtists.length > 0 ? (
+                <>
+                  <div className="sc-sub-label">{t('Artists')}</div>
+                  <div className="arow-list">
+                    {scArtists.map((ar) => (
+                      <ScArtistRow key={ar.id} artist={ar} />
+                    ))}
+                  </div>
+                </>
+              ) : null}
+
               {scNote ? <div className="sc-toast">{scNote}</div> : null}
             </>
           ) : null}

@@ -138,10 +138,7 @@ fn map_track(item: &Value) -> Option<ScTrack> {
         .unwrap_or("Unknown")
         .to_string();
     let duration_ms = item.get("duration").and_then(|v| v.as_i64()).unwrap_or(0);
-    let artwork_url = item
-        .get("artwork_url")
-        .and_then(|v| v.as_str())
-        .map(|u| u.replace("-large.jpg", "-t500x500.jpg").replace("-large.png", "-t500x500.png"));
+    let artwork_url = item.get("artwork_url").and_then(|v| v.as_str()).map(upscale_artwork);
     let permalink_url = item
         .get("permalink_url")
         .and_then(|v| v.as_str())
@@ -179,19 +176,127 @@ fn map_track(item: &Value) -> Option<ScTrack> {
     })
 }
 
-pub async fn search_tracks(query: &str, limit: u32, offset: u32) -> Result<Vec<ScTrack>, String> {
+/// SoundCloud hands back a 100px thumbnail by default; the 500px one is the
+/// same URL with a different suffix.
+fn upscale_artwork(url: &str) -> String {
+    url.replace("-large.jpg", "-t500x500.jpg")
+        .replace("-large.png", "-t500x500.png")
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScPlaylist {
+    pub id: String,
+    pub title: String,
+    pub user: String,
+    pub track_count: u32,
+    pub duration_ms: i64,
+    /// SoundCloud marks a release as `playlist_type: "album"`, which is the only
+    /// way to tell an album from a playlist someone assembled by hand.
+    pub is_album: bool,
+    pub artwork_url: Option<String>,
+    pub permalink_url: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScArtist {
+    pub id: String,
+    pub username: String,
+    pub track_count: u32,
+    pub avatar_url: Option<String>,
+    pub permalink_url: Option<String>,
+    pub verified: bool,
+}
+
+fn map_playlist(item: &Value) -> Option<ScPlaylist> {
+    if item.get("kind").and_then(|k| k.as_str()) != Some("playlist") {
+        return None;
+    }
+    let id = item.get("id").and_then(|v| v.as_i64())?.to_string();
+    let title = item.get("title").and_then(|v| v.as_str())?.to_string();
+    let user = item
+        .pointer("/user/username")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown")
+        .to_string();
+    // More often than not a playlist has no artwork of its own; SoundCloud's
+    // own UI falls back to the first track's, so this does too.
+    let artwork_url = item
+        .get("artwork_url")
+        .and_then(|v| v.as_str())
+        .or_else(|| item.pointer("/tracks/0/artwork_url").and_then(|v| v.as_str()))
+        .map(upscale_artwork);
+    Some(ScPlaylist {
+        id,
+        title,
+        user,
+        track_count: item.get("track_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        duration_ms: item.get("duration").and_then(|v| v.as_i64()).unwrap_or(0),
+        is_album: item.get("playlist_type").and_then(|v| v.as_str()) == Some("album"),
+        artwork_url,
+        permalink_url: item
+            .get("permalink_url")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    })
+}
+
+fn map_artist(item: &Value) -> Option<ScArtist> {
+    if item.get("kind").and_then(|k| k.as_str()) != Some("user") {
+        return None;
+    }
+    let id = item.get("id").and_then(|v| v.as_i64())?.to_string();
+    let username = item.get("username").and_then(|v| v.as_str())?.to_string();
+    Some(ScArtist {
+        id,
+        username,
+        track_count: item.get("track_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        avatar_url: item.get("avatar_url").and_then(|v| v.as_str()).map(upscale_artwork),
+        permalink_url: item
+            .get("permalink_url")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        verified: item.get("verified").and_then(|v| v.as_bool()).unwrap_or(false),
+    })
+}
+
+/// Every `/search/*` endpoint answers with the same envelope: a `collection`
+/// array of items of one kind. Mapping is passed in so the response is never
+/// cloned just to outlive the borrow.
+async fn search_map<T>(
+    path: &str,
+    query: &str,
+    limit: u32,
+    offset: u32,
+    map: fn(&Value) -> Option<T>,
+) -> Result<Vec<T>, String> {
     let url = format!(
-        "{API}/search?q={}&limit={}&offset={}&client_id=",
+        "{API}{path}?q={}&limit={}&offset={}&client_id=",
         queryencode(query),
-        limit.max(1).min(200),
-        offset.max(0)
+        limit.clamp(1, 200),
+        offset
     );
     let json = get_json_with_fresh_client(&url).await?;
     let collection = json
         .get("collection")
         .and_then(|v| v.as_array())
         .ok_or_else(|| "unexpected search response".to_string())?;
-    Ok(collection.iter().filter_map(map_track).collect())
+    Ok(collection.iter().filter_map(map).collect())
+}
+
+/// The per-kind endpoints rather than the mixed `/search`, so `limit` is a
+/// count of the thing that was asked for rather than a share of a mixture.
+pub async fn search_tracks(query: &str, limit: u32, offset: u32) -> Result<Vec<ScTrack>, String> {
+    search_map("/search/tracks", query, limit, offset, map_track).await
+}
+
+pub async fn search_playlists(query: &str, limit: u32, offset: u32) -> Result<Vec<ScPlaylist>, String> {
+    search_map("/search/playlists", query, limit, offset, map_playlist).await
+}
+
+pub async fn search_artists(query: &str, limit: u32, offset: u32) -> Result<Vec<ScArtist>, String> {
+    search_map("/search/users", query, limit, offset, map_artist).await
 }
 
 fn stream_cache() -> &'static tokio::sync::Mutex<HashMap<String, (StreamInfo, Instant)>> {

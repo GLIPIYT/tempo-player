@@ -552,6 +552,24 @@ pub async fn sc_search_tracks(query: String, limit: u32, offset: u32) -> Result<
 }
 
 #[tauri::command]
+pub async fn sc_search_playlists(
+    query: String,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<crate::soundcloud::ScPlaylist>, String> {
+    crate::soundcloud::search_playlists(&query, limit, offset).await
+}
+
+#[tauri::command]
+pub async fn sc_search_artists(
+    query: String,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<crate::soundcloud::ScArtist>, String> {
+    crate::soundcloud::search_artists(&query, limit, offset).await
+}
+
+#[tauri::command]
 pub async fn sc_stream_url(track_id: String) -> Result<String, String> {
     crate::soundcloud::get_stream_url(&track_id).await
 }

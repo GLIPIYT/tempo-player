@@ -16,6 +16,8 @@ import type {
   Playlist,
   PlaylistTrack,
   ScanSummary,
+  ScArtist,
+  ScPlaylist,
   ScTrack,
   SearchResults,
   TopTrackItem,
@@ -178,6 +180,12 @@ export const api = {
 
   scSearchTracks: (query: string, limit: number, offset: number) =>
     invoke<ScTrack[]>('sc_search_tracks', { query, limit, offset }),
+
+  scSearchPlaylists: (query: string, limit: number, offset: number) =>
+    invoke<ScPlaylist[]>('sc_search_playlists', { query, limit, offset }),
+
+  scSearchArtists: (query: string, limit: number, offset: number) =>
+    invoke<ScArtist[]>('sc_search_artists', { query, limit, offset }),
 
   scGetPlayback: (trackId: string, waitForCache = false) =>
     invoke<{ url: string | null; cachedPath: string | null; format: string | null }>('sc_get_playback', {

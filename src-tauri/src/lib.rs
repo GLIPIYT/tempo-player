@@ -107,6 +107,8 @@ pub fn run() {
             commands::clear_covers_cache,
             commands::set_taskbar_progress,
             commands::sc_search_tracks,
+            commands::sc_search_playlists,
+            commands::sc_search_artists,
             commands::sc_stream_url,
             commands::fetch_online_lyrics,
             commands::fetch_online_lyrics_all,

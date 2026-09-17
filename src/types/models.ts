@@ -12,6 +12,27 @@ export interface ScTrack {
   hasHls: boolean
 }
 
+export interface ScPlaylist {
+  id: string
+  title: string
+  user: string
+  trackCount: number
+  durationMs: number
+  /** SoundCloud's own marker for a release, as opposed to a hand-made playlist. */
+  isAlbum: boolean
+  artworkUrl: string | null
+  permalinkUrl: string | null
+}
+
+export interface ScArtist {
+  id: string
+  username: string
+  trackCount: number
+  avatarUrl: string | null
+  permalinkUrl: string | null
+  verified: boolean
+}
+
 export interface LibraryFolder {
   id: number
   path: string
