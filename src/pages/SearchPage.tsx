@@ -8,7 +8,7 @@ import TrackList from '../components/common/TrackList'
 import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import ScArtwork from '../components/common/ScArtwork'
-import BrandIcon from '../components/common/BrandIcon'
+import BrandIcon, { type BrandMark } from '../components/common/BrandIcon'
 import { ScArtistRow, ScPlaylistCard } from '../components/common/ScCards'
 import { useNav } from '../state/nav'
 import { usePlayer } from '../player'
@@ -28,6 +28,19 @@ type ScStatus = 'idle' | 'loading' | 'error' | 'done'
  * without a tab of their own they would be reachable only from "All".
  */
 type SearchTab = 'all' | 'tracks' | 'albums' | 'playlists' | 'artists'
+
+/**
+ * Which catalogue to search. Picking one narrows the whole page to it - the
+ * local library included - because the question being answered is "where do I
+ * want to look", and a half-filtered page answers it badly.
+ */
+type SearchSource = 'all' | 'soundcloud' | 'youtube'
+
+const SEARCH_SOURCES: { id: SearchSource; label: string; mark: BrandMark | null }[] = [
+  { id: 'all', label: 'Everything', mark: null },
+  { id: 'soundcloud', label: 'SoundCloud', mark: 'soundcloud' },
+  { id: 'youtube', label: 'YouTube Music', mark: 'youtubemusic' },
+]
 
 const SEARCH_TABS: { id: SearchTab; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -267,6 +280,7 @@ export default function SearchPage() {
   const [scPlaylists, setScPlaylists] = useState<ScPlaylist[]>([])
   const [scArtists, setScArtists] = useState<ScArtist[]>([])
   const [tab, setTab] = useState<SearchTab>('all')
+  const [source, setSource] = useState<SearchSource>('all')
   const trimmed = query.trim()
 
   useEffect(() => {
@@ -299,7 +313,7 @@ export default function SearchPage() {
   }, [trimmed, version])
 
   useEffect(() => {
-    if (trimmed.length === 0) {
+    if (trimmed.length === 0 || source === 'youtube') {
       setScStatus('idle')
       setScTracks([])
       setScPlaylists([])
@@ -332,10 +346,10 @@ export default function SearchPage() {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [trimmed])
+  }, [trimmed, source])
 
   useEffect(() => {
-    if (trimmed.length === 0) {
+    if (trimmed.length === 0 || source === 'soundcloud') {
       setYtStatus('idle')
       setYtHits([])
       return
@@ -361,7 +375,7 @@ export default function SearchPage() {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [trimmed])
+  }, [trimmed, source])
 
   const nothing =
     !loading &&
@@ -410,6 +424,29 @@ export default function SearchPage() {
       </div>
 
       {trimmed.length > 0 ? (
+        <div className="seg search-sources" role="tablist" aria-label={t('Where to search')}>
+          {SEARCH_SOURCES.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              role="tab"
+              aria-selected={source === entry.id}
+              className={source === entry.id ? 'seg-btn is-active' : 'seg-btn'}
+              onClick={() => setSource(entry.id)}
+            >
+              {entry.mark ? (
+                // The mark carries its own colour only on the chosen chip;
+                // elsewhere it sits back with the label instead of shouting
+                // from a row of grey buttons.
+                <BrandIcon mark={entry.mark} size={13} brand={source === entry.id} />
+              ) : null}
+              <span>{t(entry.label)}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {trimmed.length > 0 && source === 'all' ? (
         <div className="seg search-tabs" role="tablist" aria-label={t('Search scope')}>
           {SEARCH_TABS.map((entry) => (
             <button
@@ -426,7 +463,7 @@ export default function SearchPage() {
         </div>
       ) : null}
 
-      {trimmed.length === 0 ? (
+      {source !== 'all' ? null : trimmed.length === 0 ? (
         <EmptyState
           icon={<Search size={34} />}
           title={t('Search your library')}
@@ -490,7 +527,7 @@ export default function SearchPage() {
         </>
       ) : null}
 
-      {trimmed.length > 0 ? (
+      {trimmed.length > 0 && source !== 'youtube' ? (
         <section className="sc-section">
           <div className="section-label sc-label">
             <BrandIcon mark="soundcloud" size={14} brand />
@@ -590,7 +627,7 @@ export default function SearchPage() {
         </section>
       ) : null}
 
-      {trimmed.length > 0 ? (
+      {trimmed.length > 0 && source !== 'soundcloud' ? (
         <section className="sc-section">
           <div className="section-label sc-label">
             <BrandIcon mark="youtubemusic" size={14} brand />

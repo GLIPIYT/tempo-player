@@ -802,6 +802,27 @@
   width: fit-content;
 }
 
+/* Where to search sits above what to search, so the two rows read in the order
+   the questions are asked. */
+.search-sources {
+  margin-bottom: 8px;
+  width: fit-content;
+}
+
+.search-sources .seg-btn,
+.search-tabs .seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The eyebrow above a detail title, which can carry a source mark. */
+.detail-kind {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .sc-sub-label {
   margin: 18px 0 10px;
   font-size: 12px;

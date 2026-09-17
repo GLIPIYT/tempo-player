@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { ScPlaylistDetail, ScTrack } from '../types/models'
 import ScArtwork from '../components/common/ScArtwork'
 import DetailLayout from '../components/common/DetailLayout'
+import BrandIcon from '../components/common/BrandIcon'
 import { toast } from '../components/common/Toast'
 import CacheBadge from '../soundcloud/CacheBadge'
 import { useNav } from '../state/nav'
@@ -102,7 +103,14 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
           <ScArtwork url={playlist.artworkUrl} title={playlist.title} />
         </CacheBadge>
       }
-      kind={`${playlist.isAlbum ? t('Album') : t('Playlist')} · ${t('SoundCloud')}`}
+      kind={
+        <>
+          <span>{playlist.isAlbum ? t('Album') : t('Playlist')}</span>
+          <span className="meta-dot">·</span>
+          <BrandIcon mark="soundcloud" size={12} brand />
+          <span>{t('SoundCloud')}</span>
+        </>
+      }
       title={playlist.title}
       meta={
         <span>

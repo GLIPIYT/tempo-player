@@ -25,7 +25,8 @@ export default function DetailLayout({
   /** The cover or avatar. Fills a square, or a circle when `round`. */
   art: ReactNode
   round?: boolean
-  kind: string
+  /** The eyebrow above the title. Markup, so a source mark can sit in it. */
+  kind: ReactNode
   title: string
   meta: ReactNode
   actions?: ReactNode
@@ -41,7 +42,7 @@ export default function DetailLayout({
       <div className="detail-split">
         <aside className="detail-side">
           <div className={round ? 'detail-side-art is-round' : 'detail-side-art'}>{art}</div>
-          <div className="section-label">{kind}</div>
+          <div className="section-label detail-kind">{kind}</div>
           <h1 className="detail-side-title">{title}</h1>
           <div className="detail-side-meta">{meta}</div>
           {actions ? <div className="detail-side-actions">{actions}</div> : null}

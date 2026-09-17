@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { ScArtist, ScPlaylist, ScTrack } from '../types/models'
 import ScArtwork from '../components/common/ScArtwork'
 import DetailLayout from '../components/common/DetailLayout'
+import BrandIcon from '../components/common/BrandIcon'
 import { ScPlaylistCard } from '../components/common/ScCards'
 import { toast } from '../components/common/Toast'
 import CacheBadge from '../soundcloud/CacheBadge'
@@ -113,7 +114,14 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
           <ScArtwork url={artist.avatarUrl} title={artist.username} />
         </CacheBadge>
       }
-      kind={`${t('Artist')} · ${t('SoundCloud')}`}
+      kind={
+        <>
+          <span>{t('Artist')}</span>
+          <span className="meta-dot">·</span>
+          <BrandIcon mark="soundcloud" size={12} brand />
+          <span>{t('SoundCloud')}</span>
+        </>
+      }
       title={artist.username}
       meta={
         <>
