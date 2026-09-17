@@ -132,30 +132,43 @@ pub fn cache_info(db: &Db, default_root: &Path) -> ScCacheInfo {
     }
 }
 
+/// `wait_for_cache` blocks until the track is on disk and hands back the local
+/// file instead of a stream URL. That is what lets a SoundCloud track play
+/// through the audio graph - and so show a spectrum - on its very first play,
+/// rather than only once it happens to have finished downloading.
+///
+/// HLS is exempt either way: it never lands in the cache, and it already
+/// reaches the element same-origin through MediaSource.
 pub async fn get_playback(
     db: Arc<Db>,
     default_root: PathBuf,
     covers_dir: PathBuf,
     track_id: &str,
     app: Option<AppHandle>,
+    wait_for_cache: bool,
 ) -> Result<ScPlayback, String> {
     let dir = cache_dir(&db, &default_root);
     let cached = cached_file_path(&dir, track_id);
     if cached.exists() {
-        return Ok(ScPlayback {
-            url: None,
-            cached_path: Some(cached.to_string_lossy().to_string()),
-            format: None,
-        });
+        return Ok(local_playback(&cached));
     }
     let info = crate::soundcloud::get_stream_info(track_id).await?;
     let format = Some(info.format.clone());
     if info.format == "hls" {
         return Ok(ScPlayback { url: Some(info.url), cached_path: None, format });
     }
+    let limit = cache_limit(&db);
+    if wait_for_cache {
+        // Falls back to streaming when the download does not finish in time: a
+        // slow connection should cost a few seconds of waiting, not playback.
+        if download_to_cache(&info.url, &cached).await.is_ok() {
+            finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
+            enforce_cache_limit(&db, &dir, limit);
+            return Ok(local_playback(&cached));
+        }
+    }
     let bg_url = info.url.clone();
     let bg_id = track_id.to_string();
-    let limit = cache_limit(&db);
     tokio::spawn(async move {
         if download_to_cache(&bg_url, &cached).await.is_ok() {
             finalize_cached_file(&db, &dir, &covers_dir, &bg_id, app.as_ref());
@@ -163,6 +176,14 @@ pub async fn get_playback(
         }
     });
     Ok(ScPlayback { url: Some(info.url), cached_path: None, format })
+}
+
+fn local_playback(path: &Path) -> ScPlayback {
+    ScPlayback {
+        url: None,
+        cached_path: Some(path.to_string_lossy().to_string()),
+        format: None,
+    }
 }
 
 pub async fn precache(
@@ -376,6 +397,7 @@ mod tests {
             root.join("covers"),
             "999",
             None,
+            false,
         )
         .await
         .unwrap();

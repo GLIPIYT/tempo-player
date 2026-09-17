@@ -74,6 +74,14 @@ export interface AppSettings {
     /** Seconds of overlap between tracks; 0 disables crossfade. */
     crossfadeSec: number
   }
+  soundcloud: {
+    /**
+     * Download a track in full before starting it. Costs a wait on the first
+     * play, but the track then comes off disk - same-origin, inside the audio
+     * graph - instead of streaming past it.
+     */
+    cacheBeforePlay: boolean
+  }
   visualizer: {
     style: VisualizerStyle
     /** Bar count. The 64 incoming bins are interpolated up or down to this. */
@@ -112,6 +120,9 @@ export const defaultSettings: AppSettings = {
   },
   system: { autostart: false, closeToTray: false },
   audio: { normalize: false, crossfadeSec: 0 },
+  // off by default: streaming starts immediately, which is what most people
+  // expect from a search result
+  soundcloud: { cacheBeforePlay: false },
   // On by default: the band is the whole point of the setting, and it only
   // ever routes the same-origin channel - the same thing normalisation does.
   visualizer: {
@@ -205,6 +216,7 @@ function load(): AppSettings {
       },
       system: { ...defaultSettings.system, ...parsed.system },
       audio: { ...defaultSettings.audio, ...parsed.audio },
+      soundcloud: { ...defaultSettings.soundcloud, ...parsed.soundcloud },
       visualizer: clampVisualizer(parsed.visualizer ?? {}),
     }
   } catch {
@@ -251,6 +263,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       },
       system: { ...prev.system, ...patch.system },
       audio: { ...prev.audio, ...patch.audio },
+      soundcloud: { ...prev.soundcloud, ...patch.soundcloud },
       visualizer: clampVisualizer({ ...prev.visualizer, ...patch.visualizer }),
     }))
   }, [])

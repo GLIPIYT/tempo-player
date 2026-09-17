@@ -191,8 +191,8 @@ export const ru: Record<string, string> = {
   Unmute: 'Включить звук',
   Mute: 'Выключить звук',
   'Unknown artist': 'Неизвестный исполнитель',
-  'Version 0.2.0 — a local-first desktop music player. Your library is scanned and stored entirely on this machine; Tempo works fully offline with no account required.':
-    'Версия 0.1.0 — локальный десктопный музыкальный плеер. Библиотека сканируется и хранится целиком на этом компьютере; Tempo полностью работает офлайн и не требует аккаунта.',
+  'A local-first desktop music player. Your library is scanned and stored entirely on this machine; Tempo works fully offline with no account required.':
+    'Локальный десктопный музыкальный плеер. Библиотека сканируется и хранится целиком на этом компьютере; Tempo полностью работает офлайн и не требует аккаунта.',
   Volume: 'Громкость',
   'Waveform progress bar': 'Волновой индикатор прогресса',
   'Where Tempo keeps its data.': 'Где Tempo хранит свои данные.',
@@ -433,4 +433,32 @@ export const ru: Record<string, string> = {
   'Theme colour': 'Цвет темы',
   'Draw the spectrum in the theme accent instead of the plain text colour.':
     'Рисовать спектр акцентным цветом темы, а не обычным цветом текста.',
+  'Cache before playing': 'Кэшировать перед воспроизведением',
+  'Downloads a track in full before starting it. The first play waits, but the track then plays from disk instead of streaming, which is what lets it show a spectrum.':
+    'Скачивает трек целиком до начала воспроизведения. Первый запуск придётся подождать, зато дальше трек играет с диска, а не потоком — именно поэтому на нём появляется спектр.',
+  Updates: 'Обновления',
+  'Tempo checks for new releases when it starts.':
+    'Tempo проверяет новые релизы при запуске.',
+  'Current version': 'Текущая версия',
+  'Latest available': 'Последняя доступная',
+  'Could not check': 'Не удалось проверить',
+  'You are on the newest release.': 'У вас самая свежая версия.',
+  'Available to install': 'Доступны для установки',
+  Download: 'Скачать',
+  'Check now': 'Проверить сейчас',
+  'Offer skipped versions again': 'Показать пропущенные версии снова',
+  'Update available': 'Доступно обновление',
+  'No release notes.': 'Описание обновления отсутствует.',
+  'This release has no Windows installer attached.':
+    'К этому релизу не приложен установщик для Windows.',
+  'Download and install': 'Скачать и установить',
+  'Skip this version': 'Пропустить эту версию',
+  'Skipped update': 'Пропущено обновление',
+  'Try again': 'Попробовать снова',
+  'Downloading…': 'Загрузка…',
+  'Tempo will close and start again to finish installing.':
+    'Tempo закроется и запустится заново, чтобы завершить установку.',
+  'Update installed': 'Обновление установлено',
+  'Tempo updated successfully. Now running version':
+    'Tempo успешно обновился. Сейчас запущена версия',
 }

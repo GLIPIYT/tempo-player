@@ -577,6 +577,7 @@ pub async fn sc_get_playback(
     app: AppHandle,
     state: State<'_, AppState>,
     track_id: String,
+    wait_for_cache: bool,
 ) -> Result<crate::soundcloud_store::ScPlayback, String> {
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
     crate::soundcloud_store::get_playback(
@@ -585,6 +586,7 @@ pub async fn sc_get_playback(
         state.covers_dir.clone(),
         &track_id,
         Some(app),
+        wait_for_cache,
     )
     .await
 }

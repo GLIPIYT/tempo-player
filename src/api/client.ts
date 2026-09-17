@@ -179,9 +179,10 @@ export const api = {
   scSearchTracks: (query: string, limit: number, offset: number) =>
     invoke<ScTrack[]>('sc_search_tracks', { query, limit, offset }),
 
-  scGetPlayback: (trackId: string) =>
+  scGetPlayback: (trackId: string, waitForCache = false) =>
     invoke<{ url: string | null; cachedPath: string | null; format: string | null }>('sc_get_playback', {
       trackId,
+      waitForCache,
     }),
   upsertScTrack: (track: Omit<ScTrack, 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'> & Partial<Pick<ScTrack, 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'>>) =>
     invoke<number>('sc_upsert_track', { track }),

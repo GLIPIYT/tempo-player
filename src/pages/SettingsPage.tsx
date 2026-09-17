@@ -46,6 +46,16 @@ import type { CustomTheme, ThemeTokens } from '../types/theme'
 import { TOKEN_VARS } from '../types/theme'
 import { CUSTOM_DEFAULT_BASE, PRESETS, getPreset } from '../theme/presets'
 import { parseHex, toHex } from '../theme/engine'
+import UpdateDialog from '../updater/UpdateDialog'
+import {
+  appVersion,
+  forgetSkippedVersions,
+  formatBytes,
+  listReleases,
+  skippedVersions,
+  type ReleaseInfo,
+} from '../updater/service'
+import { newerThan } from '../updater/version'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 
 type Category = 'general' | 'appearance' | 'library' | 'storage' | 'about'
@@ -504,6 +514,7 @@ function fmtBytes(n: number): string {
 
 function StorageCard() {
   const t = useT()
+  const { settings, update } = useSettings()
   const info = useAsync(() => api.getCoversCacheInfo(), [])
   const scInfo = useAsync(() => api.scCacheInfo(), [])
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -627,6 +638,21 @@ function StorageCard() {
             </div>
           </>
         ) : null}
+        <div className="set-row" style={{ marginTop: 12 }}>
+          <span className="set-row-label">{t('Cache before playing')}</span>
+          <button
+            className={settings.soundcloud.cacheBeforePlay ? 'switch is-on' : 'switch'}
+            role="switch"
+            aria-checked={settings.soundcloud.cacheBeforePlay}
+            aria-label={t('Cache before playing')}
+            onClick={() =>
+              update({ soundcloud: { cacheBeforePlay: !settings.soundcloud.cacheBeforePlay } })
+            }
+          />
+        </div>
+        <div className="set-note" style={{ marginTop: 6 }}>
+          {t('Downloads a track in full before starting it. The first play waits, but the track then plays from disk instead of streaming, which is what lets it show a spectrum.')}
+        </div>
         <CommitSlider
           label={t('Cache limit')}
           min={0}
@@ -673,6 +699,82 @@ function StorageCard() {
         />
       </div>
     </Card>
+  )
+}
+
+function UpdateCard() {
+  const t = useT()
+  const [check, setCheck] = useState(0)
+  const [offer, setOffer] = useState<ReleaseInfo | null>(null)
+  const [skipped, setSkipped] = useState<string[]>(skippedVersions)
+  const current = useAsync(() => appVersion(), [])
+  const releases = useAsync(() => listReleases(), [check])
+
+  const currentVersion = current.data
+  const latest = releases.data?.[0]?.version ?? null
+  const installable =
+    releases.data && currentVersion ? newerThan(releases.data, currentVersion) : []
+  const upToDate = !releases.loading && !releases.error && releases.data !== null && installable.length === 0
+
+  return (
+    <>
+      <Card title={t('Updates')} desc={t('Tempo checks for new releases when it starts.')}>
+        <div className="set-row">
+          <span className="set-row-label">{t('Current version')}</span>
+          <span className="muted">{currentVersion ?? '…'}</span>
+        </div>
+        <div className="set-row" style={{ marginTop: 6 }}>
+          <span className="set-row-label">{t('Latest available')}</span>
+          <span className="muted">{releases.error ? t('Could not check') : (latest ?? '…')}</span>
+        </div>
+
+        {releases.error ? <div className="error-line">{releases.error}</div> : null}
+        {upToDate ? (
+          <div className="set-note">{t('You are on the newest release.')}</div>
+        ) : null}
+
+        {installable.length > 0 ? (
+          <>
+            <div className="section-label" style={{ marginTop: 16 }}>
+              {t('Available to install')}
+            </div>
+            {installable.map((r) => (
+              <div key={r.version} className="update-row">
+                <div className="update-row-info">
+                  <span className="update-row-version">{r.version}</span>
+                  {r.assetSize ? <span className="muted">{formatBytes(r.assetSize)}</span> : null}
+                </div>
+                <button
+                  className="btn"
+                  disabled={r.assetUrl === null}
+                  onClick={() => setOffer(r)}
+                >
+                  {t('Download')}
+                </button>
+              </div>
+            ))}
+          </>
+        ) : null}
+
+        <div className="set-actions" style={{ marginTop: 16 }}>
+          <button className="btn" disabled={releases.loading} onClick={() => setCheck((n) => n + 1)}>
+            {t('Check now')}
+          </button>
+          {skipped.length > 0 ? (
+            <button
+              className="btn"
+              onClick={() => {
+                forgetSkippedVersions()
+                setSkipped([])
+              }}
+            >
+              {t('Offer skipped versions again')}
+            </button>
+          ) : null}
+        </div>
+      </Card>
+      {offer ? <UpdateDialog release={offer} onDismiss={() => setOffer(null)} /> : null}
+    </>
   )
 }
 
@@ -1488,13 +1590,16 @@ export default function SettingsPage() {
           {cat === 'storage' ? <StorageCard /> : null}
 
           {cat === 'about' ? (
-            <Card title={t('About')}>
-              <div className="about-name">Tempo</div>
-              <div className="muted settings-line">
-                {t('Version 0.2.0 — a local-first desktop music player. Your library is scanned and stored entirely on this machine; Tempo works fully offline with no account required.')}
-              </div>
-              <div className="muted settings-line" style={{ marginTop: 8 }}>Tauri 2 · React 18 · TypeScript · SQLite</div>
-            </Card>
+            <>
+              <Card title={t('About')}>
+                <div className="about-name">Tempo</div>
+                <div className="muted settings-line">
+                  {t('A local-first desktop music player. Your library is scanned and stored entirely on this machine; Tempo works fully offline with no account required.')}
+                </div>
+                <div className="muted settings-line" style={{ marginTop: 8 }}>Tauri 2 · React 18 · TypeScript · SQLite</div>
+              </Card>
+              <UpdateCard />
+            </>
           ) : null}
         </div>
       </div>

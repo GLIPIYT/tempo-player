@@ -94,7 +94,21 @@ function artworkSrc(path: string): string {
   return /^https?:\/\//.test(path) ? path : convertFileSrc(path)
 }
 
-const scPlaybackCache = new Map<string, ScPlayback | null>()
+/**
+ * How long a resolution that is not a file on disk stays good for.
+ *
+ * A cached file is the same file next time, so that answer holds for the whole
+ * session. Everything else is either a signed stream URL that expires, or a
+ * track that is still downloading and may well be on disk by the next play.
+ * Remembering those forever is why a SoundCloud track that had finished
+ * caching still played through the unrouted stream channel - and so showed no
+ * visualiser - until the app was restarted.
+ */
+const SC_PLAYBACK_TTL_MS = 30_000
+
+type ScPlaybackEntry = { playback: ScPlayback | null; at: number }
+
+const scPlaybackCache = new Map<string, ScPlaybackEntry>()
 
 function toScPlayback(res: { url: string | null; cachedPath: string | null; format: string | null }): ScPlayback | null {
   if (res.cachedPath) return { url: convertFileSrc(res.cachedPath), cached: true, format: res.format }
@@ -102,23 +116,42 @@ function toScPlayback(res: { url: string | null; cachedPath: string | null; form
   return null
 }
 
-async function fetchScPlayback(sourceId: string): Promise<ScPlayback | null> {
-  const cached = scPlaybackCache.get(sourceId)
-  if (cached !== undefined) return cached
-  try {
-    const playback = toScPlayback(await api.scGetPlayback(sourceId))
-    scPlaybackCache.set(sourceId, playback)
-    return playback
-  } catch {
-    scPlaybackCache.delete(sourceId)
+async function fetchScPlayback(sourceId: string, waitForCache: boolean): Promise<ScPlayback | null> {
+  // The flag changes the answer, so it is part of the key: flipping the setting
+  // must not keep serving the other mode's resolution.
+  const key = `${sourceId}|${waitForCache ? 'cache' : 'stream'}`
+  const hit = scPlaybackCache.get(key)
+  if (hit && (hit.playback?.cached === true || Date.now() - hit.at < SC_PLAYBACK_TTL_MS)) {
+    return hit.playback
   }
+  // one retry: the first call can lose a cold connection
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const playback = toScPlayback(await api.scGetPlayback(sourceId, waitForCache))
+      scPlaybackCache.set(key, { playback, at: Date.now() })
+      return playback
+    } catch {
+      scPlaybackCache.delete(key)
+    }
+  }
+  return null
+}
+
+/**
+ * Whether SoundCloud tracks should be downloaded in full before they start.
+ *
+ * Read straight from the persisted settings blob, the same way the controller
+ * already reads volume and normalisation: it is a module singleton with no
+ * access to React context.
+ */
+function cacheScBeforePlay(): boolean {
   try {
-    const playback = toScPlayback(await api.scGetPlayback(sourceId))
-    scPlaybackCache.set(sourceId, playback)
-    return playback
+    const raw = window.localStorage.getItem('tempo.settings.v1')
+    if (!raw) return false
+    const parsed = JSON.parse(raw) as { soundcloud?: { cacheBeforePlay?: boolean } }
+    return parsed.soundcloud?.cacheBeforePlay === true
   } catch {
-    scPlaybackCache.delete(sourceId)
-    return null
+    return false
   }
 }
 
@@ -371,7 +404,7 @@ export class PlayerController {
           })
         } catch {}
       }
-      const playback = await fetchScPlayback(t.sourceId)
+      const playback = await fetchScPlayback(t.sourceId, cacheScBeforePlay())
       if (!playback) return null
       // Cached files are local; HLS reaches the element through MediaSource,
       // i.e. a blob URL, which is same-origin too. Only a progressive remote

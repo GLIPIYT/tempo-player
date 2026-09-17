@@ -27,6 +27,7 @@ import PlayerProvider from './player/PlayerProvider'
 import { SettingsProvider } from './state/settings'
 import { I18nProvider } from './i18n'
 import { ThemeApply } from './theme/engine'
+import UpdateWatcher from './updater/UpdateWatcher'
 import BackgroundLayer from './components/layout/BackgroundLayer'
 import { ToastHost } from './components/common/Toast'
 import { onScanProgress, onLibraryChanged } from './api/events'
@@ -199,6 +200,7 @@ function Shell() {
         <MiniPlayerBridge />
         <SystemBridge />
         <LoudnessBridge />
+        <UpdateWatcher />
       </div>
       {/* Fixed-position overlays live outside .app-root: applyFont() sets a zoom
           on it for the UI scale preference, and a zoomed ancestor makes

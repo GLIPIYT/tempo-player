@@ -8,6 +8,7 @@ mod scanner;
 mod soundcloud;
 mod soundcloud_store;
 mod tray;
+mod updater;
 
 use std::sync::Arc;
 
@@ -148,7 +149,11 @@ pub fn run() {
             commands::set_tray_labels,
             commands::list_tracks_needing_loudness,
             commands::count_tracks_needing_loudness,
-            commands::set_track_loudness
+            commands::set_track_loudness,
+            updater::updater_releases,
+            updater::updater_download,
+            updater::updater_install,
+            updater::updater_discard
         ])
         .on_window_event(|window, event| {
             // With "stay in tray" on, closing the main window parks it instead of

@@ -33,6 +33,19 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Tempo ${{ github.ref_name }}'
-          releaseBody: 'Windows installer (NSIS, x64). See the commit history for the full changelog.'
+          releaseBody: 'Windows installer (NSIS, x64).'
           releaseDraft: false
           prerelease: false
+
+      # The updater shows the release body to the user as the changelog, so it
+      # has to be the annotated tag's message rather than a placeholder.
+      - name: Use the tag annotation as the release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          notes=$(git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}")
+          if [ -z "$notes" ]; then
+            notes=$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")
+          fi
+          gh release edit "${GITHUB_REF_NAME}" --notes "$notes"
