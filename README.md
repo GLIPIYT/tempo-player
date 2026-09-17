@@ -6,7 +6,7 @@
 
 Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLite** under the hood. No Electron, no backend server, no telemetry.
 
-![Version](https://img.shields.io/badge/version-0.7.0-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-0.8.0-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ![Tempo — home screen](docs/screenshot.png)
 
@@ -47,6 +47,7 @@ Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLi
 - **SoundCloud provider** — search and stream from SoundCloud alongside your local library through a unified provider abstraction. Streams are cached on disk with a configurable size limit and least-recently-played eviction; a cached track joins your library automatically.
 - **Cache before playing** — optional: download a SoundCloud track in full before it starts. The first play waits a little, but the track then comes off disk instead of streaming past the audio graph, which is what lets the spectrum visualiser work on it.
 - **Browse SoundCloud properly** — search with tabs for tracks, albums, playlists and artists, and open a playlist or artist from the results without keeping any of it. Those pages read live from SoundCloud; nothing reaches your library until you ask.
+- **YouTube Music too** — search it alongside SoundCloud, with a picker for which one to look in. Results come back as songs rather than videos, with covers, artists and albums, and the ones you play are filed into your library under the right artist and album. yt-dlp is fetched and kept current by the app, so there is nothing to install.
 - **Keep what you find** — right-click a playlist or an artist to cache it. A playlist becomes a local one under the same name, an artist brings their releases along as albums, and both show progress on their cover with a cancel that undoes what it created. Favoriting either lands it in the sidebar straight away, dimmed with a percentage until it is ready. Caching an artist you already have under a different spelling files the tracks under the local one, and a long catalogue asks which tracks to keep first.
 - **Discord Rich Presence** — show what you're listening to, with cover art, a real progress bar, and the current lyric line. Talks to Discord over the local IPC pipe; off by default.
 
@@ -130,7 +131,7 @@ The full architecture, data model and module contracts are documented in [ARCHIT
 
 ## 🗺️ Status
 
-`v0.7.0` — alpha, Windows-first. Playback, library scanning, playlists, favorites, lyrics, search, SoundCloud browsing and caching, Discord presence, a floating mini player, right-click menus throughout, two player bar layouts, crossfade, a spectrum visualiser and a built-in updater all work. The release pipeline currently ships a Windows NSIS installer only; the codebase itself has no Windows-specific dependencies beyond the Discord IPC pipe path and taskbar progress.
+`v0.8.0` — alpha, Windows-first. Playback, library scanning, playlists, favorites, lyrics, search across SoundCloud and YouTube Music, browsing and caching for both, Discord presence, a floating mini player, right-click menus throughout, two player bar layouts, crossfade, a spectrum visualiser and a built-in updater all work. The release pipeline currently ships a Windows NSIS installer only; the codebase itself has no Windows-specific dependencies beyond the Discord IPC pipe path and taskbar progress.
 
 Known gaps: the frontend has no automated tests yet, and there is no linter in CI.
 
