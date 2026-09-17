@@ -6,7 +6,7 @@
 
 Собран на **Tauri 2 + React 18 + TypeScript** во фронтенде и **Rust + SQLite** под капотом. Ни Electron, ни бэкенд-сервера, ни телеметрии.
 
-![Version](https://img.shields.io/badge/version-0.5.0-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-0.5.1-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ![Tempo — главный экран](docs/screenshot.png)
 
@@ -123,7 +123,7 @@ src-tauri/            # бэкенд на Rust
 
 ## 🗺️ Статус
 
-`v0.5.0` — альфа, в первую очередь под Windows. Воспроизведение, сканирование библиотеки, плейлисты, избранное, лирика, поиск, SoundCloud, Discord-презенс, плавающий мини-плеер, контекстные меню по правому клику, два вида плейбара, кроссфейд и визуализатор спектра — всё работает. Релизный пайплайн пока собирает только установщик NSIS для Windows; при этом сам код не завязан на Windows нигде, кроме пути к IPC-пайпу Discord и прогресса на панели задач.
+`v0.5.1` — альфа, в первую очередь под Windows. Воспроизведение, сканирование библиотеки, плейлисты, избранное, лирика, поиск, SoundCloud, Discord-презенс, плавающий мини-плеер, контекстные меню по правому клику, два вида плейбара, кроссфейд и визуализатор спектра — всё работает. Релизный пайплайн пока собирает только установщик NSIS для Windows; при этом сам код не завязан на Windows нигде, кроме пути к IPC-пайпу Discord и прогресса на панели задач.
 
 Что ещё предстоит: у фронтенда пока нет автотестов, а в CI нет линтера.
 
