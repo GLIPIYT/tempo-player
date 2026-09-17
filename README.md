@@ -6,7 +6,7 @@
 
 Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLite** under the hood. No Electron, no backend server, no telemetry.
 
-![Version](https://img.shields.io/badge/version-0.6.0-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-0.6.1-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ![Tempo — home screen](docs/screenshot.png)
 
@@ -128,7 +128,7 @@ The full architecture, data model and module contracts are documented in [ARCHIT
 
 ## 🗺️ Status
 
-`v0.6.0` — alpha, Windows-first. Playback, library scanning, playlists, favorites, lyrics, search, SoundCloud, Discord presence, a floating mini player, right-click menus throughout, two player bar layouts, crossfade, a spectrum visualiser and a built-in updater all work. The release pipeline currently ships a Windows NSIS installer only; the codebase itself has no Windows-specific dependencies beyond the Discord IPC pipe path and taskbar progress.
+`v0.6.1` — alpha, Windows-first. Playback, library scanning, playlists, favorites, lyrics, search, SoundCloud, Discord presence, a floating mini player, right-click menus throughout, two player bar layouts, crossfade, a spectrum visualiser and a built-in updater all work. The release pipeline currently ships a Windows NSIS installer only; the codebase itself has no Windows-specific dependencies beyond the Discord IPC pipe path and taskbar progress.
 
 Known gaps: the frontend has no automated tests yet, and there is no linter in CI.
 
