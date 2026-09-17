@@ -64,6 +64,8 @@ export interface YtSearchHit {
 
 /** What a full extraction adds on top of a flat search. */
 export interface YtEnrichment {
+  /** Which search it belongs to, so results for a replaced query are dropped. */
+  jobId: string
   id: string
   artist: string | null
   album: string | null

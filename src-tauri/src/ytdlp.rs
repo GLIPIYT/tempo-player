@@ -11,10 +11,13 @@
 //!
 //! A path the user set by hand always wins and is never touched.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
+use tauri::Emitter;
 
 /// Long enough for a search on a slow connection, short enough that a wedged
 /// process does not hang the app forever.
@@ -354,30 +357,70 @@ fn map_hit(item: &serde_json::Value) -> Option<YtSearchHit> {
     })
 }
 
+/// Emitted once per track as its metadata resolves.
+pub const ENRICH_EVENT: &str = "ytdlp://enriched";
+
 /// What a full extraction adds on top of a flat search.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct YtEnrichment {
+    pub job_id: String,
     pub id: String,
     pub artist: Option<String>,
     pub album: Option<String>,
     pub duration_ms: Option<i64>,
 }
 
-/// Fills in what a flat search cannot tell us.
+/// A plain mutex, not tokio's: this is read and written from a blocking task
+/// that has no business awaiting anything.
+fn running_enrichments() -> &'static Mutex<HashMap<String, u32>> {
+    static RUNNING: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+    RUNNING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Stops an enrichment that is still working through its list.
 ///
-/// A flat search is fast because it never opens a video, and that is also why
-/// it has no artist: YouTube Music's search response does not carry one in the
-/// shape yt-dlp maps for flat results. Resolving it costs roughly a second and
-/// a half per track, so this runs as a second pass that the caller does not
-/// wait for - the list appears immediately and fills in behind it.
-pub fn enrich(
+/// Worth having: a batch of twenty takes about half a minute, and typing one
+/// more letter would otherwise leave the previous one running to the end
+/// alongside the new one.
+pub fn cancel_enrichment(job_id: &str) {
+    let pid = match running_enrichments().lock() {
+        Ok(mut map) => map.remove(job_id),
+        Err(_) => None,
+    };
+    let Some(pid) = pid else { return };
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+    }
+}
+
+/// Resolves metadata for a list of ids, reporting each one as it lands.
+///
+/// Streaming rather than returning a list, because resolving a track takes
+/// about a second and a half: a batch of twenty would sit silent for half a
+/// minute and then arrive all at once. yt-dlp prints a line as it finishes each
+/// video, so following its output spreads the same work over the same time with
+/// results appearing throughout.
+pub fn enrich_streaming(
+    app: tauri::AppHandle,
     configured: &str,
     bin_dir: &Path,
+    job_id: &str,
     ids: &[String],
-) -> Result<Vec<YtEnrichment>, String> {
+) -> Result<(), String> {
+    use std::io::{BufRead, BufReader};
+
     if ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(());
     }
     let path = binary(configured, bin_dir).ok_or_else(|| "yt-dlp is not available".to_string())?;
 
@@ -394,18 +437,39 @@ pub fn enrich(
     for id in ids {
         args.push(format!("https://www.youtube.com/watch?v={id}"));
     }
-    let borrowed: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    let out = run(&path, &borrowed, 300)?;
-    if !out.status.success() && out.stdout.is_empty() {
-        return Err(format!(
-            "yt-dlp could not read the results: {}",
-            String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("no output")
-        ));
+    let mut child = Command::new(&path)
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("yt-dlp could not be started: {e}"))?;
+
+    let pid = child.id();
+    // Registered before anything is read, so a cancel arriving immediately
+    // still finds it.
+    if let Ok(mut map) = running_enrichments().lock() {
+        map.insert(job_id.to_string(), pid);
     }
 
-    let text = String::from_utf8_lossy(&out.stdout);
-    Ok(text.lines().filter_map(parse_enrichment).collect())
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "yt-dlp gave no output to read".to_string())?;
+    for line in BufReader::new(stdout).lines() {
+        let Ok(line) = line else { break };
+        let Some(mut entry) = parse_enrichment(&line) else {
+            continue;
+        };
+        entry.job_id = job_id.to_string();
+        let _ = app.emit(ENRICH_EVENT, entry);
+    }
+    let _ = child.wait();
+
+    if let Ok(mut map) = running_enrichments().lock() {
+        map.remove(job_id);
+    }
+    Ok(())
 }
 
 /// One `--print` line: id, artist, album, duration, tab separated.
@@ -429,6 +493,7 @@ fn parse_enrichment(line: &str) -> Option<YtEnrichment> {
         .and_then(|v| v.trim().parse::<f64>().ok())
         .map(|sec| (sec * 1000.0) as i64);
     Some(YtEnrichment {
+        job_id: String::new(),
         id: id.to_string(),
         artist,
         album,

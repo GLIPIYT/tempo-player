@@ -126,6 +126,7 @@ pub fn run() {
             commands::ytdlp_ensure,
             commands::ytdlp_search,
             commands::ytdlp_enrich,
+            commands::ytdlp_enrich_cancel,
             commands::ytdlp_cache,
             commands::sc_artist_releases,
             commands::sc_import_artist,

@@ -1051,6 +1051,30 @@
   }
 }
 
+/* ── Loading ─────────────────────────────────────────────────────────────
+   One ring, used wherever something is still being fetched: a cover that has
+   not arrived, and the fields a flat YouTube search cannot supply. */
+.spin {
+  display: inline-block;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sc-art-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+}
+
 /* ── Cache state on a cover ───────────────────────────────────────────────
    A kept playlist or artist that is still downloading: dimmed, with the
    percentage written on the artwork. */

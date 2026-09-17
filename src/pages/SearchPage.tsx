@@ -1,13 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { listen } from '@tauri-apps/api/event'
 import { Check, Ellipsis, ExternalLink, Lock, Plus, Search } from 'lucide-react'
 import { api } from '../api/client'
-import type { Playlist, ScArtist, ScPlaylist, ScTrack, SearchResults, YtSearchHit } from '../types/models'
+import type {
+  Playlist,
+  ScArtist,
+  ScPlaylist,
+  ScTrack,
+  SearchResults,
+  YtEnrichment,
+  YtSearchHit,
+} from '../types/models'
 import { useSearchQuery } from '../hooks/useSearchQuery'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import TrackList from '../components/common/TrackList'
 import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
-import ScArtwork from '../components/common/ScArtwork'
+import ScArtwork, { Spinner } from '../components/common/ScArtwork'
 import BrandIcon, { type BrandMark } from '../components/common/BrandIcon'
 import { ScArtistRow, ScPlaylistCard } from '../components/common/ScCards'
 import { useNav } from '../state/nav'
@@ -16,6 +25,9 @@ import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
 import { scTrackToUnified, scTracksToUnified } from '../utils/unified'
 import { ytHitToUnified, ytdlpPath } from '../providers/youtubeProvider'
+
+/** Emitted once per track as its metadata resolves. */
+const YT_ENRICH_EVENT = 'ytdlp://enriched'
 
 type ScStatus = 'idle' | 'loading' | 'error' | 'done'
 
@@ -277,6 +289,10 @@ export default function SearchPage() {
   const [scTracks, setScTracks] = useState<ScTrack[]>([])
   const [ytHits, setYtHits] = useState<YtSearchHit[]>([])
   const [ytStatus, setYtStatus] = useState<ScStatus>('idle')
+  /** Ids whose artist, album and duration have not come back yet. */
+  const [ytPending, setYtPending] = useState<ReadonlySet<string>>(new Set())
+  /** The enrichment the current results belong to; anything else is stale. */
+  const ytJob = useRef('')
   const [scPlaylists, setScPlaylists] = useState<ScPlaylist[]>([])
   const [scArtists, setScArtists] = useState<ScArtist[]>([])
   const [tab, setTab] = useState<SearchTab>('all')
@@ -365,30 +381,23 @@ export default function SearchPage() {
           if (cancelled) return
           setYtHits(hits)
           setYtStatus('done')
-          // The list is already on screen with covers, because a cover comes
-          // from the video id and costs nothing. The artist does not: it needs
-          // a full extraction at about a second and a half per track, so it
-          // arrives afterwards and is merged in rather than waited for.
-          if (hits.length === 0) return
+          // The list is on screen with covers, because a cover comes from the
+          // video id and costs nothing. The artist, album and duration need a
+          // full extraction at about a second and a half per track, so they
+          // arrive one by one on an event and the rows fill in as they land.
+          if (hits.length === 0) {
+            setYtPending(new Set())
+            return
+          }
+          const previous = ytJob.current
+          ytJob.current = `${Date.now()}:${trimmed}`
+          // A batch of twenty takes half a minute; without this, typing one
+          // more letter leaves the previous one running alongside the new one.
+          if (previous) void api.ytdlpEnrichCancel(previous).catch(() => undefined)
+          setYtPending(new Set(hits.map((h) => h.id)))
           void api
-            .ytdlpEnrich(ytdlpPath(), hits.map((h) => h.id))
-            .then((rows) => {
-              if (cancelled) return
-              const found = new Map(rows.map((row) => [row.id, row]))
-              setYtHits((prev) =>
-                prev.map((hit) => {
-                  const extra = found.get(hit.id)
-                  if (!extra) return hit
-                  return {
-                    ...hit,
-                    artist: extra.artist ?? hit.artist,
-                    album: extra.album ?? hit.album,
-                    durationMs: extra.durationMs ?? hit.durationMs,
-                  }
-                }),
-              )
-            })
-            .catch(() => undefined)
+            .ytdlpEnrich(ytdlpPath(), ytJob.current, hits.map((h) => h.id))
+            .catch(() => setYtPending(new Set()))
         })
         .catch(() => {
           if (cancelled) return
@@ -400,6 +409,42 @@ export default function SearchPage() {
       window.clearTimeout(timer)
     }
   }, [trimmed, source])
+
+  // Results arrive one at a time rather than as a batch, so each row fills in
+  // as its own track resolves instead of the whole list waiting for the last.
+  useEffect(() => {
+    let stop: (() => void) | null = null
+    let done = false
+    void listen<YtEnrichment>(YT_ENRICH_EVENT, (event) => {
+      const extra = event.payload
+      if (extra.jobId !== ytJob.current) return
+      setYtHits((prev) =>
+        prev.map((hit) =>
+          hit.id === extra.id
+            ? {
+                ...hit,
+                artist: extra.artist ?? hit.artist,
+                album: extra.album ?? hit.album,
+                durationMs: extra.durationMs ?? hit.durationMs,
+              }
+            : hit,
+        ),
+      )
+      setYtPending((prev) => {
+        if (!prev.has(extra.id)) return prev
+        const next = new Set(prev)
+        next.delete(extra.id)
+        return next
+      })
+    }).then((fn) => {
+      if (done) fn()
+      else stop = fn
+    })
+    return () => {
+      done = true
+      stop?.()
+    }
+  }, [])
 
   const nothing =
     !loading &&
@@ -671,13 +716,29 @@ export default function SearchPage() {
                   className="sc-row"
                   onClick={() => player.playTracks([ytHitToUnified(hit)], 0)}
                 >
-                  <ScArtwork url={hit.thumbnailUrl} title={hit.title} />
+                  <ScArtwork
+                    url={hit.thumbnailUrl}
+                    title={hit.title}
+                    pending={ytPending.has(hit.id)}
+                  />
                   <div className="sc-meta">
                     <span className="sc-title">{hit.title}</span>
-                    <span className="sc-artist">{hit.artist || hit.album || ''}</span>
+                    <span className="sc-artist">
+                      {ytPending.has(hit.id) ? (
+                        <Spinner size={10} />
+                      ) : (
+                        hit.artist || hit.album || ''
+                      )}
+                    </span>
                   </div>
                   <span className="sc-duration">
-                    {hit.durationMs > 0 ? fmtTime(hit.durationMs / 1000) : '—'}
+                    {ytPending.has(hit.id) ? (
+                      <Spinner size={10} />
+                    ) : hit.durationMs > 0 ? (
+                      fmtTime(hit.durationMs / 1000)
+                    ) : (
+                      '—'
+                    )}
                   </span>
                   <button
                     className="icon-btn sc-open"
