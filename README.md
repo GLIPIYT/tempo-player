@@ -6,7 +6,7 @@
 
 Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLite** under the hood. No Electron, no backend server, no telemetry.
 
-![Version](https://img.shields.io/badge/version-0.5.1-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-0.6.0-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ![Tempo — home screen](docs/screenshot.png)
 
@@ -45,6 +45,7 @@ Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLi
 ### Beyond your library
 
 - **SoundCloud provider** — search and stream from SoundCloud alongside your local library through a unified provider abstraction. Streams are cached on disk with a configurable size limit and least-recently-played eviction; a cached track joins your library automatically.
+- **Cache before playing** — optional: download a SoundCloud track in full before it starts. The first play waits a little, but the track then comes off disk instead of streaming past the audio graph, which is what lets the spectrum visualiser work on it.
 - **Discord Rich Presence** — show what you're listening to, with cover art, a real progress bar, and the current lyric line. Talks to Discord over the local IPC pipe; off by default.
 
 ### Look and feel
@@ -54,6 +55,10 @@ Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLi
 - **Two player bar layouts** — classic keeps the progress bar between the transport and the volume controls; modern centres the transport and runs the progress line along the top edge of the bar.
 - **Your own font and background** — import a font file, set a background image with adjustable dim and blur, scale the whole UI.
 - **Bilingual UI** — English and Russian out of the box, or follow the system language.
+
+### Staying current
+
+- **Built-in updater** — Tempo checks GitHub for new releases when it starts and offers the newest one you have not skipped. The changelog is the release's own notes, and download and install are a single action: the app closes and comes back on the new version. Settings lists every release above the one you are running, so an older version can be picked deliberately, and a skipped release comes back as soon as a newer one exists.
 
 ## 🖥️ Screens
 
@@ -123,7 +128,7 @@ The full architecture, data model and module contracts are documented in [ARCHIT
 
 ## 🗺️ Status
 
-`v0.5.1` — alpha, Windows-first. Playback, library scanning, playlists, favorites, lyrics, search, SoundCloud, Discord presence, a floating mini player, right-click menus throughout, two player bar layouts, crossfade and a spectrum visualiser all work. The release pipeline currently ships a Windows NSIS installer only; the codebase itself has no Windows-specific dependencies beyond the Discord IPC pipe path and taskbar progress.
+`v0.6.0` — alpha, Windows-first. Playback, library scanning, playlists, favorites, lyrics, search, SoundCloud, Discord presence, a floating mini player, right-click menus throughout, two player bar layouts, crossfade, a spectrum visualiser and a built-in updater all work. The release pipeline currently ships a Windows NSIS installer only; the codebase itself has no Windows-specific dependencies beyond the Discord IPC pipe path and taskbar progress.
 
 Known gaps: the frontend has no automated tests yet, and there is no linter in CI.
 
