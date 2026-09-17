@@ -179,9 +179,14 @@ pub async fn updater_download(
 /// Starts the installer and gets out of its way.
 ///
 /// A running executable cannot be replaced, so the app has to exit before the
-/// installer can do its job. `/S` asks NSIS for a silent install; if that flag
-/// is ever ignored the installer simply shows its own UI, which is still a
-/// working upgrade.
+/// installer can do its job.
+///
+/// The flags are read off the NSIS script Tauri generates, not guessed:
+/// `/S` is NSIS's silent switch, and `/R` is what makes the installer start the
+/// app again when it is done - without it a silent install finishes and leaves
+/// nothing running, and the app simply vanishes. The installer is built
+/// `currentUser`, so none of this needs elevation or shows a UAC prompt, and in
+/// silent mode it kills a still-running instance itself.
 #[tauri::command]
 pub fn updater_install(app: AppHandle, path: String) -> Result<(), String> {
     let installer = PathBuf::from(&path);
@@ -189,7 +194,7 @@ pub fn updater_install(app: AppHandle, path: String) -> Result<(), String> {
         return Err(format!("the installer is gone: {path}"));
     }
     std::process::Command::new(&installer)
-        .arg("/S")
+        .args(["/S", "/R"])
         .spawn()
         .map_err(|e| format!("could not start the installer: {e}"))?;
     app.exit(0);
