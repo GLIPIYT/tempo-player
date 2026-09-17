@@ -363,6 +363,9 @@ fn map_hit(item: &serde_json::Value) -> Option<YtSearchHit> {
 /// Emitted once per track as its metadata resolves.
 pub const ENRICH_EVENT: &str = "ytdlp://enriched";
 
+/// A newline, spelled out so it cannot be mistaken for a line break.
+const NEWLINE: char = '\n';
+
 /// Emitted when an enrichment stops, however it stopped.
 ///
 /// The caller is waiting on one event per track, so without this a run that
@@ -435,7 +438,6 @@ pub fn enrich_streaming(
     job_id: &str,
     ids: &[String],
 ) -> Result<(), String> {
-    use std::io::{BufRead, BufReader};
 
     if ids.is_empty() {
         return Ok(());
@@ -456,18 +458,27 @@ pub fn enrich_streaming(
         args.push(format!("https://www.youtube.com/watch?v={id}"));
     }
 
+    // Output goes to a file, not a pipe.
+    //
+    // This is a GUI process: there is no console. Python's stdout against a
+    // pipe in that situation fails with `OSError: [Errno 22] Invalid argument`
+    // from inside its own TextIOWrapper, before yt-dlp has written a thing -
+    // and it does so regardless of PYTHONIOENCODING, which the frozen
+    // interpreter appears not to honour. A file handle is unambiguous and
+    // always valid, so the whole class of problem goes away.
+    let scratch = std::env::temp_dir().join(format!(
+        "tempo-yt-enrich-{}.txt",
+        job_id.replace(|c: char| !c.is_ascii_alphanumeric(), "_")
+    ));
+    let sink_file = std::fs::File::create(&scratch)
+        .map_err(|e| format!("could not open a scratch file: {e}"))?;
+
     let mut child = Command::new(&path)
         .args(&args)
-        // Both of these are the difference between working and an immediate
-        // `OSError: [Errno 22]` from Python, and neither is obvious.
-        //
-        // The encoding: this is a GUI process with no console, and without it
-        // the frozen interpreter picks an output encoding that cannot write to
-        // a pipe. The stdin: there is no console handle to inherit, so passing
-        // one on is passing on something invalid.
         .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONUTF8", "1")
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::from(sink_file))
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("yt-dlp could not be started: {e}"))?;
@@ -496,23 +507,37 @@ pub fn enrich_streaming(
         }
     });
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "yt-dlp gave no output to read".to_string())?;
+    // The scratch file is polled rather than read at the end: results are meant
+    // to appear as they resolve, and reading a file being appended to is safe
+    // to attempt. If it ever fails, the loop simply sees nothing until the end
+    // and this degrades into reading the whole thing at once - it cannot break.
     let mut produced = 0usize;
-    for line in BufReader::new(stdout).lines() {
-        let Ok(line) = line else { break };
-        let Some(mut entry) = parse_enrichment(&line) else {
-            continue;
-        };
-        entry.job_id = job_id.to_string();
-        produced += 1;
-        let _ = app.emit(ENRICH_EVENT, entry);
+    let mut consumed = 0usize;
+    let mut pending = String::new();
+    let mut finished = false;
+    while !finished {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        if let Ok(text) = std::fs::read_to_string(&scratch) {
+            if text.len() > consumed {
+                pending.push_str(&text[consumed..]);
+                consumed = text.len();
+                while let Some(at) = pending.find(NEWLINE) {
+                    let line: String = pending.drain(..=at).collect();
+                    let Some(mut entry) = parse_enrichment(line.trim_end()) else {
+                        continue;
+                    };
+                    entry.job_id = job_id.to_string();
+                    produced += 1;
+                    let _ = app.emit(ENRICH_EVENT, entry);
+                }
+            }
+        }
+        finished = child.try_wait().map(|s| s.is_some()).unwrap_or(true);
     }
 
     let _ = child.wait();
     let _ = reader.join();
+    let _ = std::fs::remove_file(&scratch);
 
     if let Ok(mut map) = running_enrichments().lock() {
         map.remove(job_id);
