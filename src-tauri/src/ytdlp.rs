@@ -475,6 +475,10 @@ pub fn enrich_streaming(
 
     let mut child = Command::new(&path)
         .args(&args)
+        // Unbuffered, because Python block-buffers stdout when it is not a
+        // terminal: without this everything is flushed on the way out and the
+        // polling below sees nothing at all until the run is over.
+        .env("PYTHONUNBUFFERED", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUTF8", "1")
         .stdin(std::process::Stdio::null())
@@ -537,6 +541,23 @@ pub fn enrich_streaming(
 
     let _ = child.wait();
     let _ = reader.join();
+
+    // One last look, because the child can flush on its way out after the final
+    // poll has already run. Without this a run that buffers everything until
+    // the end reports that it read nothing at all.
+    if let Ok(text) = std::fs::read_to_string(&scratch) {
+        if text.len() > consumed {
+            pending.push_str(&text[consumed..]);
+        }
+    }
+    for line in pending.lines() {
+        let Some(mut entry) = parse_enrichment(line.trim_end()) else {
+            continue;
+        };
+        entry.job_id = job_id.to_string();
+        produced += 1;
+        let _ = app.emit(ENRICH_EVENT, entry);
+    }
     let _ = std::fs::remove_file(&scratch);
 
     if let Ok(mut map) = running_enrichments().lock() {
