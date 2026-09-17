@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, ExternalLink, Lock, Play } from 'lucide-react'
+import { ArrowLeft, Download, ExternalLink, Lock, Play } from 'lucide-react'
 import { api } from '../api/client'
 import type { ScPlaylistDetail, ScTrack } from '../types/models'
 import ScArtwork from '../components/common/ScArtwork'
+import { toast } from '../components/common/Toast'
 import { useNav } from '../state/nav'
 import { usePlayer } from '../player'
 import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
 import { scTrackToUnified } from '../utils/unified'
+import { requestPlaylistCache } from '../soundcloud/cacheJobs'
 
 /**
  * A SoundCloud playlist or release, read live.
@@ -22,6 +24,7 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
   const [data, setData] = useState<ScPlaylistDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -73,6 +76,21 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
     if (index >= 0) player.playTracks(playable.map(scTrackToUnified), index)
   }
 
+  const startCache = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const outcome = await requestPlaylistCache(playlist)
+      if (outcome === 'empty') toast.show(t('Nothing in this playlist can be cached'), 'info')
+      else if (outcome === 'started') toast.show(t('Caching started'))
+      // 'asked' means the name question is up; that dialog reports its own
+      // outcome, so there is nothing to say here.
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : String(e), 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="page">
       <button className="back-link" onClick={() => navigate({ name: 'search' })}>
@@ -100,6 +118,10 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
             >
               <Play size={14} />
               <span>{t('Play')}</span>
+            </button>
+            <button className="btn" disabled={busy} onClick={() => void startCache()}>
+              <Download size={14} />
+              <span>{t('Cache playlist')}</span>
             </button>
             {playlist.permalinkUrl ? (
               <button

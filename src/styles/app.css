@@ -879,6 +879,84 @@
   border-radius: inherit;
 }
 
+/* ── Playlist cache progress ──────────────────────────────────────────────
+   The notification's own border is the progress bar: an SVG rounded rect whose
+   stroke is drawn up to the percentage. Bottom-right rather than centred, so it
+   does not fight with the transient toasts. */
+.cache-toasts {
+  position: fixed;
+  right: 18px;
+  bottom: calc(var(--playerbar-h) + 14px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  z-index: 1001;
+  pointer-events: none;
+}
+
+.cache-toast {
+  position: relative;
+  width: 320px;
+  height: 60px;
+  pointer-events: auto;
+  animation: toast-in 0.18s ease;
+}
+
+.cache-toast-ring {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.cache-toast-track {
+  fill: var(--surface);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.cache-toast-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.3s ease;
+}
+
+.cache-toast.is-done .cache-toast-fill {
+  stroke: var(--text-muted);
+}
+
+.cache-toast-body {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 16px;
+}
+
+.cache-toast-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cache-toast-label {
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cache-toast-status {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
 .text-input {
   width: 100%;
   height: 32px;

@@ -1,5 +1,6 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
@@ -186,33 +187,134 @@ fn local_playback(path: &Path) -> ScPlayback {
     }
 }
 
+/// Brings one track onto disk.
+///
+/// `Ok` means it is cached, either because it already was or because it just
+/// landed. `Err` says why not - a cache job counts those and carries on rather
+/// than stopping at the first one.
 pub async fn precache(
     db: Arc<Db>,
     default_root: PathBuf,
     covers_dir: PathBuf,
     track_id: &str,
     app: Option<AppHandle>,
-) {
+) -> Result<(), String> {
     let dir = cache_dir(&db, &default_root);
     let dest = cached_file_path(&dir, track_id);
     if dest.exists() {
         // already on disk - make sure the row is flagged and enriched
         finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
-        return;
+        return Ok(());
     }
-    if let Ok(info) = crate::soundcloud::get_stream_info(track_id).await {
-        if info.format == "hls" {
-            return;
-        }
-        if download_to_cache(&info.url, &dest).await.is_ok() {
-            finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
-            enforce_cache_limit(&db, &dir, cache_limit(&db));
-        }
+    let info = crate::soundcloud::get_stream_info(track_id).await?;
+    if info.format == "hls" {
+        // HLS reaches the element through MediaSource and never lands in the
+        // cache, so there is nothing here to download.
+        return Err("hls cannot be cached".to_string());
     }
+    download_to_cache(&info.url, &dest).await?;
+    finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
+    enforce_cache_limit(&db, &dir, cache_limit(&db));
+    Ok(())
 }
 
-pub fn clear_cache(db: &Db, default_root: &Path) -> Result<(u32, u32), String> {
-    let dir = cache_dir(db, default_root);
+/// Emitted while a cache job runs: `{ jobId, label, done, total, failed, state }`.
+pub const CACHE_PROGRESS_EVENT: &str = "sc-cache://progress";
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheProgress {
+    pub job_id: String,
+    pub label: String,
+    pub done: u32,
+    pub total: u32,
+    pub failed: u32,
+    /// "running" | "done" | "cancelled"
+    pub state: &'static str,
+}
+
+fn cancelled_jobs() -> &'static tokio::sync::Mutex<HashSet<String>> {
+    static CANCELLED: OnceLock<tokio::sync::Mutex<HashSet<String>>> = OnceLock::new();
+    CANCELLED.get_or_init(|| tokio::sync::Mutex::new(HashSet::new()))
+}
+
+/// Asks a running job to stop once the track it is on has finished.
+pub async fn cancel_job(job_id: &str) {
+    cancelled_jobs().lock().await.insert(job_id.to_string());
+}
+
+async fn job_cancelled(job_id: &str) -> bool {
+    cancelled_jobs().lock().await.contains(job_id)
+}
+
+fn emit_cache_progress(
+    app: &AppHandle,
+    job_id: &str,
+    label: &str,
+    done: u32,
+    total: u32,
+    failed: u32,
+    state: &'static str,
+) {
+    let _ = app.emit(
+        CACHE_PROGRESS_EVENT,
+        CacheProgress {
+            job_id: job_id.to_string(),
+            label: label.to_string(),
+            done,
+            total,
+            failed,
+            state,
+        },
+    );
+}
+
+/// Downloads a list of tracks one after another, reporting progress as it goes.
+///
+/// Serial on purpose: SoundCloud throttles, and firing fifty downloads at once
+/// is a good way to have the whole lot refused. Cancellation is checked between
+/// tracks rather than mid-download, so a track already coming in finishes
+/// instead of leaving a half-written file behind.
+pub async fn run_cache_job(
+    app: AppHandle,
+    db: Arc<Db>,
+    default_root: PathBuf,
+    covers_dir: PathBuf,
+    job_id: String,
+    label: String,
+    track_ids: Vec<String>,
+) {
+    let total = track_ids.len() as u32;
+    let mut done = 0u32;
+    let mut failed = 0u32;
+    let mut state: &'static str = "done";
+
+    emit_cache_progress(&app, &job_id, &label, done, total, failed, "running");
+
+    for id in track_ids {
+        if job_cancelled(&job_id).await {
+            state = "cancelled";
+            break;
+        }
+        // `None` for the app handle: letting each track emit its own library
+        // change would make the library refetch once per track. One event at
+        // the end is enough.
+        if precache(db.clone(), default_root.clone(), covers_dir.clone(), &id, None)
+            .await
+            .is_err()
+        {
+            failed += 1;
+        }
+        done += 1;
+        emit_cache_progress(&app, &job_id, &label, done, total, failed, "running");
+    }
+
+    cancelled_jobs().lock().await.remove(&job_id);
+    let _ = app.emit(LIBRARY_CHANGED_EVENT, String::new());
+    emit_cache_progress(&app, &job_id, &label, done, total, failed, state);
+}
+
+pub fn clear_cache(db: &Db, default_root: &Path) -> Result<(u32, u32), String> {    let dir = cache_dir(db, default_root);
     let mut files_deleted = 0u32;
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {

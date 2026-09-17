@@ -1,8 +1,12 @@
-import { Check } from 'lucide-react'
+import type { MouseEvent } from 'react'
+import { Check, Download, ExternalLink } from 'lucide-react'
 import type { ScArtist, ScPlaylist } from '../../types/models'
 import { useNav } from '../../state/nav'
 import { useT } from '../../i18n'
 import ScArtwork from './ScArtwork'
+import { toast } from './Toast'
+import { openContextMenu, type ContextMenuItem } from './ContextMenu'
+import { requestPlaylistCache } from '../../soundcloud/cacheJobs'
 
 /**
  * The two SoundCloud result shapes, shared by the search page and the artist
@@ -13,12 +17,40 @@ import ScArtwork from './ScArtwork'
 export function ScPlaylistCard({ playlist }: { playlist: ScPlaylist }) {
   const t = useT()
   const { navigate } = useNav()
+
+  const cache = (): void => {
+    void requestPlaylistCache(playlist)
+      .then((outcome) => {
+        if (outcome === 'started') toast.show(t('Caching started'))
+        else if (outcome === 'empty') toast.show(t('Nothing in this playlist can be cached'), 'info')
+        // 'asked' leaves the name question on screen; it reports its own result
+      })
+      .catch((e: unknown) => toast.show(e instanceof Error ? e.message : String(e), 'error'))
+  }
+
+  const onContextMenu = (e: MouseEvent): void => {
+    e.preventDefault()
+    const items: ContextMenuItem[] = [
+      { id: 'cache', label: t('Cache playlist'), icon: <Download size={13} />, onSelect: cache },
+    ]
+    if (playlist.permalinkUrl) {
+      items.push({
+        id: 'open',
+        label: t('Open on SoundCloud'),
+        icon: <ExternalLink size={13} />,
+        onSelect: () => window.open(playlist.permalinkUrl ?? '', '_blank'),
+      })
+    }
+    openContextMenu({ x: e.clientX, y: e.clientY, title: playlist.title, items })
+  }
+
   return (
     <button
       type="button"
       className="card sc-card"
       title={playlist.title}
       onClick={() => navigate({ name: 'sc-playlist', id: playlist.id })}
+      onContextMenu={onContextMenu}
     >
       <span className="sc-card-art">
         <ScArtwork url={playlist.artworkUrl} title={playlist.title} />

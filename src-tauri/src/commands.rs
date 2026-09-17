@@ -653,7 +653,7 @@ pub async fn sc_precache(
     track_id: String,
 ) -> Result<(), String> {
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
-    crate::soundcloud_store::precache(
+    let _ = crate::soundcloud_store::precache(
         state.db.clone(),
         root,
         state.covers_dir.clone(),
@@ -684,9 +684,71 @@ pub async fn add_sc_track_to_playlist(
     let covers = state.covers_dir.clone();
     let sc_id = track.id.clone();
     tauri::async_runtime::spawn(async move {
-        crate::soundcloud_store::precache(db, root, covers, &sc_id, Some(app)).await;
+        let _ = crate::soundcloud_store::precache(db, root, covers, &sc_id, Some(app)).await;
     });
     Ok(track_id)
+}
+
+/// Turns a SoundCloud playlist into a local one: every track is upserted and
+/// linked, and nothing is downloaded.
+///
+/// With `playlist_id` it appends to that playlist instead of creating one,
+/// which is what the "the name already exists" choice resolves to. Downloading
+/// stays the cache job's business, so an import that is never cached is still
+/// a perfectly valid playlist.
+#[tauri::command]
+pub fn sc_import_playlist(
+    state: State<'_, AppState>,
+    name: String,
+    tracks: Vec<crate::soundcloud::ScTrack>,
+    playlist_id: Option<i64>,
+) -> Result<i64, String> {
+    let target = match playlist_id {
+        Some(id) => id,
+        None => state.db.create_playlist(&name)?.id,
+    };
+    for track in tracks {
+        let track_id = state.db.upsert_sc_track(
+            &track.id,
+            &track.title,
+            &track.artist,
+            track.duration_ms,
+            track.artwork_url.as_deref(),
+        )?;
+        state.db.playlist_add_track(target, track_id)?;
+    }
+    Ok(target)
+}
+
+/// Downloads a list of tracks, emitting `sc-cache://progress` as it goes.
+///
+/// Returns as soon as the job has finished rather than streaming; the caller is
+/// expected not to await it, and to follow the progress events instead.
+#[tauri::command]
+pub async fn sc_cache_tracks(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    job_id: String,
+    label: String,
+    track_ids: Vec<String>,
+) -> Result<(), String> {
+    let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
+    crate::soundcloud_store::run_cache_job(
+        app,
+        state.db.clone(),
+        root,
+        state.covers_dir.clone(),
+        job_id,
+        label,
+        track_ids,
+    )
+    .await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sc_cache_cancel(job_id: String) {
+    crate::soundcloud_store::cancel_job(&job_id).await;
 }
 
 #[tauri::command]

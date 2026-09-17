@@ -30,6 +30,8 @@ import { ThemeApply } from './theme/engine'
 import UpdateWatcher from './updater/UpdateWatcher'
 import ScPlaylistPage from './pages/ScPlaylistPage'
 import ScArtistPage from './pages/ScArtistPage'
+import CacheToasts from './soundcloud/CacheToasts'
+import CacheChoiceDialog from './soundcloud/CacheChoiceDialog'
 import BackgroundLayer from './components/layout/BackgroundLayer'
 import { ToastHost } from './components/common/Toast'
 import { onScanProgress, onLibraryChanged } from './api/events'
@@ -207,6 +209,8 @@ function Shell() {
         <SystemBridge />
         <LoudnessBridge />
         <UpdateWatcher />
+        <CacheToasts />
+        <CacheChoiceDialog />
       </div>
       {/* Fixed-position overlays live outside .app-root: applyFont() sets a zoom
           on it for the UI scale preference, and a zoomed ancestor makes
