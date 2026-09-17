@@ -304,6 +304,10 @@ pub async fn run_cache_job(
             .is_err()
         {
             failed += 1;
+        } else {
+            // A track only gains a cover once it is downloaded and its tags are
+            // read, so its album can only pick one up now.
+            let _ = db.fill_album_cover_for_sc(&id);
         }
         done += 1;
         emit_cache_progress(&app, &job_id, &label, done, total, failed, "running");

@@ -451,6 +451,17 @@ export const ru: Record<string, string> = {
   'You already have a playlist called': 'У вас уже есть плейлист',
   'Create a second one': 'Создать второй',
   'Append to it': 'Дописать в него',
+  'Keep this artist': 'Сохранить артиста',
+  'Pick the ones to keep.': 'Отметьте, какие треки оставить.',
+  'Select all': 'Выбрать все',
+  'Clear all': 'Убрать все',
+  'File them under': 'Записать их к',
+  'A new artist': 'Новый артист',
+  'These local artists look like the same one. Picking one files the tracks under it.':
+    'Эти локальные артисты похожи на того же самого. Если выбрать одного, треки запишутся к нему.',
+  Cache: 'Кэшировать',
+  'Added to favorites': 'Добавлено в избранное',
+  'Nothing to cache for this artist': 'У этого артиста нечего кэшировать',
   'Downloads a track in full before starting it. The first play waits, but the track then plays from disk instead of streaming, which is what lets it show a spectrum.':
     'Скачивает трек целиком до начала воспроизведения. Первый запуск придётся подождать, зато дальше трек играет с диска, а не потоком — именно поэтому на нём появляется спектр.',
   Updates: 'Обновления',

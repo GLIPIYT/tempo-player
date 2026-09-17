@@ -696,6 +696,71 @@ impl Db {
         })
     }
 
+    /// Creates or finds an artist by name, for imports that arrive without one.
+    pub fn ensure_artist(&self, name: &str) -> Result<i64, String> {
+        self.with_conn(|conn| get_or_create_artist(conn, name))
+    }
+
+    /// Creates or finds an album by title under an artist.
+    pub fn ensure_album(&self, title: &str, artist_id: Option<i64>) -> Result<i64, String> {
+        self.with_conn(|conn| get_or_create_album(conn, title, artist_id))
+    }
+
+    /// Files a SoundCloud track under an artist, and under an album when it
+    /// belongs to one.
+    ///
+    /// `upsert_sc_track` records only the artist's *name* - a SoundCloud track
+    /// is not part of the artist pages until something asks it to be, which is
+    /// what an import does. The name is rewritten as well, so a track merged
+    /// into a local artist is findable under the name it now belongs to.
+    pub fn attach_sc_track(
+        &self,
+        track_id: i64,
+        artist_id: i64,
+        album_id: Option<i64>,
+    ) -> Result<(), String> {
+        self.with_conn(|conn| {
+            let name: String = conn
+                .query_row("SELECT name FROM artists WHERE id = ?1", params![artist_id], |r| {
+                    r.get(0)
+                })
+                .map_err(db_err)?;
+            let title: String = conn
+                .query_row("SELECT title FROM tracks WHERE id = ?1", params![track_id], |r| {
+                    r.get(0)
+                })
+                .map_err(db_err)?;
+            let search_text = build_search_text(&title, &name, "", "");
+            conn.execute(
+                "UPDATE tracks SET artist_id = ?1, album_id = ?2, artist_name = ?3, \
+                 search_text = ?4 WHERE id = ?5",
+                params![artist_id, album_id, name, search_text, track_id],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    /// Gives an album a cover once one of its tracks has one.
+    ///
+    /// A SoundCloud track only gains a cover when it is downloaded and its tags
+    /// are read, so the album has to pick one up later rather than at import.
+    pub fn fill_album_cover_for_sc(&self, sc_id: &str) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE albums SET cover_path = \
+                 (SELECT cover_path FROM tracks t WHERE t.external_id = ?1 AND t.source = 'soundcloud') \
+                 WHERE id = (SELECT album_id FROM tracks t WHERE t.external_id = ?1 AND t.source = 'soundcloud') \
+                 AND cover_path IS NULL \
+                 AND EXISTS (SELECT 1 FROM tracks t WHERE t.external_id = ?1 AND t.source = 'soundcloud' \
+                             AND t.cover_path IS NOT NULL)",
+                params![sc_id],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
     pub fn create_playlist(&self, name: &str) -> Result<Playlist, String> {
         let conn = self.lock_conn()?;
         let ts = now();

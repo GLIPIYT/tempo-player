@@ -751,6 +751,62 @@ pub async fn sc_cache_cancel(job_id: String) {
     crate::soundcloud_store::cancel_job(&job_id).await;
 }
 
+/// An artist's releases with their tracks, so a cache can bring the albums
+/// along instead of leaving a pile of loose tracks behind.
+#[tauri::command]
+pub async fn sc_artist_releases(
+    id: String,
+) -> Result<Vec<crate::soundcloud::ScPlaylistDetail>, String> {
+    crate::soundcloud::user_releases_with_tracks(&id).await
+}
+
+/// Brings a SoundCloud artist into the library.
+///
+/// `merge_into` files the tracks under an existing local artist rather than
+/// creating one named after the SoundCloud account - the answer to "I already
+/// have this artist under a different spelling". `album_of` maps a track id to
+/// the release it came from, which is how the albums arrive with the tracks.
+#[tauri::command]
+pub fn sc_import_artist(
+    state: State<'_, AppState>,
+    name: String,
+    tracks: Vec<crate::soundcloud::ScTrack>,
+    album_of: std::collections::HashMap<String, String>,
+    merge_into: Option<i64>,
+) -> Result<i64, String> {
+    let artist_id = match merge_into {
+        Some(id) => id,
+        None => state.db.ensure_artist(&name)?,
+    };
+    // one album row per release, however many of its tracks were picked
+    let mut albums: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for track in tracks {
+        let track_id = state.db.upsert_sc_track(
+            &track.id,
+            &track.title,
+            &track.artist,
+            track.duration_ms,
+            track.artwork_url.as_deref(),
+        )?;
+        let album_id = match album_of.get(&track.id) {
+            Some(title) => {
+                let id = match albums.get(title) {
+                    Some(known) => *known,
+                    None => {
+                        let created = state.db.ensure_album(title, Some(artist_id))?;
+                        albums.insert(title.clone(), created);
+                        created
+                    }
+                };
+                Some(id)
+            }
+            None => None,
+        };
+        state.db.attach_sc_track(track_id, artist_id, album_id)?;
+    }
+    Ok(artist_id)
+}
+
 #[tauri::command]
 pub fn sc_upsert_track(state: State<'_, AppState>, track: crate::soundcloud::ScTrack) -> Result<i64, String> {
     state.db.upsert_sc_track(

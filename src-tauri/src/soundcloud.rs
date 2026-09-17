@@ -362,6 +362,25 @@ pub async fn get_playlist(id: &str) -> Result<ScPlaylistDetail, String> {
     Ok(ScPlaylistDetail { playlist, tracks })
 }
 
+/// An artist's releases, each with its full track list.
+///
+/// N+1 by nature - a playlist object only carries a truncated track array, so
+/// every release has to be asked for separately - and capped, because an artist
+/// with a hundred releases should not turn one action into a hundred round
+/// trips. A release that fails to load is skipped rather than failing the lot.
+pub async fn user_releases_with_tracks(id: &str) -> Result<Vec<ScPlaylistDetail>, String> {
+    const MAX_RELEASES: usize = 20;
+    let releases = user_playlists(id, 50, 0).await?;
+    let mut out = Vec::new();
+    for release in releases.into_iter().take(MAX_RELEASES) {
+        let want = release.track_count.max(1);
+        if let Ok(tracks) = fetch_playlist_tracks(&release.id, want).await {
+            out.push(ScPlaylistDetail { playlist: release, tracks });
+        }
+    }
+    Ok(out)
+}
+
 fn stream_cache() -> &'static tokio::sync::Mutex<HashMap<String, (StreamInfo, Instant)>> {
     static CACHE: OnceLock<tokio::sync::Mutex<HashMap<String, (StreamInfo, Instant)>>> = OnceLock::new();
     CACHE.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()))

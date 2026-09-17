@@ -1,37 +1,55 @@
 import type { MouseEvent } from 'react'
-import { Check, Download, ExternalLink } from 'lucide-react'
+import { Check, Download, ExternalLink, Star } from 'lucide-react'
 import type { ScArtist, ScPlaylist } from '../../types/models'
 import { useNav } from '../../state/nav'
 import { useT } from '../../i18n'
 import ScArtwork from './ScArtwork'
 import { toast } from './Toast'
 import { openContextMenu, type ContextMenuItem } from './ContextMenu'
-import { requestPlaylistCache } from '../../soundcloud/cacheJobs'
+import CacheBadge from '../../soundcloud/CacheBadge'
+import { favoritePlaylist, requestArtistCache, requestPlaylistCache } from '../../soundcloud/cacheJobs'
 
 /**
  * The two SoundCloud result shapes, shared by the search page and the artist
  * page. Both open the in-app view, which reads live from SoundCloud - nothing
- * reaches the library until it is cached.
+ * reaches the library until it is cached or favorited.
  */
+
+/** Shared: a failed request should say so rather than do nothing visible. */
+function report(promise: Promise<unknown>): void {
+  promise.catch((e: unknown) => {
+    toast.show(e instanceof Error ? e.message : String(e), 'error')
+  })
+}
 
 export function ScPlaylistCard({ playlist }: { playlist: ScPlaylist }) {
   const t = useT()
   const { navigate } = useNav()
 
   const cache = (): void => {
-    void requestPlaylistCache(playlist)
-      .then((outcome) => {
+    report(
+      requestPlaylistCache(playlist).then((outcome) => {
         if (outcome === 'started') toast.show(t('Caching started'))
         else if (outcome === 'empty') toast.show(t('Nothing in this playlist can be cached'), 'info')
         // 'asked' leaves the name question on screen; it reports its own result
-      })
-      .catch((e: unknown) => toast.show(e instanceof Error ? e.message : String(e), 'error'))
+      }),
+    )
+  }
+
+  const favorite = (): void => {
+    report(
+      favoritePlaylist(playlist).then((outcome) => {
+        if (outcome === 'started') toast.show(t('Added to favorites'))
+        else if (outcome === 'empty') toast.show(t('Nothing in this playlist can be cached'), 'info')
+      }),
+    )
   }
 
   const onContextMenu = (e: MouseEvent): void => {
     e.preventDefault()
     const items: ContextMenuItem[] = [
       { id: 'cache', label: t('Cache playlist'), icon: <Download size={13} />, onSelect: cache },
+      { id: 'fav', label: t('Add to favorites'), icon: <Star size={13} />, onSelect: favorite },
     ]
     if (playlist.permalinkUrl) {
       items.push({
@@ -53,7 +71,9 @@ export function ScPlaylistCard({ playlist }: { playlist: ScPlaylist }) {
       onContextMenu={onContextMenu}
     >
       <span className="sc-card-art">
-        <ScArtwork url={playlist.artworkUrl} title={playlist.title} />
+        <CacheBadge kind="playlist" scId={playlist.id}>
+          <ScArtwork url={playlist.artworkUrl} title={playlist.title} />
+        </CacheBadge>
       </span>
       <span className="card-title">{playlist.title}</span>
       <span className="card-sub">{playlist.user}</span>
@@ -68,14 +88,44 @@ export function ScPlaylistCard({ playlist }: { playlist: ScPlaylist }) {
 export function ScArtistRow({ artist }: { artist: ScArtist }) {
   const t = useT()
   const { navigate } = useNav()
+
+  const keep = (): void => {
+    report(
+      requestArtistCache(artist).then((outcome) => {
+        if (outcome === 'started') toast.show(t('Added to favorites'))
+        else if (outcome === 'empty') toast.show(t('Nothing to cache for this artist'), 'info')
+        // 'asked' leaves the track picker on screen; it reports its own result
+      }),
+    )
+  }
+
+  const onContextMenu = (e: MouseEvent): void => {
+    e.preventDefault()
+    const items: ContextMenuItem[] = [
+      { id: 'keep', label: t('Add to favorites'), icon: <Star size={13} />, onSelect: keep },
+    ]
+    if (artist.permalinkUrl) {
+      items.push({
+        id: 'open',
+        label: t('Open on SoundCloud'),
+        icon: <ExternalLink size={13} />,
+        onSelect: () => window.open(artist.permalinkUrl ?? '', '_blank'),
+      })
+    }
+    openContextMenu({ x: e.clientX, y: e.clientY, title: artist.username, items })
+  }
+
   return (
     <button
       type="button"
       className="arow"
       onClick={() => navigate({ name: 'sc-artist', id: artist.id })}
+      onContextMenu={onContextMenu}
     >
       <span className="arow-art">
-        <ScArtwork url={artist.avatarUrl} title={artist.username} />
+        <CacheBadge kind="artist" scId={artist.id}>
+          <ScArtwork url={artist.avatarUrl} title={artist.username} />
+        </CacheBadge>
       </span>
       <span className="arow-name">
         {artist.username}

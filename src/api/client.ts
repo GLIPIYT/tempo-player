@@ -200,6 +200,16 @@ export const api = {
   scArtistPlaylists: (id: string, limit: number, offset: number) =>
     invoke<ScPlaylist[]>('sc_artist_playlists', { id, limit, offset }),
 
+  /** An artist's releases with their tracks, for bringing the albums along. */
+  scArtistReleases: (id: string) => invoke<ScPlaylistDetail[]>('sc_artist_releases', { id }),
+
+  scImportArtist: (
+    name: string,
+    tracks: ScTrack[],
+    albumOf: Record<string, string>,
+    mergeInto: number | null,
+  ) => invoke<number>('sc_import_artist', { name, tracks, albumOf, mergeInto }),
+
   scGetPlayback: (trackId: string, waitForCache = false) =>
     invoke<{ url: string | null; cachedPath: string | null; format: string | null }>('sc_get_playback', {
       trackId,

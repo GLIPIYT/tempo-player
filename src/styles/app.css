@@ -957,6 +957,130 @@
   color: var(--text-muted);
 }
 
+/* ── Cache state on a cover ───────────────────────────────────────────────
+   A kept playlist or artist that is still downloading: dimmed, with the
+   percentage written on the artwork. */
+.cache-badge {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.cache-badge-veil {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  opacity: 0.55;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.cache-badge-pct {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  pointer-events: none;
+}
+
+/* ── Track picker ─────────────────────────────────────────────────────── */
+.pick-actions {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+
+.pick-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pick-row:last-child {
+  border-bottom: none;
+}
+
+.pick-row:hover {
+  background: var(--surface-hover);
+}
+
+.pick-box {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--accent);
+}
+
+.pick-row.is-on .pick-box {
+  border-color: var(--accent);
+}
+
+.pick-row .sc-art {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+}
+
+.pick-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pick-title {
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pick-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pick-duration {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.pick-merge {
+  margin-top: 14px;
+}
+
 .text-input {
   width: 100%;
   height: 32px;

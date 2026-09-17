@@ -116,6 +116,8 @@ pub fn run() {
             commands::sc_import_playlist,
             commands::sc_cache_tracks,
             commands::sc_cache_cancel,
+            commands::sc_artist_releases,
+            commands::sc_import_artist,
             commands::sc_stream_url,
             commands::fetch_online_lyrics,
             commands::fetch_online_lyrics_all,
