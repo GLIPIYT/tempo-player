@@ -79,6 +79,14 @@ describe('next and previous', () => {
     expect(queue.previous('one')?.sourceId).toBe('a')
   })
 
+  it('advances mid-queue even under repeat one, so callers must check the mode first', () => {
+    // `next` only understands repeat-all. Anything that advances the queue at
+    // the end of a track - the crossfade does - has to handle repeat-one before
+    // calling this, or repeat-one silently becomes repeat-all.
+    const queue = queueOf(['a', 'b', 'c'], 0)
+    expect(queue.next('one')?.sourceId).toBe('b')
+  })
+
   it('has nothing to give from an empty queue', () => {
     const queue = queueOf([])
     expect(queue.next('all')).toBeNull()

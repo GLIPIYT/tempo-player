@@ -483,6 +483,14 @@ export class AudioEngine {
    */
   private checkSilence(el: HTMLAudioElement): void {
     if (!this.analyser || !this.analyserBuf || this.graphDisabled) return
+    // The tap only ever carries the local channel. A stream track plays through
+    // an element that is deliberately never routed, so it reads as silence here
+    // without meaning anything - and tripping on it kills the graph for the
+    // rest of the session, taking the visualiser down with it.
+    if (this.activeChannel !== 'local') return
+    // Likewise a context that is not running: suspended is not the same as
+    // muted, and a graph that has not started cannot be judged on its output.
+    if (this.ctx && this.ctx.state !== 'running') return
     const now = performance.now()
     if (now - this.lastSilenceCheck < SILENCE_CHECK_MS) return
     this.lastSilenceCheck = now
@@ -543,6 +551,11 @@ export class AudioEngine {
         (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!Ctor) return
       const ctx = this.ctx ?? new Ctor()
+      // The graph is built from a React effect rather than from the click
+      // itself, so the context can come up suspended. Nothing else resumes it
+      // until the next play(), which is why the visualiser used to sit blank
+      // on the first track and start working after a pause.
+      if (ctx.state === 'suspended') void ctx.resume().catch(() => {})
       const source = ctx.createMediaElementSource(el)
       const gain = ctx.createGain()
       source.connect(gain)

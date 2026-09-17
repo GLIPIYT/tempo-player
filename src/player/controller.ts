@@ -465,20 +465,30 @@ export class PlayerController {
     this.crossfading = true
     try {
       const cur = this.queueCtl.current()
-      if (cur && cur.dbId !== null) {
+      if (!cur) return
+      if (cur.dbId !== null) {
         const dur = this.duration > 0 ? this.duration : cur.durationSec ?? 0
         api.recordHistory(cur.dbId, Math.round(dur), true, false).catch(() => {})
       }
-      if (!this.queueCtl.next(this.repeat)) {
-        const picked = await this.autoPick()
-        if (!picked) return
+
+      // Repeat-one loops the same track, so it crossfades into itself. Asking
+      // `queueCtl.next` here would advance - that method only knows about
+      // repeat-all - and quietly turn repeat-one into repeat-all.
+      let incoming = cur
+      if (this.repeat !== 'one') {
+        if (!this.queueCtl.next(this.repeat)) {
+          const picked = await this.autoPick()
+          if (!picked) return
+        }
+        const advanced = this.queueCtl.current()
+        if (!advanced) return
+        incoming = advanced
       }
-      const next = this.queueCtl.current()
-      if (!next) return
-      const resolved = await this.resolveTrackUrl(next)
+
+      const resolved = await this.resolveTrackUrl(incoming)
       if (!resolved) return
-      this.beginTransition(next)
-      this.startTrack(next, resolved, seconds)
+      this.beginTransition(incoming)
+      this.startTrack(incoming, resolved, seconds)
     } finally {
       this.crossfading = false
     }
