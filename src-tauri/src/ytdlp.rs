@@ -472,6 +472,9 @@ pub fn enrich_streaming(
     ));
     let sink_file = std::fs::File::create(&scratch)
         .map_err(|e| format!("could not open a scratch file: {e}"))?;
+    let err_file = sink_file
+        .try_clone()
+        .map_err(|e| format!("could not share the scratch file: {e}"))?;
 
     let mut child = Command::new(&path)
         .args(&args)
@@ -482,8 +485,11 @@ pub fn enrich_streaming(
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUTF8", "1")
         .stdin(std::process::Stdio::null())
+        // Both streams into the same file. Whatever yt-dlp has to say - data,
+        // or the reason there is no data - lands in one place that can be read
+        // afterwards, instead of half of it going somewhere nobody looks.
         .stdout(std::process::Stdio::from(sink_file))
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::from(err_file))
         .spawn()
         .map_err(|e| format!("yt-dlp could not be started: {e}"))?;
 
@@ -493,23 +499,6 @@ pub fn enrich_streaming(
     if let Ok(mut map) = running_enrichments().lock() {
         map.insert(job_id.to_string(), pid);
     }
-
-    // Drained on its own thread rather than after the loop: a full stderr pipe
-    // blocks the child, and waiting until stdout ends to read it is how that
-    // turns into a hang.
-    let complaint = std::sync::Arc::new(Mutex::new(String::new()));
-    let sink = std::sync::Arc::clone(&complaint);
-    let mut err_pipe = child.stderr.take();
-    let reader = std::thread::spawn(move || {
-        use std::io::Read;
-        if let Some(pipe) = err_pipe.as_mut() {
-            let mut text = String::new();
-            let _ = pipe.read_to_string(&mut text);
-            if let Ok(mut slot) = sink.lock() {
-                *slot = text;
-            }
-        }
-    });
 
     // The scratch file is polled rather than read at the end: results are meant
     // to appear as they resolve, and reading a file being appended to is safe
@@ -539,8 +528,7 @@ pub fn enrich_streaming(
         finished = child.try_wait().map(|s| s.is_some()).unwrap_or(true);
     }
 
-    let _ = child.wait();
-    let _ = reader.join();
+    let exit = child.wait().map(|s| s.code()).unwrap_or(None);
 
     // One last look, because the child can flush on its way out after the final
     // poll has already run. Without this a run that buffers everything until
@@ -565,21 +553,24 @@ pub fn enrich_streaming(
     }
 
     let error = if produced == 0 {
-        let text = complaint.lock().map(|t| t.clone()).unwrap_or_default();
-        // The tail rather than the last line: a Python traceback ends on the
-        // exception, but the useful part is the few lines above it.
+        // Everything needed to tell the two cases apart: it said nothing, or it
+        // said something nobody read.
+        let size = std::fs::metadata(&scratch).map(|m| m.len()).unwrap_or(0);
+        let text = std::fs::read_to_string(&scratch).unwrap_or_default();
         let tail: Vec<&str> = text
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty() && !l.starts_with("Deprecated Feature"))
             .collect();
         let start = tail.len().saturating_sub(3);
-        Some(match tail.get(start..) {
-            Some(lines) if !lines.is_empty() => {
-                format!("yt-dlp read nothing: {}", lines.join(" | "))
-            }
-            _ => "yt-dlp read nothing".to_string(),
-        })
+        let said = if tail.is_empty() {
+            "said nothing".to_string()
+        } else {
+            tail[start..].join(" | ")
+        };
+        Some(format!(
+            "yt-dlp read nothing (exit {exit:?}, {size} bytes): {said}"
+        ))
     } else {
         None
     };
