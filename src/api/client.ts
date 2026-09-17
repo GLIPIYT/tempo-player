@@ -184,6 +184,9 @@ export const api = {
       trackId,
       waitForCache,
     }),
+
+  /** Fire-and-forget: fetches a track into the cache ahead of it being played. */
+  scPrecache: (trackId: string) => invoke<void>('sc_precache', { trackId }),
   upsertScTrack: (track: Omit<ScTrack, 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'> & Partial<Pick<ScTrack, 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'>>) =>
     invoke<number>('sc_upsert_track', { track }),
   fetchOnlineLyricsAll: (artist: string, title: string) =>

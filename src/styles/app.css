@@ -907,6 +907,22 @@
   text-overflow: ellipsis;
 }
 
+/* Fetching a track before it can start. A slow pulse rather than a progress
+   bar: the download reports nothing until it is finished. */
+.pb-preparing {
+  animation: pb-preparing-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pb-preparing-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .pb-placeholder {
   width: 48px;
   height: 48px;

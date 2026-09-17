@@ -46,6 +46,7 @@ export function composePlayerApi(state: PlayerSnapshot): PlayerApi {
     repeat: state.repeat,
     shuffle: state.shuffle,
     bufferPct: state.bufferPct,
+    preparing: state.preparing,
     ...actions,
   }
 }

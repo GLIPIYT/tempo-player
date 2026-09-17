@@ -17,6 +17,12 @@ export interface PlayerSnapshot {
   repeat: RepeatMode
   shuffle: boolean
   bufferPct: number | null
+  /**
+   * True while a track is being fetched before it can start - which with
+   * cache-before-play on is a wait of several seconds. Without this the player
+   * bar just sits there at 0:00 and looks broken.
+   */
+  preparing: boolean
   version: number
 }
 
@@ -180,6 +186,10 @@ export class PlayerController {
   private loadedSourceId: string | null = null
   private metadataSourceId: string | null | undefined = undefined
   private bufferPct: number | null = null
+  /** Set while a track is being resolved and fetched, before it can start. */
+  private preparing = false
+  /** The track the cache has already been warmed for, so it is only done once. */
+  private preloadedSourceId: string | null = null
   private playedSourceIds = new Set<string>()
   private autoPickBusy = false
   private saveTimer: number | null = null
@@ -194,6 +204,7 @@ export class PlayerController {
     repeat: 'off',
     shuffle: false,
     bufferPct: null,
+    preparing: false,
     version: 0,
   }
 
@@ -426,6 +437,10 @@ export class PlayerController {
   private async startPlayableFromCurrent(): Promise<void> {
     const seq = ++this.startSeq
     this.engine.stop()
+    // Resolving can take seconds with cache-before-play on, so the bar is told
+    // something is happening instead of sitting at 0:00 looking broken.
+    this.preparing = true
+    this.emit()
     let guard = this.queueCtl.getItems().length + 1
     while (guard > 0) {
       guard -= 1
@@ -451,6 +466,7 @@ export class PlayerController {
     this.position = 0
     this.duration = track.durationSec ?? 0
     this.bufferPct = null
+    this.preparing = false
     this.engine.setVolume(this.volume)
     // Level this track. Unmeasured tracks and streamed sources pass 1, which
     // leaves the audio path exactly as it was.
@@ -474,6 +490,25 @@ export class PlayerController {
       api.bumpPlayCount(track.dbId).catch(() => {})
     }
     this.emit()
+    this.preloadNext()
+  }
+
+  /**
+   * Fetches the next track while the current one plays.
+   *
+   * Only worth doing with cache-before-play on, where a track that is not on
+   * disk means a wait before it can start. Warming it in advance turns that
+   * wait into something that only ever happens once, on the first track.
+   */
+  private preloadNext(): void {
+    if (!cacheScBeforePlay()) return
+    const next = this.queueCtl.peekNext(this.repeat)
+    if (!next || next.source !== 'soundcloud') return
+    // precache is a no-op when the file is already there, but this stops the
+    // same track being asked for again and again across a long queue
+    if (next.sourceId === this.preloadedSourceId) return
+    this.preloadedSourceId = next.sourceId
+    void api.scPrecache(next.sourceId).catch(() => {})
   }
 
   /**
@@ -626,6 +661,7 @@ export class PlayerController {
     this.engine.stop()
     this.isPlaying = false
     this.bufferPct = null
+    this.preparing = false
     this.emit()
   }
 
@@ -642,6 +678,7 @@ export class PlayerController {
       repeat: this.repeat,
       shuffle: this.shuffle,
       bufferPct: this.bufferPct,
+      preparing: this.preparing,
       version: this.snapshot.version + 1,
     }
     this.updateMediaMetadata(cur)

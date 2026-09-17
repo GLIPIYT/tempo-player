@@ -434,6 +434,7 @@ export const ru: Record<string, string> = {
   'Draw the spectrum in the theme accent instead of the plain text colour.':
     'Рисовать спектр акцентным цветом темы, а не обычным цветом текста.',
   'Cache before playing': 'Кэшировать перед воспроизведением',
+  'Preparing…': 'Подготовка…',
   'Downloads a track in full before starting it. The first play waits, but the track then plays from disk instead of streaming, which is what lets it show a spectrum.':
     'Скачивает трек целиком до начала воспроизведения. Первый запуск придётся подождать, зато дальше трек играет с диска, а не потоком — именно поэтому на нём появляется спектр.',
   Updates: 'Обновления',

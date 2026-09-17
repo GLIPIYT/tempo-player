@@ -591,6 +591,29 @@ pub async fn sc_get_playback(
     .await
 }
 
+/// Warms the cache for a track that is about to play.
+///
+/// With cache-before-play on, the next track in the queue is fetched while the
+/// current one plays, so the wait only ever happens once rather than on every
+/// track. Does nothing when the file is already on disk.
+#[tauri::command]
+pub async fn sc_precache(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    track_id: String,
+) -> Result<(), String> {
+    let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
+    crate::soundcloud_store::precache(
+        state.db.clone(),
+        root,
+        state.covers_dir.clone(),
+        &track_id,
+        Some(app),
+    )
+    .await;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn add_sc_track_to_playlist(
     app: AppHandle,

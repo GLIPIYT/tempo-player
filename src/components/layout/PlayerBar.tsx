@@ -134,7 +134,13 @@ function PlayerBarContent() {
                 <span className="pb-title" title={p.currentTrack.title}>
                   {p.currentTrack.title}
                 </span>
-                <span className="pb-artist">{p.currentTrack.artists.join(', ') || t('Unknown artist')}</span>
+                {p.preparing ? (
+                  // Fetching the track before it can start. Saying so beats a
+                  // bar that sits at 0:00 with no explanation.
+                  <span className="pb-artist pb-preparing">{t('Preparing…')}</span>
+                ) : (
+                  <span className="pb-artist">{p.currentTrack.artists.join(', ') || t('Unknown artist')}</span>
+                )}
               </div>
             </>
           ) : (
