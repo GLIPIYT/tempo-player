@@ -1,3 +1,4 @@
+mod child;
 mod commands;
 mod database;
 mod discord;

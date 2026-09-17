@@ -105,6 +105,7 @@ fn run(path: &Path, args: &[&str], timeout_secs: u64) -> Result<std::process::Ou
     let mut command = Command::new(path);
     command.args(args);
     command.env("PYTHONIOENCODING", "utf-8");
+    crate::child::quiet(&mut command);
 
     let mut child = command
         // A GUI process has no console, so there is no stdin to hand over;
@@ -253,7 +254,20 @@ pub async fn ensure(configured: &str, bin_dir: &Path) -> YtdlpStatus {
         error = latest.err();
     }
 
-    let mut result = status(configured, bin_dir, true);
+    // Built from the version already read rather than asking again: `status`
+    // runs the binary, and running it twice was two console windows on startup
+    // rather than one.
+    let mut result = YtdlpStatus {
+        found: current.is_some(),
+        path: if current.is_some() {
+            managed.to_string_lossy().to_string()
+        } else {
+            String::new()
+        },
+        version: current,
+        managed: true,
+        error: None,
+    };
     if result.error.is_none() {
         result.error = error;
     }
@@ -436,11 +450,11 @@ pub fn cancel_enrichment(job_id: &str) {
     let Some(pid) = pid else { return };
     #[cfg(target_os = "windows")]
     {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
+        let mut kill = Command::new("taskkill");
+        kill.args(["/PID", &pid.to_string(), "/T", "/F"])
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+            .stderr(std::process::Stdio::null());
+        let _ = crate::child::quiet(&mut kill).status();
     }
     #[cfg(not(target_os = "windows"))]
     {

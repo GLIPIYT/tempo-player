@@ -1535,7 +1535,7 @@ pub fn reveal_in_file_manager(path: String) -> Result<bool, String> {
     {
         // explorer.exe reports exit code 1 even when it worked, so the status is
         // deliberately not checked - only a failure to start is an error.
-        std::process::Command::new("explorer")
+        crate::child::quiet(&mut std::process::Command::new("explorer"))
             .arg(reveal_arg(&path))
             .spawn()
             .map(|_| true)
@@ -1544,7 +1544,7 @@ pub fn reveal_in_file_manager(path: String) -> Result<bool, String> {
     #[cfg(not(windows))]
     {
         let target = file.parent().unwrap_or(file);
-        std::process::Command::new("xdg-open")
+        crate::child::quiet(&mut std::process::Command::new("xdg-open"))
             .arg(target)
             .spawn()
             .map(|_| true)

@@ -193,7 +193,9 @@ pub fn updater_install(app: AppHandle, path: String) -> Result<(), String> {
     if !installer.exists() {
         return Err(format!("the installer is gone: {path}"));
     }
-    std::process::Command::new(&installer)
+    let mut command = std::process::Command::new(&installer);
+    crate::child::quiet(&mut command);
+    command
         .args(["/S", "/R"])
         .spawn()
         .map_err(|e| format!("could not start the installer: {e}"))?;
