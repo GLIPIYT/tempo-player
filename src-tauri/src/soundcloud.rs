@@ -316,61 +316,40 @@ pub async fn user_playlists(id: &str, limit: u32, offset: u32) -> Result<Vec<ScP
     collection_map(&format!("/users/{id}/playlists"), None, limit, offset, map_playlist).await
 }
 
-/// Strips whatever `client_id` a URL came with, so a fresh one can be appended.
-fn with_client_id(url: &str) -> String {
-    let mut base = url.to_string();
-    if let Some(at) = base.find("client_id=") {
-        base.truncate(at);
-        base = base.trim_end_matches(['?', '&']).to_string();
-    }
-    let sep = if base.contains('?') { '&' } else { '?' };
-    format!("{base}{sep}client_id=")
-}
-
-/// Walks a collection by following the `next_href` the API hands back.
+/// Resolves track stubs by id.
 ///
-/// SoundCloud pages by returning the URL of the next page rather than by taking
-/// an offset, so the href is the only thing that knows the right path and the
-/// right cursor. Guessing at `/playlists/{id}/tracks` is what produced a 404 -
-/// the object's own chain is what actually works.
-async fn follow_track_pages(
-    first: String,
-    want: usize,
-    seed: Vec<ScTrack>,
-) -> Result<Vec<ScTrack>, String> {
-    let mut out = seed;
-    let mut next = first;
-    // a hard stop, so a cycle in the chain cannot spin forever
-    let mut guard = 40;
-    while out.len() < want && !next.is_empty() && guard > 0 {
-        guard -= 1;
-        let base = if next.starts_with("http") {
-            next.clone()
-        } else {
-            format!("{API}{next}")
-        };
-        let json = get_json_with_fresh_client(&with_client_id(&base)).await?;
-        if let Some(collection) = json.get("collection").and_then(|v| v.as_array()) {
-            out.extend(collection.iter().filter_map(map_track));
+/// SoundCloud hands back most of a large playlist's tracks as *stubs* - objects
+/// carrying nothing but an `id`. They are resolved in batches through
+/// `/tracks?ids=`, fifty at a time, which is what SoundCloud's own client does.
+/// Without this only the handful of entries that happened to arrive fully
+/// formed survive, which is why a forty track playlist loaded as five.
+async fn resolve_track_stubs(ids: Vec<String>) -> Vec<ScTrack> {
+    const CHUNK: usize = 50;
+    let mut out = Vec::new();
+    for chunk in ids.chunks(CHUNK) {
+        let url = format!("{API}/tracks?ids={}&client_id=", chunk.join(","));
+        match get_json_with_fresh_client(&url).await {
+            Ok(json) => {
+                // the batch endpoint answers with a bare array, not an envelope
+                if let Some(list) = json.as_array() {
+                    out.extend(list.iter().filter_map(map_track));
+                }
+            }
+            Err(_) => {
+                // One at a time as a last resort, and capped: a failing batch
+                // should degrade into a short playlist, not hundreds of calls.
+                for id in chunk.iter().take(20) {
+                    let single = format!("{API}/tracks/{id}?client_id=");
+                    if let Ok(one) = get_json_with_fresh_client(&single).await {
+                        if let Some(track) = map_track(&one) {
+                            out.push(track);
+                        }
+                    }
+                }
+            }
         }
-        next = json
-            .get("next_href")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
     }
-    out.truncate(want);
-    Ok(out)
-}
-
-/// The tracks carried by a playlist object itself.
-///
-/// Always present, but only the first page - the rest is behind `next_href`.
-fn embedded_playlist_tracks(json: &Value) -> Vec<ScTrack> {
-    json.get("tracks")
-        .and_then(|v| v.as_array())
-        .map(|list| list.iter().filter_map(map_track).collect())
-        .unwrap_or_default()
+    out
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -384,23 +363,35 @@ pub async fn get_playlist(id: &str) -> Result<ScPlaylistDetail, String> {
     let json = get_json_with_fresh_client(&format!("{API}/playlists/{id}?client_id=")).await?;
     let playlist = map_playlist(&json).ok_or_else(|| "that is not a SoundCloud playlist".to_string())?;
 
-    let mut tracks = embedded_playlist_tracks(&json);
-    // A playlist longer than one page says so with a `next_href`. Without
-    // following it a forty track playlist loads as five, which is exactly what
-    // it did.
-    let next = json
-        .get("next_href")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
-    if !next.is_empty() {
-        let want = playlist.track_count.max(1) as usize;
-        if let Ok(more) = follow_track_pages(next, want, tracks.clone()).await {
-            if more.len() > tracks.len() {
-                tracks = more;
-            }
+    // The `tracks` array is in playlist order and mixes fully formed tracks with
+    // stubs, so the order is kept as a list of ids and the tracks are filled in
+    // from whichever source has them. Concatenating the two lists instead would
+    // lose the order, which for an album is the whole point.
+    let empty = Vec::new();
+    let entries = json.get("tracks").and_then(|v| v.as_array()).unwrap_or(&empty);
+    let mut order: Vec<String> = Vec::new();
+    let mut known: HashMap<String, ScTrack> = HashMap::new();
+    let mut stubs: Vec<String> = Vec::new();
+    for item in entries {
+        let Some(raw) = item.get("id").and_then(|v| v.as_i64()) else {
+            continue;
+        };
+        let track_id = raw.to_string();
+        order.push(track_id.clone());
+        if item.get("title").is_none() {
+            // a stub: nothing but an id
+            stubs.push(track_id);
+        } else if let Some(track) = map_track(item) {
+            known.insert(track_id, track);
         }
     }
+    if !stubs.is_empty() {
+        for track in resolve_track_stubs(stubs).await {
+            known.insert(track.id.clone(), track);
+        }
+    }
+
+    let tracks: Vec<ScTrack> = order.into_iter().filter_map(|tid| known.remove(&tid)).collect();
     Ok(ScPlaylistDetail { playlist, tracks })
 }
 
