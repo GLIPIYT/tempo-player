@@ -366,6 +366,10 @@ pub const ENRICH_EVENT: &str = "ytdlp://enriched";
 /// A newline, spelled out so it cannot be mistaken for a line break.
 const NEWLINE: char = '\n';
 
+/// Separates the fields of one printed row. A unit separator, because it cannot
+/// occur in an artist or an album name and cannot be split by a command line.
+const FIELD: char = '\u{1f}';
+
 /// Emitted when an enrichment stops, however it stopped.
 ///
 /// The caller is waiting on one event per track, so without this a run that
@@ -444,8 +448,11 @@ pub fn enrich_streaming(
     }
     let path = binary(configured, bin_dir).ok_or_else(|| "yt-dlp is not available".to_string())?;
 
-    // A tab separates the fields; anything else risks colliding with a title.
-    let template = "%(id)s\t%(artist,artists.0,uploader)s\t%(album)s\t%(duration)s";
+    // Fields are separated by an ASCII unit separator rather than a tab.
+    // Windows splits a command line on tabs as well as spaces, so a tab inside
+    // an argument is a character that can be cut in half on the way to the
+    // process - and this one is passed straight through, being neither.
+    let template = "%(id)s\u{1f}%(artist,artists.0,uploader)s\u{1f}%(album)s\u{1f}%(duration)s";
     let mut args: Vec<String> = vec![
         "--no-warnings".into(),
         "--ignore-errors".into(),
@@ -475,6 +482,17 @@ pub fn enrich_streaming(
     let err_file = sink_file
         .try_clone()
         .map_err(|e| format!("could not share the scratch file: {e}"))?;
+
+    // Kept for the failure message: when a process says nothing, the thing to
+    // look at is what it was asked to do.
+    let command = format!(
+        "{} {}",
+        path.display(),
+        args.iter()
+            .map(|a| a.replace(FIELD, "|").replace(NEWLINE, " "))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
 
     let mut child = Command::new(&path)
         .args(&args)
@@ -569,7 +587,7 @@ pub fn enrich_streaming(
             tail[start..].join(" | ")
         };
         Some(format!(
-            "yt-dlp read nothing (exit {exit:?}, {size} bytes): {said}"
+            "yt-dlp read nothing (exit {exit:?}, {size} bytes): {said} :: {command}"
         ))
     } else {
         None
@@ -586,7 +604,7 @@ pub fn enrich_streaming(
 
 /// One `--print` line: id, artist, album, duration, tab separated.
 fn parse_enrichment(line: &str) -> Option<YtEnrichment> {
-    let mut parts = line.split('\t');
+    let mut parts = line.split(FIELD);
     let id = parts.next()?.trim();
     if id.is_empty() {
         return None;
