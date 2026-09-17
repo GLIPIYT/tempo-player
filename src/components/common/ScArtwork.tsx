@@ -32,25 +32,26 @@ export default function ScArtwork({
   if (!url || broken) {
     return <span className="sc-art sc-art-fallback">{(title.trim()[0] ?? '?').toUpperCase()}</span>
   }
+  // The image is always mounted and always in the layout; the ring sits over
+  // it. Hiding the image instead would make the ring depend on onLoad firing
+  // for something that is not being displayed, which is a poor thing to rely
+  // on for the only path that ever clears it.
   const waiting = pending || !loaded
   return (
-    <>
-      {waiting ? (
-        <span className="sc-art sc-art-loading">
-          <Spinner size={14} />
-        </span>
-      ) : null}
-      {/* Kept mounted while it loads, so onLoad can fire - hidden rather than
-          absent, because a display:none image still fetches. */}
+    <span className="sc-art-box">
       <img
         className="sc-art"
-        style={waiting ? { display: 'none' } : undefined}
         src={url}
         alt=""
         draggable={false}
         onLoad={() => setLoaded(true)}
         onError={() => setBroken(true)}
       />
-    </>
+      {waiting ? (
+        <span className="sc-art-veil">
+          <Spinner size={14} />
+        </span>
+      ) : null}
+    </span>
   )
 }

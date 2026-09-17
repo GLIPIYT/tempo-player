@@ -360,6 +360,21 @@ fn map_hit(item: &serde_json::Value) -> Option<YtSearchHit> {
 /// Emitted once per track as its metadata resolves.
 pub const ENRICH_EVENT: &str = "ytdlp://enriched";
 
+/// Emitted when an enrichment stops, however it stopped.
+///
+/// The caller is waiting on one event per track, so without this a run that
+/// ends early - a failure, a cancellation, a track yt-dlp skipped - would leave
+/// rows waiting forever for something that is never coming.
+pub const ENRICH_DONE_EVENT: &str = "ytdlp://enriched-done";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrichDone {
+    pub job_id: String,
+    /// Set when the run failed, so the UI can say why instead of just stopping.
+    pub error: Option<String>,
+}
+
 /// What a full extraction adds on top of a flat search.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -438,10 +453,12 @@ pub fn enrich_streaming(
         args.push(format!("https://www.youtube.com/watch?v={id}"));
     }
 
+    // stderr is kept, not discarded: a run that produces no output at all has
+    // to be able to say why, and the alternative is rows that wait forever.
     let mut child = Command::new(&path)
         .args(&args)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("yt-dlp could not be started: {e}"))?;
 
@@ -456,19 +473,45 @@ pub fn enrich_streaming(
         .stdout
         .take()
         .ok_or_else(|| "yt-dlp gave no output to read".to_string())?;
+    let mut produced = 0usize;
     for line in BufReader::new(stdout).lines() {
         let Ok(line) = line else { break };
         let Some(mut entry) = parse_enrichment(&line) else {
             continue;
         };
         entry.job_id = job_id.to_string();
+        produced += 1;
         let _ = app.emit(ENRICH_EVENT, entry);
+    }
+
+    // Read before waiting: the pipe would otherwise fill and block the child.
+    let mut complaint = String::new();
+    if let Some(mut err) = child.stderr.take() {
+        use std::io::Read;
+        let _ = err.read_to_string(&mut complaint);
     }
     let _ = child.wait();
 
     if let Ok(mut map) = running_enrichments().lock() {
         map.remove(job_id);
     }
+
+    let error = if produced == 0 {
+        let last = complaint.lines().filter(|l| !l.trim().is_empty()).last();
+        Some(match last {
+            Some(line) => format!("yt-dlp read nothing: {line}"),
+            None => "yt-dlp read nothing".to_string(),
+        })
+    } else {
+        None
+    };
+    let _ = app.emit(
+        ENRICH_DONE_EVENT,
+        EnrichDone {
+            job_id: job_id.to_string(),
+            error,
+        },
+    );
     Ok(())
 }
 

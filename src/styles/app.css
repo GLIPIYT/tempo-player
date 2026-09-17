@@ -1068,10 +1068,36 @@
   }
 }
 
-.sc-art-loading {
+/* The artwork and its loading ring share one box, so the ring can sit over an
+   image that is loading normally underneath it. */
+.sc-art-box {
+  position: relative;
+  display: block;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+}
+
+.sc-art-box .sc-art {
+  width: 100%;
+  height: 100%;
+}
+
+.arow-art .sc-art-box,
+.sc-card-art .sc-art-box,
+.detail-side-art .sc-art-box,
+.pick-row .sc-art-box {
+  width: 100%;
+  height: 100%;
+}
+
+.sc-art-veil {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: inherit;
   background: var(--surface);
 }
 

@@ -18,6 +18,7 @@ import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import ScArtwork, { Spinner } from '../components/common/ScArtwork'
 import BrandIcon, { type BrandMark } from '../components/common/BrandIcon'
+import { toast } from '../components/common/Toast'
 import { ScArtistRow, ScPlaylistCard } from '../components/common/ScCards'
 import { useNav } from '../state/nav'
 import { usePlayer } from '../player'
@@ -28,6 +29,8 @@ import { ytHitToUnified, ytdlpPath } from '../providers/youtubeProvider'
 
 /** Emitted once per track as its metadata resolves. */
 const YT_ENRICH_EVENT = 'ytdlp://enriched'
+/** Emitted when a run stops, so nothing can wait on an event that never comes. */
+const YT_ENRICH_DONE_EVENT = 'ytdlp://enriched-done'
 
 type ScStatus = 'idle' | 'loading' | 'error' | 'done'
 
@@ -436,6 +439,27 @@ export default function SearchPage() {
         next.delete(extra.id)
         return next
       })
+    }).then((fn) => {
+      if (done) fn()
+      else stop = fn
+    })
+    return () => {
+      done = true
+      stop?.()
+    }
+  }, [])
+
+  // Whatever is still waiting when a run ends is never getting an answer:
+  // a track yt-dlp skipped, a failure, or a cancellation. Clearing here is what
+  // stops a ring hanging forever.
+  useEffect(() => {
+    let stop: (() => void) | null = null
+    let done = false
+    void listen<{ jobId: string; error: string | null }>(YT_ENRICH_DONE_EVENT, (event) => {
+      const payload = event.payload
+      if (payload.jobId !== ytJob.current) return
+      setYtPending(new Set())
+      if (payload.error) toast.show(payload.error, 'error')
     }).then((fn) => {
       if (done) fn()
       else stop = fn
