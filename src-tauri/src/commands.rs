@@ -830,6 +830,27 @@ pub async fn ytdlp_enrich_cancel(job_id: String) {
     crate::ytdlp::cancel_enrichment(&job_id);
 }
 
+/// Files a played YouTube track in the library, with its artist and album.
+#[tauri::command]
+pub fn upsert_yt_track(
+    state: State<'_, AppState>,
+    video_id: String,
+    title: String,
+    artist: String,
+    album: String,
+    duration_ms: i64,
+    artwork_url: Option<String>,
+) -> Result<i64, String> {
+    state.db.upsert_yt_track(
+        &video_id,
+        &title,
+        &artist,
+        &album,
+        duration_ms,
+        artwork_url.as_deref(),
+    )
+}
+
 /// Downloads one track's audio and returns where it landed.
 ///
 /// The file is the cache: a second request for the same key finds it and

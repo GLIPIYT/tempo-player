@@ -128,6 +128,7 @@ pub fn run() {
             commands::ytdlp_enrich,
             commands::ytdlp_enrich_cancel,
             commands::ytdlp_cache,
+            commands::upsert_yt_track,
             commands::sc_artist_releases,
             commands::sc_import_artist,
             commands::sc_stream_url,

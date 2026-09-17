@@ -586,6 +586,74 @@ impl Db {
         })
     }
 
+    /// Files a YouTube track in the library, under the artist and album it came
+    /// from.
+    ///
+    /// SoundCloud tracks are filed when they are played; these were not filed
+    /// at all, which is why a downloaded one played perfectly and then appeared
+    /// under no artist and in no album. The names come from the search, that
+    /// being the only place they exist - the downloaded file carries no tags of
+    /// its own.
+    pub fn upsert_yt_track(
+        &self,
+        video_id: &str,
+        title: &str,
+        artist: &str,
+        album: &str,
+        duration_ms: i64,
+        artwork_url: Option<&str>,
+    ) -> Result<i64, String> {
+        let path = format!("youtube://{}", video_id);
+        let duration_sec = duration_ms as f64 / 1000.0;
+        let search_text = build_search_text(title, artist, album, "");
+        self.with_conn(|conn| {
+            let track_id: i64 = conn
+                .query_row(
+                    "INSERT INTO tracks(path, folder_id, title, artist_name, duration_sec, cover_path, \
+                     file_size, modified_at, added_at, source, external_id, search_text) \
+                     VALUES(?1, NULL, ?2, ?3, ?4, ?5, 0, 0, ?6, 'youtube', ?7, ?8) \
+                     ON CONFLICT(path) DO UPDATE SET \
+                     title = excluded.title, artist_name = excluded.artist_name, \
+                     duration_sec = excluded.duration_sec, cover_path = excluded.cover_path, \
+                     search_text = excluded.search_text \
+                     RETURNING id",
+                    params![path, title, artist, duration_sec, artwork_url, now(), video_id, search_text],
+                    |row| row.get(0),
+                )
+                .map_err(db_err)?;
+
+            let artist_name = artist.trim();
+            let artist_id = if artist_name.is_empty() {
+                None
+            } else {
+                Some(get_or_create_artist(conn, artist_name)?)
+            };
+            let album_name = album.trim();
+            let album_id = match (album_name.is_empty(), artist_id) {
+                (false, owner) => {
+                    let id = get_or_create_album(conn, album_name, owner)?;
+                    // The artwork URL is all there is for a cover, and it is
+                    // what the track rows carry too.
+                    if let Some(url) = artwork_url {
+                        conn.execute(
+                            "UPDATE albums SET cover_path = COALESCE(cover_path, ?1) WHERE id = ?2",
+                            params![url, id],
+                        )
+                        .map_err(db_err)?;
+                    }
+                    Some(id)
+                }
+                _ => None,
+            };
+            conn.execute(
+                "UPDATE tracks SET artist_id = ?1, album_id = ?2 WHERE id = ?3",
+                params![artist_id, album_id, track_id],
+            )
+            .map_err(db_err)?;
+            Ok(track_id)
+        })
+    }
+
     pub fn upsert_sc_track(
         &self,
         sc_id: &str,

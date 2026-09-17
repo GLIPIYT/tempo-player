@@ -2,6 +2,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '../api/client'
 import { getSettings } from '../state/settings'
 import { toast } from '../components/common/Toast'
+import { bumpLibraryVersion } from '../utils/libraryVersion'
 import type { RepeatMode, UnifiedTrack } from '../types/models'
 import { trackToUnified } from '../utils/unified'
 import { AudioEngine, type AudioChannel } from './engine'
@@ -436,6 +437,22 @@ export class PlayerController {
           t.externalUrl ?? `https://www.youtube.com/watch?v=${t.sourceId}`,
           t.sourceId,
         )
+        // Filed now rather than at download time, so a track that is played is
+        // a track that exists - under its artist and in its album, the same way
+        // a SoundCloud track is.
+        try {
+          t.dbId = await api.upsertYtTrack({
+            videoId: t.sourceId,
+            title: t.title,
+            artist: t.artists[0] ?? '',
+            album: t.album ?? '',
+            durationMs: Math.round((t.durationSec ?? 0) * 1000),
+            artworkUrl: /^https?:\/\//.test(t.coverPath ?? '') ? t.coverPath : null,
+          })
+          bumpLibraryVersion()
+        } catch {
+          // playing matters more than filing; the track still plays
+        }
         return { url: convertFileSrc(file), format: null, channel: 'local' }
       } catch (e) {
         // Silent here would mean a track that simply never plays, with nothing

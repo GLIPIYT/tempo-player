@@ -237,6 +237,16 @@ export const api = {
 
   ytdlpEnrichCancel: (jobId: string) => invoke<void>('ytdlp_enrich_cancel', { jobId }),
 
+  /** Files a played YouTube track, with the artist and album it came from. */
+  upsertYtTrack: (payload: {
+    videoId: string
+    title: string
+    artist: string
+    album: string
+    durationMs: number
+    artworkUrl: string | null
+  }) => invoke<number>('upsert_yt_track', payload),
+
   scGetPlayback: (trackId: string, waitForCache = false) =>
     invoke<{ url: string | null; cachedPath: string | null; format: string | null }>('sc_get_playback', {
       trackId,
