@@ -320,26 +320,30 @@ pub fn search(
 fn map_hit(item: &serde_json::Value) -> Option<YtSearchHit> {
     let id = item.get("id").and_then(|v| v.as_str())?.to_string();
     let title = item.get("title").and_then(|v| v.as_str())?.to_string();
-    // A flat search gives the channel rather than a separate artist field; for
-    // music uploads the channel is the artist often enough to be worth using.
+    // A flat search carries no artist at all, so this starts empty rather than
+    // guessing - the enrichment pass fills it in a moment later.
     let artist = item
         .get("uploader")
         .or_else(|| item.get("channel"))
         .and_then(|v| v.as_str())
-        .unwrap_or("YouTube")
+        .unwrap_or_default()
         .to_string();
     let duration_ms = item
         .get("duration")
         .and_then(|v| v.as_f64())
         .map(|sec| (sec * 1000.0) as i64)
         .unwrap_or(0);
+    // A flat search returns no thumbnails either, but YouTube's image URLs are
+    // deterministic from the video id, so the cover costs nothing and needs no
+    // extra request.
     let thumbnail_url = item
         .get("thumbnails")
         .and_then(|v| v.as_array())
         .and_then(|list| list.last())
         .and_then(|t| t.get("url"))
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(|s| s.to_string())
+        .or_else(|| Some(format!("https://i.ytimg.com/vi/{id}/mqdefault.jpg")));
     Some(YtSearchHit {
         url: format!("https://www.youtube.com/watch?v={id}"),
         id,
@@ -347,6 +351,88 @@ fn map_hit(item: &serde_json::Value) -> Option<YtSearchHit> {
         artist,
         duration_ms,
         thumbnail_url,
+    })
+}
+
+/// What a full extraction adds on top of a flat search.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct YtEnrichment {
+    pub id: String,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub duration_ms: Option<i64>,
+}
+
+/// Fills in what a flat search cannot tell us.
+///
+/// A flat search is fast because it never opens a video, and that is also why
+/// it has no artist: YouTube Music's search response does not carry one in the
+/// shape yt-dlp maps for flat results. Resolving it costs roughly a second and
+/// a half per track, so this runs as a second pass that the caller does not
+/// wait for - the list appears immediately and fills in behind it.
+pub fn enrich(
+    configured: &str,
+    bin_dir: &Path,
+    ids: &[String],
+) -> Result<Vec<YtEnrichment>, String> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let path = binary(configured, bin_dir).ok_or_else(|| "yt-dlp is not available".to_string())?;
+
+    // A tab separates the fields; anything else risks colliding with a title.
+    let template = "%(id)s\t%(artist,artists.0,uploader)s\t%(album)s\t%(duration)s";
+    let mut args: Vec<String> = vec![
+        "--no-warnings".into(),
+        "--ignore-errors".into(),
+        "--no-playlist".into(),
+        "--skip-download".into(),
+        "--print".into(),
+        template.into(),
+    ];
+    for id in ids {
+        args.push(format!("https://www.youtube.com/watch?v={id}"));
+    }
+    let borrowed: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+    let out = run(&path, &borrowed, 300)?;
+    if !out.status.success() && out.stdout.is_empty() {
+        return Err(format!(
+            "yt-dlp could not read the results: {}",
+            String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("no output")
+        ));
+    }
+
+    let text = String::from_utf8_lossy(&out.stdout);
+    Ok(text.lines().filter_map(parse_enrichment).collect())
+}
+
+/// One `--print` line: id, artist, album, duration, tab separated.
+fn parse_enrichment(line: &str) -> Option<YtEnrichment> {
+    let mut parts = line.split('\t');
+    let id = parts.next()?.trim();
+    if id.is_empty() {
+        return None;
+    }
+    // yt-dlp writes NA for anything it could not find.
+    let field = |v: Option<&str>| -> Option<String> {
+        match v.map(str::trim) {
+            Some(s) if !s.is_empty() && s != "NA" => Some(s.to_string()),
+            _ => None,
+        }
+    };
+    let artist = field(parts.next());
+    let album = field(parts.next());
+    let duration_ms = parts
+        .next()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .map(|sec| (sec * 1000.0) as i64);
+    Some(YtEnrichment {
+        id: id.to_string(),
+        artist,
+        album,
+        duration_ms,
     })
 }
 

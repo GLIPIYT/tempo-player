@@ -365,6 +365,30 @@ export default function SearchPage() {
           if (cancelled) return
           setYtHits(hits)
           setYtStatus('done')
+          // The list is already on screen with covers, because a cover comes
+          // from the video id and costs nothing. The artist does not: it needs
+          // a full extraction at about a second and a half per track, so it
+          // arrives afterwards and is merged in rather than waited for.
+          if (hits.length === 0) return
+          void api
+            .ytdlpEnrich(ytdlpPath(), hits.map((h) => h.id))
+            .then((rows) => {
+              if (cancelled) return
+              const found = new Map(rows.map((row) => [row.id, row]))
+              setYtHits((prev) =>
+                prev.map((hit) => {
+                  const extra = found.get(hit.id)
+                  if (!extra) return hit
+                  return {
+                    ...hit,
+                    artist: extra.artist ?? hit.artist,
+                    album: extra.album ?? hit.album,
+                    durationMs: extra.durationMs ?? hit.durationMs,
+                  }
+                }),
+              )
+            })
+            .catch(() => undefined)
         })
         .catch(() => {
           if (cancelled) return
@@ -650,7 +674,7 @@ export default function SearchPage() {
                   <ScArtwork url={hit.thumbnailUrl} title={hit.title} />
                   <div className="sc-meta">
                     <span className="sc-title">{hit.title}</span>
-                    <span className="sc-artist">{hit.artist}</span>
+                    <span className="sc-artist">{hit.artist || hit.album || ''}</span>
                   </div>
                   <span className="sc-duration">
                     {hit.durationMs > 0 ? fmtTime(hit.durationMs / 1000) : '—'}

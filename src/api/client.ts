@@ -20,6 +20,7 @@ import type {
   ScPlaylist,
   ScPlaylistDetail,
   ScTrack,
+  YtEnrichment,
   YtSearchHit,
   YtdlpStatus,
   SearchResults,
@@ -224,6 +225,13 @@ export const api = {
 
   ytdlpCache: (configured: string, url: string, key: string) =>
     invoke<string>('ytdlp_cache', { configured, url, key }),
+
+  /**
+   * Resolves the artist, album and duration a flat search cannot provide.
+   * Roughly a second and a half per track, so the caller shows the list first.
+   */
+  ytdlpEnrich: (configured: string, ids: string[]) =>
+    invoke<YtEnrichment[]>('ytdlp_enrich', { configured, ids }),
 
   scGetPlayback: (trackId: string, waitForCache = false) =>
     invoke<{ url: string | null; cachedPath: string | null; format: string | null }>('sc_get_playback', {

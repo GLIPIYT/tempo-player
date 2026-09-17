@@ -54,10 +54,20 @@ export interface YtdlpStatus {
 export interface YtSearchHit {
   id: string
   title: string
+  /** Empty until the enrichment pass has run; a flat search carries no artist. */
   artist: string
+  album: string | null
   durationMs: number
   thumbnailUrl: string | null
   url: string
+}
+
+/** What a full extraction adds on top of a flat search. */
+export interface YtEnrichment {
+  id: string
+  artist: string | null
+  album: string | null
+  durationMs: number | null
 }
 
 export interface LibraryFolder {

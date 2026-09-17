@@ -16,7 +16,7 @@ export function ytHitToUnified(hit: YtSearchHit): UnifiedTrack {
     dbId: null,
     title: hit.title,
     artists: hit.artist ? [hit.artist] : [],
-    album: null,
+    album: hit.album,
     durationSec: hit.durationMs > 0 ? hit.durationMs / 1000 : null,
     coverPath: hit.thumbnailUrl,
     playable: true,

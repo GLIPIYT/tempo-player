@@ -804,6 +804,25 @@ pub async fn ytdlp_search(
     .map_err(|e| e.to_string())?
 }
 
+/// Fills in the artist, album and duration a flat search cannot provide.
+///
+/// A second pass on purpose: the flat search returns in a couple of seconds and
+/// shows the list, and this resolves behind it at roughly a second and a half
+/// per track. Waiting for it up front would make every search feel broken.
+#[tauri::command]
+pub async fn ytdlp_enrich(
+    state: State<'_, AppState>,
+    configured: String,
+    ids: Vec<String>,
+) -> Result<Vec<crate::ytdlp::YtEnrichment>, String> {
+    let bin_dir = state.bin_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::ytdlp::enrich(&configured, &bin_dir, &ids)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Downloads one track's audio and returns where it landed.
 ///
 /// The file is the cache: a second request for the same key finds it and
