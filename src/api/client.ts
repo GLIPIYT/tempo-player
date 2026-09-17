@@ -20,6 +20,8 @@ import type {
   ScPlaylist,
   ScPlaylistDetail,
   ScTrack,
+  YtSearchHit,
+  YtdlpStatus,
   SearchResults,
   TopTrackItem,
   Track,
@@ -209,6 +211,16 @@ export const api = {
     albumOf: Record<string, string>,
     mergeInto: number | null,
   ) => invoke<number>('sc_import_artist', { name, tracks, albumOf, mergeInto }),
+
+  // yt-dlp. The binary path is passed in on every call rather than read in
+  // Rust, so settings stay the single source of truth for it.
+  ytdlpStatus: (configured: string) => invoke<YtdlpStatus>('ytdlp_status', { configured }),
+
+  ytdlpSearch: (configured: string, query: string, limit: number) =>
+    invoke<YtSearchHit[]>('ytdlp_search', { configured, query, limit }),
+
+  ytdlpCache: (configured: string, url: string, key: string) =>
+    invoke<string>('ytdlp_cache', { configured, url, key }),
 
   scGetPlayback: (trackId: string, waitForCache = false) =>
     invoke<{ url: string | null; cachedPath: string | null; format: string | null }>('sc_get_playback', {

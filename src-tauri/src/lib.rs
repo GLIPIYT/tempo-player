@@ -9,6 +9,7 @@ mod soundcloud;
 mod soundcloud_store;
 mod tray;
 mod updater;
+mod ytdlp;
 
 use std::sync::Arc;
 
@@ -116,6 +117,9 @@ pub fn run() {
             commands::sc_import_playlist,
             commands::sc_cache_tracks,
             commands::sc_cache_cancel,
+            commands::ytdlp_status,
+            commands::ytdlp_search,
+            commands::ytdlp_cache,
             commands::sc_artist_releases,
             commands::sc_import_artist,
             commands::sc_stream_url,

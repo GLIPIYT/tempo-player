@@ -33,7 +33,7 @@ const HISTORY_TRACKS_FROM: &str = "listening_history h \
      LEFT JOIN albums al ON al.id = t.album_id \
      LEFT JOIN track_loudness tl ON tl.track_id = t.id";
 
-const TRACK_SEARCH_PRED: &str = r"(t.folder_id IS NOT NULL OR (t.source = 'soundcloud' AND t.cached_at IS NOT NULL)) AND t.search_text LIKE ?1 ESCAPE '\'";
+const TRACK_SEARCH_PRED: &str = r"(t.folder_id IS NOT NULL OR (t.source <> 'local' AND t.cached_at IS NOT NULL)) AND t.search_text LIKE ?1 ESCAPE '\'";
 
 const TRACK_EXACT_TARGET: usize = 25;
 const CATALOG_EXACT_TARGET: usize = 15;
@@ -60,7 +60,7 @@ const PLAYLIST_COLUMNS: &str =
       ORDER BY ptc.added_at DESC, ptc.id DESC LIMIT 1)";
 
 const PLAYLIST_VISIBLE_PRED: &str =
-    "t.folder_id IS NOT NULL OR (t.source = 'soundcloud' AND t.cached_at IS NOT NULL)";
+    "t.folder_id IS NOT NULL OR (t.source <> 'local' AND t.cached_at IS NOT NULL)";
 
 const FOLDER_COLUMNS: &str =
     "f.id, f.path, f.enabled, f.added_at, \
@@ -1135,7 +1135,7 @@ impl Db {
         self.with_conn(|conn| {
             conn.execute(
                 "UPDATE tracks SET cached_at = COALESCE(cached_at, ?1), file_size = ?2 \
-                 WHERE source = 'soundcloud' AND external_id = ?3",
+                 WHERE source <> 'local' AND external_id = ?3",
                 params![now(), size, external_id],
             )
             .map_err(db_err)?;

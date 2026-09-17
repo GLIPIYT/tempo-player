@@ -82,6 +82,17 @@ export interface AppSettings {
      */
     cacheBeforePlay: boolean
   }
+  ytdlp: {
+    /**
+     * Path to a yt-dlp binary. Empty means "look on PATH".
+     *
+     * Deliberately not bundled: YouTube extraction breaks on YouTube's
+     * schedule, and yt-dlp answers within days. Shipping our own copy would
+     * mean a new release of this app every time, plus a Python runtime and a
+     * JS runtime to go with it.
+     */
+    path: string
+  }
   visualizer: {
     style: VisualizerStyle
     /** Bar count. The 64 incoming bins are interpolated up or down to this. */
@@ -123,6 +134,9 @@ export const defaultSettings: AppSettings = {
   // off by default: streaming starts immediately, which is what most people
   // expect from a search result
   soundcloud: { cacheBeforePlay: false },
+  // Empty by default: most people already have yt-dlp on PATH, and asking for
+  // a path before anything works would be a poor first impression.
+  ytdlp: { path: '' },
   // On by default: the band is the whole point of the setting, and it only
   // ever routes the same-origin channel - the same thing normalisation does.
   visualizer: {
@@ -182,8 +196,19 @@ type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? Partial<T[K]> : T
 
 type SettingsPatch = Omit<DeepPartial<AppSettings>, 'theme'> & { theme?: ActiveTheme }
 
-function load(): AppSettings {
-  try {
+/**
+ * The current settings, mirrored at module level for the handful of places
+ * that are not components - the player's track resolution and the provider
+ * registry. They run outside React, and threading a settings object down
+ * through the whole player to reach one string would be worse than this.
+ */
+let currentSettings: AppSettings = defaultSettings
+
+export function getSettings(): AppSettings {
+  return currentSettings
+}
+
+function load(): AppSettings {  try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return defaultSettings
     const parsed = JSON.parse(raw) as SettingsPatch
@@ -217,6 +242,7 @@ function load(): AppSettings {
       system: { ...defaultSettings.system, ...parsed.system },
       audio: { ...defaultSettings.audio, ...parsed.audio },
       soundcloud: { ...defaultSettings.soundcloud, ...parsed.soundcloud },
+      ytdlp: { ...defaultSettings.ytdlp, ...parsed.ytdlp },
       visualizer: clampVisualizer(parsed.visualizer ?? {}),
     }
   } catch {
@@ -236,6 +262,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(load)
 
   useEffect(() => {
+    // Kept in step with the state so the non-React readers above never see a
+    // stale value.
+    currentSettings = settings
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
     } catch {
@@ -264,6 +293,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       system: { ...prev.system, ...patch.system },
       audio: { ...prev.audio, ...patch.audio },
       soundcloud: { ...prev.soundcloud, ...patch.soundcloud },
+      ytdlp: { ...prev.ytdlp, ...patch.ytdlp },
       visualizer: clampVisualizer({ ...prev.visualizer, ...patch.visualizer }),
     }))
   }, [])

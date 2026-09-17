@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Cloud, Ellipsis, ExternalLink, Lock, Plus, Search } from 'lucide-react'
+import { Check, Cloud, Ellipsis, ExternalLink, Lock, Plus, Search, SquarePlay } from 'lucide-react'
 import { api } from '../api/client'
-import type { Playlist, ScArtist, ScPlaylist, ScTrack, SearchResults } from '../types/models'
+import type { Playlist, ScArtist, ScPlaylist, ScTrack, SearchResults, YtSearchHit } from '../types/models'
 import { useSearchQuery } from '../hooks/useSearchQuery'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import TrackList from '../components/common/TrackList'
@@ -14,6 +14,7 @@ import { usePlayer } from '../player'
 import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
 import { scTrackToUnified, scTracksToUnified } from '../utils/unified'
+import { ytHitToUnified, ytdlpPath } from '../providers/youtubeProvider'
 
 type ScStatus = 'idle' | 'loading' | 'error' | 'done'
 
@@ -260,6 +261,8 @@ export default function SearchPage() {
   const [error, setError] = useState<string | null>(null)
   const [scStatus, setScStatus] = useState<ScStatus>('idle')
   const [scTracks, setScTracks] = useState<ScTrack[]>([])
+  const [ytHits, setYtHits] = useState<YtSearchHit[]>([])
+  const [ytStatus, setYtStatus] = useState<ScStatus>('idle')
   const [scPlaylists, setScPlaylists] = useState<ScPlaylist[]>([])
   const [scArtists, setScArtists] = useState<ScArtist[]>([])
   const [tab, setTab] = useState<SearchTab>('all')
@@ -322,6 +325,35 @@ export default function SearchPage() {
         .catch(() => {
           if (cancelled) return
           setScStatus('error')
+        })
+    }, 250)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [trimmed])
+
+  useEffect(() => {
+    if (trimmed.length === 0) {
+      setYtStatus('idle')
+      setYtHits([])
+      return
+    }
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      setYtStatus('loading')
+      // A missing yt-dlp lands in the same place as a failed search: the
+      // section says YouTube is unavailable rather than pretending it is empty.
+      api
+        .ytdlpSearch(ytdlpPath(), trimmed, 20)
+        .then((hits) => {
+          if (cancelled) return
+          setYtHits(hits)
+          setYtStatus('done')
+        })
+        .catch(() => {
+          if (cancelled) return
+          setYtStatus('error')
         })
     }, 250)
     return () => {
@@ -553,6 +585,51 @@ export default function SearchPage() {
 
               {scNote ? <div className="sc-toast">{scNote}</div> : null}
             </>
+          ) : null}
+        </section>
+      ) : null}
+
+      {trimmed.length > 0 ? (
+        <section className="sc-section">
+          <div className="section-label sc-label">
+            <SquarePlay size={13} />
+            <span>{t('YouTube')}</span>
+          </div>
+          {ytStatus === 'loading' ? (
+            <div className="muted sc-status">{t('Searching YouTube…')}</div>
+          ) : ytStatus === 'error' ? (
+            <div className="muted sc-status">{t('YouTube needs yt-dlp')}</div>
+          ) : ytStatus === 'done' && ytHits.length === 0 ? (
+            <div className="muted sc-status">{t('Nothing found on YouTube')}</div>
+          ) : ytStatus === 'done' ? (
+            <div className="sc-list">
+              {ytHits.map((hit) => (
+                <div
+                  key={hit.id}
+                  className="sc-row"
+                  onClick={() => player.playTracks([ytHitToUnified(hit)], 0)}
+                >
+                  <ScArtwork url={hit.thumbnailUrl} title={hit.title} />
+                  <div className="sc-meta">
+                    <span className="sc-title">{hit.title}</span>
+                    <span className="sc-artist">{hit.artist}</span>
+                  </div>
+                  <span className="sc-duration">
+                    {hit.durationMs > 0 ? fmtTime(hit.durationMs / 1000) : '—'}
+                  </span>
+                  <button
+                    className="icon-btn sc-open"
+                    aria-label={t('Open on YouTube')}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      window.open(hit.url, '_blank')
+                    }}
+                  >
+                    <ExternalLink size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
           ) : null}
         </section>
       ) : null}

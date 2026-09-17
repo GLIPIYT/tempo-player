@@ -754,6 +754,78 @@ pub async fn sc_cache_cancel(job_id: String) {
     crate::soundcloud_store::cancel_job(&job_id).await;
 }
 
+// ── yt-dlp ─────────────────────────────────────────────────────────────────
+//
+// Every call takes the configured binary path rather than reading settings in
+// Rust: the path lives in the frontend's settings, and passing it keeps one
+// source of truth instead of two that can disagree.
+
+#[tauri::command]
+pub async fn ytdlp_status(configured: String) -> Result<crate::ytdlp::YtdlpStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::ytdlp::status(&configured))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ytdlp_search(
+    configured: String,
+    query: String,
+    limit: u32,
+) -> Result<Vec<crate::ytdlp::YtSearchHit>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::ytdlp::search(&configured, &query, limit))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Downloads one track's audio and returns where it landed.
+///
+/// The file is the cache: a second request for the same key finds it and
+/// returns immediately, so nothing is downloaded twice.
+#[tauri::command]
+pub async fn ytdlp_cache(
+    state: State<'_, AppState>,
+    configured: String,
+    url: String,
+    key: String,
+) -> Result<String, String> {
+    // The key is a YouTube video id, which is safe as a filename, but it comes
+    // from the frontend so it is still not trusted as a path.
+    let safe: String = key
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if safe.is_empty() {
+        return Err("invalid cache key".to_string());
+    }
+    let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
+    let dir = root.join("yt");
+    let destination = dir.join(&safe);
+
+    // Already downloaded? The extension is whatever yt-dlp chose, so look for
+    // the stem rather than a name we would have to guess.
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        if let Some(found) = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().starts_with(&safe))
+                    .unwrap_or(false)
+            })
+        {
+            return Ok(found.to_string_lossy().to_string());
+        }
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::ytdlp::download(&configured, &url, &destination)
+            .map(|p| p.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// An artist's releases with their tracks, so a cache can bring the albums
 /// along instead of leaving a pile of loose tracks behind.
 #[tauri::command]

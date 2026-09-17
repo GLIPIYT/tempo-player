@@ -1,5 +1,6 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '../api/client'
+import { getSettings } from '../state/settings'
 import type { RepeatMode, UnifiedTrack } from '../types/models'
 import { trackToUnified } from '../utils/unified'
 import { AudioEngine, type AudioChannel } from './engine'
@@ -422,6 +423,22 @@ export class PlayerController {
       // stream has to stay off the graph.
       const channel: AudioChannel = playback.cached || playback.format === 'hls' ? 'local' : 'stream'
       return { url: playback.url, format: playback.format, channel }
+    }
+    if (t.source === 'youtube') {
+      // A googlevideo URL cannot simply be handed to an audio element: it wants
+      // a matching User-Agent, and an element cannot send one. So the track is
+      // fetched to disk first and played from there - which also puts it inside
+      // the audio graph, so the visualiser works on it.
+      try {
+        const file = await api.ytdlpCache(
+          getSettings().ytdlp.path,
+          t.externalUrl ?? `https://www.youtube.com/watch?v=${t.sourceId}`,
+          t.sourceId,
+        )
+        return { url: convertFileSrc(file), format: null, channel: 'local' }
+      } catch {
+        return null
+      }
     }
     return null
   }

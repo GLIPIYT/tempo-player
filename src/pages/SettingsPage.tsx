@@ -43,6 +43,7 @@ import ScanLine from '../components/common/ScanLine'
 import ConfirmModal from '../components/common/ConfirmModal'
 import { toast } from '../components/common/Toast'
 import type { CustomTheme, ThemeTokens } from '../types/theme'
+import type { YtdlpStatus } from '../types/models'
 import { TOKEN_VARS } from '../types/theme'
 import { CUSTOM_DEFAULT_BASE, PRESETS, getPreset } from '../theme/presets'
 import { parseHex, toHex } from '../theme/engine'
@@ -518,6 +519,27 @@ function StorageCard() {
   const info = useAsync(() => api.getCoversCacheInfo(), [])
   const scInfo = useAsync(() => api.scCacheInfo(), [])
   const [confirmOpen, setConfirmOpen] = useState(false)
+
+  // Checked on mount and whenever the path changes: the binary is an external
+  // thing that can be moved, updated or removed between sessions, so the
+  // answer is never cached beyond the current settings.
+  const [ytStatus, setYtStatus] = useState<YtdlpStatus | null>(null)
+  const ytdlpPathValue = settings.ytdlp.path
+  useEffect(() => {
+    let cancelled = false
+    setYtStatus(null)
+    api
+      .ytdlpStatus(ytdlpPathValue)
+      .then((status) => {
+        if (!cancelled) setYtStatus(status)
+      })
+      .catch(() => {
+        if (!cancelled) setYtStatus({ found: false, path: '', version: null })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [ytdlpPathValue])
   const [scConfirmOpen, setScConfirmOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [scBusy, setScBusy] = useState(false)
@@ -621,6 +643,33 @@ function StorageCard() {
         onConfirm={() => void clearCovers()}
         onClose={() => setConfirmOpen(false)}
       />
+      <div className="set-sc-section">
+        <div className="section-label">{t('yt-dlp')}</div>
+        <div className="set-row">
+          <span className="set-row-label">{t('yt-dlp path')}</span>
+          <input
+            className="text-input"
+            value={settings.ytdlp.path}
+            placeholder="yt-dlp"
+            spellCheck={false}
+            onChange={(e) => update({ ytdlp: { path: e.target.value } })}
+          />
+        </div>
+        <div className="set-note" style={{ marginTop: 6 }}>
+          {t('Leave empty to use the one on PATH.')}
+        </div>
+        <div className="muted settings-line" style={{ marginTop: 6 }}>
+          {ytStatus === null
+            ? t('Checking…')
+            : ytStatus.found
+              ? `${t('Found')} · ${ytStatus.version ?? ''}`
+              : t('yt-dlp not found')}
+        </div>
+        <div className="set-note" style={{ marginTop: 6 }}>
+          {t('YouTube playback goes through yt-dlp. It is not bundled: the tool is updated constantly to keep up with YouTube, and shipping our own copy would mean a new release every time it changed.')}
+        </div>
+      </div>
+
       <div className="set-sc-section">
         <div className="section-label">{t('SoundCloud cache')}</div>
         {scInfo.error ? <div className="error-line">{scInfo.error}</div> : null}

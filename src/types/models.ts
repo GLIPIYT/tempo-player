@@ -1,4 +1,4 @@
-export type SourceId = 'local' | 'soundcloud'
+export type SourceId = 'local' | 'soundcloud' | 'youtube'
 
 export interface ScTrack {
   id: string
@@ -37,6 +37,23 @@ export interface ScArtist {
 export interface ScPlaylistDetail {
   playlist: ScPlaylist
   tracks: ScTrack[]
+}
+
+/** What the app knows about the yt-dlp binary the user pointed it at. */
+export interface YtdlpStatus {
+  found: boolean
+  path: string
+  version: string | null
+}
+
+/** One YouTube search result, as yt-dlp reports it. */
+export interface YtSearchHit {
+  id: string
+  title: string
+  artist: string
+  durationMs: number
+  thumbnailUrl: string | null
+  url: string
 }
 
 export interface LibraryFolder {
