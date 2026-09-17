@@ -316,45 +316,56 @@ pub async fn user_playlists(id: &str, limit: u32, offset: u32) -> Result<Vec<ScP
     collection_map(&format!("/users/{id}/playlists"), None, limit, offset, map_playlist).await
 }
 
-/// A playlist's tracks, paged in.
-///
-/// Capped rather than crawled to the end: nobody wants to wait for a
-/// two-thousand track playlist to page in before seeing any of it. Not every
-/// playlist answers this endpoint, so callers fall back to the `tracks` array
-/// the playlist object carries rather than failing outright.
-async fn fetch_playlist_tracks(id: &str, want: u32) -> Result<Vec<ScTrack>, String> {
-    const PAGE: u32 = 200;
-    const CAP: u32 = 600;
-    let want = want.clamp(1, CAP);
-    let mut out: Vec<ScTrack> = Vec::new();
-    let mut offset = 0u32;
-    while (out.len() as u32) < want {
-        let page = collection_map(
-            &format!("/playlists/{id}/tracks"),
-            None,
-            PAGE,
-            offset,
-            map_track,
-        )
-        .await?;
-        if page.is_empty() {
-            break;
-        }
-        let short = page.len() < PAGE as usize;
-        out.extend(page);
-        if short {
-            break;
-        }
-        offset += PAGE;
+/// Strips whatever `client_id` a URL came with, so a fresh one can be appended.
+fn with_client_id(url: &str) -> String {
+    let mut base = url.to_string();
+    if let Some(at) = base.find("client_id=") {
+        base.truncate(at);
+        base = base.trim_end_matches(['?', '&']).to_string();
     }
-    out.truncate(want as usize);
+    let sep = if base.contains('?') { '&' } else { '?' };
+    format!("{base}{sep}client_id=")
+}
+
+/// Walks a collection by following the `next_href` the API hands back.
+///
+/// SoundCloud pages by returning the URL of the next page rather than by taking
+/// an offset, so the href is the only thing that knows the right path and the
+/// right cursor. Guessing at `/playlists/{id}/tracks` is what produced a 404 -
+/// the object's own chain is what actually works.
+async fn follow_track_pages(
+    first: String,
+    want: usize,
+    seed: Vec<ScTrack>,
+) -> Result<Vec<ScTrack>, String> {
+    let mut out = seed;
+    let mut next = first;
+    // a hard stop, so a cycle in the chain cannot spin forever
+    let mut guard = 40;
+    while out.len() < want && !next.is_empty() && guard > 0 {
+        guard -= 1;
+        let base = if next.starts_with("http") {
+            next.clone()
+        } else {
+            format!("{API}{next}")
+        };
+        let json = get_json_with_fresh_client(&with_client_id(&base)).await?;
+        if let Some(collection) = json.get("collection").and_then(|v| v.as_array()) {
+            out.extend(collection.iter().filter_map(map_track));
+        }
+        next = json
+            .get("next_href")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+    }
+    out.truncate(want);
     Ok(out)
 }
 
 /// The tracks carried by a playlist object itself.
 ///
-/// Always present, but truncated once a playlist gets large - which is the
-/// whole reason the paged endpoint exists.
+/// Always present, but only the first page - the rest is behind `next_href`.
 fn embedded_playlist_tracks(json: &Value) -> Vec<ScTrack> {
     json.get("tracks")
         .and_then(|v| v.as_array())
@@ -373,12 +384,18 @@ pub async fn get_playlist(id: &str) -> Result<ScPlaylistDetail, String> {
     let json = get_json_with_fresh_client(&format!("{API}/playlists/{id}?client_id=")).await?;
     let playlist = map_playlist(&json).ok_or_else(|| "that is not a SoundCloud playlist".to_string())?;
 
-    // The object's own `tracks` array is the one source that is always there,
-    // so it is the baseline. The paged endpoint is asked for only when that
-    // came up short, and a refusal from it is not worth failing the page over.
     let mut tracks = embedded_playlist_tracks(&json);
-    if (tracks.len() as u32) < playlist.track_count {
-        if let Ok(more) = fetch_playlist_tracks(id, playlist.track_count).await {
+    // A playlist longer than one page says so with a `next_href`. Without
+    // following it a forty track playlist loads as five, which is exactly what
+    // it did.
+    let next = json
+        .get("next_href")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if !next.is_empty() {
+        let want = playlist.track_count.max(1) as usize;
+        if let Ok(more) = follow_track_pages(next, want, tracks.clone()).await {
             if more.len() > tracks.len() {
                 tracks = more;
             }

@@ -705,7 +705,10 @@ pub fn sc_import_playlist(
 ) -> Result<i64, String> {
     let target = match playlist_id {
         Some(id) => id,
-        None => state.db.create_playlist(&name)?.id,
+        // Unpinned: an imported playlist is not one the user just made, and
+        // pinning it would put it in favorites without being asked. Favoriting
+        // pins it afterwards, deliberately.
+        None => state.db.create_playlist_pinned(&name, false)?.id,
     };
     for track in tracks {
         let track_id = state.db.upsert_sc_track(

@@ -761,17 +761,31 @@ impl Db {
         })
     }
 
+    /// Creates a playlist and pins it, because one the user just made should
+    /// show up in the sidebar.
     pub fn create_playlist(&self, name: &str) -> Result<Playlist, String> {
+        self.create_playlist_pinned(name, true)
+    }
+
+    /// Creates a playlist, optionally without pinning it.
+    ///
+    /// `pinned: false` is for imports. A playlist copied from SoundCloud is not
+    /// one the user just made, and pinning it would drop every cached playlist
+    /// into favorites without anyone asking for that.
+    pub fn create_playlist_pinned(&self, name: &str, pinned: bool) -> Result<Playlist, String> {
         let conn = self.lock_conn()?;
         let ts = now();
         conn.execute(
             "INSERT INTO playlists(name, created_at, updated_at, pinned, pin_order) \
-             VALUES(?1, ?2, ?2, 1, COALESCE((SELECT MAX(pin_order) + 1 FROM playlists WHERE pinned = 1), 0))",
-            params![name, ts],
+             VALUES(?1, ?2, ?2, ?3, \
+             CASE WHEN ?3 = 1 \
+                  THEN COALESCE((SELECT MAX(pin_order) + 1 FROM playlists WHERE pinned = 1), 0) \
+                  ELSE NULL END)",
+            params![name, ts, pinned],
         )
         .map_err(db_err)?;
         let id = conn.last_insert_rowid();
-        let pin_order: i64 = conn
+        let pin_order: Option<i64> = conn
             .query_row("SELECT pin_order FROM playlists WHERE id = ?1", params![id], |row| {
                 row.get(0)
             })
@@ -782,8 +796,8 @@ impl Db {
             created_at: ts,
             updated_at: ts,
             track_count: Some(0),
-            pinned: Some(true),
-            pin_order: Some(pin_order),
+            pinned: Some(pinned),
+            pin_order,
             is_likes: Some(false),
             cover_path: None,
         })
