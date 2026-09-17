@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Cloud, Ellipsis, ExternalLink, Lock, Plus, Search, SquarePlay } from 'lucide-react'
+import { Check, Ellipsis, ExternalLink, Lock, Plus, Search } from 'lucide-react'
 import { api } from '../api/client'
 import type { Playlist, ScArtist, ScPlaylist, ScTrack, SearchResults, YtSearchHit } from '../types/models'
 import { useSearchQuery } from '../hooks/useSearchQuery'
@@ -8,6 +8,7 @@ import TrackList from '../components/common/TrackList'
 import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import ScArtwork from '../components/common/ScArtwork'
+import BrandIcon from '../components/common/BrandIcon'
 import { ScArtistRow, ScPlaylistCard } from '../components/common/ScCards'
 import { useNav } from '../state/nav'
 import { usePlayer } from '../player'
@@ -492,7 +493,7 @@ export default function SearchPage() {
       {trimmed.length > 0 ? (
         <section className="sc-section">
           <div className="section-label sc-label">
-            <Cloud size={13} />
+            <BrandIcon mark="soundcloud" size={14} brand />
             <span>{t('SoundCloud')}</span>
           </div>
           {scStatus === 'loading' ? (
@@ -592,7 +593,7 @@ export default function SearchPage() {
       {trimmed.length > 0 ? (
         <section className="sc-section">
           <div className="section-label sc-label">
-            <SquarePlay size={13} />
+            <BrandIcon mark="youtubemusic" size={14} brand />
             <span>{t('YouTube')}</span>
           </div>
           {ytStatus === 'loading' ? (
