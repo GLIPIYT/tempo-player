@@ -445,6 +445,10 @@ export class PlayerController {
         let album = t.album ?? ''
         let durationSec = t.durationSec
         if (!artist || !album) {
+          // Said out loud, so the player can show that it is looking rather
+          // than claim there is no artist.
+          t.resolving = true
+          this.emit()
           try {
             const extra = await api.ytdlpResolveOne(getSettings().ytdlp.path, t.sourceId)
             if (extra) {
@@ -460,6 +464,11 @@ export class PlayerController {
           } catch {
             // filing without them is better than not filing at all
           }
+          t.resolving = false
+          // The track was changed in place, and React does not see that on its
+          // own - the subscription is what makes the new names appear without
+          // the track being restarted.
+          this.emit()
         }
         // Filed now rather than at download time, so a track that is played is
         // a track that exists - under its artist and in its album, the same way

@@ -9,6 +9,7 @@ import { fmtTime } from '../../utils/format'
 import { trackToUnified } from '../../utils/unified'
 import { toast } from '../common/Toast'
 import Cover from '../common/Cover'
+import { Spinner } from '../common/ScArtwork'
 import WaveProgress from '../common/WaveProgress'
 import QueuePanel from './QueuePanel'
 import PlayerVisualizer from '../player/PlayerVisualizer'
@@ -139,7 +140,13 @@ function PlayerBarContent() {
                   // bar that sits at 0:00 with no explanation.
                   <span className="pb-artist pb-preparing">{t('Preparing…')}</span>
                 ) : (
-                  <span className="pb-artist">{p.currentTrack.artists.join(', ') || t('Unknown artist')}</span>
+                  <span className="pb-artist">
+                    {p.currentTrack.resolving ? (
+                      <Spinner size={10} />
+                    ) : (
+                      p.currentTrack.artists.join(', ') || t('Unknown artist')
+                    )}
+                  </span>
                 )}
               </div>
             </>

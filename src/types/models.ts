@@ -200,6 +200,14 @@ export interface UnifiedTrack {
   gainDb: number | null
   /** appended automatically by queue auto-extend */
   auto?: boolean
+  /**
+   * True while the artist and album are still being looked up.
+   *
+   * A track played from a YouTube search can be in the queue before its names
+   * have resolved, and the player would otherwise say "Unknown artist" at a
+   * track whose artist it simply has not heard yet.
+   */
+  resolving?: boolean
 }
 
 export interface HistoryEntry {
