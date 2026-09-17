@@ -100,6 +100,8 @@ fn binary(configured: &str, bin_dir: &Path) -> Option<PathBuf> {
 }
 
 fn run(path: &Path, args: &[&str], timeout_secs: u64) -> Result<std::process::Output, String> {
+    use std::io::Read;
+
     let mut command = Command::new(path);
     command.args(args);
     command.env("PYTHONIOENCODING", "utf-8");
@@ -113,10 +115,33 @@ fn run(path: &Path, args: &[&str], timeout_secs: u64) -> Result<std::process::Ou
         .spawn()
         .map_err(|e| format!("yt-dlp could not be started: {e}"))?;
 
+    // Both pipes are drained on their own threads.
+    //
+    // Polling `try_wait` while nothing reads them deadlocks the moment the
+    // output exceeds a pipe buffer: the child blocks writing, never exits, and
+    // the wait runs to its timeout. A few hundred bytes of `--print` fit and
+    // hid this for a while; a JSON dump of a few hundred kilobytes does not.
+    let mut out_pipe = child.stdout.take();
+    let out_thread = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        if let Some(pipe) = out_pipe.as_mut() {
+            let _ = pipe.read_to_end(&mut buffer);
+        }
+        buffer
+    });
+    let mut err_pipe = child.stderr.take();
+    let err_thread = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        if let Some(pipe) = err_pipe.as_mut() {
+            let _ = pipe.read_to_end(&mut buffer);
+        }
+        buffer
+    });
+
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) => {
                 if std::time::Instant::now() > deadline {
                     let _ = child.kill();
@@ -126,10 +151,13 @@ fn run(path: &Path, args: &[&str], timeout_secs: u64) -> Result<std::process::Ou
             }
             Err(e) => return Err(format!("yt-dlp could not be waited on: {e}")),
         }
-    }
-    child
-        .wait_with_output()
-        .map_err(|e| format!("yt-dlp output could not be read: {e}"))
+    };
+
+    Ok(std::process::Output {
+        status,
+        stdout: out_thread.join().unwrap_or_default(),
+        stderr: err_thread.join().unwrap_or_default(),
+    })
 }
 
 fn version_of(path: &Path) -> Option<String> {
