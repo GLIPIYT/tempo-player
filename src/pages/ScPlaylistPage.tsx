@@ -1,21 +1,24 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Download, ExternalLink, Lock, Play } from 'lucide-react'
+import { Download, ExternalLink, Lock, Play, Star } from 'lucide-react'
 import { api } from '../api/client'
 import type { ScPlaylistDetail, ScTrack } from '../types/models'
 import ScArtwork from '../components/common/ScArtwork'
+import DetailLayout from '../components/common/DetailLayout'
 import { toast } from '../components/common/Toast'
+import CacheBadge from '../soundcloud/CacheBadge'
 import { useNav } from '../state/nav'
 import { usePlayer } from '../player'
 import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
 import { scTrackToUnified } from '../utils/unified'
-import { requestPlaylistCache } from '../soundcloud/cacheJobs'
+import { favoritePlaylist, requestPlaylistCache } from '../soundcloud/cacheJobs'
 
 /**
  * A SoundCloud playlist or release, read live.
  *
- * Nothing here touches the library - this is the look-before-you-keep view.
- * Caching and favouriting will hang off the header actions in a later stage.
+ * Nothing here reaches the library until it is cached or favorited - this is
+ * the look-before-you-keep view, and the two buttons that change that are in
+ * the side column where they stay put.
  */
 export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
   const t = useT()
@@ -76,14 +79,13 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
     if (index >= 0) player.playTracks(playable.map(scTrackToUnified), index)
   }
 
-  const startCache = async (): Promise<void> => {
+  const run = async (action: () => Promise<'started' | 'asked' | 'empty'>, done: string) => {
     setBusy(true)
     try {
-      const outcome = await requestPlaylistCache(playlist)
+      const outcome = await action()
       if (outcome === 'empty') toast.show(t('Nothing in this playlist can be cached'), 'info')
-      else if (outcome === 'started') toast.show(t('Caching started'))
-      // 'asked' means the name question is up; that dialog reports its own
-      // outcome, so there is nothing to say here.
+      else if (outcome === 'started') toast.show(done)
+      // 'asked' means the name question is up; that dialog reports its own result
     } catch (e) {
       toast.show(e instanceof Error ? e.message : String(e), 'error')
     } finally {
@@ -92,50 +94,59 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
   }
 
   return (
-    <div className="page">
-      <button className="back-link" onClick={() => navigate({ name: 'search' })}>
-        <ArrowLeft size={14} />
-        <span>{t('Back to search')}</span>
-      </button>
-
-      <div className="detail-hero">
-        <div className="sc-hero-art">
+    <DetailLayout
+      onBack={() => navigate({ name: 'search' })}
+      backLabel={t('Back to search')}
+      art={
+        <CacheBadge kind="playlist" scId={playlist.id}>
           <ScArtwork url={playlist.artworkUrl} title={playlist.title} />
-        </div>
-        <div className="detail-hero-info">
-          <div className="section-label">
-            {playlist.isAlbum ? t('Album') : t('Playlist')} · {t('SoundCloud')}
-          </div>
-          <h1 className="detail-title">{playlist.title}</h1>
-          <div className="detail-meta">
-            {playlist.user} · {playlist.trackCount} {t('tracks')}
-          </div>
-          <div className="detail-actions">
+        </CacheBadge>
+      }
+      kind={`${playlist.isAlbum ? t('Album') : t('Playlist')} · ${t('SoundCloud')}`}
+      title={playlist.title}
+      meta={
+        <span>
+          {playlist.user} · {playlist.trackCount} {t('tracks')}
+        </span>
+      }
+      actions={
+        <>
+          <button
+            className="btn btn-primary"
+            disabled={playable.length === 0}
+            onClick={() => playFrom(playable[0] ?? tracks[0])}
+          >
+            <Play size={14} />
+            <span>{t('Play')}</span>
+          </button>
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={() => void run(() => requestPlaylistCache(playlist), t('Caching started'))}
+          >
+            <Download size={14} />
+            <span>{t('Cache playlist')}</span>
+          </button>
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={() => void run(() => favoritePlaylist(playlist), t('Added to favorites'))}
+          >
+            <Star size={14} />
+            <span>{t('Add to favorites')}</span>
+          </button>
+          {playlist.permalinkUrl ? (
             <button
-              className="btn btn-primary"
-              disabled={playable.length === 0}
-              onClick={() => playFrom(playable[0] ?? tracks[0])}
+              className="btn"
+              onClick={() => window.open(playlist.permalinkUrl ?? '', '_blank')}
             >
-              <Play size={14} />
-              <span>{t('Play')}</span>
+              <ExternalLink size={14} />
+              <span>{t('Open on SoundCloud')}</span>
             </button>
-            <button className="btn" disabled={busy} onClick={() => void startCache()}>
-              <Download size={14} />
-              <span>{t('Cache playlist')}</span>
-            </button>
-            {playlist.permalinkUrl ? (
-              <button
-                className="btn"
-                onClick={() => window.open(playlist.permalinkUrl ?? '', '_blank')}
-              >
-                <ExternalLink size={14} />
-                <span>{t('Open on SoundCloud')}</span>
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
+          ) : null}
+        </>
+      }
+    >
       <div className="sc-list">
         {tracks.map((trk) => {
           const playableHere = trk.streamable && (trk.hasProgressive || trk.hasHls)
@@ -157,6 +168,6 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
           )
         })}
       </div>
-    </div>
+    </DetailLayout>
   )
 }

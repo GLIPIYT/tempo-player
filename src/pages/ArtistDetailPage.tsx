@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronLeft, Heart, ImagePlus, Play } from 'lucide-react'
+import { Heart, ImagePlus, Play } from 'lucide-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useNav } from '../state/nav'
@@ -11,6 +11,7 @@ import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { usePlayer } from '../player'
 import { tracksToUnified, trackToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
+import DetailLayout from '../components/common/DetailLayout'
 import CardPlayButton from '../components/common/CardPlayButton'
 import TrackList from '../components/common/TrackList'
 import EmptyState from '../components/common/EmptyState'
@@ -78,90 +79,78 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
   }
 
   return (
-    <div className="page">
-      <button className="back-link" onClick={() => navigate({ name: 'artists' })}>
-        <ChevronLeft size={15} />
-        {t('Artists')}
-      </button>
-
-      <div className="detail-hero detail-hero-rich">
-        {albums[0]?.coverPath ? (
-          <div className="dh-bg" aria-hidden="true">
+    <DetailLayout
+      onBack={() => navigate({ name: 'artists' })}
+      backLabel={t('Artists')}
+      round
+      art={
+        <button
+          className="avatar-edit"
+          title={t('Change image')}
+          disabled={imageBusy}
+          onClick={() => void changeImage()}
+        >
+          {artist.imagePath ? (
             <img
-              className="dh-bg-img"
-              src={convertFileSrc(albums[0].coverPath)}
+              className="profile-avatar"
+              style={{ width: '100%', height: '100%' }}
+              src={convertFileSrc(artist.imagePath)}
               alt=""
               draggable={false}
             />
-            <div className="dh-fade" />
-          </div>
-        ) : null}
-        <div className="dh-fg">
-          <button
-            className="avatar-edit"
-            title={t('Change image')}
-            disabled={imageBusy}
-            onClick={() => void changeImage()}
-          >
-            {artist.imagePath ? (
-              <img
-                className="profile-avatar"
-                style={{ width: 132, height: 132 }}
-                src={convertFileSrc(artist.imagePath)}
-                alt=""
-                draggable={false}
-              />
-            ) : (
-              <Cover label={artist.name} size={132} rounded />
-            )}
-            <span className="avatar-edit-overlay">
-              <ImagePlus size={16} />
-              <span>{t('Change image')}</span>
-            </span>
-          </button>
-          <div className="detail-hero-info">
-            <div className="section-label">{t('Artist')}</div>
-            <h1 className="detail-title">{artist.name}</h1>
-            <div className="detail-meta">
-              <span>
-                {(artist.albumCount ?? albums.length) === 1
-                  ? `${artist.albumCount ?? albums.length} ${t('album')}`
-                  : `${artist.albumCount ?? albums.length} ${t('albums')}`}
-              </span>
-              {artist.trackCount != null ? (
-                <>
-                  <span className="meta-dot">·</span>
-                  <span>{artist.trackCount} {t('tracks')}</span>
-                </>
-              ) : null}
-            </div>
-            {albums.length > 0 || (tracks.data?.length ?? 0) > 0 ? (
-              <div className="detail-actions">
-                <button className="btn btn-primary" onClick={() => void playAll()}>
-                  <Play size={14} />
-                  {t('Play all')}
-                </button>
-                <button
-                  className={'btn' + (fav.data ? ' is-active' : '')}
-                  title={t('Favorite artist')}
-                  onClick={() =>
-                    void api
-                      .toggleFavoriteArtist(artistId)
-                      .then(() => {
-                        fav.reload()
-                        bumpLibraryVersion()
-                      })
-                      .catch(() => {})
-                  }
-                >
-                  <Heart size={14} fill={fav.data ? 'currentColor' : 'none'} />
-                  {fav.data ? t('Remove from favorites') : t('Add to favorites')}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
+          ) : (
+            <Cover label={artist.name} size={232} rounded />
+          )}
+          <span className="avatar-edit-overlay">
+            <ImagePlus size={16} />
+            <span>{t('Change image')}</span>
+          </span>
+        </button>
+      }
+      kind={t('Artist')}
+      title={artist.name}
+      meta={
+        <>
+          <span>
+            {(artist.albumCount ?? albums.length) === 1
+              ? `${artist.albumCount ?? albums.length} ${t('album')}`
+              : `${artist.albumCount ?? albums.length} ${t('albums')}`}
+          </span>
+          {artist.trackCount != null ? (
+            <>
+              <span className="meta-dot">·</span>
+              <span>{artist.trackCount} {t('tracks')}</span>
+            </>
+          ) : null}
+        </>
+      }
+      actions={
+        albums.length > 0 || (tracks.data?.length ?? 0) > 0 ? (
+          <>
+            <button className="btn btn-primary" onClick={() => void playAll()}>
+              <Play size={14} />
+              {t('Play all')}
+            </button>
+            <button
+              className={'btn' + (fav.data ? ' is-active' : '')}
+              title={t('Favorite artist')}
+              onClick={() =>
+                void api
+                  .toggleFavoriteArtist(artistId)
+                  .then(() => {
+                    fav.reload()
+                    bumpLibraryVersion()
+                  })
+                  .catch(() => {})
+              }
+            >
+              <Heart size={14} fill={fav.data ? 'currentColor' : 'none'} />
+              {fav.data ? t('Remove from favorites') : t('Add to favorites')}
+            </button>
+          </>
+        ) : undefined
+      }
+    >
 
       {albums.length === 0 ? (
         <EmptyState title={t('No albums for this artist')} hint={t('Tracks may be filed without album metadata.')} />
@@ -201,6 +190,6 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
           <TrackList tracks={artistTracks} />
         </section>
       ) : null}
-    </div>
+    </DetailLayout>
   )
 }

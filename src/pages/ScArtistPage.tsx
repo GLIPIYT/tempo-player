@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Check, ExternalLink, Lock, Play } from 'lucide-react'
+import { Check, ExternalLink, Lock, Play, Star } from 'lucide-react'
 import { api } from '../api/client'
 import type { ScArtist, ScPlaylist, ScTrack } from '../types/models'
 import ScArtwork from '../components/common/ScArtwork'
+import DetailLayout from '../components/common/DetailLayout'
 import { ScPlaylistCard } from '../components/common/ScCards'
+import { toast } from '../components/common/Toast'
+import CacheBadge from '../soundcloud/CacheBadge'
 import { useNav } from '../state/nav'
 import { usePlayer } from '../player'
 import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
 import { scTrackToUnified } from '../utils/unified'
+import { requestArtistCache } from '../soundcloud/cacheJobs'
 
 /** SoundCloud returns a user's tracks in pages; one page is plenty to look at. */
 const TRACK_LIMIT = 50
@@ -16,7 +20,7 @@ const TRACK_LIMIT = 50
 /**
  * A SoundCloud artist, read live.
  *
- * The track list is capped rather than paged: this is a look-before-you-keep
+ * The track list is capped rather than paged: this is the look-before-you-keep
  * view, and the full crawl belongs to the caching flow, where it can report
  * progress instead of blocking the page.
  */
@@ -29,6 +33,7 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
   const [releases, setReleases] = useState<ScPlaylist[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -84,45 +89,71 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
     if (index >= 0) player.playTracks(playable.map(scTrackToUnified), index)
   }
 
+  const keep = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const outcome = await requestArtistCache(artist)
+      if (outcome === 'empty') toast.show(t('Nothing to cache for this artist'), 'info')
+      else if (outcome === 'started') toast.show(t('Added to favorites'))
+      // 'asked' leaves the track picker on screen; it reports its own result
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : String(e), 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
-    <div className="page">
-      <button className="back-link" onClick={() => navigate({ name: 'search' })}>
-        <ArrowLeft size={14} />
-        <span>{t('Back to search')}</span>
-      </button>
-
-      <div className="detail-hero">
-        <div className="sc-hero-avatar">
+    <DetailLayout
+      onBack={() => navigate({ name: 'search' })}
+      backLabel={t('Back to search')}
+      round
+      art={
+        <CacheBadge kind="artist" scId={artist.id}>
           <ScArtwork url={artist.avatarUrl} title={artist.username} />
-        </div>
-        <div className="detail-hero-info">
-          <div className="section-label">{t('Artist')} · {t('SoundCloud')}</div>
-          <h1 className="detail-title">
-            {artist.username}
-            {artist.verified ? <Check size={18} className="sc-verified" /> : null}
-          </h1>
-          <div className="detail-meta">
+        </CacheBadge>
+      }
+      kind={`${t('Artist')} · ${t('SoundCloud')}`}
+      title={artist.username}
+      meta={
+        <>
+          <span>
             {artist.trackCount} {t('tracks')}
-          </div>
-          <div className="detail-actions">
-            <button
-              className="btn btn-primary"
-              disabled={playable.length === 0}
-              onClick={() => playFrom(playable[0] ?? tracks[0])}
-            >
-              <Play size={14} />
-              <span>{t('Play')}</span>
+          </span>
+          {artist.verified ? (
+            <>
+              <span className="meta-dot">·</span>
+              <span className="sc-verified-line">
+                <Check size={12} />
+                {t('Verified')}
+              </span>
+            </>
+          ) : null}
+        </>
+      }
+      actions={
+        <>
+          <button
+            className="btn btn-primary"
+            disabled={playable.length === 0}
+            onClick={() => playFrom(playable[0] ?? tracks[0])}
+          >
+            <Play size={14} />
+            <span>{t('Play')}</span>
+          </button>
+          <button className="btn" disabled={busy} onClick={() => void keep()}>
+            <Star size={14} />
+            <span>{t('Add to favorites')}</span>
+          </button>
+          {artist.permalinkUrl ? (
+            <button className="btn" onClick={() => window.open(artist.permalinkUrl ?? '', '_blank')}>
+              <ExternalLink size={14} />
+              <span>{t('Open on SoundCloud')}</span>
             </button>
-            {artist.permalinkUrl ? (
-              <button className="btn" onClick={() => window.open(artist.permalinkUrl ?? '', '_blank')}>
-                <ExternalLink size={14} />
-                <span>{t('Open on SoundCloud')}</span>
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
+          ) : null}
+        </>
+      }
+    >
       {tracks.length > 0 ? (
         <>
           <div className="section-label">{t('Tracks')}</div>
@@ -171,6 +202,6 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
           </div>
         </>
       ) : null}
-    </div>
+    </DetailLayout>
   )
 }

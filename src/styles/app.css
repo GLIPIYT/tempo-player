@@ -851,32 +851,20 @@
   vertical-align: -2px;
 }
 
-/* Hero artwork on the live SoundCloud pages. Square for a playlist, round for
-   an artist, both fed by the same remote-image component. */
-.sc-hero-art,
-.sc-hero-avatar {
-  flex: none;
-  overflow: hidden;
-  background: var(--surface);
+.sc-verified-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 
-.sc-hero-art {
-  width: 180px;
-  height: 180px;
-  border-radius: var(--radius);
-}
-
-.sc-hero-avatar {
-  width: 140px;
-  height: 140px;
-  border-radius: 50%;
-}
-
-.sc-hero-art .sc-art,
-.sc-hero-avatar .sc-art {
+/* Shown in the side column when a playlist has no cover of its own. */
+.detail-side-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   height: 100%;
-  border-radius: inherit;
+  color: var(--text-muted);
 }
 
 /* ── Playlist cache progress ──────────────────────────────────────────────
@@ -955,6 +943,91 @@
 .cache-toast-status {
   font-size: 11.5px;
   color: var(--text-muted);
+}
+
+/* ── Detail pages: a sticky side column and a scrolling list ──────────────
+   The cover and the actions stay put while a long track list scrolls, which is
+   the point: on a two-hour playlist the play button should not be a scroll
+   away. */
+.detail-split {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.detail-side {
+  position: sticky;
+  top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-side-art {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.detail-side-art.is-round {
+  border-radius: 50%;
+}
+
+.detail-side-art img,
+.detail-side-art .sc-art {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.detail-side-title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.detail-side-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.detail-side-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.detail-main {
+  min-width: 0;
+}
+
+/* The side column folds above the list when there is no room for two. */
+@media (max-width: 860px) {
+  .detail-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .detail-side {
+    position: static;
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .detail-side-art {
+    width: 96px;
+    flex: none;
+  }
 }
 
 /* ── Cache state on a cover ───────────────────────────────────────────────

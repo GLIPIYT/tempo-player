@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { save } from '@tauri-apps/plugin-dialog'
-import { ChevronLeft, Download, FileDown, ListMusic, Pencil, Play, Star, StarOff, Trash2, X } from 'lucide-react'
+import { Download, FileDown, ListMusic, Pencil, Play, Star, StarOff, Trash2, X } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { useT } from '../i18n'
 import { api } from '../api/client'
@@ -13,6 +13,7 @@ import { fmtTime } from '../utils/format'
 import { trackToUnified } from '../utils/unified'
 import { playlistDisplayName } from '../utils/playlists'
 import Cover from '../components/common/Cover'
+import DetailLayout from '../components/common/DetailLayout'
 import { toast } from '../components/common/Toast'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
@@ -184,88 +185,86 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const isLikes = playlist?.isLikes === true
 
   return (
-    <div className="page">
-      <button className="back-link" onClick={() => navigate({ name: 'playlists' })}>
-        <ChevronLeft size={15} />
-        {t('Playlists')}
-      </button>
-
-      <div className="detail-hero">
-        <div className="playlist-tile playlist-tile-lg">
-          {playlist?.coverPath ? (
-            <Cover path={playlist.coverPath} label={displayName} size={160} />
-          ) : (
+    <DetailLayout
+      onBack={() => navigate({ name: 'playlists' })}
+      backLabel={t('Playlists')}
+      art={
+        playlist?.coverPath ? (
+          <Cover path={playlist.coverPath} label={displayName} size={232} />
+        ) : (
+          <span className="detail-side-fallback">
             <ListMusic size={34} />
-          )}
-        </div>
-        <div className="detail-hero-info">
-          <div className="section-label">{t('Playlist')}</div>
-          <h1 className="detail-title">{displayName}</h1>
-          <div className="detail-meta">
-            <span>
-              {items.length === 1 ? `${items.length} ${t('track')}` : `${items.length} ${t('tracks')}`}
-            </span>
-          </div>
-          <div className="detail-actions">
-            {tracks.length > 0 ? (
+          </span>
+        )
+      }
+      kind={t('Playlist')}
+      title={displayName}
+      meta={
+        <span>
+          {items.length === 1 ? `${items.length} ${t('track')}` : `${items.length} ${t('tracks')}`}
+        </span>
+      }
+      actions={
+        <>
+          {tracks.length > 0 ? (
+            <button
+              className="btn btn-primary"
+              onClick={() => player.playTracks(tracks.map((t) => trackToUnified(t)), 0)}
+            >
+              {t('Play all')}
+            </button>
+          ) : null}
+          {playlist ? (
+            <>
               <button
-                className="btn btn-primary"
-                onClick={() => player.playTracks(tracks.map((t) => trackToUnified(t)), 0)}
+                className="btn"
+                title={playlist.pinned ? t('Remove from favorites') : t('Add to favorites')}
+                onClick={() => void togglePin()}
               >
-                {t('Play all')}
+                {playlist.pinned ? <StarOff size={14} /> : <Star size={14} />}
+                {playlist.pinned ? t('Remove from favorites') : t('Add to favorites')}
               </button>
-            ) : null}
-            {playlist ? (
-              <>
+              <button
+                className="btn"
+                onClick={() => {
+                  setName(playlist.name)
+                  setRenaming(true)
+                }}
+              >
+                <Pencil size={14} />
+                {t('Rename')}
+              </button>
+              <button
+                className="btn"
+                disabled={exportBusy || items.length === 0}
+                title={t('Export playlist (m3u8)')}
+                onClick={() => void exportM3u8()}
+              >
+                <FileDown size={14} />
+                m3u8
+              </button>
+              {isLikes ? (
                 <button
                   className="btn"
-                  title={playlist.pinned ? t('Remove from favorites') : t('Add to favorites')}
-                  onClick={() => void togglePin()}
+                  disabled={downloadBusy || !items.some((it) => it.track.source === 'soundcloud')}
+                  title={t('Download to cache')}
+                  onClick={() => void downloadToCache()}
                 >
-                  {playlist.pinned ? <StarOff size={14} /> : <Star size={14} />}
-                  {playlist.pinned ? t('Remove from favorites') : t('Add to favorites')}
+                  <Download size={14} />
+                  {t('Download to cache')}
                 </button>
-                <button
-                  className="btn"
-                  onClick={() => {
-                    setName(playlist.name)
-                    setRenaming(true)
-                  }}
-                >
-                  <Pencil size={14} />
-                  {t('Rename')}
+              ) : null}
+              {isLikes ? null : (
+                <button className="btn btn-danger" disabled={busy} onClick={() => void destroy()}>
+                  <Trash2 size={14} />
+                  {t('Delete')}
                 </button>
-                <button
-                  className="btn"
-                  disabled={exportBusy || items.length === 0}
-                  title={t('Export playlist (m3u8)')}
-                  onClick={() => void exportM3u8()}
-                >
-                  <FileDown size={14} />
-                  m3u8
-                </button>
-                {isLikes ? (
-                  <button
-                    className="btn"
-                    disabled={downloadBusy || !items.some((it) => it.track.source === 'soundcloud')}
-                    title={t('Download to cache')}
-                    onClick={() => void downloadToCache()}
-                  >
-                    <Download size={14} />
-                    {t('Download to cache')}
-                  </button>
-                ) : null}
-                {isLikes ? null : (
-                  <button className="btn btn-danger" disabled={busy} onClick={() => void destroy()}>
-                    <Trash2 size={14} />
-                    {t('Delete')}
-                  </button>
-                )}
-              </>
-            ) : null}
-          </div>
-        </div>
-      </div>
+              )}
+            </>
+          ) : null}
+        </>
+      }
+    >
 
       {playlistError ? <div className="error-line">{playlistError}</div> : null}
 
@@ -422,6 +421,6 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
           </button>
         </div>
       </Modal>
-    </div>
+    </DetailLayout>
   )
 }
