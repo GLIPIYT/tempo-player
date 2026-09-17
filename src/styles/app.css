@@ -1061,6 +1061,13 @@
   pointer-events: none;
 }
 
+/* The badge also rides the 22px covers in the sidebar, where a full-size
+   percentage would not fit inside the circle. */
+.fav-cover .cache-badge-pct {
+  font-size: 8px;
+  font-weight: 700;
+}
+
 /* ── Track picker ─────────────────────────────────────────────────────── */
 .pick-actions {
   display: flex;

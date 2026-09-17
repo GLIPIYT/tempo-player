@@ -43,6 +43,7 @@ import {
   useDragTargets,
 } from '../../dnd/trackDrag'
 import Cover from '../common/Cover'
+import CacheBadge from '../../soundcloud/CacheBadge'
 import Modal from '../common/Modal'
 import ConfirmModal from '../common/ConfirmModal'
 
@@ -491,7 +492,9 @@ export default function Sidebar() {
         }}
       >
         <span className="fav-cover">
-          <Cover path={f.coverPath ?? null} label={displayName} size={22} />
+          <CacheBadge kind="playlist" scId={null} localId={f.id}>
+            <Cover path={f.coverPath ?? null} label={displayName} size={22} />
+          </CacheBadge>
         </span>
         <span className="fav-name">{displayName}</span>
       </div>
@@ -515,7 +518,9 @@ export default function Sidebar() {
       }}
     >
       <span className="fav-cover">
-        <Cover path={a.imagePath ?? null} label={a.name} size={22} rounded />
+        <CacheBadge kind="artist" scId={null} localId={a.id}>
+          <Cover path={a.imagePath ?? null} label={a.name} size={22} rounded />
+        </CacheBadge>
       </span>
       <span className="fav-name">{a.name}</span>
     </div>

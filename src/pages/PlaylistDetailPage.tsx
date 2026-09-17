@@ -170,6 +170,10 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
     setBusy(true)
     try {
       await api.deletePlaylist(playlistId)
+      // The sidebar's favorites are built from the playlist list, so it has to
+      // be told the list changed - otherwise the deleted playlist sits there
+      // until something unrelated refreshes it.
+      bumpLibraryVersion()
       navigate({ name: 'playlists' })
     } catch (e: unknown) {
       setError(errText(e))

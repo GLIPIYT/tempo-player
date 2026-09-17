@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '../api/client'
+import { bumpLibraryVersion } from '../utils/libraryVersion'
 import type { ScArtist, ScPlaylist, ScTrack } from '../types/models'
 
 /**
@@ -21,6 +22,12 @@ export interface CacheJob {
   kind: CacheKind
   /** The library row it created, once there is one. */
   localId: number | null
+  /**
+   * Whether this job is what put that row there. Cancelling a job that created
+   * its playlist takes the playlist away again; cancelling one that appended to
+   * an existing playlist must not.
+   */
+  created: boolean
   label: string
   done: number
   total: number
@@ -78,6 +85,7 @@ export async function initCacheJobs(): Promise<void> {
         id: p.jobId,
         kind: known?.kind ?? 'playlist',
         localId: known?.localId ?? null,
+        created: known?.created ?? false,
         label: p.label,
         done: p.done,
         total: p.total,
@@ -86,6 +94,17 @@ export async function initCacheJobs(): Promise<void> {
       }
       jobs = known ? jobs.map((job) => (job.id === p.jobId ? next : job)) : [...jobs, next]
       emit()
+
+      if (p.state === 'cancelled' && next.created && next.localId !== null) {
+        // Cancelling means "I did not want this". The playlist only exists
+        // because the job was started, so it goes away with it. Whatever was
+        // already downloaded stays in the cache - it will be reused if the
+        // playlist is cached again.
+        void api
+          .deletePlaylist(next.localId)
+          .then(() => bumpLibraryVersion())
+          .catch(() => undefined)
+      }
       if (p.state !== 'running') {
         window.setTimeout(() => dismissCacheJob(p.jobId), LINGER_MS)
       }
@@ -136,11 +155,22 @@ function startJob(
   localId: number,
   label: string,
   tracks: ScTrack[],
+  created: boolean,
 ): void {
   const id = `${kind}:${scId}`
   jobs = [
     ...jobs.filter((job) => job.id !== id),
-    { id, kind, localId, label, done: 0, total: tracks.length, failed: 0, state: 'running' },
+    {
+      id,
+      kind,
+      localId,
+      created,
+      label,
+      done: 0,
+      total: tracks.length,
+      failed: 0,
+      state: 'running',
+    },
   ]
   emit()
   // Not awaited: the download reports through events, and holding the IPC call
@@ -226,7 +256,10 @@ export async function runPlaylistCache(
     tracks,
     playlistId: into === 'new' ? null : into,
   })
-  startJob('playlist', playlist.id, playlistId, playlist.title, tracks)
+  // The playlist exists from here on, so the lists that show playlists need to
+  // know before the download has finished.
+  bumpLibraryVersion()
+  startJob('playlist', playlist.id, playlistId, playlist.title, tracks, into === 'new')
   return playlistId
 }
 
@@ -279,7 +312,11 @@ export async function favoritePlaylist(playlist: ScPlaylist): Promise<CacheReque
     target = await runPlaylistCache(playlist, plan.tracks, 'new')
   }
   await api.setPlaylistPinned(target, true)
-  if (plan.existing) startJob('playlist', playlist.id, target, playlist.title, plan.tracks)
+  // Pinning is what puts it in the sidebar's favorites, so that list has to be
+  // told - otherwise it only appears on the next unrelated refresh.
+  bumpLibraryVersion()
+  // Appending to something already there: cancelling must not take it away.
+  if (plan.existing) startJob('playlist', playlist.id, target, playlist.title, plan.tracks, false)
   return 'started'
 }
 
@@ -377,7 +414,8 @@ export async function runArtistCache(
     const already = await api.isFavoriteArtist(artistId).catch(() => false)
     if (!already) await api.toggleFavoriteArtist(artistId).catch(() => undefined)
   }
-  startJob('artist', artist.id, artistId, artist.username, tracks)
+  bumpLibraryVersion()
+  startJob('artist', artist.id, artistId, artist.username, tracks, true)
   return artistId
 }
 
