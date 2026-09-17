@@ -66,9 +66,8 @@ fn asset_name() -> &'static str {
     }
 }
 
-/// What the fetched copy is called on disk. Matches the asset so the file is
-/// recognisable, and keeps `.exe` on Windows where it is required to run.
-fn managed_name() -> &'static str {
+/// The file name of the fetched copy.
+fn binary_name() -> &'static str {
     asset_name()
 }
 
@@ -93,7 +92,7 @@ fn binary(configured: &str, bin_dir: &Path) -> Option<PathBuf> {
         // hide the mistake, so nothing is returned and the UI says so.
         return None;
     }
-    let managed = bin_dir.join(managed_name());
+    let managed = bin_dir.join(binary_name());
     if managed.is_file() {
         return Some(managed);
     }
@@ -203,7 +202,7 @@ pub async fn ensure(configured: &str, bin_dir: &Path) -> YtdlpStatus {
         return status(configured, bin_dir, false);
     }
 
-    let managed = bin_dir.join(managed_name());
+    let managed = bin_dir.join(binary_name());
     let current = version_of(&managed);
     let latest = latest_version().await;
 
@@ -363,8 +362,9 @@ fn map_hit(item: &serde_json::Value) -> Option<YtSearchHit> {
 /// Emitted once per track as its metadata resolves.
 pub const ENRICH_EVENT: &str = "ytdlp://enriched";
 
-/// A newline, spelled out so it cannot be mistaken for a line break.
-const NEWLINE: char = '\n';
+/// What yt-dlp is asked to print for each track.
+const TEMPLATE: &str =
+    "%(id)s\u{1f}%(artist,artists.0,uploader)s\u{1f}%(album)s\u{1f}%(duration)s";
 
 /// Separates the fields of one printed row. A unit separator, because it cannot
 /// occur in an artist or an album name and cannot be split by a command line.
@@ -442,98 +442,41 @@ pub fn enrich_streaming(
     job_id: &str,
     ids: &[String],
 ) -> Result<(), String> {
-
     if ids.is_empty() {
         return Ok(());
     }
-    let path = binary(configured, bin_dir).ok_or_else(|| "yt-dlp is not available".to_string())?;
 
-    // Fields are separated by an ASCII unit separator rather than a tab.
-    // Windows splits a command line on tabs as well as spaces, so a tab inside
-    // an argument is a character that can be cut in half on the way to the
-    // process - and this one is passed straight through, being neither.
-    let template = "%(id)s\u{1f}%(artist,artists.0,uploader)s\u{1f}%(album)s\u{1f}%(duration)s";
-    let mut args: Vec<String> = vec![
-        "--no-warnings".into(),
-        "--ignore-errors".into(),
-        "--no-playlist".into(),
-        "--skip-download".into(),
-        "--print".into(),
-        template.into(),
-    ];
-    for id in ids {
-        args.push(format!("https://www.youtube.com/watch?v={id}"));
-    }
-
-    // Output goes to a file, not a pipe.
+    // Sent in small batches through the same helper the search uses.
     //
-    // This is a GUI process: there is no console. Python's stdout against a
-    // pipe in that situation fails with `OSError: [Errno 22] Invalid argument`
-    // from inside its own TextIOWrapper, before yt-dlp has written a thing -
-    // and it does so regardless of PYTHONIOENCODING, which the frozen
-    // interpreter appears not to honour. A file handle is unambiguous and
-    // always valid, so the whole class of problem goes away.
-    let scratch = std::env::temp_dir().join(format!(
-        "tempo-yt-enrich-{}.txt",
-        job_id.replace(|c: char| !c.is_ascii_alphanumeric(), "_")
-    ));
-    let sink_file = std::fs::File::create(&scratch)
-        .map_err(|e| format!("could not open a scratch file: {e}"))?;
-    let err_file = sink_file
-        .try_clone()
-        .map_err(|e| format!("could not share the scratch file: {e}"))?;
-
-    // Kept for the failure message: when a process says nothing, the thing to
-    // look at is what it was asked to do.
-    let command = format!(
-        "{} {}",
-        path.display(),
-        args.iter()
-            .map(|a| a.replace(FIELD, "|").replace(NEWLINE, " "))
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-
-    let mut child = Command::new(&path)
-        .args(&args)
-        // Unbuffered, because Python block-buffers stdout when it is not a
-        // terminal: without this everything is flushed on the way out and the
-        // polling below sees nothing at all until the run is over.
-        .env("PYTHONUNBUFFERED", "1")
-        .env("PYTHONIOENCODING", "utf-8")
-        .env("PYTHONUTF8", "1")
-        .stdin(std::process::Stdio::null())
-        // Both streams into the same file. Whatever yt-dlp has to say - data,
-        // or the reason there is no data - lands in one place that can be read
-        // afterwards, instead of half of it going somewhere nobody looks.
-        .stdout(std::process::Stdio::from(sink_file))
-        .stderr(std::process::Stdio::from(err_file))
-        .spawn()
-        .map_err(|e| format!("yt-dlp could not be started: {e}"))?;
-
-    let pid = child.id();
-    // Registered before anything is read, so a cancel arriving immediately
-    // still finds it.
-    if let Ok(mut map) = running_enrichments().lock() {
-        map.insert(job_id.to_string(), pid);
-    }
-
-    // The scratch file is polled rather than read at the end: results are meant
-    // to appear as they resolve, and reading a file being appended to is safe
-    // to attempt. If it ever fails, the loop simply sees nothing until the end
-    // and this degrades into reading the whole thing at once - it cannot break.
+    // The search is the one call that has always worked, and every attempt to
+    // give the enrichment its own arrangement - a pipe, then a scratch file -
+    // produced a process that exited successfully having said nothing. Rather
+    // than keep inventing, this reuses the arrangement that is known to work.
+    // Four at a time is a compromise: results appear every few seconds instead
+    // of every one, and each batch is small enough that one bad track cannot
+    // hold up the rest for long.
+    const BATCH: usize = 4;
+    // A path set by hand wins here too, exactly as it does everywhere else.
+    let path = binary(configured, bin_dir).ok_or_else(|| "yt-dlp is not available".to_string())?;
     let mut produced = 0usize;
-    let mut consumed = 0usize;
-    let mut pending = String::new();
-    let mut finished = false;
-    while !finished {
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        if let Ok(text) = std::fs::read_to_string(&scratch) {
-            if text.len() > consumed {
-                pending.push_str(&text[consumed..]);
-                consumed = text.len();
-                while let Some(at) = pending.find(NEWLINE) {
-                    let line: String = pending.drain(..=at).collect();
+    let mut complaint = String::new();
+
+    for chunk in ids.chunks(BATCH) {
+        let mut args: Vec<String> = vec![
+            "--no-warnings".into(),
+            "--ignore-errors".into(),
+            "--no-playlist".into(),
+            "--skip-download".into(),
+            "--print".into(),
+            TEMPLATE.into(),
+        ];
+        for id in chunk {
+            args.push(format!("https://www.youtube.com/watch?v={id}"));
+        }
+        let borrowed: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        match run(&path, &borrowed, 300) {
+            Ok(out) => {
+                for line in String::from_utf8_lossy(&out.stdout).lines() {
                     let Some(mut entry) = parse_enrichment(line.trim_end()) else {
                         continue;
                     };
@@ -541,54 +484,26 @@ pub fn enrich_streaming(
                     produced += 1;
                     let _ = app.emit(ENRICH_EVENT, entry);
                 }
+                if !out.status.success() && produced == 0 {
+                    complaint = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                }
             }
+            Err(e) => complaint = e,
         }
-        finished = child.try_wait().map(|s| s.is_some()).unwrap_or(true);
-    }
-
-    let exit = child.wait().map(|s| s.code()).unwrap_or(None);
-
-    // One last look, because the child can flush on its way out after the final
-    // poll has already run. Without this a run that buffers everything until
-    // the end reports that it read nothing at all.
-    if let Ok(text) = std::fs::read_to_string(&scratch) {
-        if text.len() > consumed {
-            pending.push_str(&text[consumed..]);
-        }
-    }
-    for line in pending.lines() {
-        let Some(mut entry) = parse_enrichment(line.trim_end()) else {
-            continue;
-        };
-        entry.job_id = job_id.to_string();
-        produced += 1;
-        let _ = app.emit(ENRICH_EVENT, entry);
-    }
-    let _ = std::fs::remove_file(&scratch);
-
-    if let Ok(mut map) = running_enrichments().lock() {
-        map.remove(job_id);
     }
 
     let error = if produced == 0 {
-        // Everything needed to tell the two cases apart: it said nothing, or it
-        // said something nobody read.
-        let size = std::fs::metadata(&scratch).map(|m| m.len()).unwrap_or(0);
-        let text = std::fs::read_to_string(&scratch).unwrap_or_default();
-        let tail: Vec<&str> = text
+        let tail: Vec<&str> = complaint
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty() && !l.starts_with("Deprecated Feature"))
             .collect();
-        let start = tail.len().saturating_sub(3);
-        let said = if tail.is_empty() {
-            "said nothing".to_string()
+        let start = tail.len().saturating_sub(2);
+        Some(if tail.is_empty() {
+            "yt-dlp read nothing".to_string()
         } else {
-            tail[start..].join(" | ")
-        };
-        Some(format!(
-            "yt-dlp read nothing (exit {exit:?}, {size} bytes): {said} :: {command}"
-        ))
+            format!("yt-dlp read nothing: {}", tail[start..].join(" | "))
+        })
     } else {
         None
     };
