@@ -602,6 +602,7 @@ impl Db {
         album: &str,
         duration_ms: i64,
         artwork_url: Option<&str>,
+        cached_size: Option<i64>,
     ) -> Result<i64, String> {
         let path = format!("youtube://{}", video_id);
         let duration_sec = duration_ms as f64 / 1000.0;
@@ -650,6 +651,19 @@ impl Db {
                 params![artist_id, album_id, track_id],
             )
             .map_err(db_err)?;
+
+            // Without this the track is filed but invisible: the library only
+            // shows external tracks that are cached, which is the rule that
+            // keeps streamed SoundCloud results out of it. A YouTube track has
+            // always been downloaded by the time it is filed, so it belongs in
+            // the library the moment it exists.
+            if let Some(size) = cached_size {
+                conn.execute(
+                    "UPDATE tracks SET cached_at = COALESCE(cached_at, ?1), file_size = ?2                      WHERE id = ?3",
+                    params![now(), size, track_id],
+                )
+                .map_err(db_err)?;
+            }
             Ok(track_id)
         })
     }

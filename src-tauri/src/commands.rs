@@ -21,6 +21,9 @@ pub struct AppState {
     pub backgrounds_dir: PathBuf,
     pub avatars_dir: PathBuf,
     pub sc_cache_dir: PathBuf,
+    /// Kept apart from the SoundCloud cache: clearing one must not delete the
+    /// other's files.
+    pub yt_cache_dir: PathBuf,
     /// Tools the app fetches for itself, currently just yt-dlp.
     pub bin_dir: PathBuf,
 }
@@ -830,6 +833,22 @@ pub async fn ytdlp_enrich_cancel(job_id: String) {
     crate::ytdlp::cancel_enrichment(&job_id);
 }
 
+/// Resolves one track's metadata, for the player to file it under the right
+/// artist and album without waiting for the search to get that far.
+#[tauri::command]
+pub async fn ytdlp_resolve_one(
+    state: State<'_, AppState>,
+    configured: String,
+    video_id: String,
+) -> Result<Option<crate::ytdlp::YtEnrichment>, String> {
+    let bin_dir = state.bin_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::ytdlp::resolve_one(&configured, &bin_dir, &video_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Files a played YouTube track in the library, with its artist and album.
 #[tauri::command]
 pub fn upsert_yt_track(
@@ -840,7 +859,12 @@ pub fn upsert_yt_track(
     album: String,
     duration_ms: i64,
     artwork_url: Option<String>,
+    cached_path: Option<String>,
 ) -> Result<i64, String> {
+    let cached_size = cached_path
+        .as_deref()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .map(|m| m.len() as i64);
     state.db.upsert_yt_track(
         &video_id,
         &title,
@@ -848,6 +872,7 @@ pub fn upsert_yt_track(
         &album,
         duration_ms,
         artwork_url.as_deref(),
+        cached_size,
     )
 }
 
@@ -871,8 +896,7 @@ pub async fn ytdlp_cache(
     if safe.is_empty() {
         return Err("invalid cache key".to_string());
     }
-    let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
-    let dir = root.join("yt");
+    let dir = state.yt_cache_dir.clone();
     let destination = dir.join(&safe);
 
     // Already downloaded? The extension is whatever yt-dlp chose, so look for

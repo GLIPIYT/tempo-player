@@ -542,6 +542,37 @@ pub fn enrich_streaming(
     Ok(())
 }
 
+/// Resolves one track's metadata and hands it back.
+///
+/// The search works through its list in order, so a track near the bottom of it
+/// can be played long before its turn comes - and then it has no artist to be
+/// filed under. The player asks for the track it is about to play directly
+/// instead of waiting, which costs one extraction and fits inside the download
+/// that is happening anyway.
+pub fn resolve_one(
+    configured: &str,
+    bin_dir: &Path,
+    id: &str,
+) -> Result<Option<YtEnrichment>, String> {
+    let path = binary(configured, bin_dir).ok_or_else(|| "yt-dlp is not available".to_string())?;
+    let url = format!("https://www.youtube.com/watch?v={id}");
+    let out = run(
+        &path,
+        &[
+            "--no-warnings",
+            "--ignore-errors",
+            "--no-playlist",
+            "--skip-download",
+            "--dump-json",
+            &url,
+        ],
+        120,
+    )?;
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|line| parse_json_entry(line.trim(), "")))
+}
+
 /// One `--dump-json` line, reduced to what the rows need.
 fn parse_json_entry(line: &str, job_id: &str) -> Option<YtEnrichment> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;

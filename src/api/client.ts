@@ -20,6 +20,7 @@ import type {
   ScPlaylist,
   ScPlaylistDetail,
   ScTrack,
+  YtEnrichment,
   YtSearchHit,
   YtdlpStatus,
   SearchResults,
@@ -237,6 +238,14 @@ export const api = {
 
   ytdlpEnrichCancel: (jobId: string) => invoke<void>('ytdlp_enrich_cancel', { jobId }),
 
+  /**
+   * Resolves one track's metadata, so the player can file it under the right
+   * artist and album without waiting for the search to reach that far down the
+   * list.
+   */
+  ytdlpResolveOne: (configured: string, videoId: string) =>
+    invoke<YtEnrichment | null>('ytdlp_resolve_one', { configured, videoId }),
+
   /** Files a played YouTube track, with the artist and album it came from. */
   upsertYtTrack: (payload: {
     videoId: string
@@ -245,6 +254,7 @@ export const api = {
     album: string
     durationMs: number
     artworkUrl: string | null
+    cachedPath: string | null
   }) => invoke<number>('upsert_yt_track', payload),
 
   scGetPlayback: (trackId: string, waitForCache = false) =>

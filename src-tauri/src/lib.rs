@@ -46,6 +46,7 @@ pub fn run() {
             let backgrounds_dir = data_dir.join("backgrounds");
             let avatars_dir = data_dir.join("avatars");
             let sc_cache_dir = data_dir.join("sc_cache");
+            let yt_cache_dir = data_dir.join("yt_cache");
             // Where the app keeps the tools it fetches for itself. Data, not
             // cache: losing it would mean a re-download for no reason.
             let bin_dir = data_dir.join("bin");
@@ -54,6 +55,7 @@ pub fn run() {
             std::fs::create_dir_all(&backgrounds_dir)?;
             std::fs::create_dir_all(&avatars_dir)?;
             std::fs::create_dir_all(&sc_cache_dir)?;
+            std::fs::create_dir_all(&yt_cache_dir)?;
             std::fs::create_dir_all(&bin_dir)?;
             let db = database::Db::open_at(&data_dir.join("tempo.db"))?;
             app.manage(commands::AppState {
@@ -63,6 +65,7 @@ pub fn run() {
                 backgrounds_dir,
                 avatars_dir,
                 sc_cache_dir,
+                yt_cache_dir,
                 bin_dir,
             });
             let handle = app.handle().clone();
@@ -129,6 +132,7 @@ pub fn run() {
             commands::ytdlp_enrich_cancel,
             commands::ytdlp_cache,
             commands::upsert_yt_track,
+            commands::ytdlp_resolve_one,
             commands::sc_artist_releases,
             commands::sc_import_artist,
             commands::sc_stream_url,

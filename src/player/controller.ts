@@ -437,6 +437,30 @@ export class PlayerController {
           t.externalUrl ?? `https://www.youtube.com/watch?v=${t.sourceId}`,
           t.sourceId,
         )
+        // The search enriches its list in order, so a track can be played long
+        // before its turn comes - and then it has no artist to be filed under.
+        // Asking for this one directly costs an extraction and a half, which is
+        // less than the download that just happened.
+        let artist = t.artists[0] ?? ''
+        let album = t.album ?? ''
+        let durationSec = t.durationSec
+        if (!artist || !album) {
+          try {
+            const extra = await api.ytdlpResolveOne(getSettings().ytdlp.path, t.sourceId)
+            if (extra) {
+              artist = extra.artist ?? artist
+              album = extra.album ?? album
+              durationSec = extra.durationMs != null ? extra.durationMs / 1000 : durationSec
+              // Written back so the queue, the player and anything else looking
+              // at this track see the names too.
+              t.artists = artist ? [artist] : t.artists
+              t.album = album || t.album
+              t.durationSec = durationSec
+            }
+          } catch {
+            // filing without them is better than not filing at all
+          }
+        }
         // Filed now rather than at download time, so a track that is played is
         // a track that exists - under its artist and in its album, the same way
         // a SoundCloud track is.
@@ -444,10 +468,12 @@ export class PlayerController {
           t.dbId = await api.upsertYtTrack({
             videoId: t.sourceId,
             title: t.title,
-            artist: t.artists[0] ?? '',
-            album: t.album ?? '',
-            durationMs: Math.round((t.durationSec ?? 0) * 1000),
+            artist,
+            album,
+            durationMs: Math.round((durationSec ?? 0) * 1000),
             artworkUrl: /^https?:\/\//.test(t.coverPath ?? '') ? t.coverPath : null,
+            // Its presence is what puts the track in the library at all.
+            cachedPath: file,
           })
           bumpLibraryVersion()
         } catch {
