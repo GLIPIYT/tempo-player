@@ -740,11 +740,10 @@ export default function SearchPage() {
                   className="sc-row"
                   onClick={() => player.playTracks([ytHitToUnified(hit)], 0)}
                 >
-                  <ScArtwork
-                    url={hit.thumbnailUrl}
-                    title={hit.title}
-                    pending={ytPending.has(hit.id)}
-                  />
+                  {/* Deliberately not `pending`: the cover comes from the
+                      video id and needs no extraction, so it should never wait
+                      on one. It shows its own loading ring and nothing else. */}
+                  <ScArtwork url={hit.thumbnailUrl} title={hit.title} />
                   <div className="sc-meta">
                     <span className="sc-title">{hit.title}</span>
                     <span className="sc-artist">

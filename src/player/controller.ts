@@ -1,6 +1,7 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '../api/client'
 import { getSettings } from '../state/settings'
+import { toast } from '../components/common/Toast'
 import type { RepeatMode, UnifiedTrack } from '../types/models'
 import { trackToUnified } from '../utils/unified'
 import { AudioEngine, type AudioChannel } from './engine'
@@ -436,7 +437,10 @@ export class PlayerController {
           t.sourceId,
         )
         return { url: convertFileSrc(file), format: null, channel: 'local' }
-      } catch {
+      } catch (e) {
+        // Silent here would mean a track that simply never plays, with nothing
+        // anywhere to say why.
+        toast.show(e instanceof Error ? e.message : String(e), 'error')
         return null
       }
     }
