@@ -106,6 +106,9 @@ fn run(path: &Path, args: &[&str], timeout_secs: u64) -> Result<std::process::Ou
     command.env("PYTHONIOENCODING", "utf-8");
 
     let mut child = command
+        // A GUI process has no console, so there is no stdin to hand over;
+        // passing on an invalid handle is what Python complains about.
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -453,10 +456,17 @@ pub fn enrich_streaming(
         args.push(format!("https://www.youtube.com/watch?v={id}"));
     }
 
-    // stderr is kept, not discarded: a run that produces no output at all has
-    // to be able to say why, and the alternative is rows that wait forever.
     let mut child = Command::new(&path)
         .args(&args)
+        // Both of these are the difference between working and an immediate
+        // `OSError: [Errno 22]` from Python, and neither is obvious.
+        //
+        // The encoding: this is a GUI process with no console, and without it
+        // the frozen interpreter picks an output encoding that cannot write to
+        // a pipe. The stdin: there is no console handle to inherit, so passing
+        // one on is passing on something invalid.
+        .env("PYTHONIOENCODING", "utf-8")
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -468,6 +478,23 @@ pub fn enrich_streaming(
     if let Ok(mut map) = running_enrichments().lock() {
         map.insert(job_id.to_string(), pid);
     }
+
+    // Drained on its own thread rather than after the loop: a full stderr pipe
+    // blocks the child, and waiting until stdout ends to read it is how that
+    // turns into a hang.
+    let complaint = std::sync::Arc::new(Mutex::new(String::new()));
+    let sink = std::sync::Arc::clone(&complaint);
+    let mut err_pipe = child.stderr.take();
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        if let Some(pipe) = err_pipe.as_mut() {
+            let mut text = String::new();
+            let _ = pipe.read_to_string(&mut text);
+            if let Ok(mut slot) = sink.lock() {
+                *slot = text;
+            }
+        }
+    });
 
     let stdout = child
         .stdout
@@ -484,23 +511,28 @@ pub fn enrich_streaming(
         let _ = app.emit(ENRICH_EVENT, entry);
     }
 
-    // Read before waiting: the pipe would otherwise fill and block the child.
-    let mut complaint = String::new();
-    if let Some(mut err) = child.stderr.take() {
-        use std::io::Read;
-        let _ = err.read_to_string(&mut complaint);
-    }
     let _ = child.wait();
+    let _ = reader.join();
 
     if let Ok(mut map) = running_enrichments().lock() {
         map.remove(job_id);
     }
 
     let error = if produced == 0 {
-        let last = complaint.lines().filter(|l| !l.trim().is_empty()).last();
-        Some(match last {
-            Some(line) => format!("yt-dlp read nothing: {line}"),
-            None => "yt-dlp read nothing".to_string(),
+        let text = complaint.lock().map(|t| t.clone()).unwrap_or_default();
+        // The tail rather than the last line: a Python traceback ends on the
+        // exception, but the useful part is the few lines above it.
+        let tail: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with("Deprecated Feature"))
+            .collect();
+        let start = tail.len().saturating_sub(3);
+        Some(match tail.get(start..) {
+            Some(lines) if !lines.is_empty() => {
+                format!("yt-dlp read nothing: {}", lines.join(" | "))
+            }
+            _ => "yt-dlp read nothing".to_string(),
         })
     } else {
         None
