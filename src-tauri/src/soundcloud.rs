@@ -91,7 +91,10 @@ async fn get_json(url: &str) -> Result<Value, String> {
         .map_err(|e| format!("request failed: {e}"))?;
     let status = resp.status();
     if status.is_client_error() {
-        return Err(format!("SC_CLIENT_ERROR {}", status.as_u16()));
+        // The path is named so a failure says *which* endpoint refused, and the
+        // query is dropped because it carries the client id.
+        let path = url.split('?').next().unwrap_or(url);
+        return Err(format!("SC_CLIENT_ERROR {} {path}", status.as_u16()));
     }
     resp.error_for_status()
         .map_err(|e| format!("soundcloud api: {e}"))?
@@ -315,10 +318,10 @@ pub async fn user_playlists(id: &str, limit: u32, offset: u32) -> Result<Vec<ScP
 
 /// A playlist's tracks, paged in.
 ///
-/// The playlist object itself carries a `tracks` array, but it is truncated for
-/// anything of size, so the paged endpoint is the only reliable source. Capped
-/// rather than crawled to the end: nobody wants to wait for a two-thousand
-/// track playlist to page in before seeing any of it.
+/// Capped rather than crawled to the end: nobody wants to wait for a
+/// two-thousand track playlist to page in before seeing any of it. Not every
+/// playlist answers this endpoint, so callers fall back to the `tracks` array
+/// the playlist object carries rather than failing outright.
 async fn fetch_playlist_tracks(id: &str, want: u32) -> Result<Vec<ScTrack>, String> {
     const PAGE: u32 = 200;
     const CAP: u32 = 600;
@@ -348,6 +351,17 @@ async fn fetch_playlist_tracks(id: &str, want: u32) -> Result<Vec<ScTrack>, Stri
     Ok(out)
 }
 
+/// The tracks carried by a playlist object itself.
+///
+/// Always present, but truncated once a playlist gets large - which is the
+/// whole reason the paged endpoint exists.
+fn embedded_playlist_tracks(json: &Value) -> Vec<ScTrack> {
+    json.get("tracks")
+        .and_then(|v| v.as_array())
+        .map(|list| list.iter().filter_map(map_track).collect())
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScPlaylistDetail {
@@ -358,24 +372,36 @@ pub struct ScPlaylistDetail {
 pub async fn get_playlist(id: &str) -> Result<ScPlaylistDetail, String> {
     let json = get_json_with_fresh_client(&format!("{API}/playlists/{id}?client_id=")).await?;
     let playlist = map_playlist(&json).ok_or_else(|| "that is not a SoundCloud playlist".to_string())?;
-    let tracks = fetch_playlist_tracks(id, playlist.track_count).await?;
+
+    // The object's own `tracks` array is the one source that is always there,
+    // so it is the baseline. The paged endpoint is asked for only when that
+    // came up short, and a refusal from it is not worth failing the page over.
+    let mut tracks = embedded_playlist_tracks(&json);
+    if (tracks.len() as u32) < playlist.track_count {
+        if let Ok(more) = fetch_playlist_tracks(id, playlist.track_count).await {
+            if more.len() > tracks.len() {
+                tracks = more;
+            }
+        }
+    }
     Ok(ScPlaylistDetail { playlist, tracks })
 }
 
-/// An artist's releases, each with its full track list.
+/// An artist's releases, each with its track list.
 ///
-/// N+1 by nature - a playlist object only carries a truncated track array, so
-/// every release has to be asked for separately - and capped, because an artist
-/// with a hundred releases should not turn one action into a hundred round
-/// trips. A release that fails to load is skipped rather than failing the lot.
+/// N+1 by nature, and capped, because an artist with a hundred releases should
+/// not turn one action into a hundred round trips. A release that fails to load
+/// is skipped rather than failing the lot.
 pub async fn user_releases_with_tracks(id: &str) -> Result<Vec<ScPlaylistDetail>, String> {
     const MAX_RELEASES: usize = 20;
     let releases = user_playlists(id, 50, 0).await?;
     let mut out = Vec::new();
     for release in releases.into_iter().take(MAX_RELEASES) {
-        let want = release.track_count.max(1);
-        if let Ok(tracks) = fetch_playlist_tracks(&release.id, want).await {
-            out.push(ScPlaylistDetail { playlist: release, tracks });
+        // Reuses the resilient path above rather than paging directly, so a
+        // release whose paged endpoint is unavailable still arrives with the
+        // tracks its object carries.
+        if let Ok(detail) = get_playlist(&release.id).await {
+            out.push(detail);
         }
     }
     Ok(out)

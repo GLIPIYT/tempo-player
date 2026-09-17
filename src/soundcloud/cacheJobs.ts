@@ -323,6 +323,8 @@ export interface PendingArtistChoice {
   plan: ArtistCachePlan
   /** Local artists whose name looks like this one, offered for merging. */
   mergeCandidates: { id: number; name: string }[]
+  /** Whether this request also meant "add to favorites". */
+  favorite: boolean
 }
 
 let pendingArtist: PendingArtistChoice | null = null
@@ -353,13 +355,16 @@ export function dismissArtistChoice(): void {
  * Imports the chosen tracks and starts downloading them.
  *
  * `mergeInto` files them under an existing local artist instead of creating one
- * named after the SoundCloud account.
+ * named after the SoundCloud account. `favorite` only ever adds: an artist that
+ * is already in favorites stays there, which matters because re-caching one is
+ * the normal way to pick up tracks that were added later.
  */
 export async function runArtistCache(
   artist: ScArtist,
   tracks: ScTrack[],
   albumOf: Record<string, string>,
   mergeInto: number | null,
+  favorite: boolean,
 ): Promise<number> {
   const artistId = await invoke<number>('sc_import_artist', {
     name: artist.username,
@@ -367,7 +372,11 @@ export async function runArtistCache(
     albumOf,
     mergeInto,
   })
-  await api.toggleFavoriteArtist(artistId).catch(() => undefined)
+  if (favorite) {
+    // `toggleFavoriteArtist` would *remove* an artist that is already there.
+    const already = await api.isFavoriteArtist(artistId).catch(() => false)
+    if (!already) await api.toggleFavoriteArtist(artistId).catch(() => undefined)
+  }
   startJob('artist', artist.id, artistId, artist.username, tracks)
   return artistId
 }
@@ -375,21 +384,29 @@ export async function runArtistCache(
 export type ArtistRequestOutcome = 'started' | 'asked' | 'empty'
 
 /**
- * Adds an artist to favorites, keeping their tracks.
+ * Keeps an artist's tracks, and optionally favorites them.
  *
  * A short catalogue is taken whole; a long one asks first, because caching
  * everything an artist ever posted is rarely what was meant.
  */
-export async function requestArtistCache(artist: ScArtist): Promise<ArtistRequestOutcome> {
+export async function requestArtistCache(
+  artist: ScArtist,
+  favorite: boolean,
+): Promise<ArtistRequestOutcome> {
   const plan = await planArtistCache(artist)
   if (plan.tracks.length === 0) return 'empty'
   if (plan.needsPicker) {
     const local = await api.listArtists('').catch(() => [])
-    pendingArtist = { artist, plan, mergeCandidates: suggestMerges(artist.username, local) }
+    pendingArtist = {
+      artist,
+      plan,
+      mergeCandidates: suggestMerges(artist.username, local),
+      favorite,
+    }
     emitArtist()
     return 'asked'
   }
-  await runArtistCache(artist, plan.tracks, plan.albumOf, null)
+  await runArtistCache(artist, plan.tracks, plan.albumOf, null, favorite)
   return 'started'
 }
 
@@ -402,7 +419,7 @@ export async function resolveArtistChoice(
   if (!pending) return
   pendingArtist = null
   emitArtist()
-  await runArtistCache(pending.artist, selected, pending.plan.albumOf, mergeInto)
+  await runArtistCache(pending.artist, selected, pending.plan.albumOf, mergeInto, pending.favorite)
 }
 
 /**

@@ -92,7 +92,7 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
   const keep = async (): Promise<void> => {
     setBusy(true)
     try {
-      const outcome = await requestArtistCache(artist)
+      const outcome = await requestArtistCache(artist, true)
       if (outcome === 'empty') toast.show(t('Nothing to cache for this artist'), 'info')
       else if (outcome === 'started') toast.show(t('Added to favorites'))
       // 'asked' leaves the track picker on screen; it reports its own result

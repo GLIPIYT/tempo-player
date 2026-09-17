@@ -89,11 +89,14 @@ export function ScArtistRow({ artist }: { artist: ScArtist }) {
   const t = useT()
   const { navigate } = useNav()
 
-  const keep = (): void => {
+  const keep = (favorite: boolean): void => {
     report(
-      requestArtistCache(artist).then((outcome) => {
-        if (outcome === 'started') toast.show(t('Added to favorites'))
-        else if (outcome === 'empty') toast.show(t('Nothing to cache for this artist'), 'info')
+      requestArtistCache(artist, favorite).then((outcome) => {
+        if (outcome === 'started') {
+          toast.show(favorite ? t('Added to favorites') : t('Caching started'))
+        } else if (outcome === 'empty') {
+          toast.show(t('Nothing to cache for this artist'), 'info')
+        }
         // 'asked' leaves the track picker on screen; it reports its own result
       }),
     )
@@ -102,7 +105,18 @@ export function ScArtistRow({ artist }: { artist: ScArtist }) {
   const onContextMenu = (e: MouseEvent): void => {
     e.preventDefault()
     const items: ContextMenuItem[] = [
-      { id: 'keep', label: t('Add to favorites'), icon: <Star size={13} />, onSelect: keep },
+      {
+        id: 'cache',
+        label: t('Cache artist'),
+        icon: <Download size={13} />,
+        onSelect: () => keep(false),
+      },
+      {
+        id: 'fav',
+        label: t('Add to favorites'),
+        icon: <Star size={13} />,
+        onSelect: () => keep(true),
+      },
     ]
     if (artist.permalinkUrl) {
       items.push({

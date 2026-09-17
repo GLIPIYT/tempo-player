@@ -462,6 +462,7 @@ export const ru: Record<string, string> = {
   Cache: 'Кэшировать',
   'Added to favorites': 'Добавлено в избранное',
   'Nothing to cache for this artist': 'У этого артиста нечего кэшировать',
+  'Cache artist': 'Кэшировать артиста',
   'Downloads a track in full before starting it. The first play waits, but the track then plays from disk instead of streaming, which is what lets it show a spectrum.':
     'Скачивает трек целиком до начала воспроизведения. Первый запуск придётся подождать, зато дальше трек играет с диска, а не потоком — именно поэтому на нём появляется спектр.',
   Updates: 'Обновления',
