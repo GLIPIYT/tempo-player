@@ -362,14 +362,6 @@ fn map_hit(item: &serde_json::Value) -> Option<YtSearchHit> {
 /// Emitted once per track as its metadata resolves.
 pub const ENRICH_EVENT: &str = "ytdlp://enriched";
 
-/// What yt-dlp is asked to print for each track.
-const TEMPLATE: &str =
-    "%(id)s\u{1f}%(artist,artists.0,uploader)s\u{1f}%(album)s\u{1f}%(duration)s";
-
-/// Separates the fields of one printed row. A unit separator, because it cannot
-/// occur in an artist or an album name and cannot be split by a command line.
-const FIELD: char = '\u{1f}';
-
 /// Emitted when an enrichment stops, however it stopped.
 ///
 /// The caller is waiting on one event per track, so without this a run that
@@ -467,8 +459,14 @@ pub fn enrich_streaming(
             "--ignore-errors".into(),
             "--no-playlist".into(),
             "--skip-download".into(),
-            "--print".into(),
-            TEMPLATE.into(),
+            // JSON rather than `--print`.
+            //
+            // `--print` writes in the system code page, so on a Russian Windows
+            // every Cyrillic artist came back as question marks - while titles,
+            // which arrive as JSON from the search, were fine. That asymmetry
+            // was the whole clue. JSON is UTF-8 and the extraction costs the
+            // same either way.
+            "--dump-json".into(),
         ];
         for id in chunk {
             args.push(format!("https://www.youtube.com/watch?v={id}"));
@@ -477,10 +475,9 @@ pub fn enrich_streaming(
         match run(&path, &borrowed, 300) {
             Ok(out) => {
                 for line in String::from_utf8_lossy(&out.stdout).lines() {
-                    let Some(mut entry) = parse_enrichment(line.trim_end()) else {
+                    let Some(entry) = parse_json_entry(line.trim(), job_id) else {
                         continue;
                     };
-                    entry.job_id = job_id.to_string();
                     produced += 1;
                     let _ = app.emit(ENRICH_EVENT, entry);
                 }
@@ -517,29 +514,39 @@ pub fn enrich_streaming(
     Ok(())
 }
 
-/// One `--print` line: id, artist, album, duration, tab separated.
-fn parse_enrichment(line: &str) -> Option<YtEnrichment> {
-    let mut parts = line.split(FIELD);
-    let id = parts.next()?.trim();
-    if id.is_empty() {
-        return None;
-    }
-    // yt-dlp writes NA for anything it could not find.
-    let field = |v: Option<&str>| -> Option<String> {
-        match v.map(str::trim) {
-            Some(s) if !s.is_empty() && s != "NA" => Some(s.to_string()),
-            _ => None,
-        }
+/// One `--dump-json` line, reduced to what the rows need.
+fn parse_json_entry(line: &str, job_id: &str) -> Option<YtEnrichment> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let id = value.get("id").and_then(|v| v.as_str())?.to_string();
+
+    let text = |v: Option<&serde_json::Value>| -> Option<String> {
+        v.and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
     };
-    let artist = field(parts.next());
-    let album = field(parts.next());
-    let duration_ms = parts
-        .next()
-        .and_then(|v| v.trim().parse::<f64>().ok())
+    // The music-specific field first, then the list, then the channel: a
+    // YouTube Music result carries the first two, a plain video only the last.
+    let artist = text(value.get("artist"))
+        .or_else(|| {
+            value
+                .get("artists")
+                .and_then(|v| v.as_array())
+                .and_then(|list| list.first())
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .or_else(|| text(value.get("uploader")))
+        .or_else(|| text(value.get("channel")));
+    let album = text(value.get("album"));
+    let duration_ms = value
+        .get("duration")
+        .and_then(|v| v.as_f64())
         .map(|sec| (sec * 1000.0) as i64);
+
     Some(YtEnrichment {
-        job_id: String::new(),
-        id: id.to_string(),
+        job_id: job_id.to_string(),
+        id,
         artist,
         album,
         duration_ms,
