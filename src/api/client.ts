@@ -216,6 +216,9 @@ export const api = {
   // Rust, so settings stay the single source of truth for it.
   ytdlpStatus: (configured: string) => invoke<YtdlpStatus>('ytdlp_status', { configured }),
 
+  /** Fetches the app's own copy, or refreshes it when GitHub has a newer one. */
+  ytdlpEnsure: (configured: string) => invoke<YtdlpStatus>('ytdlp_ensure', { configured }),
+
   ytdlpSearch: (configured: string, query: string, limit: number) =>
     invoke<YtSearchHit[]>('ytdlp_search', { configured, query, limit }),
 

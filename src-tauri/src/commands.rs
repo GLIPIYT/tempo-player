@@ -21,6 +21,8 @@ pub struct AppState {
     pub backgrounds_dir: PathBuf,
     pub avatars_dir: PathBuf,
     pub sc_cache_dir: PathBuf,
+    /// Tools the app fetches for itself, currently just yt-dlp.
+    pub bin_dir: PathBuf,
 }
 
 const SCAN_EVENT: &str = "scan://progress";
@@ -761,21 +763,45 @@ pub async fn sc_cache_cancel(job_id: String) {
 // source of truth instead of two that can disagree.
 
 #[tauri::command]
-pub async fn ytdlp_status(configured: String) -> Result<crate::ytdlp::YtdlpStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::ytdlp::status(&configured))
-        .await
-        .map_err(|e| e.to_string())
+pub async fn ytdlp_status(
+    state: State<'_, AppState>,
+    configured: String,
+) -> Result<crate::ytdlp::YtdlpStatus, String> {
+    let bin_dir = state.bin_dir.clone();
+    let managed = configured.trim().is_empty();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::ytdlp::status(&configured, &bin_dir, managed)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Fetches the app's own copy, or refreshes it when GitHub has a newer one.
+///
+/// Called on startup. A path set by hand is left alone: that one belongs to
+/// whoever set it.
+#[tauri::command]
+pub async fn ytdlp_ensure(
+    state: State<'_, AppState>,
+    configured: String,
+) -> Result<crate::ytdlp::YtdlpStatus, String> {
+    let bin_dir = state.bin_dir.clone();
+    Ok(crate::ytdlp::ensure(&configured, &bin_dir).await)
 }
 
 #[tauri::command]
 pub async fn ytdlp_search(
+    state: State<'_, AppState>,
     configured: String,
     query: String,
     limit: u32,
 ) -> Result<Vec<crate::ytdlp::YtSearchHit>, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::ytdlp::search(&configured, &query, limit))
-        .await
-        .map_err(|e| e.to_string())?
+    let bin_dir = state.bin_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::ytdlp::search(&configured, &bin_dir, &query, limit)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Downloads one track's audio and returns where it landed.
@@ -818,8 +844,9 @@ pub async fn ytdlp_cache(
         }
     }
 
+    let bin_dir = state.bin_dir.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::ytdlp::download(&configured, &url, &destination)
+        crate::ytdlp::download(&configured, &bin_dir, &url, &destination)
             .map(|p| p.to_string_lossy().to_string())
     })
     .await

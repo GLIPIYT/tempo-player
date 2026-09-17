@@ -471,6 +471,11 @@ export const ru: Record<string, string> = {
   'Leave empty to use the one on PATH.': 'Оставь пустым, чтобы искать в PATH.',
   'yt-dlp not found': 'yt-dlp не найден',
   'Check again': 'Проверить снова',
+  'Managed by Tempo': 'Скачан самим Tempo',
+  'Path set by hand': 'Путь задан вручную',
+  'Check for updates': 'Проверить обновления',
+  'Tempo fetches yt-dlp itself and keeps it current, so there is nothing to install. Leave the path empty to let it.':
+    'Tempo сам скачивает yt-dlp и сам его обновляет — устанавливать ничего не нужно. Оставь путь пустым, чтобы он этим занимался.',
   'yt-dlp': 'yt-dlp',
   YouTube: 'YouTube',
   Found: 'Найден',

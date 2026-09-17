@@ -44,6 +44,10 @@ export interface YtdlpStatus {
   found: boolean
   path: string
   version: string | null
+  /** True when this is the copy the app fetched for itself. */
+  managed: boolean
+  /** Why a fetch or refresh failed, when one did. */
+  error: string | null
 }
 
 /** One YouTube search result, as yt-dlp reports it. */

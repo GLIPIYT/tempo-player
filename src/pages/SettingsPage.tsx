@@ -524,6 +524,7 @@ function StorageCard() {
   // thing that can be moved, updated or removed between sessions, so the
   // answer is never cached beyond the current settings.
   const [ytStatus, setYtStatus] = useState<YtdlpStatus | null>(null)
+  const [ytBusy, setYtBusy] = useState(false)
   const ytdlpPathValue = settings.ytdlp.path
   useEffect(() => {
     let cancelled = false
@@ -534,7 +535,9 @@ function StorageCard() {
         if (!cancelled) setYtStatus(status)
       })
       .catch(() => {
-        if (!cancelled) setYtStatus({ found: false, path: '', version: null })
+        if (!cancelled) {
+          setYtStatus({ found: false, path: '', version: null, managed: true, error: null })
+        }
       })
     return () => {
       cancelled = true
@@ -665,8 +668,27 @@ function StorageCard() {
               ? `${t('Found')} · ${ytStatus.version ?? ''}`
               : t('yt-dlp not found')}
         </div>
+        <div className="set-row" style={{ marginTop: 10 }}>
+          <span className="set-row-label">
+            {ytStatus?.managed ? t('Managed by Tempo') : t('Path set by hand')}
+          </span>
+          <button
+            className="btn"
+            disabled={ytBusy}
+            onClick={() => {
+              setYtBusy(true)
+              void api
+                .ytdlpEnsure(settings.ytdlp.path)
+                .then(setYtStatus)
+                .catch(() => undefined)
+                .finally(() => setYtBusy(false))
+            }}
+          >
+            {t('Check for updates')}
+          </button>
+        </div>
         <div className="set-note" style={{ marginTop: 6 }}>
-          {t('YouTube playback goes through yt-dlp. It is not bundled: the tool is updated constantly to keep up with YouTube, and shipping our own copy would mean a new release every time it changed.')}
+          {t('Tempo fetches yt-dlp itself and keeps it current, so there is nothing to install. Leave the path empty to let it.')}
         </div>
       </div>
 
