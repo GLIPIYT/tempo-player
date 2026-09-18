@@ -20,6 +20,7 @@ import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import ScArtwork, { Spinner } from '../components/common/ScArtwork'
 import BrandIcon, { type BrandMark } from '../components/common/BrandIcon'
+import LoadingLine from '../components/common/LoadingLine'
 import { toast } from '../components/common/Toast'
 import { ScArtistRow, ScPlaylistCard } from '../components/common/ScCards'
 import { useNav } from '../state/nav'
@@ -712,7 +713,9 @@ export default function SearchPage() {
             <span>{t('SoundCloud')}</span>
           </div>
           {scStatus === 'loading' ? (
-            <div className="muted sc-status">{t('Searching SoundCloud…')}</div>
+            <LoadingLine
+              lines={[t('Searching SoundCloud…'), t('Reading what came back…')]}
+            />
           ) : scStatus === 'error' ? (
             <div className="muted sc-status">{t('SoundCloud is unavailable')}</div>
           ) : scStatus === 'done' &&
@@ -818,7 +821,17 @@ export default function SearchPage() {
             </span>
           </div>
           {ytCollStatus === 'loading' ? (
-            <div className="muted sc-status">{t('Searching YouTube…')}</div>
+            <LoadingLine
+              lines={[
+                t('Asking YouTube Music…'),
+                ytSection === 'albums'
+                  ? t('Opening each album…')
+                  : ytSection === 'artists'
+                    ? t('Opening each artist…')
+                    : t('Opening each playlist…'),
+                t('Reading the names…'),
+              ]}
+            />
           ) : ytCollStatus === 'error' ? (
             <div className="muted sc-status">{t('YouTube needs yt-dlp')}</div>
           ) : ytCollStatus === 'done' && ytHitsColl.length === 0 ? (
@@ -871,7 +884,13 @@ export default function SearchPage() {
             <span>{t('YouTube')}</span>
           </div>
           {ytStatus === 'loading' ? (
-            <div className="muted sc-status">{t('Searching YouTube…')}</div>
+            <LoadingLine
+              lines={[
+                t('Searching YouTube…'),
+                t('Looking for songs, not videos…'),
+                t('Reading what came back…'),
+              ]}
+            />
           ) : ytStatus === 'error' ? (
             <div className="muted sc-status">{t('YouTube needs yt-dlp')}</div>
           ) : ytStatus === 'done' && ytHits.length === 0 ? (

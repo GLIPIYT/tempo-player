@@ -1062,6 +1062,24 @@
   animation: spin 0.7s linear infinite;
 }
 
+/* A line that fades and rises into place, for status text that changes while
+   something takes its time. */
+.loading-line {
+  display: inline-block;
+  animation: loading-line-in 0.45s ease;
+}
+
+@keyframes loading-line-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
