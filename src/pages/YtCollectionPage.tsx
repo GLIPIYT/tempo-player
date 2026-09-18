@@ -9,6 +9,13 @@ import BrandIcon from '../components/common/BrandIcon'
 import ScArtwork from '../components/common/ScArtwork'
 import LoadingLine from '../components/common/LoadingLine'
 import { ytHitToUnified } from '../providers/youtubeProvider'
+import {
+  cancelSave,
+  getSaveProgress,
+  saveCollection,
+  subscribeSave,
+  type SaveProgress,
+} from '../youtube/collectionSaver'
 import { fmtTime } from '../utils/format'
 import type { YtCollectionDetail } from '../types/models'
 
@@ -29,6 +36,11 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
   const player = usePlayer()
   const [detail, setDetail] = useState<YtCollectionDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState<SaveProgress | null>(getSaveProgress)
+
+  // The save lives outside the page, so it keeps going when this one is left
+  // behind - and the page has to follow it rather than own it.
+  useEffect(() => subscribeSave(() => setSaving(getSaveProgress())), [])
 
   useEffect(() => {
     let cancelled = false
@@ -104,16 +116,44 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
         </span>
       }
       actions={
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={tracks.length === 0}
-          onClick={() => player.playTracks(tracks, 0)}
-        >
-          {t('Play')}
-        </button>
+        <>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={tracks.length === 0}
+            onClick={() => player.playTracks(tracks, 0)}
+          >
+            {t('Play')}
+          </button>
+          {saving?.running ? (
+            <button type="button" className="btn" onClick={cancelSave}>
+              {t('Cancel')} · {saving.done}/{saving.total}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn"
+              disabled={tracks.length === 0}
+              onClick={() => void saveCollection(name, detail.tracks)}
+            >
+              {t('Save to library')}
+            </button>
+          )}
+        </>
       }
     >
+      {saving && !saving.running ? (
+        <div className="muted settings-line">
+          {saving.failed > 0
+            ? `${t('Saved')} ${saving.done - saving.failed} ${t('of')} ${saving.total} · ${saving.failed} ${t('unavailable')}`
+            : `${t('Saved')} ${saving.done} ${t('tracks')}`}
+        </div>
+      ) : null}
+      {saving?.running ? (
+        <div className="muted settings-line">
+          {`${t('Saving')} ${saving.done}/${saving.total}…`}
+        </div>
+      ) : null}
       <div className="sc-list">
         {tracks.map((track, index) => (
           <div
