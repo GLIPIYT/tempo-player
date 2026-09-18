@@ -820,9 +820,33 @@ pub async fn ytdlp_enrich(
     job_id: String,
     ids: Vec<String>,
 ) -> Result<(), String> {
+    // Anything the library already knows is answered from there and never
+    // asked about again. A track that has been played once carries its artist,
+    // album and duration on its row, and without this every search spent a
+    // second and a half per result re-reading what it had already been told.
+    let known = state.db.known_yt_tracks(&ids).unwrap_or_default();
+    let mut unknown = Vec::new();
+    for id in ids {
+        match known.get(&id) {
+            Some(entry) => {
+                let _ = app.emit(
+                    crate::ytdlp::ENRICH_EVENT,
+                    crate::ytdlp::YtEnrichment {
+                        job_id: job_id.clone(),
+                        id,
+                        artist: entry.artist.clone(),
+                        album: entry.album.clone(),
+                        duration_ms: entry.duration_ms,
+                    },
+                );
+            }
+            None => unknown.push(id),
+        }
+    }
+
     let bin_dir = state.bin_dir.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::ytdlp::enrich_streaming(app, &configured, &bin_dir, &job_id, &ids)
+        crate::ytdlp::enrich_streaming(app, &configured, &bin_dir, &job_id, &unknown)
     })
     .await
     .map_err(|e| e.to_string())?

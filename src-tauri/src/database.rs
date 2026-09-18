@@ -6,6 +6,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
+/// What the library already knows about a YouTube track.
+#[derive(Debug, Clone)]
+pub struct KnownYtTrack {
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub duration_ms: Option<i64>,
+}
+
 use crate::models::{
     Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, FavoriteOrderEntry, FileStamp,
     HiddenTrack, HistoryEntryDto, LibraryFolder, LyricsOverride, Playlist, PlaylistTrack,
@@ -594,6 +602,58 @@ impl Db {
     /// under no artist and in no album. The names come from the search, that
     /// being the only place they exist - the downloaded file carries no tags of
     /// its own.
+    /// The artist, album and duration already stored for YouTube ids.
+    ///
+    /// A track that has been played once carries all of this on its row, so a
+    /// second search can answer from the database rather than spending a second
+    /// and a half per track asking YouTube the same question again - which is
+    /// what it did on every keystroke before.
+    ///
+    /// Rows missing either name are left out deliberately: they were filed
+    /// before the lookup worked, and treating them as known would keep the gap
+    /// forever instead of filling it in.
+    pub fn known_yt_tracks(&self, ids: &[String]) -> Result<HashMap<String, KnownYtTrack>, String> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let placeholders = std::iter::repeat("?").take(ids.len()).collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT t.external_id, t.artist_name, a.title, t.duration_sec \
+             FROM tracks t LEFT JOIN albums a ON a.id = t.album_id \
+             WHERE t.source = 'youtube' AND t.external_id IN ({placeholders})"
+        );
+        self.with_conn(|conn| {
+            let mut statement = conn.prepare(&sql).map_err(db_err)?;
+            let rows = statement
+                .query_map(params_from_iter(ids.iter()), |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<f64>>(3)?,
+                    ))
+                })
+                .map_err(db_err)?;
+            let mut found = HashMap::new();
+            for row in rows {
+                let (id, artist, album, duration) = row.map_err(db_err)?;
+                let artist = artist.filter(|a| !a.trim().is_empty());
+                if artist.is_none() || duration.unwrap_or(0.0) <= 0.0 {
+                    continue;
+                }
+                found.insert(
+                    id,
+                    KnownYtTrack {
+                        artist,
+                        album: album.filter(|a| !a.trim().is_empty()),
+                        duration_ms: duration.map(|sec| (sec * 1000.0) as i64),
+                    },
+                );
+            }
+            Ok(found)
+        })
+    }
+
     pub fn upsert_yt_track(
         &self,
         video_id: &str,
