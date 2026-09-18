@@ -19,6 +19,30 @@ export function localTrackToUnified(t: Track): UnifiedTrack {
       gainDb: null,
     }
   }
+  if (t.source === 'youtube') {
+    return {
+      source: 'youtube',
+      sourceId: t.externalId ?? String(t.id),
+      dbId: t.id,
+      title: t.title,
+      artists: t.artistName ? [t.artistName] : [],
+      album: t.albumTitle,
+      durationSec: t.durationSec,
+      coverPath: t.coverPath,
+      playable: true,
+      // Deliberately null, like the SoundCloud branch above.
+      //
+      // The row's `path` is `youtube://<id>`, which is an identifier rather
+      // than a file. Passing it on would have the player hand `youtube://...`
+      // to convertFileSrc and get a URL that resolves to nothing, so a track
+      // sitting in the cache played perfectly from a search result and not at
+      // all once it was in the library. The player resolves YouTube tracks from
+      // their id, which is also how it finds the cached file.
+      localPath: null,
+      externalUrl: null,
+      gainDb: null,
+    }
+  }
   return {
     source: 'local',
     sourceId: String(t.id),
