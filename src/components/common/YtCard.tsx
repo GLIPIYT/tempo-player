@@ -6,10 +6,10 @@ import { openContextMenu, type ContextMenuItem } from './ContextMenu'
 import { toast } from './Toast'
 import ScArtwork from './ScArtwork'
 import {
-  getSaveProgress,
+  getSaveJob,
   saveCollectionById,
   subscribeSave,
-  type SaveProgress,
+  type SaveJob,
 } from '../../youtube/collectionSaver'
 
 /**
@@ -37,10 +37,10 @@ export default function YtCard({
 }) {
   const t = useT()
   const { navigate } = useNav()
-  const [saving, setSaving] = useState<SaveProgress | null>(getSaveProgress)
+  const [saving, setSaving] = useState<SaveJob | null>(getSaveJob)
 
   // Only this card's own save, not whatever else happens to be running.
-  useEffect(() => subscribeSave(() => setSaving(getSaveProgress())), [])
+  useEffect(() => subscribeSave(() => setSaving(getSaveJob())), [])
   const mine = saving !== null && saving.id === id ? saving : null
 
   const browseUrl = `https://music.youtube.com/browse/${id}`
@@ -85,7 +85,9 @@ export default function YtCard({
         <ScArtwork url={thumbnailUrl} title={name ?? ''} pending={pending} />
         {mine ? (
           <span className="cache-badge">
-            {mine.running ? `${Math.round((mine.done / Math.max(1, mine.total)) * 100)}%` : '✓'}
+            {mine.state === 'running'
+              ? `${Math.round((mine.done / Math.max(1, mine.total)) * 100)}%`
+              : '✓'}
           </span>
         ) : null}
       </span>

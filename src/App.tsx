@@ -34,6 +34,7 @@ import YtCollectionPage from './pages/YtCollectionPage'
 import CacheToasts from './soundcloud/CacheToasts'
 import CacheChoiceDialog from './soundcloud/CacheChoiceDialog'
 import YtdlpBootstrapper from './providers/YtdlpBootstrapper'
+import SaveToasts from './youtube/SaveToasts'
 import CacheArtistDialog from './soundcloud/CacheArtistDialog'
 import BackgroundLayer from './components/layout/BackgroundLayer'
 import { ToastHost } from './components/common/Toast'
@@ -218,6 +219,7 @@ function Shell() {
         <CacheChoiceDialog />
         <CacheArtistDialog />
         <YtdlpBootstrapper />
+        <SaveToasts />
       </div>
       {/* Fixed-position overlays live outside .app-root: applyFont() sets a zoom
           on it for the UI scale preference, and a zoomed ancestor makes

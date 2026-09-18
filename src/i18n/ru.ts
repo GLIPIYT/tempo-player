@@ -484,6 +484,7 @@ export const ru: Record<string, string> = {
   of: 'из',
   unavailable: 'недоступно',
   'Copy name': 'Скопировать название',
+  'Saving stopped': 'Сохранение остановлено',
   'Copy artist': 'Скопировать исполнителя',
   'Copy title': 'Скопировать название',
   'Open on YouTube Music': 'Открыть в YouTube Music',

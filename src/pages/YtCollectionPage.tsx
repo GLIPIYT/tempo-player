@@ -11,10 +11,10 @@ import LoadingLine from '../components/common/LoadingLine'
 import { ytHitToUnified } from '../providers/youtubeProvider'
 import {
   cancelSave,
-  getSaveProgress,
+  getSaveJob,
   saveCollection,
   subscribeSave,
-  type SaveProgress,
+  type SaveJob,
 } from '../youtube/collectionSaver'
 import { fmtTime } from '../utils/format'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
@@ -38,11 +38,11 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
   const player = usePlayer()
   const [detail, setDetail] = useState<YtCollectionDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState<SaveProgress | null>(getSaveProgress)
+  const [saving, setSaving] = useState<SaveJob | null>(getSaveJob)
 
   // The save lives outside the page, so it keeps going when this one is left
   // behind - and the page has to follow it rather than own it.
-  useEffect(() => subscribeSave(() => setSaving(getSaveProgress())), [])
+  useEffect(() => subscribeSave(() => setSaving(getSaveJob())), [])
 
   useEffect(() => {
     let cancelled = false
@@ -163,7 +163,7 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
           >
             {t('Play')}
           </button>
-          {saving?.running ? (
+          {saving?.state === 'running' ? (
             <button type="button" className="btn" onClick={cancelSave}>
               {t('Cancel')} · {saving.done}/{saving.total}
             </button>
@@ -180,16 +180,11 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
         </>
       }
     >
-      {saving && !saving.running ? (
+      {saving && saving.state !== 'running' ? (
         <div className="muted settings-line">
           {saving.failed > 0
             ? `${t('Saved')} ${saving.done - saving.failed} ${t('of')} ${saving.total} · ${saving.failed} ${t('unavailable')}`
             : `${t('Saved')} ${saving.done} ${t('tracks')}`}
-        </div>
-      ) : null}
-      {saving?.running ? (
-        <div className="muted settings-line">
-          {`${t('Saving')} ${saving.done}/${saving.total}…`}
         </div>
       ) : null}
       <div className="sc-list">
