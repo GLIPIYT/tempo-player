@@ -4,6 +4,8 @@ import { Check, Ellipsis, ExternalLink, Lock, Plus, Search } from 'lucide-react'
 import { api } from '../api/client'
 import type {
   Playlist,
+  YtCollectionHit,
+  YtCollectionInfo,
   ScArtist,
   ScPlaylist,
   ScTrack,
@@ -31,6 +33,9 @@ import { ytHitToUnified, ytdlpPath } from '../providers/youtubeProvider'
 const YT_ENRICH_EVENT = 'ytdlp://enriched'
 /** Emitted when a run stops, so nothing can wait on an event that never comes. */
 const YT_ENRICH_DONE_EVENT = 'ytdlp://enriched-done'
+/** Emitted once per album, artist or playlist as its name resolves. */
+const YT_BROWSE_EVENT = 'ytdlp://browsed'
+const YT_BROWSE_DONE_EVENT = 'ytdlp://browsed-done'
 
 type ScStatus = 'idle' | 'loading' | 'error' | 'done'
 
@@ -296,9 +301,17 @@ export default function SearchPage() {
   const [ytPending, setYtPending] = useState<ReadonlySet<string>>(new Set())
   /** The enrichment the current results belong to; anything else is stale. */
   const ytJob = useRef('')
+  /** Albums, artists or playlists, and whatever their pages have said so far. */
+  const [ytHitsColl, setYtHitsColl] = useState<YtCollectionHit[]>([])
+  const [ytInfo, setYtInfo] = useState<Record<string, YtCollectionInfo>>({})
+  const [ytCollStatus, setYtCollStatus] = useState<ScStatus>('idle')
+  const ytBrowseJob = useRef('')
   const [scPlaylists, setScPlaylists] = useState<ScPlaylist[]>([])
   const [scArtists, setScArtists] = useState<ScArtist[]>([])
   const [tab, setTab] = useState<SearchTab>('all')
+  /** Which of YouTube Music's sections the current tab is asking for, if any. */
+  const ytSection: 'albums' | 'artists' | 'playlists' | null =
+    tab === 'albums' ? 'albums' : tab === 'artists' ? 'artists' : tab === 'playlists' ? 'playlists' : null
   const [source, setSource] = useState<SearchSource>('all')
   const trimmed = query.trim()
 
@@ -413,6 +426,44 @@ export default function SearchPage() {
     }
   }, [trimmed, source])
 
+  // The tab picks which of YouTube Music's sections to ask. Albums, artists and
+  // playlists come back as bare ids, so their names are fetched afterwards, one
+  // page at a time.
+  useEffect(() => {
+    if (source !== 'youtube' || ytSection === null || trimmed.length === 0) {
+      setYtCollStatus('idle')
+      setYtHitsColl([])
+      setYtInfo({})
+      return
+    }
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      setYtCollStatus('loading')
+      setYtHitsColl([])
+      setYtInfo({})
+      api
+        .ytdlpSearchCollections(ytdlpPath(), trimmed, 12, ytSection)
+        .then((hits) => {
+          if (cancelled) return
+          setYtHitsColl(hits)
+          if (hits.length === 0) {
+            setYtCollStatus('done')
+            return
+          }
+          const job = `browse:${Date.now()}:${ytSection}:${trimmed}`
+          ytBrowseJob.current = job
+          void api.ytdlpBrowse(ytdlpPath(), job, hits).catch(() => setYtCollStatus('done'))
+        })
+        .catch(() => {
+          if (!cancelled) setYtCollStatus('error')
+        })
+    }, 250)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [trimmed, source, ytSection])
+
   // Results arrive one at a time rather than as a batch, so each row fills in
   // as its own track resolves instead of the whole list waiting for the last.
   useEffect(() => {
@@ -460,6 +511,40 @@ export default function SearchPage() {
       if (payload.jobId !== ytJob.current) return
       setYtPending(new Set())
       if (payload.error) toast.show(payload.error, 'error')
+    }).then((fn) => {
+      if (done) fn()
+      else stop = fn
+    })
+    return () => {
+      done = true
+      stop?.()
+    }
+  }, [])
+
+  // One event per collection, because a page costs about three seconds and the
+  // names would otherwise all arrive together at the end.
+  useEffect(() => {
+    let stop: (() => void) | null = null
+    let done = false
+    void listen<YtCollectionInfo>(YT_BROWSE_EVENT, (event) => {
+      const info = event.payload
+      if (info.jobId !== ytBrowseJob.current) return
+      setYtInfo((prev) => ({ ...prev, [info.id]: info }))
+    }).then((fn) => {
+      if (done) fn()
+      else stop = fn
+    })
+    return () => {
+      done = true
+      stop?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    let stop: (() => void) | null = null
+    let done = false
+    void listen<{ jobId: string }>(YT_BROWSE_DONE_EVENT, (event) => {
+      if (event.payload.jobId === ytBrowseJob.current) setYtCollStatus('done')
     }).then((fn) => {
       if (done) fn()
       else stop = fn
@@ -539,7 +624,7 @@ export default function SearchPage() {
         </div>
       ) : null}
 
-      {trimmed.length > 0 && source === 'all' ? (
+      {trimmed.length > 0 ? (
         <div className="seg search-tabs" role="tablist" aria-label={t('Search scope')}>
           {SEARCH_TABS.map((entry) => (
             <button
@@ -720,7 +805,66 @@ export default function SearchPage() {
         </section>
       ) : null}
 
-      {trimmed.length > 0 && source !== 'soundcloud' ? (
+      {trimmed.length > 0 && source === 'youtube' && ytSection !== null ? (
+        <section className="sc-section">
+          <div className="section-label sc-label">
+            <BrandIcon mark="youtubemusic" size={14} brand />
+            <span>
+              {ytSection === 'albums'
+                ? t('Albums')
+                : ytSection === 'artists'
+                  ? t('Artists')
+                  : t('Playlists')}
+            </span>
+          </div>
+          {ytCollStatus === 'loading' ? (
+            <div className="muted sc-status">{t('Searching YouTube…')}</div>
+          ) : ytCollStatus === 'error' ? (
+            <div className="muted sc-status">{t('YouTube needs yt-dlp')}</div>
+          ) : ytCollStatus === 'done' && ytHitsColl.length === 0 ? (
+            <div className="muted sc-status">{t('Nothing found')}</div>
+          ) : (
+            <div className="sc-list">
+              {ytHitsColl.map((hit) => {
+                const info = ytInfo[hit.id]
+                // Each kind keeps its name somewhere different: an album and a
+                // playlist in the title, an artist in the uploader.
+                const name =
+                  ytSection === 'artists'
+                    ? (info?.uploader ?? info?.title ?? null)
+                    : (info?.title?.replace(/^Album - /i, '') ?? null)
+                return (
+                  <div
+                    key={hit.id}
+                    className="sc-row"
+                    onClick={() => window.open(hit.url, '_blank')}
+                  >
+                    <ScArtwork
+                      url={info?.thumbnailUrl ?? null}
+                      title={name ?? ''}
+                      pending={!info}
+                    />
+                    <div className="sc-meta">
+                      <span className="sc-title">{name ?? ''}</span>
+                      <span className="sc-artist">
+                        {!info ? (
+                          <Spinner size={10} />
+                        ) : (
+                          [info.uploader, info.count ? `${info.count}` : null]
+                            .filter(Boolean)
+                            .join(' · ')
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {trimmed.length > 0 && source !== 'soundcloud' && ytSection === null ? (
         <section className="sc-section">
           <div className="section-label sc-label">
             <BrandIcon mark="youtubemusic" size={14} brand />

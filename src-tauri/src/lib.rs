@@ -130,6 +130,8 @@ pub fn run() {
             commands::ytdlp_ensure,
             commands::ytdlp_search,
             commands::ytdlp_enrich,
+            commands::ytdlp_search_collections,
+            commands::ytdlp_browse,
             commands::ytdlp_enrich_cancel,
             commands::ytdlp_cache,
             commands::upsert_yt_track,

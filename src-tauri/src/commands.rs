@@ -807,6 +807,47 @@ pub async fn ytdlp_search(
     .map_err(|e| e.to_string())?
 }
 
+/// Searches YouTube Music's albums, artists or playlists.
+///
+/// Separate from the track search because the answer is different in kind: a
+/// flat search returns these as bare ids, with no name to show.
+#[tauri::command]
+pub async fn ytdlp_search_collections(
+    state: State<'_, AppState>,
+    configured: String,
+    query: String,
+    limit: u32,
+    section: String,
+) -> Result<Vec<crate::ytdlp::YtCollectionHit>, String> {
+    let bin_dir = state.bin_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::ytdlp::search_collections(&configured, &bin_dir, &query, limit, &section)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Resolves the name, cover and size of each collection, one at a time.
+///
+/// Returns as soon as the work has been started; results arrive on
+/// `ytdlp://browsed`, because a page costs about three seconds and a batch
+/// would leave every row blank for half a minute.
+#[tauri::command]
+pub async fn ytdlp_browse(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    configured: String,
+    job_id: String,
+    hits: Vec<crate::ytdlp::YtCollectionHit>,
+) -> Result<(), String> {
+    let bin_dir = state.bin_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::ytdlp::browse_stream(app, &configured, &bin_dir, &job_id, &hits)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Fills in the artist, album and duration a flat search cannot provide.
 ///
 /// Returns as soon as the work has been started. Results arrive one at a time

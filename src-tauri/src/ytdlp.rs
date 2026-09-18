@@ -401,6 +401,39 @@ fn map_hit(item: &serde_json::Value) -> Option<YtSearchHit> {
     })
 }
 
+/// Emitted once per collection as its name resolves.
+pub const BROWSE_EVENT: &str = "ytdlp://browsed";
+/// Emitted when a browse run stops, however it stopped.
+pub const BROWSE_DONE_EVENT: &str = "ytdlp://browsed-done";
+
+/// A search result that is not a track: an album, an artist or a playlist.
+///
+/// A flat search returns nothing for these but an id and a browse URL - no
+/// name, no cover. Those arrive separately, one at a time, which is why this
+/// carries so little.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct YtCollectionHit {
+    pub id: String,
+    pub url: String,
+}
+
+/// What a collection's page turned out to say about itself.
+///
+/// Every field is passed through rather than interpreted here: an album keeps
+/// its name in `title`, an artist in `uploader`, a playlist in `title` with the
+/// owner in `uploader`. The caller knows which kind it asked for.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct YtCollectionInfo {
+    pub job_id: String,
+    pub id: String,
+    pub title: Option<String>,
+    pub uploader: Option<String>,
+    pub count: Option<i64>,
+    pub thumbnail_url: Option<String>,
+}
+
 /// Emitted once per track as its metadata resolves.
 pub const ENRICH_EVENT: &str = "ytdlp://enriched";
 
@@ -585,6 +618,160 @@ pub fn resolve_one(
     Ok(String::from_utf8_lossy(&out.stdout)
         .lines()
         .find_map(|line| parse_json_entry(line.trim(), "")))
+}
+
+/// Searches one of YouTube Music's other sections.
+///
+/// Albums, artists and playlists come back as bare ids and browse URLs: their
+/// names are not in the search response at all, and `search` above cannot
+/// return them because there is nothing to return.
+pub fn search_collections(
+    configured: &str,
+    bin_dir: &Path,
+    query: &str,
+    limit: u32,
+    section: &str,
+) -> Result<Vec<YtCollectionHit>, String> {
+    let path = binary(configured, bin_dir).ok_or_else(|| "yt-dlp is not available".to_string())?;
+    let limit = limit.clamp(1, 50);
+    let fragment = match section {
+        "albums" => "#albums",
+        "artists" => "#artists",
+        "playlists" => "#community+playlists",
+        other => return Err(format!("unknown section: {other}")),
+    };
+    let target = format!(
+        "https://music.youtube.com/search?q={}{fragment}",
+        encode_query(query)
+    );
+    let end = limit.to_string();
+    let out = run(
+        &path,
+        &[
+            "--flat-playlist",
+            "--dump-single-json",
+            "--no-warnings",
+            "--playlist-end",
+            &end,
+            &target,
+        ],
+        SEARCH_TIMEOUT_SECS,
+    )?;
+    if !out.status.success() {
+        return Err(format!(
+            "yt-dlp search failed: {}",
+            String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("no output")
+        ));
+    }
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .map_err(|e| format!("yt-dlp returned something unexpected: {e}"))?;
+    let entries = json
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "yt-dlp search returned no results".to_string())?;
+
+    Ok(entries
+        .iter()
+        .filter_map(|item| {
+            Some(YtCollectionHit {
+                id: item.get("id").and_then(|v| v.as_str())?.to_string(),
+                url: item.get("url").and_then(|v| v.as_str())?.to_string(),
+            })
+        })
+        .collect())
+}
+
+/// Resolves the name, cover and size of each collection, one at a time.
+///
+/// A page costs about three seconds, so ten albums is half a minute - which is
+/// why this reports each one as it lands rather than returning a list. Flat
+/// mode on the page itself, because a full extraction would enumerate every
+/// track in it: twenty-three seconds instead of three.
+pub fn browse_stream(
+    app: tauri::AppHandle,
+    configured: &str,
+    bin_dir: &Path,
+    job_id: &str,
+    hits: &[YtCollectionHit],
+) -> Result<(), String> {
+    let mut produced = 0usize;
+    let mut complaint = String::new();
+
+    for hit in hits {
+        let path = match binary(configured, bin_dir) {
+            Some(p) => p,
+            None => break,
+        };
+        match run(
+            &path,
+            &[
+                "--flat-playlist",
+                "--dump-single-json",
+                "--no-warnings",
+                "--playlist-end",
+                "1",
+                &hit.url,
+            ],
+            120,
+        ) {
+            Ok(out) if out.status.success() => {
+                let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
+                    continue;
+                };
+                let text = |key: &str| {
+                    json.get(key)
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                };
+                let info = YtCollectionInfo {
+                    job_id: job_id.to_string(),
+                    id: hit.id.clone(),
+                    title: text("title"),
+                    uploader: text("uploader").or_else(|| text("channel")),
+                    count: json.get("playlist_count").and_then(|v| v.as_i64()),
+                    thumbnail_url: json
+                        .get("thumbnails")
+                        .and_then(|v| v.as_array())
+                        .and_then(|list| list.last())
+                        .and_then(|t| t.get("url"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                };
+                produced += 1;
+                let _ = app.emit(BROWSE_EVENT, info);
+            }
+            Ok(out) => {
+                complaint = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            }
+            Err(e) => complaint = e,
+        }
+    }
+
+    let error = if produced == 0 {
+        let tail: Vec<&str> = complaint
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with("Deprecated Feature"))
+            .collect();
+        let start = tail.len().saturating_sub(2);
+        Some(if tail.is_empty() {
+            "nothing resolved".to_string()
+        } else {
+            tail[start..].join(" | ")
+        })
+    } else {
+        None
+    };
+    let _ = app.emit(
+        BROWSE_DONE_EVENT,
+        EnrichDone {
+            job_id: job_id.to_string(),
+            error,
+        },
+    );
+    Ok(())
 }
 
 /// One `--dump-json` line, reduced to what the rows need.

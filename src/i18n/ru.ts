@@ -469,6 +469,7 @@ export const ru: Record<string, string> = {
   'Searching YouTube…': 'Ищу на YouTube…',
   'YouTube needs yt-dlp': 'Для YouTube нужен yt-dlp',
   'Nothing found on YouTube': 'На YouTube ничего не найдено',
+  'Nothing found': 'Ничего не найдено',
   'Open on YouTube': 'Открыть на YouTube',
   'yt-dlp path': 'Путь к yt-dlp',
   'Leave empty to use the one on PATH.': 'Оставь пустым, чтобы искать в PATH.',

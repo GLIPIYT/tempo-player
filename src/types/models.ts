@@ -62,6 +62,25 @@ export interface YtSearchHit {
   url: string
 }
 
+/**
+ * A YouTube Music album, artist or playlist as the search reports it: an id and
+ * a browse URL, with no name - the search response does not carry one.
+ */
+export interface YtCollectionHit {
+  id: string
+  url: string
+}
+
+/** What a collection's page says about itself, once it has been opened. */
+export interface YtCollectionInfo {
+  jobId: string
+  id: string
+  title: string | null
+  uploader: string | null
+  count: number | null
+  thumbnailUrl: string | null
+}
+
 /** What a full extraction adds on top of a flat search. */
 export interface YtEnrichment {
   /** Which search it belongs to, so results for a replaced query are dropped. */

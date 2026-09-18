@@ -20,6 +20,7 @@ import type {
   ScPlaylist,
   ScPlaylistDetail,
   ScTrack,
+  YtCollectionHit,
   YtEnrichment,
   YtSearchHit,
   YtdlpStatus,
@@ -237,6 +238,14 @@ export const api = {
     invoke<void>('ytdlp_enrich', { configured, jobId, ids }),
 
   ytdlpEnrichCancel: (jobId: string) => invoke<void>('ytdlp_enrich_cancel', { jobId }),
+
+  /** Albums, artists or playlists - which come back as ids with no name. */
+  ytdlpSearchCollections: (configured: string, query: string, limit: number, section: string) =>
+    invoke<YtCollectionHit[]>('ytdlp_search_collections', { configured, query, limit, section }),
+
+  /** Resolves names one at a time on `ytdlp://browsed`. */
+  ytdlpBrowse: (configured: string, jobId: string, hits: YtCollectionHit[]) =>
+    invoke<void>('ytdlp_browse', { configured, jobId, hits }),
 
   /**
    * Resolves one track's metadata, so the player can file it under the right
