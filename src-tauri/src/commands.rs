@@ -807,6 +807,17 @@ pub async fn ytdlp_search(
     .map_err(|e| e.to_string())?
 }
 
+/// The library row a saved collection was filed under, if it has been saved.
+#[tauri::command]
+pub fn find_yt_collection_row(
+    state: State<'_, AppState>,
+    kind: String,
+    name: String,
+    artist: String,
+) -> Result<Option<i64>, String> {
+    state.db.find_yt_collection_row(&kind, &name, &artist)
+}
+
 /// Opens an album, artist or playlist for preview.
 #[tauri::command]
 pub async fn ytdlp_open_collection(

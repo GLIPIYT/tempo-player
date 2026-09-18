@@ -602,6 +602,46 @@ impl Db {
     /// under no artist and in no album. The names come from the search, that
     /// being the only place they exist - the downloaded file carries no tags of
     /// its own.
+    /// The library row a saved YouTube collection ended up filed under.
+    ///
+    /// Favourites are kept against the library's own artist and album rows, not
+    /// against a YouTube id, so a collection can only be favourited once it has
+    /// been saved - and only if the caller can find the row it became. Hence
+    /// this: the name it was filed under, looked up by the name it was saved
+    /// with.
+    pub fn find_yt_collection_row(
+        &self,
+        kind: &str,
+        name: &str,
+        artist: &str,
+    ) -> Result<Option<i64>, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Ok(None);
+        }
+        self.with_conn(|conn| {
+            let found = match kind {
+                "artist" => conn
+                    .query_row("SELECT id FROM artists WHERE name = ?1", params![name], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .optional()
+                    .map_err(db_err)?,
+                // An album is only unique together with its artist, so the
+                // artist is part of the lookup rather than a nicety.
+                _ => conn
+                    .query_row(
+                        "SELECT a.id FROM albums a                          LEFT JOIN artists ar ON ar.id = a.artist_id                          WHERE a.title = ?1 AND (?2 = '' OR ar.name = ?2)",
+                        params![name, artist.trim()],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()
+                    .map_err(db_err)?,
+            };
+            Ok(found)
+        })
+    }
+
     /// The artist, album and duration already stored for YouTube ids.
     ///
     /// A track that has been played once carries all of this on its row, so a

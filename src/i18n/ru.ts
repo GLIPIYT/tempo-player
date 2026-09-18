@@ -485,6 +485,7 @@ export const ru: Record<string, string> = {
   unavailable: 'недоступно',
   'Copy name': 'Скопировать название',
   'Saving stopped': 'Сохранение остановлено',
+  'Save it first to add it to favorites.': 'Сначала сохрани — тогда можно добавить в избранное.',
   'Copy artist': 'Скопировать исполнителя',
   'Copy title': 'Скопировать название',
   'Open on YouTube Music': 'Открыть в YouTube Music',

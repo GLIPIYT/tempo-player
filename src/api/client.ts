@@ -244,6 +244,16 @@ export const api = {
   ytdlpSearchCollections: (configured: string, query: string, limit: number, section: string) =>
     invoke<YtCollectionHit[]>('ytdlp_search_collections', { configured, query, limit, section }),
 
+  /**
+   * The library row a saved collection was filed under.
+   *
+   * Favourites are kept against the library's own rows, so a collection can
+   * only be favourited once it has been saved - and this is how the page finds
+   * out that it has, and under what.
+   */
+  findYtCollectionRow: (kind: string, name: string, artist: string) =>
+    invoke<number | null>('find_yt_collection_row', { kind, name, artist }),
+
   /** Opens an album, artist or playlist for preview. */
   ytdlpOpenCollection: (configured: string, url: string) =>
     invoke<YtCollectionDetail>('ytdlp_open_collection', { configured, url }),

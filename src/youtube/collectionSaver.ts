@@ -31,9 +31,24 @@ export interface SaveJob {
   state: 'running' | 'done' | 'cancelled'
 }
 
+/** A collection waiting for the user to say which of its tracks to keep. */
+export interface SaveChoice {
+  id: string
+  label: string
+  tracks: YtSearchHit[]
+}
+
+/**
+ * Past this many tracks, taking all of them is unlikely to have been the
+ * intent - an artist can hold a hundred, and nobody wants all of them.
+ */
+const PICK_ABOVE = 20
+
 let job: SaveJob | null = null
+let choice: SaveChoice | null = null
 let cancelled = false
 const listeners = new Set<() => void>()
+const choiceListeners = new Set<() => void>()
 
 function emit(): void {
   for (const listener of listeners) listener()
@@ -48,6 +63,30 @@ export function subscribeSave(listener: () => void): () => void {
 
 export function getSaveJob(): SaveJob | null {
   return job
+}
+
+export function subscribeSaveChoice(listener: () => void): () => void {
+  choiceListeners.add(listener)
+  return () => {
+    choiceListeners.delete(listener)
+  }
+}
+
+export function getSaveChoice(): SaveChoice | null {
+  return choice
+}
+
+export function dismissSaveChoice(): void {
+  choice = null
+  for (const listener of choiceListeners) listener()
+}
+
+/** Answers the question and starts the download with what was ticked. */
+export function resolveSaveChoice(tracks: YtSearchHit[]): void {
+  const pending = choice
+  choice = null
+  for (const listener of choiceListeners) listener()
+  if (pending !== null) void run(pending.id, pending.label, tracks)
 }
 
 export function cancelSave(): void {
@@ -105,6 +144,11 @@ export async function saveCollection(
   tracks: YtSearchHit[],
 ): Promise<void> {
   if (job?.state === 'running') return
+  if (tracks.length > PICK_ABOVE) {
+    choice = { id, label, tracks }
+    for (const listener of choiceListeners) listener()
+    return
+  }
   await run(id, label, tracks)
 }
 

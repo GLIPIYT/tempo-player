@@ -18,7 +18,8 @@ import {
 } from '../youtube/collectionSaver'
 import { fmtTime } from '../utils/format'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
-import { Copy, ExternalLink, Play } from 'lucide-react'
+import { Copy, ExternalLink, Play, Star } from 'lucide-react'
+import { toast } from '../components/common/Toast'
 import type { YtCollectionDetail } from '../types/models'
 
 type Kind = 'album' | 'artist' | 'playlist'
@@ -39,6 +40,17 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
   const [detail, setDetail] = useState<YtCollectionDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState<SaveJob | null>(getSaveJob)
+  /**
+   * The library row this collection was filed under, and whether the library
+   * has an opinion about it.
+   *
+   * Favourites are kept against those rows rather than against a YouTube id,
+   * so this is null until the collection has been saved - and a playlist never
+   * gets one, because a playlist does not become a row: its tracks are filed
+   * under their own artists.
+   */
+  const [favRow, setFavRow] = useState<number | null>(null)
+  const [isFav, setIsFav] = useState(false)
 
   // The save lives outside the page, so it keeps going when this one is left
   // behind - and the page has to follow it rather than own it.
@@ -60,6 +72,29 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
       cancelled = true
     }
   }, [id])
+
+  // Looked up again once a save finishes, because saving is what creates the
+  // row in the first place.
+  const saveFinished = saving !== null && saving.state !== 'running'
+  useEffect(() => {
+    if (!detail || kind === 'playlist') return
+    let cancelled = false
+    const artist = kind === 'artist' ? '' : (detail.uploader ?? '')
+    api
+      .findYtCollectionRow(kind, kind === 'artist' ? (detail.uploader ?? '') : name, artist)
+      .then(async (row) => {
+        if (cancelled) return
+        setFavRow(row)
+        if (row === null) return
+        const fav = kind === 'artist' ? await api.isFavoriteArtist(row) : await api.isFavoriteAlbum(row)
+        if (!cancelled) setIsFav(fav)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- name is derived from detail
+  }, [detail, kind, saveFinished])
 
   const kindLabel =
     kind === 'album' ? t('Album') : kind === 'artist' ? t('Artist') : t('Playlist')
@@ -163,6 +198,27 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
           >
             {t('Play')}
           </button>
+          {kind !== 'playlist' ? (
+            <button
+              type="button"
+              className="btn"
+              disabled={favRow === null}
+              title={favRow === null ? t('Save it first to add it to favorites.') : undefined}
+              onClick={() => {
+                if (favRow === null) return
+                const next =
+                  kind === 'artist'
+                    ? api.toggleFavoriteArtist(favRow)
+                    : api.toggleFavoriteAlbum(favRow)
+                void next.then((now) => {
+                  setIsFav(now)
+                  toast.show(now ? t('Added to favorites') : t('Remove from favorites'))
+                })
+              }}
+            >
+              <Star size={14} fill={isFav ? 'currentColor' : 'none'} />
+            </button>
+          ) : null}
           {saving?.state === 'running' ? (
             <button type="button" className="btn" onClick={cancelSave}>
               {t('Cancel')} · {saving.done}/{saving.total}

@@ -133,6 +133,7 @@ pub fn run() {
             commands::ytdlp_search_collections,
             commands::ytdlp_browse,
             commands::ytdlp_open_collection,
+            commands::find_yt_collection_row,
             commands::ytdlp_enrich_cancel,
             commands::ytdlp_cache,
             commands::upsert_yt_track,
