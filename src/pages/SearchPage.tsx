@@ -23,6 +23,7 @@ import BrandIcon, { type BrandMark } from '../components/common/BrandIcon'
 import LoadingLine from '../components/common/LoadingLine'
 import { toast } from '../components/common/Toast'
 import { ScArtistRow, ScPlaylistCard } from '../components/common/ScCards'
+import YtCard from '../components/common/YtCard'
 import { useNav } from '../state/nav'
 import { usePlayer } from '../player'
 import { useT } from '../i18n'
@@ -313,6 +314,9 @@ export default function SearchPage() {
   /** Which of YouTube Music's sections the current tab is asking for, if any. */
   const ytSection: 'albums' | 'artists' | 'playlists' | null =
     tab === 'albums' ? 'albums' : tab === 'artists' ? 'artists' : tab === 'playlists' ? 'playlists' : null
+  /** The section name without its plural, which is what a card is keyed by. */
+  const ytKind: 'album' | 'artist' | 'playlist' =
+    ytSection === 'albums' ? 'album' : ytSection === 'artists' ? 'artist' : 'playlist'
   const [source, setSource] = useState<SearchSource>('all')
   const trimmed = query.trim()
 
@@ -837,39 +841,29 @@ export default function SearchPage() {
           ) : ytCollStatus === 'done' && ytHitsColl.length === 0 ? (
             <div className="muted sc-status">{t('Nothing found')}</div>
           ) : (
-            <div className="sc-list">
+            <div className="cards-grid cards-grid-tight">
               {ytHitsColl.map((hit) => {
                 const info = ytInfo[hit.id]
                 // Each kind keeps its name somewhere different: an album and a
-                // playlist in the title, an artist in the uploader.
+                // playlist in the title, an artist in the uploader. An album's
+                // title also arrives with the word "Album" stuck on the front.
                 const name =
                   ytSection === 'artists'
                     ? (info?.uploader ?? info?.title ?? null)
-                    : (info?.title?.replace(/^Album - /i, '') ?? null)
+                    : ytSection === 'albums'
+                      ? (info?.title?.replace(/^Album - /i, '') ?? null)
+                      : (info?.title ?? null)
                 return (
-                  <div
+                  <YtCard
                     key={hit.id}
-                    className="sc-row"
-                    onClick={() => window.open(hit.url, '_blank')}
-                  >
-                    <ScArtwork
-                      url={info?.thumbnailUrl ?? null}
-                      title={name ?? ''}
-                      pending={!info}
-                    />
-                    <div className="sc-meta">
-                      <span className="sc-title">{name ?? ''}</span>
-                      <span className="sc-artist">
-                        {!info ? (
-                          <Spinner size={10} />
-                        ) : (
-                          [info.uploader, info.count ? `${info.count}` : null]
-                            .filter(Boolean)
-                            .join(' · ')
-                        )}
-                      </span>
-                    </div>
-                  </div>
+                    kind={ytKind}
+                    id={hit.id}
+                    name={name}
+                    sub={info?.uploader ?? null}
+                    count={info?.count ?? null}
+                    thumbnailUrl={info?.thumbnailUrl ?? null}
+                    pending={!info}
+                  />
                 )
               })}
             </div>

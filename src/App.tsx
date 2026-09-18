@@ -30,6 +30,7 @@ import { ThemeApply } from './theme/engine'
 import UpdateWatcher from './updater/UpdateWatcher'
 import ScPlaylistPage from './pages/ScPlaylistPage'
 import ScArtistPage from './pages/ScArtistPage'
+import YtCollectionPage from './pages/YtCollectionPage'
 import CacheToasts from './soundcloud/CacheToasts'
 import CacheChoiceDialog from './soundcloud/CacheChoiceDialog'
 import YtdlpBootstrapper from './providers/YtdlpBootstrapper'
@@ -72,6 +73,8 @@ function CurrentPage() {
       return <ScPlaylistPage playlistId={view.id} />
     case 'sc-artist':
       return <ScArtistPage artistId={view.id} />
+    case 'yt-collection':
+      return <YtCollectionPage kind={view.kind} id={view.id} />
   }
 }
 

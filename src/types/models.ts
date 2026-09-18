@@ -81,6 +81,17 @@ export interface YtCollectionInfo {
   thumbnailUrl: string | null
 }
 
+/** A collection opened for preview, with everything it holds. */
+export interface YtCollectionDetail {
+  id: string
+  /** As the page reports it: an album arrives as "Album - <name>". */
+  title: string | null
+  uploader: string | null
+  count: number | null
+  thumbnailUrl: string | null
+  tracks: YtSearchHit[]
+}
+
 /** What a full extraction adds on top of a flat search. */
 export interface YtEnrichment {
   /** Which search it belongs to, so results for a replaced query are dropped. */

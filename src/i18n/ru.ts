@@ -477,6 +477,7 @@ export const ru: Record<string, string> = {
   'Opening each artist…': 'Открываю артистов по одному…',
   'Opening each playlist…': 'Открываю плейлисты по одному…',
   'Reading the names…': 'Читаю названия…',
+  'Opening it…': 'Открываю…',
   'Open on YouTube': 'Открыть на YouTube',
   'yt-dlp path': 'Путь к yt-dlp',
   'Leave empty to use the one on PATH.': 'Оставь пустым, чтобы искать в PATH.',

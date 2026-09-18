@@ -16,6 +16,8 @@ export type View =
   /** SoundCloud pages, browsed live and not written to the library. */
   | { name: 'sc-playlist'; id: string }
   | { name: 'sc-artist'; id: string }
+  /** YouTube Music collections, browsed live the same way. */
+  | { name: 'yt-collection'; kind: 'album' | 'artist' | 'playlist'; id: string }
 
 interface NavState {
   view: View

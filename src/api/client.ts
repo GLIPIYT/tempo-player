@@ -20,6 +20,7 @@ import type {
   ScPlaylist,
   ScPlaylistDetail,
   ScTrack,
+  YtCollectionDetail,
   YtCollectionHit,
   YtEnrichment,
   YtSearchHit,
@@ -242,6 +243,10 @@ export const api = {
   /** Albums, artists or playlists - which come back as ids with no name. */
   ytdlpSearchCollections: (configured: string, query: string, limit: number, section: string) =>
     invoke<YtCollectionHit[]>('ytdlp_search_collections', { configured, query, limit, section }),
+
+  /** Opens an album, artist or playlist for preview. */
+  ytdlpOpenCollection: (configured: string, url: string) =>
+    invoke<YtCollectionDetail>('ytdlp_open_collection', { configured, url }),
 
   /** Resolves names one at a time on `ytdlp://browsed`. */
   ytdlpBrowse: (configured: string, jobId: string, hits: YtCollectionHit[]) =>
