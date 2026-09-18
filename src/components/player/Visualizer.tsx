@@ -59,17 +59,25 @@ export default function Visualizer(props: VisualizerProps) {
       }
 
       const o = optsRef.current
-      const width = Math.max(1, canvas.clientWidth)
-      const height = Math.max(1, canvas.clientHeight)
+      // Measured, never clamped, and nothing is drawn at zero size.
+      //
+      // A hidden window measures zero. The old clamp turned that into 1 and
+      // then wrote it back as an inline width, which overrides the stylesheet -
+      // so the canvas stayed one pixel wide for good, and minimising the window
+      // made the visualiser disappear and never come back.
+      const width = canvas.clientWidth
+      const height = canvas.clientHeight
+      if (width === 0 || height === 0) return
       // 2 is the ceiling on purpose: a 4K panel at dpr 3 would triple the
       // pixel count for no visible gain.
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
 
       if (width !== lastWidth || height !== lastHeight) {
+        // Only the backing store is set. The element's own size comes from the
+        // stylesheet, so it keeps following the window instead of being pinned
+        // to whatever it happened to measure on the first frame.
         canvas.width = Math.round(width * dpr)
         canvas.height = Math.round(height * dpr)
-        canvas.style.width = `${width}px`
-        canvas.style.height = `${height}px`
         lastWidth = width
         lastHeight = height
         // resizing the backing store resets the transform, so it goes back on
