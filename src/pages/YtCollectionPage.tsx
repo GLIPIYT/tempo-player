@@ -17,6 +17,8 @@ import {
   type SaveProgress,
 } from '../youtube/collectionSaver'
 import { fmtTime } from '../utils/format'
+import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
+import { Copy, ExternalLink, Play } from 'lucide-react'
 import type { YtCollectionDetail } from '../types/models'
 
 type Kind = 'album' | 'artist' | 'playlist'
@@ -91,6 +93,42 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
 
   const tracks = detail.tracks.map(ytHitToUnified)
 
+  // The same things a track offers anywhere else, minus the ones that need a
+  // library row: a search result has none until it has been saved, and
+  // favourites are kept against those rows.
+  const trackMenu = (e: React.MouseEvent, index: number): void => {
+    e.preventDefault()
+    const hit = detail.tracks[index]
+    if (!hit) return
+    const items: ContextMenuItem[] = [
+      {
+        id: 'play',
+        label: t('Play'),
+        icon: <Play size={13} />,
+        onSelect: () => player.playTracks(tracks, index),
+      },
+      {
+        id: 'artist',
+        label: t('Copy artist'),
+        icon: <Copy size={13} />,
+        onSelect: () => void navigator.clipboard.writeText(hit.artist),
+      },
+      {
+        id: 'title',
+        label: t('Copy title'),
+        icon: <Copy size={13} />,
+        onSelect: () => void navigator.clipboard.writeText(hit.title),
+      },
+      {
+        id: 'open',
+        label: t('Open on YouTube Music'),
+        icon: <ExternalLink size={13} />,
+        onSelect: () => window.open(hit.url, '_blank'),
+      },
+    ]
+    openContextMenu({ x: e.clientX, y: e.clientY, title: hit.title, items })
+  }
+
   return (
     <DetailLayout
       onBack={() => navigate({ name: 'search' })}
@@ -134,7 +172,7 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
               type="button"
               className="btn"
               disabled={tracks.length === 0}
-              onClick={() => void saveCollection(name, detail.tracks)}
+              onClick={() => void saveCollection(id, name, detail.tracks)}
             >
               {t('Save to library')}
             </button>
@@ -160,6 +198,7 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
             key={track.sourceId}
             className="sc-row"
             onClick={() => player.playTracks(tracks, index)}
+            onContextMenu={(e) => trackMenu(e, index)}
           >
             <div className="sc-meta">
               <span className="sc-title">{track.title}</span>

@@ -18,6 +18,8 @@ import type { YtSearchHit } from '../types/models'
  */
 
 export interface SaveProgress {
+  /** Which collection, so a card can show its own progress and no one else's. */
+  id: string
   /** What is being saved, for the message. */
   name: string
   done: number
@@ -49,10 +51,31 @@ export function cancelSave(): void {
   cancelled = true
 }
 
-export async function saveCollection(name: string, tracks: YtSearchHit[]): Promise<void> {
+/**
+ * Saves a collection that has not been opened yet.
+ *
+ * A card knows only an id, and saving needs the tracks - so the page is opened
+ * first. One extra call of about three seconds, and only on this route; the
+ * preview page already has them and goes straight to the download.
+ */
+export async function saveCollectionById(
+  id: string,
+  name: string,
+  browseUrl: string,
+): Promise<void> {
+  if (progress?.running) return
+  const detail = await api.ytdlpOpenCollection(getSettings().ytdlp.path, browseUrl)
+  await saveCollection(id, name, detail.tracks)
+}
+
+export async function saveCollection(
+  id: string,
+  name: string,
+  tracks: YtSearchHit[],
+): Promise<void> {
   if (progress?.running) return
   cancelled = false
-  progress = { name, done: 0, total: tracks.length, failed: 0, running: true }
+  progress = { id, name, done: 0, total: tracks.length, failed: 0, running: true }
   emit()
 
   const configured = getSettings().ytdlp.path
