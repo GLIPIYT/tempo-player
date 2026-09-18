@@ -807,6 +807,21 @@ pub async fn ytdlp_search(
     .map_err(|e| e.to_string())?
 }
 
+/// Opens an album, artist or playlist for preview.
+#[tauri::command]
+pub async fn ytdlp_open_collection(
+    state: State<'_, AppState>,
+    configured: String,
+    url: String,
+) -> Result<crate::ytdlp::YtCollectionDetail, String> {
+    let bin_dir = state.bin_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::ytdlp::open_collection(&configured, &bin_dir, &url)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Searches YouTube Music's albums, artists or playlists.
 ///
 /// Separate from the track search because the answer is different in kind: a

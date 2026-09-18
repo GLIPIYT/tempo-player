@@ -589,7 +589,84 @@ pub fn enrich_streaming(
     Ok(())
 }
 
-/// Resolves one track's metadata and hands it back.
+/// A collection opened for preview: what it is, and what is in it.
+///
+/// Flat mode on the page itself gives all of this in one call, tracks included
+/// - name, duration, artist and cover for every one of them. A full extraction
+/// would take twenty-three seconds instead of three and tell us nothing more.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct YtCollectionDetail {
+    pub id: String,
+    /// As the page reports it. An album arrives as "Album - <name>", which the
+    /// caller strips; nothing here guesses at what the page meant.
+    pub title: Option<String>,
+    pub uploader: Option<String>,
+    pub count: Option<i64>,
+    pub thumbnail_url: Option<String>,
+    pub tracks: Vec<YtSearchHit>,
+}
+
+/// Opens an album, artist or playlist and returns everything it holds.
+pub fn open_collection(
+    configured: &str,
+    bin_dir: &Path,
+    url: &str,
+) -> Result<YtCollectionDetail, String> {
+    let path = binary(configured, bin_dir).ok_or_else(|| "yt-dlp is not available".to_string())?;
+    let out = run(
+        &path,
+        &[
+            "--flat-playlist",
+            "--dump-single-json",
+            "--no-warnings",
+            "--ignore-errors",
+            url,
+        ],
+        300,
+    )?;
+    if !out.status.success() {
+        return Err(format!(
+            "yt-dlp could not open it: {}",
+            String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("no output")
+        ));
+    }
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .map_err(|e| format!("yt-dlp returned something unexpected: {e}"))?;
+
+    let text = |key: &str| {
+        json.get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    };
+    let tracks: Vec<YtSearchHit> = json
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .map(|list| list.iter().filter_map(map_hit).collect())
+        .unwrap_or_default();
+
+    Ok(YtCollectionDetail {
+        id: text("id").unwrap_or_default(),
+        title: text("title"),
+        uploader: text("uploader").or_else(|| text("channel")),
+        count: json
+            .get("playlist_count")
+            .and_then(|v| v.as_i64())
+            .or(Some(tracks.len() as i64)),
+        thumbnail_url: json
+            .get("thumbnails")
+            .and_then(|v| v.as_array())
+            .and_then(|list| list.last())
+            .and_then(|t| t.get("url"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        tracks,
+    })
+}
+
+/// Resolves one track's metadata and hands it back./// Resolves one track's metadata and hands it back.
 ///
 /// The search works through its list in order, so a track near the bottom of it
 /// can be played long before its turn comes - and then it has no artist to be
