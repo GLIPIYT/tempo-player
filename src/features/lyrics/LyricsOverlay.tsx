@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { Check, ChevronDown, MicVocal, Music2, Pause, Pencil, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, MicVocal, Music2, Pause, Pencil, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 import type { TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from 'react'
 import { usePlayer } from '../../player'
 import { useT } from '../../i18n'
@@ -515,17 +515,33 @@ function ProviderDropdown({
 }) {
   const t = useT()
   const [open, setOpen] = useState(false)
+  const [activeProvider, setActiveProvider] = useState<string | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const selected = candidates[selectedIndex] ?? candidates[0]
   const isSyncedSelected = selected ? Boolean(selected.syncedLrc) || selected.result.kind === 'synced' : false
+  const providerGroups = useMemo(() => {
+    const groups = new Map<string, { provider: string; indices: number[] }>()
+    candidates.forEach((candidate, index) => {
+      const group = groups.get(candidate.provider) ?? { provider: candidate.provider, indices: [] }
+      group.indices.push(index)
+      groups.set(candidate.provider, group)
+    })
+    return Array.from(groups.values())
+  }, [candidates])
+  const activeGroup = providerGroups.find((group) => group.provider === activeProvider && group.indices.length > 1)
+
+  const closeDropdown = useCallback(() => {
+    setOpen(false)
+    setActiveProvider(null)
+  }, [])
 
   useEffect(() => {
     if (!open) return
     const onDoc = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) closeDropdown()
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') closeDropdown()
     }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
@@ -533,13 +549,62 @@ function ProviderDropdown({
       document.removeEventListener('mousedown', onDoc)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [open, closeDropdown])
 
   if (!selected) return null
 
+  const renderCandidate = (index: number) => {
+    const candidate = candidates[index]
+    if (!candidate) return null
+    const isSelected = index === selectedIndex
+    const isSynced = Boolean(candidate.syncedLrc) || candidate.result.kind === 'synced'
+    const metadata = [
+      candidate.artistName,
+      candidate.albumName,
+      candidate.duration != null ? fmtTime(candidate.duration) : null,
+      candidate.instrumental ? t('Instrumental') : null,
+    ]
+      .filter((part): part is string => Boolean(part?.trim()))
+      .join(' · ')
+    return (
+      <button
+        key={`${candidate.provider}-${index}`}
+        role="menuitemradio"
+        aria-checked={isSelected}
+        className={'lyr-prov-item' + (isSelected ? ' is-selected' : '')}
+        onClick={() => {
+          onSelect(index)
+          closeDropdown()
+        }}
+      >
+        <span className="lyr-prov-item-main">
+          <span className="lyr-prov-item-heading">
+            <span className="lyr-prov-item-name" title={candidate.trackName?.trim()}>
+              {candidate.trackName?.trim() || providerLabel(candidate.provider, t)}
+            </span>
+            <span className={'lyr-prov-badge' + (isSynced ? ' is-synced' : ' is-plain')}>
+              {isSynced ? t('SYNCED') : t('TEXT')}
+            </span>
+            {index === pinnedIndex && <Pin size={12} className="lyr-prov-item-pin" />}
+          </span>
+          {metadata && <span className="lyr-prov-item-meta" title={metadata}>{metadata}</span>}
+        </span>
+        {isSelected && <Check size={14} className="lyr-prov-item-check" />}
+      </button>
+    )
+  }
+
   return (
     <div className="lyr-prov-dropdown" ref={wrapRef}>
-      <button className="lyr-prov-trigger" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}>
+      <button
+        className="lyr-prov-trigger"
+        onClick={() => {
+          if (open) closeDropdown()
+          else setOpen(true)
+        }}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
         <span className="lyr-prov-trigger-name">{providerLabel(selected.provider, t)}</span>
         <span className={'lyr-prov-badge' + (isSyncedSelected ? ' is-synced' : ' is-plain')}>
           {isSyncedSelected ? t('SYNCED') : t('TEXT')}
@@ -547,63 +612,77 @@ function ProviderDropdown({
         <ChevronDown size={14} className={'lyr-prov-chevron' + (open ? ' is-open' : '')} />
       </button>
       {open && (
-        <div className="lyr-prov-menu" role="menu">
-          {/* Selecting a row pins it, so the way back to automatic lyrics has to be
-              a row of its own. Shown only when pinning is possible at all. */}
-          {canPin && (
-            <button
-              role="menuitemradio"
-              aria-checked={pinnedIndex < 0}
-              className={'lyr-prov-item lyr-prov-item-auto' + (pinnedIndex < 0 ? ' is-selected' : '')}
-              onClick={() => {
-                onReset()
-                setOpen(false)
-              }}
-            >
-              <span className="lyr-prov-item-main">
-                <RotateCcw size={13} className="lyr-prov-item-glyph" />
-                <span className="lyr-prov-item-name">{t('Auto (reset)')}</span>
-              </span>
-              {pinnedIndex < 0 && <Check size={14} className="lyr-prov-item-check" />}
-            </button>
-          )}
-          {candidates.map((c, i) => {
-            const isSelected = i === selectedIndex
-            const isSynced = Boolean(c.syncedLrc) || c.result.kind === 'synced'
-            const metadata = [
-              c.trackName,
-              c.artistName,
-              c.albumName,
-              c.duration != null ? fmtTime(c.duration) : null,
-              c.instrumental ? t('Instrumental') : null,
-            ]
-              .filter((part): part is string => Boolean(part?.trim()))
-              .join(' · ')
-            return (
+        <div className="lyr-prov-panels">
+          <div className="lyr-prov-menu" role="menu" aria-label={t('Lyrics sources')}>
+            {/* Selecting a row pins it, so the way back to automatic lyrics has to be
+                a row of its own. Shown only when pinning is possible at all. */}
+            {canPin && (
               <button
-                key={`${c.provider}-${i}`}
                 role="menuitemradio"
-                aria-checked={isSelected}
-                className={'lyr-prov-item' + (isSelected ? ' is-selected' : '')}
+                aria-checked={pinnedIndex < 0}
+                className={'lyr-prov-item lyr-prov-item-auto' + (pinnedIndex < 0 ? ' is-selected' : '')}
                 onClick={() => {
-                  onSelect(i)
-                  setOpen(false)
+                  onReset()
+                  closeDropdown()
                 }}
               >
                 <span className="lyr-prov-item-main">
-                  <span className="lyr-prov-item-heading">
-                    <span className="lyr-prov-item-name">{providerLabel(c.provider, t)}</span>
-                    <span className={'lyr-prov-badge' + (isSynced ? ' is-synced' : ' is-plain')}>
-                      {isSynced ? t('SYNCED') : t('TEXT')}
-                    </span>
-                    {i === pinnedIndex && <Pin size={12} className="lyr-prov-item-pin" />}
-                  </span>
-                  {metadata && <span className="lyr-prov-item-meta" title={metadata}>{metadata}</span>}
+                  <RotateCcw size={13} className="lyr-prov-item-glyph" />
+                  <span className="lyr-prov-item-name">{t('Auto (reset)')}</span>
                 </span>
-                {isSelected && <Check size={14} className="lyr-prov-item-check" />}
+                {pinnedIndex < 0 && <Check size={14} className="lyr-prov-item-check" />}
               </button>
-            )
-          })}
+            )}
+            {providerGroups.map((group) => {
+              const hasVariants = group.indices.length > 1
+              const isSelected = group.indices.includes(selectedIndex)
+              const isActive = activeProvider === group.provider
+              const onlyCandidate = candidates[group.indices[0]]
+              const isSynced = onlyCandidate
+                ? Boolean(onlyCandidate.syncedLrc) || onlyCandidate.result.kind === 'synced'
+                : false
+              return (
+                <button
+                  key={group.provider}
+                  role={hasVariants ? 'menuitem' : 'menuitemradio'}
+                  aria-checked={hasVariants ? undefined : isSelected}
+                  aria-haspopup={hasVariants ? 'menu' : undefined}
+                  aria-expanded={hasVariants ? isActive : undefined}
+                  className={'lyr-prov-item lyr-prov-provider-row' + (isSelected ? ' is-selected' : '') + (isActive ? ' is-active' : '')}
+                  onClick={() => {
+                    if (hasVariants) setActiveProvider((current) => current === group.provider ? null : group.provider)
+                    else {
+                      onSelect(group.indices[0])
+                      closeDropdown()
+                    }
+                  }}
+                >
+                  <span className="lyr-prov-item-main">
+                    <span className="lyr-prov-item-heading">
+                      <span className="lyr-prov-item-name">{providerLabel(group.provider, t)}</span>
+                      {!hasVariants && (
+                        <span className={'lyr-prov-badge' + (isSynced ? ' is-synced' : ' is-plain')}>
+                          {isSynced ? t('SYNCED') : t('TEXT')}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                  {hasVariants ? (
+                    <>
+                      <span className="lyr-prov-count">{group.indices.length}</span>
+                      <ChevronLeft size={14} className="lyr-prov-submenu-chevron" aria-hidden="true" />
+                    </>
+                  ) : isSelected ? <Check size={14} className="lyr-prov-item-check" /> : null}
+                </button>
+              )
+            })}
+          </div>
+          {activeGroup && (
+            <div className="lyr-prov-versions" role="menu" aria-label={providerLabel(activeGroup.provider, t)}>
+              <div className="lyr-prov-versions-heading">{providerLabel(activeGroup.provider, t)}</div>
+              {activeGroup.indices.map(renderCandidate)}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -264,6 +264,7 @@ export const ru: Record<string, string> = {
   Instrumental: 'Инструментал',
   'Search manually': 'Искать вручную',
   'Auto (reset)': 'Авто (сбросить)',
+  'Lyrics sources': 'Источники текста',
   'These lyrics are pinned to this track': 'Этот текст закреплён за треком',
   'Edit lyrics': 'Редактировать текст',
   'Lyrics timing': 'Тайминг текста',
