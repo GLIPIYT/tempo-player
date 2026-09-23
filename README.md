@@ -1,140 +1,72 @@
-# 🎵 Tempo
+# Tempo
 
-**English** · [Русский](README.ru.md)
+<p align="center">
+  <strong>Your music, together in one player.</strong><br>
+  A local-first desktop player for the music you own and the music you find.
+</p>
 
-**A local-first desktop music player.** Your files, your library, no accounts, no cloud — everything works offline.
+<p align="center">
+  <a href="README.ru.md">Русская версия</a> ·
+  <a href="https://github.com/GLIPIYT/tempo-player/actions/workflows/ci.yml"><img src="https://github.com/GLIPIYT/tempo-player/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a> ·
+  <a href="LICENSE">MIT License</a>
+</p>
 
-Built with **Tauri 2 + React 18 + TypeScript** on the frontend and **Rust + SQLite** under the hood. No Electron, no backend server, no telemetry.
+Tempo is a local-first music player for Windows that brings your files, SoundCloud and YouTube Music into one library and queue. Your collection stays on your computer, and playback keeps going as you move between pages.
 
-![Version](https://img.shields.io/badge/version-0.8.3-blue) ![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=black) ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white) ![Rust](https://img.shields.io/badge/Rust-2021-DEA584?logo=rust&logoColor=black) ![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-green)
+**[Get Tempo](https://github.com/GLIPIYT/tempo-player/releases)** · **[Report a problem](https://github.com/GLIPIYT/tempo-player/issues)**
 
-![Tempo — home screen](docs/screenshot.png)
+<p align="center">
+  <img src="docs/screenshots/tempo-showcase.png" alt="A visual tour of Tempo's home, library, albums, artists, playlists and settings" width="100%">
+</p>
 
-## ✨ Features
+## One place for your music
 
-### Library
-
-- **Local library** — point Tempo at your music folders (MP3, FLAC, M4A, AAC, OGG, Opus, WAV) and it builds a browsable collection of albums, artists and tracks.
-- **Fast incremental scanning** — files are parsed by tag (via `lofty`), album covers are extracted to the app data folder. Unchanged files (same size + mtime) are skipped, so rescans are near-instant. Scanning runs in Rust threads and never blocks the UI.
-- **Remove without deleting** — hide a local track from the library and it stays hidden across rescans, while the file itself is left untouched on disk.
-- **Reveal in file manager** — jump straight from a track to its folder.
-- **Right-click menus everywhere** — tracks, album and artist cards, and home sections, all offering the same actions as the row menu. Sections can be hidden until tomorrow.
-
-### Playback
-
-- **Full playback engine** — queue with shuffle, repeat (off / all / one), seek, volume; play counts and listening history are recorded automatically.
-- **Persistent player** — the audio element lives outside the React tree, so navigating around the app never interrupts a track.
-- **Taskbar progress** — playback position mirrored onto the Windows taskbar.
-- **Optional waveform** — a wave-style progress bar instead of the plain one.
-- **Crossfade** — overlap the end of a track with the start of the next, anywhere from 1 to 12 seconds. Off by default.
-- **Spectrum visualiser** — a live spectrum on a band above the player bar, drawn as bars, a wave or a line in the theme accent, with adjustable detail, height, opacity and smoothing. It reads the same analyser the silence watchdog uses, so it reflects what you actually hear: after loudness normalisation and after the crossfade ramp. Tracks streamed without a cache play outside the audio graph, so the band stays blank on those.
-
-### Playlists & favorites
-
-- **Playlists** — create, reorder, rename; add tracks from anywhere in the app.
-- **Likes** — a built-in, always-pinned Likes playlist.
-- **Favorite artists and albums** — pin them next to your playlists in the sidebar, in one shared drag-and-drop order.
-- **M3U8 import & export** — move playlists in and out of Tempo.
-
-### Lyrics
-
-- **Synced lyrics** — from embedded tags, `.lrc` sidecar files, or five online providers (lrclib, textyl, Musixmatch, lyrics.ovh, Genius) as a fallback.
-- **Distraction-free overlay** — the active line highlighted, with lookahead.
-- **Pin and nudge** — pin a specific provider, or even another song's lyrics, per track, and shift the timing by milliseconds until it lines up.
-
-### Beyond your library
-
-- **SoundCloud provider** — search and stream from SoundCloud alongside your local library through a unified provider abstraction. Streams are cached on disk with a configurable size limit and least-recently-played eviction; a cached track joins your library automatically.
-- **Cache before playing** — optional: download a SoundCloud track in full before it starts. The first play waits a little, but the track then comes off disk instead of streaming past the audio graph, which is what lets the spectrum visualiser work on it.
-- **Browse SoundCloud properly** — search with tabs for tracks, albums, playlists and artists, and open a playlist or artist from the results without keeping any of it. Those pages read live from SoundCloud; nothing reaches your library until you ask.
-- **YouTube Music too** — search it alongside SoundCloud, with a picker for which one to look in. Results come back as songs rather than videos, with covers, artists and albums, and the ones you play are filed into your library under the right artist and album. yt-dlp is fetched and kept current by the app, so there is nothing to install.
-- **Keep what you find** — right-click a playlist or an artist to cache it. A playlist becomes a local one under the same name, an artist brings their releases along as albums, and both show progress on their cover with a cancel that undoes what it created. Favoriting either lands it in the sidebar straight away, dimmed with a percentage until it is ready. Caching an artist you already have under a different spelling files the tracks under the local one, and a long catalogue asks which tracks to keep first.
-- **Discord Rich Presence** — show what you're listening to, with cover art, a real progress bar, and the current lyric line. Talks to Discord over the local IPC pipe; off by default.
-
-### Look and feel
-
-- **Floating mini player** — a compact always-on-top window that rests as a pill at the top edge of the screen. Click to expand into cover, transport, seek, volume, like, repeat and shuffle; it can pop open on its own when the track changes and collapse again. Off by default.
-- **Ten built-in themes** — plus a custom mode where you pick base colours and override individual tokens.
-- **Two player bar layouts** — classic keeps the progress bar between the transport and the volume controls; modern centres the transport and runs the progress line along the top edge of the bar.
-- **Your own font and background** — import a font file, set a background image with adjustable dim and blur, scale the whole UI.
-- **Bilingual UI** — English and Russian out of the box, or follow the system language.
-
-### Staying current
-
-- **Built-in updater** — Tempo checks GitHub for new releases when it starts and offers the newest one you have not skipped. The changelog is the release's own notes, and download and install are a single action: the app closes and comes back on the new version. Settings lists every release above the one you are running, so an older version can be picked deliberately, and a skipped release comes back as soon as a newer one exists.
-
-## 🖥️ Screens
-
-Home · Library · Albums · Artists · Playlists · Search · Profile · Settings — plus album, artist and playlist detail views, a persistent player bar and a queue panel. Listening statistics and history live on the Profile screen.
-
-## 🧱 Tech stack
-
-| Layer | Tech |
+| | |
 |---|---|
-| Shell | Tauri 2 (no Electron) |
-| UI | React 18 + TypeScript (strict) + Vite 6, `lucide-react` icons, hand-rolled CSS (no framework) |
-| Playback | HTML5 `<audio>` singleton + pure queue controller (shuffle permutation, repeat modes), `hls.js` for SoundCloud |
-| Backend | Rust: `rusqlite` (bundled SQLite, WAL mode), `walkdir`, `lofty`, `reqwest`, `image` |
-| Data | Single SQLite file in the app data dir; ordered migrations tracked via `user_version` |
-| Search | SQL `LIKE` queries across tracks / albums / artists, paged lists (500/page) |
+| **Your files, in one library** | Scan MP3, FLAC, M4A, AAC, OGG, Opus and WAV folders. Tempo reads tags, finds covers and makes later scans incremental. Hide tracks without moving or deleting files. |
+| **Music that travels with you** | Search SoundCloud and YouTube Music beside your local collection. Build a queue, shuffle, repeat, tune crossfade and loudness, and choose a waveform or spectrum visualiser. |
+| **A player that feels like yours** | Create playlists, like tracks, pin artists and albums, follow synced lyrics, and choose a theme, background, font and player layout. |
 
-## 🚀 Getting started
+Tempo also includes a floating mini player, Discord Rich Presence, listening history, M3U8 playlist import/export and a built-in updater. You can use the local library without an account or cloud service.
 
-**Prerequisites:** [Node.js 18+](https://nodejs.org), [Rust](https://rustup.rs), and the [Tauri 2 prerequisites](https://tauri.app/start/prerequisites/) for your platform.
+## Get started
+
+Current releases are Windows NSIS installers. To build Tempo from source, install [Node.js 22](https://nodejs.org/), [Rust](https://rustup.rs/) and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your platform.
 
 ```bash
-# install dependencies
-npm install
-
-# run in development mode
+git clone https://github.com/GLIPIYT/tempo-player.git
+cd tempo-player
+npm ci
 npm run tauri dev
-
-# build a release installer (Windows: NSIS .exe)
-npm run tauri build
 ```
 
-The frontend can also be developed standalone (`npm run dev`) with Vite hot reload on port 1420 — though anything touching the library or playback needs the Rust core, so use `tauri dev` for real work.
+Create a Windows installer with `npm run tauri build`. For frontend-only work, `npm run dev` starts Vite; features that use the library or playback need the Tauri backend.
 
-Checks:
+## Under the hood
+
+| Area | Implementation |
+|---|---|
+| Desktop | Tauri 2; React 18, TypeScript and Vite |
+| Playback | Persistent HTML audio engine, queue controller and `hls.js` for SoundCloud |
+| Native core | Rust commands for scanning, metadata, networking and app integration |
+| Storage | SQLite with ordered migrations; music files stay in their original folders |
+| Sources | Local files, SoundCloud and YouTube Music through a shared track model |
+
+The frontend crosses into Rust through typed wrappers in `src/api/`. The Rust core owns the database and filesystem work; React pages and providers work with shared track models. See [ARCHITECTURE.md](ARCHITECTURE.md) for the data model, module boundaries and runtime flows.
+
+## Development checks
 
 ```bash
-npm run typecheck                                  # TypeScript, strict
-cargo test --manifest-path src-tauri/Cargo.toml    # 62 Rust unit tests
+npm run check
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-## 📁 Project structure
+GitHub Actions runs frontend type checks, tests, hook-order and lint checks, workflow linting, and Rust tests on pushes and pull requests to `main`.
 
-```
-src/                  # React frontend
-  api/                #   typed wrappers over Tauri commands + event subscriptions
-  components/         #   shared UI, layout (sidebar, player bar, queue), onboarding
-  dnd/                #   drag-and-drop for tracks and sidebar favorites
-  features/lyrics/    #   lyrics providers, LRC parsing, overlay
-  hooks/              #   async data, likes, folders, scan progress
-  i18n/               #   EN / RU translations
-  pages/              #   Home, Library, Albums, Artists, Playlists, Search, Profile, Settings + detail views
-  player/             #   playback engine: controller, queue, React bindings
-  providers/          #   music source abstraction (local, SoundCloud)
-  state/              #   routing + persisted settings
-  theme/              #   token engine + presets
-src-tauri/            # Rust backend
-  src/database.rs     #   SQLite layer + migrations
-  src/commands.rs     #   Tauri command surface (Result<T, String>)
-  src/scanner.rs      #   filesystem walk + incremental scan logic
-  src/metadata.rs     #   tag & cover extraction (lofty)
-  src/lyrics.rs       #   online lyrics providers
-  src/soundcloud*.rs  #   SoundCloud API client + stream cache
-  src/discord.rs      #   Rich Presence over the local IPC pipe
-```
+## Project
 
-The full architecture, data model and module contracts are documented in [ARCHITECTURE.md](ARCHITECTURE.md).
+Tempo is in alpha (`0.8.3`) and Windows-first. The release workflow currently publishes a Windows installer. Network access is used by online features and the updater; the local library does not require an account or cloud service.
 
-## 🗺️ Status
-
-`v0.8.3` — alpha, Windows-first. Playback, library scanning, playlists, favorites, lyrics, search across SoundCloud and YouTube Music, browsing and caching for both, Discord presence, a floating mini player, right-click menus throughout, two player bar layouts, crossfade, a spectrum visualiser and a built-in updater all work. The release pipeline currently ships a Windows NSIS installer only; the codebase itself has no Windows-specific dependencies beyond the Discord IPC pipe path and taskbar progress.
-
-Known gaps: the frontend has no automated tests yet, and there is no linter in CI.
-
-## 📄 License
+[Releases](https://github.com/GLIPIYT/tempo-player/releases) · [Issues](https://github.com/GLIPIYT/tempo-player/issues) · [Architecture](ARCHITECTURE.md)
 
 Released under the [MIT License](LICENSE).

@@ -17,10 +17,11 @@ Four things run at once:
 2. **The mini player webview** — a second, transparent, always-on-top window that renders a
    compact view of the player. It owns no state of its own: it draws what the main window sends and
    sends commands back. See [Mini player](#mini-player).
-3. **The Rust core** — the SQLite database, the filesystem scanner, tag/cover extraction, and all
-   network calls that need to bypass browser CORS (SoundCloud, lyrics providers, image hosting).
-4. **Detached worker threads** — library scans and SoundCloud downloads. They never block the
-   webview; they report back by emitting Tauri events.
+3. **The Rust core** — the SQLite database, filesystem scanner, tag/cover extraction, and network
+   calls that need native access (SoundCloud, lyrics providers, YouTube through yt-dlp, image
+   hosting).
+4. **Background work** — library scans, SoundCloud downloads and YouTube collection operations run
+   outside the UI's render path. Long-running YouTube jobs report progress through Tauri events.
 
 The frontend never touches SQLite or the filesystem directly. Every crossing goes through a Tauri
 command, wrapped once in `src/api/client.ts`.
@@ -28,7 +29,7 @@ command, wrapped once in `src/api/client.ts`.
 ## Repository layout
 
 ```
-src/                      React frontend (~11.7k LOC)
+src/                      React frontend
   api/                      typed wrappers over Tauri commands (client.ts) + event subscriptions (events.ts)
   components/common/        TrackList, Cover, Modal, ConfirmModal, Toast, TrackMenu, WaveProgress, …
   components/layout/        TitleBar, Sidebar, TopBar, PlayerBar, QueuePanel, BackgroundLayer
@@ -41,22 +42,23 @@ src/                      React frontend (~11.7k LOC)
   mini-player/              the second window: contract, bootstrap, UI, styles
   pages/                    11 screens (see below)
   player/                   playback engine: controller, queue, engine, React bindings
-  providers/                music source abstraction (local, SoundCloud)
+  providers/                music source abstraction (local, SoundCloud, YouTube)
   state/                    nav (routing) + settings (persisted to localStorage)
   theme/                    token engine + 10 presets
   types/                    models.ts (mirrors Rust) + theme.ts
   utils/                    format, unified track mapping, playlists, likes/search stores
-src-tauri/src/            Rust core (~8.4k LOC)
-  database.rs               SQLite layer, schema, migrations, every query        (4.1k)
-  commands.rs               Tauri command surface — all 77 commands             (1.3k)
-  discord.rs                Rich Presence client over the local IPC pipe          (710)
-  lyrics.rs                 five online lyrics providers + LRC assembly           (647)
-  soundcloud_store.rs       stream cache: download, eviction, cache accounting     (432)
-  scanner.rs                filesystem walk + incremental scan decisions           (333)
-  soundcloud.rs             SoundCloud API client                                  (300)
-  models.rs                 shared serde structs (Rust mirror of types/models.ts)  (266)
-  lib.rs                    app setup, state, command registration                (139)
-  metadata.rs               tag & cover extraction via lofty                       (113)
+src-tauri/src/            Rust core
+  database.rs               SQLite schema, migrations and queries
+  commands.rs               Tauri command surface
+  scanner.rs + metadata.rs  filesystem scan, tag parsing and cover extraction
+  soundcloud.rs             SoundCloud API client
+  soundcloud_store.rs       stream cache, eviction and cache accounting
+  ytdlp.rs                  yt-dlp lifecycle, YouTube search, browse and downloads
+  lyrics.rs                 online lyrics providers and LRC assembly
+  discord.rs                Rich Presence over the local IPC pipe
+  tray.rs + updater.rs      system tray and app updates
+  models.rs                 shared Rust types mirrored in types/models.ts
+  lib.rs                    app setup, state and command registration
 ```
 
 Screens: Home, Library, Albums, Artists, Playlists, Search, Profile, Settings, plus three detail
@@ -116,12 +118,12 @@ extracted to `app_data_dir()/covers`.
 **Library visibility.** A track is listed, searchable and counted only when
 
 ```sql
-folder_id IS NOT NULL OR (source = 'soundcloud' AND cached_at IS NOT NULL)
+folder_id IS NOT NULL OR (source <> 'local' AND cached_at IS NOT NULL)
 ```
 
-A SoundCloud row exists as soon as you add it to a playlist, but it stays out of the library until
-its audio is actually cached on disk. This predicate is a single constant in `database.rs`, reused
-by every query.
+An external-source row stays out of the library until its audio is cached on disk. This includes
+SoundCloud streams, which may be cached in the background, and YouTube tracks, which are downloaded
+before they are filed. This predicate is a single constant in `database.rs`, reused by every query.
 
 **The Likes playlist** is the `playlists` row with `is_likes = 1`. It is created and pinned on every
 database open, may be renamed, and cannot be deleted or unpinned — enforced both in the UI and in
@@ -172,8 +174,7 @@ After migrating, `open_at` also runs `ensure_likes_playlist` and `backfill_searc
 ## Tauri command surface
 
 Every command returns `Result<T, String>`. Rust `snake_case` parameters are invoked as `camelCase`
-from JS — Tauri converts. All 77 commands are registered in `lib.rs` and wrapped in
-`src/api/client.ts`.
+from JS — Tauri converts. Commands are registered in `lib.rs` and wrapped in `src/api/client.ts`.
 
 **Library & scanning**
 
@@ -244,6 +245,17 @@ sc_cache_info() -> ScCacheInfo { path, totalBytes, fileCount, limitBytes }
 set_sc_cache_dir(path)     clear_sc_cache() -> (u32, u32)     sc_set_cache_limit(bytes)
 ```
 
+**YouTube / yt-dlp**
+
+```text
+ytdlp_status(configuredPath) / ytdlp_ensure(configuredPath) // managed or user-selected binary
+ytdlp_search(query, limit) / ytdlp_resolve_one(id)
+ytdlp_search_collections(query, section) / ytdlp_open_collection(url)
+ytdlp_browse(jobId, hits) / ytdlp_enrich(jobId, tracks)   // stream progress as events
+ytdlp_enrich_cancel(jobId) / ytdlp_cache(url, videoId)
+upsert_yt_track(metadata)                              // file is cached before it joins library
+```
+
 **Appearance, integration, misc**
 
 ```
@@ -264,9 +276,12 @@ Rust → frontend, subscribed in `src/api/events.ts`:
 | Event | Payload | When |
 |---|---|---|
 | `scan://progress` | `ScanProgress { phase: started \| progress \| completed, scannedFiles, added, updated, removed, unchanged, errors, currentFile }` | during scans, throttled to at most one event every 150 ms (`PROGRESS_INTERVAL_MS`) |
-| `library://changed` | SoundCloud track id | a background download finished caching, so the track just became library-visible |
+| `library://changed` | SoundCloud track id (or empty string after cache clear) | a SoundCloud download finished caching or cache rows were cleared |
+| `ytdlp://browsed`, `ytdlp://browsed-done` | collection progress / completion | a YouTube artist or playlist is being opened |
+| `ytdlp://enriched`, `ytdlp://enriched-done` | track metadata / completion | YouTube search results are being resolved into playable tracks |
 
-There is no polling anywhere; the UI reacts to these events and to local state only.
+The UI is event-driven. The one polling exception is cursor tracking for the transparent mini
+player's hover state; native mouse events are unreliable over the pill window.
 
 ## Rust modules
 
@@ -329,6 +344,15 @@ playable URL immediately and downloads the progressive stream in the background;
 `cached_at` + `file_size`, emits `library://changed`, and enforces the cache limit by evicting the
 least-recently-played files. Startup maintenance re-syncs `cached_at` against the cache directory
 and prunes duplicate local rows.
+
+### `ytdlp.rs`
+
+The app manages a standalone yt-dlp binary for YouTube search, collection browsing, metadata
+resolution and audio downloads. It checks the upstream GitHub release at startup and keeps a
+user-configured binary untouched. Downloaded tracks are filed into the same SQLite-backed library
+as local and SoundCloud tracks; the browser audio element never receives a raw YouTube media URL.
+Collection browse and search enrichment can take several seconds per batch, so the Tauri layer
+streams progress events and exposes cancellation for enrichment jobs.
 
 ### `lyrics.rs`
 
@@ -409,7 +433,7 @@ tree staying mounted.
 
 | Channel | Routed through | Used for |
 |---|---|---|
-| `local` | `AudioContext` → `GainNode` → destination | local files, cached SoundCloud, HLS |
+| `local` | `AudioContext` → `GainNode` → destination | local files, cached SoundCloud and YouTube, HLS |
 | `stream` | nothing | progressive remote SoundCloud streams |
 
 The split exists because `createMediaElementSource` routes an element **permanently**, and a
@@ -480,7 +504,7 @@ a manual skip after at least 10 seconds listened.
 
 ### Provider abstraction
 
-Local files and SoundCloud implement one interface, so pages can treat sources uniformly:
+Local files, SoundCloud and YouTube implement one interface, so pages can treat sources uniformly:
 
 ```ts
 export interface MusicProvider {
@@ -493,7 +517,9 @@ export interface MusicProvider {
 ```
 
 `UnifiedTrack` (`src/utils/unified.ts`) is the shape everything downstream consumes; a track carries
-its `source` and an optional local database id.
+its `source` and an optional local database id. YouTube results enter the queue as remote metadata;
+playback resolves and caches the media before handing it to the audio engine. Saved tracks then
+appear in the library through the same database model as the other sources.
 
 ### Lyrics
 
@@ -671,7 +697,8 @@ zoom on that element for the UI scale preference, and a zoomed ancestor makes
 
 ## Performance rules
 
-- No polling loops. The UI reacts to events and state changes only.
+- Prefer event-driven updates over polling. The mini player polls cursor position only for its
+  transparent-window hover detection; keep that exception isolated there.
 - Anything mirrored out of the player goes through a change check first. `PlayerController.emit()`
   runs at frame rate; consumers must compare the fields they care about rather than acting on every
   notification, and position-like data belongs on its own throttled channel.
@@ -682,25 +709,22 @@ zoom on that element for the UI scale preference, and a zoomed ancestor makes
 
 ## Testing
 
-62 Rust unit tests run against in-memory or temp-file databases, covering migration idempotency,
-scanner decisions, the SoundCloud cache, and one happy path per query group:
+Rust unit tests use in-memory or temporary databases and cover migration idempotency, scanner
+decisions, the SoundCloud cache, YouTube tooling and database query paths:
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml
 npm run typecheck
 ```
 
-CI runs both on every push and pull request to `main`.
-
-The frontend currently has no automated tests. The highest-value targets are the pure modules —
-`player/queue.ts` (shuffle permutation, repeat transitions), `features/lyrics/lrc.ts` (parsing),
-`utils/format.ts` and `utils/unified.ts`.
+GitHub Actions runs frontend type checking, Vitest, hook-order validation, ESLint, actionlint and
+Rust tests on every push and pull request to `main`.
 
 ## Code graph
 
-`graphify-out/` holds a persistent knowledge graph of this repository (~1270 nodes, ~3740 edges,
-~100 communities). It is built from the AST, so it needs no API key, and it is gitignored —
-local-only.
+`graphify-out/` holds a generated knowledge graph of this repository. It is gitignored and local to
+the checkout. Refresh it after significant code changes; graph counts and community labels change as
+the codebase grows.
 
 Use it to navigate instead of reading files one by one:
 
