@@ -74,7 +74,7 @@ export interface AppSettings {
     normalize: boolean
     /** Seconds of overlap between tracks; 0 disables crossfade. */
     crossfadeSec: number
-    /** Five-band equalizer; it is bypassed for uncached cross-origin streams. */
+    /** Ten-band equalizer; it is bypassed for uncached cross-origin streams. */
     equalizer: EqualizerSettings
   }
   soundcloud: {

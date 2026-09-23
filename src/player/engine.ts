@@ -667,7 +667,10 @@ export class AudioEngine {
         const filter = ctx.createBiquadFilter()
         filter.type = type
         filter.frequency.value = frequency
-        if (type === 'peaking') filter.Q.value = 1
+        if (type === 'peaking') {
+          // Keep the original three filters unchanged for saved five-band curves.
+          filter.Q.value = frequency === 250 || frequency === 1000 || frequency === 4000 ? 1 : 1.35
+        }
         previous.connect(filter)
         previous = filter
         return filter

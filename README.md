@@ -24,7 +24,7 @@ Tempo is a local-first music player for Windows that brings your files, SoundClo
 | | |
 |---|---|
 | **Your files, in one library** | Scan MP3, FLAC, M4A, AAC, OGG, Opus and WAV folders. Tempo reads tags, finds covers and makes later scans incremental. Hide tracks without moving or deleting files. |
-| **Music that travels with you** | Search SoundCloud and YouTube Music beside your local collection. Build a queue, shuffle, repeat, tune crossfade and loudness, change playback speed, shape local or cached tracks with a five-band EQ, and choose a waveform or spectrum visualiser. |
+| **Music that travels with you** | Search SoundCloud and YouTube Music beside your local collection. Build a queue, shuffle, repeat, tune crossfade and loudness, change playback speed, shape local or cached tracks with a ten-band EQ, and choose a waveform or spectrum visualiser. |
 | **A player that feels like yours** | Create playlists, like tracks, pin artists and albums, follow synced lyrics, and choose a theme, background, font and player layout. |
 
 Tempo also includes a floating mini player, Discord Rich Presence, listening history, M3U8 playlist import/export and a built-in updater. You can use the local library without an account or cloud service.

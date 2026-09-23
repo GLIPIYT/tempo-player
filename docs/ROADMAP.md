@@ -20,7 +20,7 @@ This file keeps the agreed product ideas with the repository so they remain avai
 
 ## 3. Equalizer — implemented
 
-- Added a five-band EQ with vertical controls, flat, bass, treble, vocal and rock presets, editable custom settings, and up to 12 named user presets.
+- Added a ten-band EQ with vertical controls, a ±18 dB range, flat, bass, treble, vocal and rock presets, editable custom settings, and up to 12 named user presets. Existing five-band curves are preserved by inserting zero-gain bands.
 - EQ runs on the local/cached audio graph. Uncached SoundCloud streams still bypass that graph to avoid cross-origin silence.
 - EQ no longer turns down the whole signal to make headroom. A compressor catches boosted peaks when a curve adds gain.
 

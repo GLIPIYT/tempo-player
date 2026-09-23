@@ -1,21 +1,26 @@
 export const EQUALIZER_BANDS = [
+  { frequency: 32, label: '32 Hz', type: 'peaking' },
   { frequency: 60, label: '60 Hz', type: 'lowshelf' },
+  { frequency: 120, label: '120 Hz', type: 'peaking' },
   { frequency: 250, label: '250 Hz', type: 'peaking' },
+  { frequency: 500, label: '500 Hz', type: 'peaking' },
   { frequency: 1000, label: '1 kHz', type: 'peaking' },
+  { frequency: 2000, label: '2 kHz', type: 'peaking' },
   { frequency: 4000, label: '4 kHz', type: 'peaking' },
+  { frequency: 8000, label: '8 kHz', type: 'peaking' },
   { frequency: 12000, label: '12 kHz', type: 'highshelf' },
 ] as const
 
 export const EQUALIZER_PRESETS = {
-  flat: [0, 0, 0, 0, 0],
-  bass: [6, 4, 1, 0, 0],
-  treble: [0, 0, 1, 4, 6],
-  vocal: [-2, 1, 4, 3, -1],
-  rock: [4, 2, -1, 2, 4],
+  flat: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  bass: [5, 7, 5, 3, 1, 0, 0, 0, 0, 0],
+  treble: [0, 0, 0, 0, 0, 0, 1, 3, 5, 7],
+  vocal: [-2, -2, -1, 0, 1, 3, 4, 3, 1, -1],
+  rock: [4, 5, 3, 2, 0, -1, 1, 3, 4, 4],
 } as const
 
 export type EqualizerPreset = keyof typeof EQUALIZER_PRESETS | 'custom'
-export type EqualizerBands = [number, number, number, number, number]
+export type EqualizerBands = [number, number, number, number, number, number, number, number, number, number]
 
 export interface UserEqualizerPreset {
   id: string
@@ -31,20 +36,24 @@ export interface EqualizerSettings {
   selectedUserPresetId: string | null
 }
 
-export const EQUALIZER_MIN_DB = -12
-export const EQUALIZER_MAX_DB = 12
+export const EQUALIZER_MIN_DB = -18
+export const EQUALIZER_MAX_DB = 18
 export const MAX_USER_EQUALIZER_PRESETS = 12
+
+/** The original five filters keep their frequency and type after expansion. */
+const LEGACY_BAND_POSITIONS = [1, 3, 5, 7, 9] as const
 
 export const DEFAULT_EQUALIZER_SETTINGS: EqualizerSettings = {
   enabled: false,
   preset: 'flat',
-  bands: [0, 0, 0, 0, 0],
+  bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   userPresets: [],
   selectedUserPresetId: null,
 }
 
 function isPreset(value: unknown): value is EqualizerPreset {
-  return value === 'custom' || Object.prototype.hasOwnProperty.call(EQUALIZER_PRESETS, value)
+  return value === 'custom' ||
+    (typeof value === 'string' && Object.prototype.hasOwnProperty.call(EQUALIZER_PRESETS, value))
 }
 
 /** Settings are persisted locally, so validate them before audio nodes use them. */
@@ -76,12 +85,21 @@ export function normalizeEqualizer(value: unknown): EqualizerSettings {
 
 function normalizeBands(value: unknown, fallback: readonly number[]): EqualizerBands {
   const values = Array.isArray(value) ? value : []
+  if (values.length === LEGACY_BAND_POSITIONS.length) {
+    const migrated = Array<number>(EQUALIZER_BANDS.length).fill(0)
+    LEGACY_BAND_POSITIONS.forEach((position, index) => {
+      migrated[position] = normalizeBand(values[index], fallback[position] ?? 0)
+    })
+    return migrated as EqualizerBands
+  }
   return EQUALIZER_BANDS.map((_, index) => {
-    const candidate = values[index]
-    const defaultValue = fallback[index] ?? 0
-    if (typeof candidate !== 'number' || !Number.isFinite(candidate)) return defaultValue
-    return Math.max(EQUALIZER_MIN_DB, Math.min(EQUALIZER_MAX_DB, Math.round(candidate)))
+    return normalizeBand(values[index], fallback[index] ?? 0)
   }) as EqualizerBands
+}
+
+function normalizeBand(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.max(EQUALIZER_MIN_DB, Math.min(EQUALIZER_MAX_DB, Math.round(value)))
 }
 
 function normalizeUserPreset(value: unknown): UserEqualizerPreset | null {
