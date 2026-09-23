@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Heart, ListMusic, MicVocal, Pause, Play, Radio, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-react'
+import { Gauge, Heart, ListMusic, MicVocal, Pause, Play, Radio, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-react'
 import { api } from '../../api/client'
 import { usePlayer } from '../../player'
 import { useLikes } from '../../hooks/useLikes'
@@ -16,6 +16,11 @@ import PlayerVisualizer from '../player/PlayerVisualizer'
 import { LyricsContextProvider, useLyrics } from '../../features/lyrics'
 
 let lastNonZeroVolume = 0.8
+const PLAYBACK_RATES = [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
+
+function formatPlaybackRate(rate: number): string {
+  return `${rate.toLocaleString(undefined, { maximumFractionDigits: 2 })}×`
+}
 
 export default function PlayerBar() {
   return (
@@ -35,6 +40,8 @@ function PlayerBarContent() {
   const t = useT()
   const lyrics = useLyrics()
   const [queueOpen, setQueueOpen] = useState(false)
+  const [speedOpen, setSpeedOpen] = useState(false)
+  const speedRef = useRef<HTMLDivElement | null>(null)
   const currentDbId = p.currentTrack?.dbId ?? null
   const liked = currentDbId !== null && likes.isLiked(currentDbId)
   const [scrubbing, setScrubbing] = useState(false)
@@ -48,6 +55,26 @@ function PlayerBarContent() {
   const VolIcon = p.volume === 0 ? VolumeX : p.volume < 0.5 ? Volume1 : Volume2
   const bufPct = p.bufferPct
   const buffering = bufPct !== null && bufPct < 100
+
+  useEffect(() => {
+    p.setEqualizer(settings.audio.equalizer)
+  }, [p.setEqualizer, settings.audio.equalizer])
+
+  useEffect(() => {
+    if (!speedOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (speedRef.current && !speedRef.current.contains(e.target as Node)) setSpeedOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSpeedOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [speedOpen])
 
   const commitScrub = useCallback(() => {
     if (scrubVal !== null && Number.isFinite(scrubVal)) p.seek(Math.max(0, scrubVal))
@@ -264,6 +291,61 @@ function PlayerBarContent() {
               <Heart size={16} fill={liked ? 'currentColor' : 'none'} />
             </button>
           ) : null}
+          <div className="pb-speed-control" ref={speedRef}>
+            <button
+              className={'icon-btn pb-speed-trigger' + (p.playbackRate !== 1 ? ' is-active' : '')}
+              onClick={() => setSpeedOpen((open) => !open)}
+              aria-haspopup="dialog"
+              aria-expanded={speedOpen}
+              aria-label={t('Playback speed')}
+              title={t('Playback speed')}
+            >
+              <Gauge size={15} />
+              <span>{formatPlaybackRate(p.playbackRate)}</span>
+            </button>
+            {speedOpen && (
+              <div className="pb-speed-menu" role="dialog" aria-label={t('Playback speed')}>
+                <div className="pb-speed-menu-heading">
+                  <span>{t('Playback speed')}</span>
+                  <button
+                    className="pb-speed-reset"
+                    onClick={() => {
+                      p.setPlaybackRate(1)
+                      setSpeedOpen(false)
+                    }}
+                  >
+                    {t('Reset speed')}
+                  </button>
+                </div>
+                <div className="pb-speed-presets">
+                  {PLAYBACK_RATES.map((rate) => (
+                    <button
+                      key={rate}
+                      className={'pb-speed-preset' + (p.playbackRate === rate ? ' is-selected' : '')}
+                      aria-pressed={p.playbackRate === rate}
+                      onClick={() => {
+                        p.setPlaybackRate(rate)
+                        setSpeedOpen(false)
+                      }}
+                    >
+                      {formatPlaybackRate(rate)}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className="pb-speed-pitch"
+                  role="switch"
+                  aria-checked={p.preservePitch}
+                  onClick={() => p.setPreservePitch(!p.preservePitch)}
+                >
+                  <span>{t('Preserve pitch')}</span>
+                  <span className={p.preservePitch ? 'pb-speed-switch is-on' : 'pb-speed-switch'} aria-hidden="true">
+                    <span />
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
           <div className="pb-vol">
             <button
               className="icon-btn pb-vol-btn"

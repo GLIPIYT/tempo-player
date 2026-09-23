@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ActiveTheme } from '../types/theme'
+import { DEFAULT_EQUALIZER_SETTINGS, normalizeEqualizer, type EqualizerSettings } from '../audio/equalizer'
 
 export type StartupPage = 'home' | 'library' | 'albums' | 'artists' | 'playlists'
 
@@ -73,6 +74,8 @@ export interface AppSettings {
     normalize: boolean
     /** Seconds of overlap between tracks; 0 disables crossfade. */
     crossfadeSec: number
+    /** Five-band equalizer; it is bypassed for uncached cross-origin streams. */
+    equalizer: EqualizerSettings
   }
   soundcloud: {
     /**
@@ -130,7 +133,7 @@ export const defaultSettings: AppSettings = {
     showNowPlaying: true,
   },
   system: { autostart: false, closeToTray: false },
-  audio: { normalize: false, crossfadeSec: 0 },
+  audio: { normalize: false, crossfadeSec: 0, equalizer: DEFAULT_EQUALIZER_SETTINGS },
   // off by default: streaming starts immediately, which is what most people
   // expect from a search result
   soundcloud: { cacheBeforePlay: false },
@@ -240,7 +243,11 @@ function load(): AppSettings {  try {
         ),
       },
       system: { ...defaultSettings.system, ...parsed.system },
-      audio: { ...defaultSettings.audio, ...parsed.audio },
+      audio: {
+        ...defaultSettings.audio,
+        ...parsed.audio,
+        equalizer: normalizeEqualizer(parsed.audio?.equalizer),
+      },
       soundcloud: { ...defaultSettings.soundcloud, ...parsed.soundcloud },
       ytdlp: { ...defaultSettings.ytdlp, ...parsed.ytdlp },
       visualizer: clampVisualizer(parsed.visualizer ?? {}),
@@ -291,7 +298,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         ),
       },
       system: { ...prev.system, ...patch.system },
-      audio: { ...prev.audio, ...patch.audio },
+      audio: {
+        ...prev.audio,
+        ...patch.audio,
+        equalizer: patch.audio?.equalizer
+          ? normalizeEqualizer({ ...prev.audio.equalizer, ...patch.audio.equalizer })
+          : prev.audio.equalizer,
+      },
       soundcloud: { ...prev.soundcloud, ...patch.soundcloud },
       ytdlp: { ...prev.ytdlp, ...patch.ytdlp },
       visualizer: clampVisualizer({ ...prev.visualizer, ...patch.visualizer }),

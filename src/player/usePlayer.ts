@@ -11,6 +11,9 @@ type PlayerActions = Pick<
   | 'previous'
   | 'seek'
   | 'setVolume'
+  | 'setPlaybackRate'
+  | 'setPreservePitch'
+  | 'setEqualizer'
   | 'setRepeat'
   | 'toggleShuffle'
   | 'addToQueue'
@@ -26,6 +29,9 @@ const actions: PlayerActions = {
   previous: () => playerController.previous(),
   seek: sec => playerController.seek(sec),
   setVolume: v => playerController.setVolume(v),
+  setPlaybackRate: rate => playerController.setPlaybackRate(rate),
+  setPreservePitch: preserve => playerController.setPreservePitch(preserve),
+  setEqualizer: settings => playerController.setEqualizer(settings),
   setRepeat: m => playerController.setRepeat(m),
   toggleShuffle: () => playerController.toggleShuffle(),
   addToQueue: t => playerController.addToQueue(t),
@@ -43,6 +49,8 @@ export function composePlayerApi(state: PlayerSnapshot): PlayerApi {
     position: state.position,
     duration: state.duration,
     volume: state.volume,
+    playbackRate: state.playbackRate,
+    preservePitch: state.preservePitch,
     repeat: state.repeat,
     shuffle: state.shuffle,
     bufferPct: state.bufferPct,

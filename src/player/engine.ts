@@ -1,3 +1,5 @@
+import { DEFAULT_EQUALIZER_SETTINGS, EQUALIZER_BANDS, type EqualizerSettings } from '../audio/equalizer'
+
 const SEEK_SETTLE_MS = 250
 const RESYNC_GAP_SEC = 1.5
 const BUFFER_DONE_FRAC = 0.999
@@ -21,9 +23,9 @@ const ANALYSER_MAX_DB = -15
 /**
  * Two playback paths, chosen per track.
  *
- * `local` goes through a Web Audio GainNode, which is what allows a gain above
- * 1.0 - needed both for loudness normalisation (lifting quiet tracks) and for
- * crossfade. `stream` is a plain element with no audio graph.
+ * `local` goes through the Web Audio EQ and gain graph, which supports
+ * equalization, loudness normalisation and crossfade. `stream` is a plain
+ * element with no audio graph.
  *
  * The split exists because `createMediaElementSource` routes an element
  * permanently: a cross-origin source without CORS headers comes out as silence
@@ -62,13 +64,18 @@ export class AudioEngine {
   private graphDisabled = false
   private lastLoad: { url: string; format: string | null; channel: AudioChannel } | null = null
   /** The element being faded out, while a crossfade is in flight. */
-  private fading: { el: HTMLAudioElement; gain: GainNode | null } | null = null
+  private fading: { el: HTMLAudioElement; gain: GainNode | null; eqFilters: BiquadFilterNode[] } | null = null
   private fadeTimer = 0
   /** 0..1 ramp applied on top of the volume, so the fade never fights applyGain. */
   private fadeLevel = 1
   private volumeLevel = 1
   /** Per-track loudness correction, linear. Only meaningful on the local path. */
   private trackGain = 1
+  private playbackRate = 1
+  private preservePitch = true
+  private equalizer: EqualizerSettings = DEFAULT_EQUALIZER_SETTINGS
+  private eqFilters: BiquadFilterNode[] = []
+  private eqBoostDb = 0
   private rafId = 0
   private epoch = 0
   private lastSeekAt = Number.NEGATIVE_INFINITY
@@ -128,6 +135,7 @@ export class AudioEngine {
     this.activeChannel = channel
     this.lastLoad = { url, format, channel }
     const el = this.ensure(channel)
+    this.applyPlaybackOptions(el)
     this.epoch += 1
     this.pendingSeek = null
     this.lastReported = 0
@@ -217,6 +225,30 @@ export class AudioEngine {
     this.applyGain()
   }
 
+  setPlaybackRate(rate: number): void {
+    const safeRate = Number.isFinite(rate) ? rate : 1
+    this.playbackRate = Math.round(Math.min(2, Math.max(0.5, safeRate)) * 100) / 100
+    this.applyPlaybackOptions(this.channels.local)
+    this.applyPlaybackOptions(this.channels.stream)
+    this.applyPlaybackOptions(this.fading?.el ?? null)
+  }
+
+  setPreservePitch(preserve: boolean): void {
+    this.preservePitch = preserve
+    this.applyPlaybackOptions(this.channels.local)
+    this.applyPlaybackOptions(this.channels.stream)
+    this.applyPlaybackOptions(this.fading?.el ?? null)
+  }
+
+  setEqualizer(settings: EqualizerSettings): void {
+    this.equalizer = settings
+    if (settings.enabled) this.ensureGainGraph()
+    const ctx = this.ctx
+    if (settings.enabled && ctx?.state === 'suspended') void ctx.resume().catch(() => {})
+    this.applyEqualizer()
+    this.applyGain()
+  }
+
   /**
    * Per-track loudness correction as a linear multiplier. Values above 1 lift
    * quiet tracks; only the local path can express them, so the stream path
@@ -224,9 +256,8 @@ export class AudioEngine {
    */
   setTrackGain(linear: number): void {
     this.trackGain = Number.isFinite(linear) && linear > 0 ? linear : 1
-    // The graph is only built when there is something to apply. With
-    // normalisation off the local path stays unrouted and behaves exactly as it
-    // did before, so a context that fails to start cannot silence playback.
+    // The graph is built for normalization, EQ or the visualizer. If it cannot
+    // start, the local path falls back to element volume and keeps playing.
     if (this.trackGain !== 1) this.ensureGainGraph()
     this.applyGain()
   }
@@ -243,7 +274,7 @@ export class AudioEngine {
     if (this.gainNode) {
       // the whole local level lives in the graph, so it can exceed 1.0
       if (local) local.volume = 1
-      this.gainNode.gain.value = this.volumeLevel * this.trackGain * level
+      this.gainNode.gain.value = this.volumeLevel * this.trackGain * this.equalizerHeadroom() * level
     } else if (local) {
       // graph unavailable: fall back to attenuation only
       local.volume = this.volumeLevel * Math.min(1, this.trackGain) * level
@@ -275,8 +306,11 @@ export class AudioEngine {
     }
     this.destroyHls()
     this.detachFade()
-    this.fading = { el: outgoing, gain: this.gainNode }
+    const outgoingChannel = this.activeChannel
+    this.fading = { el: outgoing, gain: this.gainNode, eqFilters: this.eqFilters }
     this.gainNode = null
+    this.eqFilters = []
+    this.channels[outgoingChannel] = null
     this.channels[channel] = null
     this.activeChannel = channel
     this.fadeLevel = 0
@@ -299,7 +333,7 @@ export class AudioEngine {
       const fade = this.fading
       if (fade) {
         const level = 1 - t
-        if (fade.gain) fade.gain.gain.value = this.volumeLevel * this.trackGain * level
+        if (fade.gain) fade.gain.gain.value = this.volumeLevel * this.trackGain * this.equalizerHeadroom() * level
         else fade.el.volume = Math.max(0, Math.min(1, this.volumeLevel * level))
       }
       if (t < 1) {
@@ -403,6 +437,57 @@ export class AudioEngine {
     el.load()
   }
 
+  private applyPlaybackOptions(el: HTMLAudioElement | null): void {
+    if (!el) return
+    el.playbackRate = this.playbackRate
+    const pitchElement = el as HTMLAudioElement & {
+      preservesPitch?: boolean
+      webkitPreservesPitch?: boolean
+      mozPreservesPitch?: boolean
+    }
+    pitchElement.preservesPitch = this.preservePitch
+    pitchElement.webkitPreservesPitch = this.preservePitch
+    pitchElement.mozPreservesPitch = this.preservePitch
+  }
+
+  private equalizerHeadroom(): number {
+    if (!this.equalizer.enabled) return 1
+    return 10 ** (-this.eqBoostDb / 20)
+  }
+
+  private applyEqualizer(): void {
+    const apply = (filters: BiquadFilterNode[]) => {
+      filters.forEach((filter, index) => {
+        filter.gain.value = this.equalizer.enabled ? this.equalizer.bands[index] ?? 0 : 0
+      })
+    }
+    apply(this.eqFilters)
+    if (this.fading) apply(this.fading.eqFilters)
+
+    const filters = this.eqFilters.length > 0 ? this.eqFilters : this.fading?.eqFilters ?? []
+    if (!this.equalizer.enabled || filters.length === 0) {
+      this.eqBoostDb = 0
+      return
+    }
+    const count = 256
+    const frequencies = new Float32Array(count)
+    const combined = new Float32Array(count)
+    const magnitudes = new Float32Array(count)
+    const phases = new Float32Array(count)
+    const maxFrequency = Math.min(20000, (this.ctx?.sampleRate ?? 48000) * 0.45)
+    for (let i = 0; i < count; i += 1) {
+      frequencies[i] = 20 * (maxFrequency / 20) ** (i / (count - 1))
+      combined[i] = 1
+    }
+    for (const filter of filters) {
+      filter.getFrequencyResponse(frequencies, magnitudes, phases)
+      for (let i = 0; i < count; i += 1) combined[i] *= magnitudes[i]
+    }
+    let peak = 1
+    for (const magnitude of combined) peak = Math.max(peak, magnitude)
+    this.eqBoostDb = 20 * Math.log10(peak)
+  }
+
   private ensure(channel: AudioChannel): HTMLAudioElement {
     const existing = this.channels[channel]
     if (existing) return existing
@@ -412,15 +497,15 @@ export class AudioEngine {
       // Local files come from the asset protocol, which is a different origin
       // from the app itself. Tauri does send Access-Control-Allow-Origin for
       // it, but a media element only gets a non-opaque response if it asks for
-      // CORS - and Web Audio silences an opaque one. Without this, enabling
-      // normalisation (which is what first builds the audio graph) muted every
-      // local track.
+      // CORS - and Web Audio silences an opaque one. Without this, routing a
+      // local track through the graph for EQ or normalization could mute it.
       //
       // Deliberately not set on the stream channel: a remote SoundCloud URL
       // without CORS headers would then fail to load at all, and that element
       // is never routed anyway.
       el.crossOrigin = 'anonymous'
     }
+    this.applyPlaybackOptions(el)
     // handlers are bound to this element, so every one checks it is still the
     // active channel - a parked element must not drive the UI
     const isActive = () => this.active() === el
@@ -474,12 +559,12 @@ export class AudioEngine {
    * Web Audio turns an opaque source - cross-origin, no CORS - into silence,
    * and it does so *quietly*: the element still reports normal progress, no
    * error fires, and the only symptom is that nothing comes out. That is
-   * exactly how enabling normalisation muted every local track once.
+   * exactly how routing local tracks through Web Audio could mute playback.
    *
    * So watch what the graph actually emits. If it stays flat while the element
    * is advancing, give up on the graph permanently and rebuild an unrouted
-   * element: normalisation then degrades to plain volume instead of leaving the
-   * user with no sound at all.
+   * element: graph effects then fall back to plain volume instead of leaving
+   * the user with no sound at all.
    */
   private checkSilence(el: HTMLAudioElement): void {
     if (!this.analyser || !this.analyserBuf || this.graphDisabled) return
@@ -515,6 +600,7 @@ export class AudioEngine {
     this.analyser = null
     this.analyserBuf = null
     this.gainNode = null
+    this.eqFilters = []
 
     const el = this.channels.local
     if (!el) return
@@ -536,8 +622,8 @@ export class AudioEngine {
   }
 
   /**
-   * Routes the local element through a GainNode. Called lazily, and only for
-   * the same-origin channel, the first time a non-unity gain is requested. If
+   * Routes the local element through the EQ and gain graph. Called lazily, and
+   * only for the same-origin channel, when the graph is first needed. If
    * the graph cannot be built the element is left unrouted and `applyGain`
    * falls back to plain volume.
    */
@@ -551,14 +637,22 @@ export class AudioEngine {
         (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!Ctor) return
       const ctx = this.ctx ?? new Ctor()
-      // The graph is built from a React effect rather than from the click
-      // itself, so the context can come up suspended. Nothing else resumes it
-      // until the next play(), which is why the visualiser used to sit blank
-      // on the first track and start working after a pause.
+      // The graph can be requested outside a click and start suspended. Resume
+      // it here; play() also retries after the next direct user gesture.
       if (ctx.state === 'suspended') void ctx.resume().catch(() => {})
       const source = ctx.createMediaElementSource(el)
+      let previous: AudioNode = source
+      const eqFilters = EQUALIZER_BANDS.map(({ frequency, type }) => {
+        const filter = ctx.createBiquadFilter()
+        filter.type = type
+        filter.frequency.value = frequency
+        if (type === 'peaking') filter.Q.value = 1
+        previous.connect(filter)
+        previous = filter
+        return filter
+      })
       const gain = ctx.createGain()
-      source.connect(gain)
+      previous.connect(gain)
       gain.connect(ctx.destination)
       if (this.analyser) {
         gain.connect(this.analyser)
@@ -576,6 +670,8 @@ export class AudioEngine {
       }
       this.ctx = ctx
       this.gainNode = gain
+      this.eqFilters = eqFilters
+      this.applyEqualizer()
       this.silentMs = 0
     } catch {
       this.ctx = null

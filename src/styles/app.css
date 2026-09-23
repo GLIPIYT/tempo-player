@@ -1274,6 +1274,33 @@
   border-color: var(--accent);
 }
 
+.eq-control-row {
+  flex-wrap: wrap;
+}
+
+.eq-preset-select,
+.eq-save-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: min(260px, 100%);
+  min-width: 0;
+}
+
+.eq-preset-select .select {
+  width: 100%;
+  min-width: 0;
+}
+
+.eq-save-row .text-input {
+  min-width: 0;
+  flex: 1;
+}
+
+.eq-delete-preset {
+  border: 1px solid var(--border);
+}
+
 .playerbar {
   /* The spectrum band is positioned against the bar, and has to paint above
      the page content it reaches over. Well below the menus (220) and modals
@@ -1516,6 +1543,115 @@
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.pb-speed-control {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.pb-speed-trigger {
+  width: auto;
+  gap: 4px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-speed-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 46;
+  width: 224px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+.pb-speed-menu-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pb-speed-reset {
+  color: var(--accent-strong);
+  font-size: 10px;
+}
+
+.pb-speed-presets {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.pb-speed-preset {
+  min-height: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-speed-preset:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.pb-speed-preset.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface));
+  color: var(--accent-strong);
+}
+
+.pb-speed-pitch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 2px 1px;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11px;
+  text-align: left;
+}
+
+.pb-speed-switch {
+  display: inline-flex;
+  align-items: center;
+  width: 27px;
+  height: 16px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background-color 0.15s ease;
+}
+
+.pb-speed-switch > span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+.pb-speed-switch.is-on {
+  background: color-mix(in srgb, var(--accent) 48%, var(--border));
+}
+
+.pb-speed-switch.is-on > span {
+  transform: translateX(11px);
+  background: var(--accent-strong);
 }
 
 /* Volume: inline slider when there is room, popover under the speaker icon when

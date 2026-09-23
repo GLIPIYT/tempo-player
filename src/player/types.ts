@@ -1,4 +1,5 @@
 import type { RepeatMode, UnifiedTrack } from '../types/models'
+import type { EqualizerSettings } from '../audio/equalizer'
 
 export interface PlayerApi {
   currentTrack: UnifiedTrack | null
@@ -8,6 +9,8 @@ export interface PlayerApi {
   position: number
   duration: number
   volume: number
+  playbackRate: number
+  preservePitch: boolean
   repeat: RepeatMode
   shuffle: boolean
   bufferPct: number | null
@@ -19,6 +22,9 @@ export interface PlayerApi {
   previous(): void
   seek(sec: number): void
   setVolume(v: number): void
+  setPlaybackRate(rate: number): void
+  setPreservePitch(preserve: boolean): void
+  setEqualizer(settings: EqualizerSettings): void
   setRepeat(m: RepeatMode): void
   toggleShuffle(): void
   addToQueue(t: UnifiedTrack): void

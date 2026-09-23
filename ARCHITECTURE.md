@@ -11,9 +11,9 @@ feature-level tour see [README.md](README.md).
 
 Four things run at once:
 
-1. **The main webview** — the whole UI, plus playback. Audio is a single HTML5 `<audio>` element
-   owned by a module-level singleton, not a React-managed node, so it survives re-renders and route
-   changes.
+1. **The main webview** — the whole UI, plus playback. `AudioEngine` owns the local and stream HTML5
+   audio elements inside a module-level singleton, not React, so playback survives re-renders and
+   route changes.
 2. **The mini player webview** — a second, transparent, always-on-top window that renders a
    compact view of the player. It owns no state of its own: it draws what the main window sends and
    sends commands back. See [Mini player](#mini-player).
@@ -413,10 +413,13 @@ export function usePlayer(): PlayerApi
 interface PlayerApi {
   currentTrack: UnifiedTrack | null; queue: UnifiedTrack[]; queueIndex: number
   isPlaying: boolean; position: number; duration: number; volume: number
+  playbackRate: number; preservePitch: boolean
   repeat: RepeatMode; shuffle: boolean
   playTracks(tracks: UnifiedTrack[], startIndex?: number): void
   toggle(): void; next(): void; previous(): void
   seek(sec: number): void; setVolume(v: number): void
+  setPlaybackRate(rate: number): void; setPreservePitch(preserve: boolean): void
+  setEqualizer(settings: EqualizerSettings): void
   setRepeat(m: RepeatMode): void; toggleShuffle(): void
   addToQueue(t: UnifiedTrack): void; removeFromQueue(index: number): void; clearQueue(): void
 }
@@ -433,7 +436,7 @@ tree staying mounted.
 
 | Channel | Routed through | Used for |
 |---|---|---|
-| `local` | `AudioContext` → `GainNode` → destination | local files, cached SoundCloud and YouTube, HLS |
+| `local` | `AudioContext` → five EQ filters → `GainNode` → destination | local files, cached SoundCloud and YouTube, HLS |
 | `stream` | nothing | progressive remote SoundCloud streams |
 
 The split exists because `createMediaElementSource` routes an element **permanently**, and a
@@ -442,10 +445,19 @@ tracks play from a remote URL — `toScPlayback` reports that as `cached: false`
 off the graph. Cached files are local, and HLS reaches the element through MediaSource (a blob URL),
 which is same-origin and therefore safe.
 
-The `GainNode` is what makes a gain **above 1.0** possible, which `HTMLAudioElement.volume` cannot
-express. It is built **lazily**, only when a non-unity track gain is actually requested: with
-normalisation off the local path is unrouted and behaves exactly as it did before, so a context that
-fails to start cannot silence playback — it just falls back to plain volume.
+The graph is built lazily for loudness normalisation, the visualizer or the equalizer. Its
+`GainNode` supports levels above 1.0 for normalization and crossfade; five biquad filters provide
+the EQ. If the context cannot start, the local path falls back to plain volume. Uncached SoundCloud
+streams remain outside the graph, so they do not receive EQ.
+
+Playback rate is stored by `PlayerController` and applied to both audio channels and the element
+fading out during a crossfade. The pitch-preservation switch maps to the media element's native
+support. The player's time and synced lyrics continue to use media `currentTime`, so rate changes do
+not need a separate lyric clock.
+
+The equalizer has low-shelf, three peaking and high-shelf bands, built-in curves and up to 12 named
+user presets. `AudioEngine` measures the combined filter response across logarithmic frequency points
+and reduces output gain by its peak boost to preserve clipping headroom.
 
 Every element handler checks `isActive()` before doing anything, so a parked element cannot drive the
 UI, and loading on one channel silences the other so two elements never play at once.

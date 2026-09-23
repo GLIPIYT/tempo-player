@@ -7,6 +7,7 @@ import type { RepeatMode, UnifiedTrack } from '../types/models'
 import { trackToUnified } from '../utils/unified'
 import { AudioEngine, type AudioChannel } from './engine'
 import { dbToLinear } from '../audio/loudness'
+import type { EqualizerSettings } from '../audio/equalizer'
 import { QueueController } from './queue'
 
 export interface PlayerSnapshot {
@@ -17,6 +18,8 @@ export interface PlayerSnapshot {
   position: number
   duration: number
   volume: number
+  playbackRate: number
+  preservePitch: boolean
   repeat: RepeatMode
   shuffle: boolean
   bufferPct: number | null
@@ -47,6 +50,8 @@ interface ScPlayback {
 }
 
 const VOLUME_KEY = 'tempo.volume'
+const PLAYBACK_RATE_KEY = 'tempo.playbackRate'
+const PRESERVE_PITCH_KEY = 'tempo.preservePitch'
 const REPEAT_KEY = 'tempo.repeat'
 const SHUFFLE_KEY = 'tempo.shuffle'
 const QUEUE_SNAPSHOT_KEY = 'tempo.queue.snapshot.v1'
@@ -170,6 +175,15 @@ function readStoredVolume(): number {
   return 0.8
 }
 
+function readStoredPlaybackRate(): number {
+  const parsed = Number.parseFloat(readPref(PLAYBACK_RATE_KEY) ?? '')
+  return Number.isFinite(parsed) ? Math.min(2, Math.max(0.5, parsed)) : 1
+}
+
+function readStoredPreservePitch(): boolean {
+  return readPref(PRESERVE_PITCH_KEY) !== '0'
+}
+
 function readStoredRepeat(): RepeatMode {
   const stored = readPref(REPEAT_KEY)
   if (stored === 'all' || stored === 'one' || stored === 'off') return stored
@@ -184,6 +198,8 @@ export class PlayerController {
   private position = 0
   private duration = 0
   private volume = readStoredVolume()
+  private playbackRate = readStoredPlaybackRate()
+  private preservePitch = readStoredPreservePitch()
   private repeat: RepeatMode = readStoredRepeat()
   private shuffle = readPref(SHUFFLE_KEY) === '1'
   private loadedSourceId: string | null = null
@@ -204,6 +220,8 @@ export class PlayerController {
     position: 0,
     duration: 0,
     volume: 0.8,
+    playbackRate: 1,
+    preservePitch: true,
     repeat: 'off',
     shuffle: false,
     bufferPct: null,
@@ -213,6 +231,9 @@ export class PlayerController {
 
   constructor() {
     this.loadSnapshot()
+    this.engine.setPlaybackRate(this.playbackRate)
+    this.engine.setPreservePitch(this.preservePitch)
+    this.engine.setEqualizer(getSettings().audio.equalizer)
     this.engine.onTime = t => {
       this.position = t
       this.maybeCrossfade()
@@ -334,6 +355,28 @@ export class PlayerController {
     writePref(VOLUME_KEY, String(this.volume))
     this.engine.setVolume(this.volume)
     this.emit()
+  }
+
+  setPlaybackRate(rate: number): void {
+    const safeRate = Number.isFinite(rate) ? rate : 1
+    const next = Math.round(Math.min(2, Math.max(0.5, safeRate)) * 100) / 100
+    if (next === this.playbackRate) return
+    this.playbackRate = next
+    writePref(PLAYBACK_RATE_KEY, String(next))
+    this.engine.setPlaybackRate(next)
+    this.emit()
+  }
+
+  setPreservePitch(preserve: boolean): void {
+    if (preserve === this.preservePitch) return
+    this.preservePitch = preserve
+    writePref(PRESERVE_PITCH_KEY, preserve ? '1' : '0')
+    this.engine.setPreservePitch(preserve)
+    this.emit()
+  }
+
+  setEqualizer(settings: EqualizerSettings): void {
+    this.engine.setEqualizer(settings)
   }
 
   setRepeat(m: RepeatMode): void {
@@ -748,6 +791,8 @@ export class PlayerController {
       position: this.position,
       duration: this.duration,
       volume: this.volume,
+      playbackRate: this.playbackRate,
+      preservePitch: this.preservePitch,
       repeat: this.repeat,
       shuffle: this.shuffle,
       bufferPct: this.bufferPct,

@@ -11,18 +11,17 @@ This file keeps the agreed product ideas with the repository so they remain avai
 - Preserve existing provider selection and per-track timing offset. Deduplicate exact duplicates without hiding distinct versions.
 - LRCLIB search exposes recording/release metadata, not a lyric contributor name; the picker distinguishes records and text versions rather than uploaders.
 
-## 2. Playback speed
+## 2. Playback speed — implemented
 
-- Add a speed control with useful presets and a reset to 1×.
-- Offer pitch preservation where supported; keep speed changes consistent across playback channels and crossfades.
-- Keep synced lyrics anchored to media position for ordinary playback-rate changes.
+- Add a speed control with useful presets and a reset to 1×. Done: the player bar offers 0.5×–2× presets and a reset.
+- Offer pitch preservation where supported; keep speed changes consistent across playback channels and crossfades. Done: rate and pitch preference apply to both engine channels and the outgoing crossfade element.
+- Keep synced lyrics anchored to media position for ordinary playback-rate changes. Done: lyrics continue to follow the media element's current time.
 
-## 3. Equalizer
+## 3. Equalizer — implemented
 
-- Add a small parametric or graphic EQ with a few presets and user presets.
-- Start on the local/cached audio graph, where Web Audio filters can be applied safely.
-- Decide how uncached online streams should participate before promising EQ for every source; those currently bypass the graph to avoid cross-origin silence.
-- Prevent filter boosts from clipping with suitable preamp/headroom handling.
+- Added a five-band graphic EQ with flat, bass, treble, vocal and rock presets, editable custom settings, and up to 12 named user presets.
+- EQ runs on the local/cached audio graph. Uncached SoundCloud streams still bypass that graph to avoid cross-origin silence, and the settings card explains the limit.
+- Automatic headroom is calculated from the combined filter response to prevent boosted bands from clipping.
 
 ## 4. Lyrics timing and appearance
 
