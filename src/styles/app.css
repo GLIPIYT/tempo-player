@@ -1274,33 +1274,6 @@
   border-color: var(--accent);
 }
 
-.eq-control-row {
-  flex-wrap: wrap;
-}
-
-.eq-preset-select,
-.eq-save-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: min(260px, 100%);
-  min-width: 0;
-}
-
-.eq-preset-select .select {
-  width: 100%;
-  min-width: 0;
-}
-
-.eq-save-row .text-input {
-  min-width: 0;
-  flex: 1;
-}
-
-.eq-delete-preset {
-  border: 1px solid var(--border);
-}
-
 .playerbar {
   /* The spectrum band is positioned against the bar, and has to paint above
      the page content it reaches over. Well below the menus (220) and modals
@@ -1563,12 +1536,15 @@
   right: 0;
   bottom: calc(100% + 10px);
   z-index: 46;
-  width: 224px;
-  padding: 9px;
+  width: 408px;
+  max-width: min(408px, calc(100vw - 24px));
+  max-height: min(76vh, 570px);
+  overflow-y: auto;
+  padding: 15px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md, 10px);
   background: var(--bg-elevated);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--bg) 70%, transparent);
+  box-shadow: 0 14px 38px color-mix(in srgb, var(--bg) 78%, transparent);
 }
 
 .pb-speed-menu-heading {
@@ -1576,41 +1552,39 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px 2px 8px;
+  padding: 0 1px 2px;
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .pb-speed-reset {
   color: var(--accent-strong);
-  font-size: 10px;
-}
-
-.pb-speed-presets {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-}
-
-.pb-speed-preset {
-  min-height: 28px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  color: var(--text-muted);
   font-size: 11px;
-  font-variant-numeric: tabular-nums;
 }
 
-.pb-speed-preset:hover {
-  background: var(--surface-hover);
+.pb-speed-readout {
+  margin-top: 5px;
   color: var(--text);
+  font-size: 24px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.035em;
 }
 
-.pb-speed-preset.is-selected {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
-  background: color-mix(in srgb, var(--accent) 15%, var(--surface));
-  color: var(--accent-strong);
+.pb-speed-slider {
+  display: block;
+  width: 100%;
+  margin: 10px 0 0;
+}
+
+.pb-speed-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .pb-speed-pitch {
@@ -1618,12 +1592,165 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  margin-top: 8px;
-  padding: 8px 2px 1px;
-  border-top: 1px solid var(--border);
+  margin-top: 10px;
+  padding: 8px 2px 2px;
   color: var(--text);
   font-size: 11px;
   text-align: left;
+}
+
+.pb-speed-divider {
+  height: 1px;
+  margin: 10px 0 12px;
+  background: var(--border);
+}
+
+.pb-eq-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pb-eq-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.pb-eq-subtitle {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.pb-eq-preset-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.pb-eq-preset-select {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+  height: 30px;
+  font-size: 11px;
+}
+
+.pb-eq-delete {
+  width: 30px;
+  min-width: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.pb-eq-bands {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 12px;
+  padding: 10px 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+
+.pb-eq-band {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+}
+
+.pb-eq-value {
+  min-height: 13px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-eq-track {
+  position: relative;
+  width: 20px;
+  height: 106px;
+  flex: 0 0 106px;
+}
+
+.pb-eq-zero {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 1px;
+  transform: translate(-50%, -50%);
+  background: var(--text-muted);
+  pointer-events: none;
+}
+
+.pb-eq-slider {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100px;
+  height: 4px;
+  margin: 0;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  transform-origin: center;
+}
+
+.pb-eq-slider::-webkit-slider-thumb {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--bg-elevated);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.pb-eq-slider::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--bg-elevated);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.pb-eq-frequency {
+  color: var(--text-muted);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.pb-eq-save-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.pb-eq-name {
+  min-width: 0;
+  height: 30px;
+  flex: 1;
+  font-size: 11px;
+}
+
+.pb-eq-save {
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: 11px;
+}
+
+.pb-eq-save:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pb-eq-note {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.4;
 }
 
 .pb-speed-switch {

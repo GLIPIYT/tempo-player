@@ -55,6 +55,7 @@ export class AudioEngine {
   private hls: unknown = null
   private ctx: AudioContext | null = null
   private gainNode: GainNode | null = null
+  private compressorNode: DynamicsCompressorNode | null = null
   private analyser: AnalyserNode | null = null
   private analyserBuf: Uint8Array<ArrayBuffer> | null = null
   /** Accumulated time the graph has been silent while the element advanced. */
@@ -64,7 +65,12 @@ export class AudioEngine {
   private graphDisabled = false
   private lastLoad: { url: string; format: string | null; channel: AudioChannel } | null = null
   /** The element being faded out, while a crossfade is in flight. */
-  private fading: { el: HTMLAudioElement; gain: GainNode | null; eqFilters: BiquadFilterNode[] } | null = null
+  private fading: {
+    el: HTMLAudioElement
+    gain: GainNode | null
+    compressor: DynamicsCompressorNode | null
+    eqFilters: BiquadFilterNode[]
+  } | null = null
   private fadeTimer = 0
   /** 0..1 ramp applied on top of the volume, so the fade never fights applyGain. */
   private fadeLevel = 1
@@ -227,7 +233,7 @@ export class AudioEngine {
 
   setPlaybackRate(rate: number): void {
     const safeRate = Number.isFinite(rate) ? rate : 1
-    this.playbackRate = Math.round(Math.min(2, Math.max(0.5, safeRate)) * 100) / 100
+    this.playbackRate = Math.round(Math.min(2, Math.max(0.5, safeRate)) * 20) / 20
     this.applyPlaybackOptions(this.channels.local)
     this.applyPlaybackOptions(this.channels.stream)
     this.applyPlaybackOptions(this.fading?.el ?? null)
@@ -274,7 +280,7 @@ export class AudioEngine {
     if (this.gainNode) {
       // the whole local level lives in the graph, so it can exceed 1.0
       if (local) local.volume = 1
-      this.gainNode.gain.value = this.volumeLevel * this.trackGain * this.equalizerHeadroom() * level
+      this.gainNode.gain.value = this.volumeLevel * this.trackGain * level
     } else if (local) {
       // graph unavailable: fall back to attenuation only
       local.volume = this.volumeLevel * Math.min(1, this.trackGain) * level
@@ -307,8 +313,14 @@ export class AudioEngine {
     this.destroyHls()
     this.detachFade()
     const outgoingChannel = this.activeChannel
-    this.fading = { el: outgoing, gain: this.gainNode, eqFilters: this.eqFilters }
+    this.fading = {
+      el: outgoing,
+      gain: this.gainNode,
+      compressor: this.compressorNode,
+      eqFilters: this.eqFilters,
+    }
     this.gainNode = null
+    this.compressorNode = null
     this.eqFilters = []
     this.channels[outgoingChannel] = null
     this.channels[channel] = null
@@ -333,7 +345,7 @@ export class AudioEngine {
       const fade = this.fading
       if (fade) {
         const level = 1 - t
-        if (fade.gain) fade.gain.gain.value = this.volumeLevel * this.trackGain * this.equalizerHeadroom() * level
+        if (fade.gain) fade.gain.gain.value = this.volumeLevel * this.trackGain * level
         else fade.el.volume = Math.max(0, Math.min(1, this.volumeLevel * level))
       }
       if (t < 1) {
@@ -450,11 +462,6 @@ export class AudioEngine {
     pitchElement.mozPreservesPitch = this.preservePitch
   }
 
-  private equalizerHeadroom(): number {
-    if (!this.equalizer.enabled) return 1
-    return 10 ** (-this.eqBoostDb / 20)
-  }
-
   private applyEqualizer(): void {
     const apply = (filters: BiquadFilterNode[]) => {
       filters.forEach((filter, index) => {
@@ -467,6 +474,7 @@ export class AudioEngine {
     const filters = this.eqFilters.length > 0 ? this.eqFilters : this.fading?.eqFilters ?? []
     if (!this.equalizer.enabled || filters.length === 0) {
       this.eqBoostDb = 0
+      this.updateLimiter()
       return
     }
     const count = 256
@@ -486,6 +494,18 @@ export class AudioEngine {
     let peak = 1
     for (const magnitude of combined) peak = Math.max(peak, magnitude)
     this.eqBoostDb = 20 * Math.log10(peak)
+    this.updateLimiter()
+  }
+
+  /** Catch boosted peaks without turning down the whole EQ curve. */
+  private updateLimiter(): void {
+    const shouldLimit = this.equalizer.enabled && this.eqBoostDb > 0.25
+    const configure = (compressor: DynamicsCompressorNode | null) => {
+      if (!compressor) return
+      compressor.ratio.setTargetAtTime(shouldLimit ? 20 : 1, compressor.context.currentTime, 0.025)
+    }
+    configure(this.compressorNode)
+    configure(this.fading?.compressor ?? null)
   }
 
   private ensure(channel: AudioChannel): HTMLAudioElement {
@@ -600,6 +620,7 @@ export class AudioEngine {
     this.analyser = null
     this.analyserBuf = null
     this.gainNode = null
+    this.compressorNode = null
     this.eqFilters = []
 
     const el = this.channels.local
@@ -652,10 +673,17 @@ export class AudioEngine {
         return filter
       })
       const gain = ctx.createGain()
+      const compressor = ctx.createDynamicsCompressor()
+      compressor.threshold.value = -1
+      compressor.knee.value = 0
+      compressor.ratio.value = 1
+      compressor.attack.value = 0.003
+      compressor.release.value = 0.14
       previous.connect(gain)
-      gain.connect(ctx.destination)
+      gain.connect(compressor)
+      compressor.connect(ctx.destination)
       if (this.analyser) {
-        gain.connect(this.analyser)
+        compressor.connect(this.analyser)
       } else {
         // A tap on the output, deliberately not connected onward - it feeds
         // both the silence watchdog and the spectrum the visualiser draws.
@@ -664,18 +692,20 @@ export class AudioEngine {
         analyser.fftSize = FFT_SIZE
         analyser.minDecibels = ANALYSER_MIN_DB
         analyser.maxDecibels = ANALYSER_MAX_DB
-        gain.connect(analyser)
+        compressor.connect(analyser)
         this.analyser = analyser
         this.analyserBuf = new Uint8Array(analyser.fftSize)
       }
       this.ctx = ctx
       this.gainNode = gain
+      this.compressorNode = compressor
       this.eqFilters = eqFilters
       this.applyEqualizer()
       this.silentMs = 0
     } catch {
       this.ctx = null
       this.gainNode = null
+      this.compressorNode = null
       this.analyser = null
       this.analyserBuf = null
     }

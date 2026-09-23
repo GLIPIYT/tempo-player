@@ -1,5 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Gauge, Heart, ListMusic, MicVocal, Pause, Play, Radio, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from 'lucide-react'
+import {
+  Heart,
+  ListMusic,
+  MicVocal,
+  Pause,
+  Play,
+  Radio,
+  Repeat,
+  Repeat1,
+  Shuffle,
+  SkipBack,
+  SkipForward,
+  SlidersHorizontal,
+  Trash2,
+  Volume1,
+  Volume2,
+  VolumeX,
+} from 'lucide-react'
 import { api } from '../../api/client'
 import { usePlayer } from '../../player'
 import { useLikes } from '../../hooks/useLikes'
@@ -14,9 +31,19 @@ import WaveProgress from '../common/WaveProgress'
 import QueuePanel from './QueuePanel'
 import PlayerVisualizer from '../player/PlayerVisualizer'
 import { LyricsContextProvider, useLyrics } from '../../features/lyrics'
+import {
+  EQUALIZER_BANDS,
+  EQUALIZER_MAX_DB,
+  EQUALIZER_MIN_DB,
+  EQUALIZER_PRESETS,
+  MAX_USER_EQUALIZER_PRESETS,
+  type EqualizerBands,
+  type EqualizerPreset,
+  type EqualizerSettings,
+} from '../../audio/equalizer'
 
 let lastNonZeroVolume = 0.8
-const PLAYBACK_RATES = [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
+const PLAYBACK_RATE_TICKS = Array.from({ length: 31 }, (_, index) => (50 + index * 5) / 100)
 
 function formatPlaybackRate(rate: number): string {
   return `${rate.toLocaleString(undefined, { maximumFractionDigits: 2 })}×`
@@ -32,7 +59,7 @@ export default function PlayerBar() {
 
 function PlayerBarContent() {
   const p = usePlayer()
-  const { settings } = useSettings()
+  const { settings, update } = useSettings()
   // In the modern layout the progress line runs along the bar's top edge, so
   // the times move in beside the transport instead.
   const modern = settings.player.barStyle === 'modern'
@@ -41,6 +68,7 @@ function PlayerBarContent() {
   const lyrics = useLyrics()
   const [queueOpen, setQueueOpen] = useState(false)
   const [speedOpen, setSpeedOpen] = useState(false)
+  const [presetName, setPresetName] = useState('')
   const speedRef = useRef<HTMLDivElement | null>(null)
   const currentDbId = p.currentTrack?.dbId ?? null
   const liked = currentDbId !== null && likes.isLiked(currentDbId)
@@ -55,6 +83,14 @@ function PlayerBarContent() {
   const VolIcon = p.volume === 0 ? VolumeX : p.volume < 0.5 ? Volume1 : Volume2
   const bufPct = p.bufferPct
   const buffering = bufPct !== null && bufPct < 100
+  const equalizer = settings.audio.equalizer
+  const speedPct = ((p.playbackRate - 0.5) / 1.5) * 100
+  const trimmedPresetName = presetName.trim()
+  const savedPresetNameExists = equalizer.userPresets.some(
+    (preset) => preset.name.toLocaleLowerCase() === trimmedPresetName.toLocaleLowerCase(),
+  )
+  const canSaveEqualizerPreset = Boolean(trimmedPresetName) &&
+    (savedPresetNameExists || equalizer.userPresets.length < MAX_USER_EQUALIZER_PRESETS)
 
   useEffect(() => {
     p.setEqualizer(settings.audio.equalizer)
@@ -101,6 +137,62 @@ function PlayerBarContent() {
     } else {
       p.setVolume(lastNonZeroVolume > 0 ? lastNonZeroVolume : 0.8)
     }
+  }
+
+  const commitEqualizer = (next: EqualizerSettings) => {
+    update({ audio: { equalizer: next } })
+    p.setEqualizer(next)
+  }
+
+  const setEqualizerPreset = (preset: EqualizerPreset) => {
+    const bands: EqualizerBands = preset === 'custom'
+      ? [...equalizer.bands] as EqualizerBands
+      : [...EQUALIZER_PRESETS[preset]] as EqualizerBands
+    commitEqualizer({ ...equalizer, preset, bands, selectedUserPresetId: null })
+  }
+
+  const selectEqualizerPreset = (value: string) => {
+    if (value.startsWith('user:')) {
+      const saved = equalizer.userPresets.find((preset) => preset.id === value.slice(5))
+      if (!saved) return
+      commitEqualizer({
+        ...equalizer,
+        preset: 'custom',
+        bands: [...saved.bands] as EqualizerBands,
+        selectedUserPresetId: saved.id,
+      })
+      return
+    }
+    setEqualizerPreset(value as EqualizerPreset)
+  }
+
+  const setEqualizerBand = (index: number, value: number) => {
+    const bands = [...equalizer.bands] as EqualizerBands
+    bands[index] = value
+    commitEqualizer({ ...equalizer, preset: 'custom', bands, selectedUserPresetId: null })
+  }
+
+  const saveEqualizerPreset = () => {
+    const name = presetName.trim().slice(0, 32)
+    if (!name) return
+    const existing = equalizer.userPresets.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase())
+    if (!existing && equalizer.userPresets.length >= MAX_USER_EQUALIZER_PRESETS) return
+    const id = existing?.id ?? window.crypto.randomUUID()
+    const saved = { id, name, bands: [...equalizer.bands] as EqualizerBands }
+    const userPresets = existing
+      ? equalizer.userPresets.map((preset) => preset.id === id ? saved : preset)
+      : [...equalizer.userPresets, saved]
+    commitEqualizer({ ...equalizer, preset: 'custom', userPresets, selectedUserPresetId: id })
+    setPresetName('')
+  }
+
+  const deleteEqualizerPreset = () => {
+    if (!equalizer.selectedUserPresetId) return
+    commitEqualizer({
+      ...equalizer,
+      userPresets: equalizer.userPresets.filter((preset) => preset.id !== equalizer.selectedUserPresetId),
+      selectedUserPresetId: null,
+    })
   }
 
   const playRadio = async () => {
@@ -293,44 +385,50 @@ function PlayerBarContent() {
           ) : null}
           <div className="pb-speed-control" ref={speedRef}>
             <button
-              className={'icon-btn pb-speed-trigger' + (p.playbackRate !== 1 ? ' is-active' : '')}
+              className={'icon-btn pb-speed-trigger' + (p.playbackRate !== 1 || equalizer.enabled ? ' is-active' : '')}
               onClick={() => setSpeedOpen((open) => !open)}
               aria-haspopup="dialog"
               aria-expanded={speedOpen}
-              aria-label={t('Playback speed')}
-              title={t('Playback speed')}
+              aria-label={t('Playback speed and equalizer')}
+              title={t('Playback speed and equalizer')}
             >
-              <Gauge size={15} />
+              <SlidersHorizontal size={15} />
               <span>{formatPlaybackRate(p.playbackRate)}</span>
             </button>
             {speedOpen && (
-              <div className="pb-speed-menu" role="dialog" aria-label={t('Playback speed')}>
+              <div className="pb-speed-menu" role="dialog" aria-label={t('Playback speed and equalizer')}>
                 <div className="pb-speed-menu-heading">
                   <span>{t('Playback speed')}</span>
                   <button
                     className="pb-speed-reset"
                     onClick={() => {
                       p.setPlaybackRate(1)
-                      setSpeedOpen(false)
                     }}
                   >
                     {t('Reset speed')}
                   </button>
                 </div>
-                <div className="pb-speed-presets">
-                  {PLAYBACK_RATES.map((rate) => (
-                    <button
-                      key={rate}
-                      className={'pb-speed-preset' + (p.playbackRate === rate ? ' is-selected' : '')}
-                      aria-pressed={p.playbackRate === rate}
-                      onClick={() => {
-                        p.setPlaybackRate(rate)
-                        setSpeedOpen(false)
-                      }}
-                    >
-                      {formatPlaybackRate(rate)}
-                    </button>
-                  ))}
+                <div className="pb-speed-readout">{formatPlaybackRate(p.playbackRate)}</div>
+                <input
+                  className="pb-speed-slider"
+                  type="range"
+                  min={0.5}
+                  max={2}
+                  step={0.05}
+                  list="pb-playback-rate-ticks"
+                  value={p.playbackRate}
+                  onChange={(e) => p.setPlaybackRate(e.target.valueAsNumber)}
+                  style={{ background: `linear-gradient(to right, var(--accent) ${speedPct}%, var(--border) ${speedPct}%)` }}
+                  aria-label={t('Playback speed')}
+                />
+                <datalist id="pb-playback-rate-ticks">
+                  {PLAYBACK_RATE_TICKS.map((rate) => <option key={rate} value={rate} />)}
+                </datalist>
+                <div className="pb-speed-scale" aria-hidden="true">
+                  <span>0.5×</span>
+                  <span>1×</span>
+                  <span>1.5×</span>
+                  <span>2×</span>
                 </div>
                 <button
                   className="pb-speed-pitch"
@@ -343,6 +441,108 @@ function PlayerBarContent() {
                     <span />
                   </span>
                 </button>
+
+                <div className="pb-speed-divider" />
+
+                <div className="pb-eq-heading">
+                  <div>
+                    <div className="pb-eq-title">{t('Equalizer')}</div>
+                    <div className="pb-eq-subtitle">{t('Shape the sound with five adjustable frequency bands.')}</div>
+                  </div>
+                  <button
+                    className={equalizer.enabled ? 'switch is-on' : 'switch'}
+                    role="switch"
+                    aria-checked={equalizer.enabled}
+                    aria-label={t('Enable equalizer')}
+                    onClick={() => commitEqualizer({ ...equalizer, enabled: !equalizer.enabled })}
+                  />
+                </div>
+
+                <div className="pb-eq-preset-row">
+                  <select
+                    className="select pb-eq-preset-select"
+                    value={equalizer.selectedUserPresetId ? `user:${equalizer.selectedUserPresetId}` : equalizer.preset}
+                    onChange={(e) => selectEqualizerPreset(e.target.value)}
+                    aria-label={t('Equalizer preset')}
+                  >
+                    <option value="flat">{t('Flat')}</option>
+                    <option value="bass">{t('Bass boost')}</option>
+                    <option value="treble">{t('Treble')}</option>
+                    <option value="vocal">{t('Vocal')}</option>
+                    <option value="rock">{t('Rock')}</option>
+                    <option value="custom">{t('Custom curve')}</option>
+                    {equalizer.userPresets.length > 0 && (
+                      <optgroup label={t('Saved presets')}>
+                        {equalizer.userPresets.map((preset) => (
+                          <option key={preset.id} value={`user:${preset.id}`}>{preset.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                  {equalizer.selectedUserPresetId ? (
+                    <button
+                      className="icon-btn pb-eq-delete"
+                      onClick={deleteEqualizerPreset}
+                      aria-label={t('Delete saved preset')}
+                      title={t('Delete saved preset')}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="pb-eq-bands">
+                  {EQUALIZER_BANDS.map((band, index) => {
+                    const value = equalizer.bands[index]
+                    const percent = ((value - EQUALIZER_MIN_DB) / (EQUALIZER_MAX_DB - EQUALIZER_MIN_DB)) * 100
+                    const fill = value >= 0
+                      ? `linear-gradient(to right, var(--border) 0%, var(--border) 50%, var(--accent) 50%, var(--accent) ${percent}%, var(--border) ${percent}%, var(--border) 100%)`
+                      : `linear-gradient(to right, var(--border) 0%, var(--border) ${percent}%, var(--accent) ${percent}%, var(--accent) 50%, var(--border) 50%, var(--border) 100%)`
+                    return (
+                      <div className="pb-eq-band" key={band.frequency}>
+                        <span className="pb-eq-value">{value > 0 ? '+' : ''}{value} dB</span>
+                        <div className="pb-eq-track">
+                          <span className="pb-eq-zero" aria-hidden="true" />
+                          <input
+                            className="pb-eq-slider"
+                            type="range"
+                            min={EQUALIZER_MIN_DB}
+                            max={EQUALIZER_MAX_DB}
+                            step={1}
+                            value={value}
+                            onChange={(e) => setEqualizerBand(index, e.target.valueAsNumber)}
+                            style={{ background: fill }}
+                            aria-label={t(band.label)}
+                            aria-valuetext={`${value > 0 ? '+' : ''}${value} dB`}
+                          />
+                        </div>
+                        <span className="pb-eq-frequency">{t(band.label)}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="pb-eq-save-row">
+                  <input
+                    className="text-input pb-eq-name"
+                    value={presetName}
+                    maxLength={32}
+                    placeholder={t('Preset name')}
+                    onChange={(e) => setPresetName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') saveEqualizerPreset() }}
+                    aria-label={t('Preset name')}
+                  />
+                  <button
+                    className="btn pb-eq-save"
+                    disabled={!canSaveEqualizerPreset}
+                    onClick={saveEqualizerPreset}
+                  >
+                    {t('Save')}
+                  </button>
+                </div>
+                <div className="pb-eq-note">
+                  {t('The equalizer applies to local and cached tracks. Uncached SoundCloud streams bypass it. Boosted peaks are limited only when needed. Save up to 12 named presets.')}
+                </div>
               </div>
             )}
           </div>

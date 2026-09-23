@@ -13,15 +13,16 @@ This file keeps the agreed product ideas with the repository so they remain avai
 
 ## 2. Playback speed — implemented
 
-- Add a speed control with useful presets and a reset to 1×. Done: the player bar offers 0.5×–2× presets and a reset.
+- Add a speed slider and a reset to 1×. Done: the player bar offers 0.5×–2× in exact 0.05× steps.
 - Offer pitch preservation where supported; keep speed changes consistent across playback channels and crossfades. Done: rate and pitch preference apply to both engine channels and the outgoing crossfade element.
 - Keep synced lyrics anchored to media position for ordinary playback-rate changes. Done: lyrics continue to follow the media element's current time.
+- Keep speed and EQ together in the player bar popover, with the three-slider control icon.
 
 ## 3. Equalizer — implemented
 
-- Added a five-band graphic EQ with flat, bass, treble, vocal and rock presets, editable custom settings, and up to 12 named user presets.
-- EQ runs on the local/cached audio graph. Uncached SoundCloud streams still bypass that graph to avoid cross-origin silence, and the settings card explains the limit.
-- Automatic headroom is calculated from the combined filter response to prevent boosted bands from clipping.
+- Added a five-band EQ with vertical controls, flat, bass, treble, vocal and rock presets, editable custom settings, and up to 12 named user presets.
+- EQ runs on the local/cached audio graph. Uncached SoundCloud streams still bypass that graph to avoid cross-origin silence.
+- EQ no longer turns down the whole signal to make headroom. A compressor catches boosted peaks when a curve adds gain.
 
 ## 4. Lyrics timing and appearance
 

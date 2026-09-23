@@ -177,7 +177,9 @@ function readStoredVolume(): number {
 
 function readStoredPlaybackRate(): number {
   const parsed = Number.parseFloat(readPref(PLAYBACK_RATE_KEY) ?? '')
-  return Number.isFinite(parsed) ? Math.min(2, Math.max(0.5, parsed)) : 1
+  return Number.isFinite(parsed)
+    ? Math.round(Math.min(2, Math.max(0.5, parsed)) * 20) / 20
+    : 1
 }
 
 function readStoredPreservePitch(): boolean {
@@ -359,7 +361,7 @@ export class PlayerController {
 
   setPlaybackRate(rate: number): void {
     const safeRate = Number.isFinite(rate) ? rate : 1
-    const next = Math.round(Math.min(2, Math.max(0.5, safeRate)) * 100) / 100
+    const next = Math.round(Math.min(2, Math.max(0.5, safeRate)) * 20) / 20
     if (next === this.playbackRate) return
     this.playbackRate = next
     writePref(PLAYBACK_RATE_KEY, String(next))

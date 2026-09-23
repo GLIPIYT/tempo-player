@@ -445,10 +445,12 @@ tracks play from a remote URL — `toScPlayback` reports that as `cached: false`
 off the graph. Cached files are local, and HLS reaches the element through MediaSource (a blob URL),
 which is same-origin and therefore safe.
 
-The graph is built lazily for loudness normalisation, the visualizer or the equalizer. Its
-`GainNode` supports levels above 1.0 for normalization and crossfade; five biquad filters provide
-the EQ. If the context cannot start, the local path falls back to plain volume. Uncached SoundCloud
-streams remain outside the graph, so they do not receive EQ.
+The graph is built lazily for loudness normalisation, the visualizer or the equalizer. Five biquad
+filters provide the EQ, followed by a gain node and a compressor used as a peak guard when the EQ
+curve adds gain. This leaves the overall level unchanged instead of reducing it by the curve's
+maximum boost. The gain node supports levels above 1.0 for normalization and crossfade. If the
+context cannot start, the local path falls back to plain volume. Uncached SoundCloud streams remain
+outside the graph, so they do not receive EQ.
 
 Playback rate is stored by `PlayerController` and applied to both audio channels and the element
 fading out during a crossfade. The pitch-preservation switch maps to the media element's native
@@ -456,8 +458,9 @@ support. The player's time and synced lyrics continue to use media `currentTime`
 not need a separate lyric clock.
 
 The equalizer has low-shelf, three peaking and high-shelf bands, built-in curves and up to 12 named
-user presets. `AudioEngine` measures the combined filter response across logarithmic frequency points
-and reduces output gain by its peak boost to preserve clipping headroom.
+user presets. `AudioEngine` measures the combined filter response across logarithmic frequency
+points, then enables strong compression only when the curve has positive gain. The player bar puts
+the vertical EQ bands beside a 0.5×–2× playback slider with 0.05× increments.
 
 Every element handler checks `isActive()` before doing anything, so a parked element cannot drive the
 UI, and loading on one channel silences the other so two elements never play at once.

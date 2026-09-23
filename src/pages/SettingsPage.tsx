@@ -58,17 +58,6 @@ import {
 } from '../updater/service'
 import { newerThan } from '../updater/version'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
-import {
-  EQUALIZER_BANDS,
-  EQUALIZER_MAX_DB,
-  EQUALIZER_MIN_DB,
-  EQUALIZER_PRESETS,
-  MAX_USER_EQUALIZER_PRESETS,
-  type EqualizerBands,
-  type EqualizerPreset,
-  type EqualizerSettings,
-} from '../audio/equalizer'
-import { playerController } from '../player/controller'
 
 type Category = 'general' | 'appearance' | 'library' | 'storage' | 'about'
 type FontMode = 'default' | 'system' | 'file'
@@ -442,154 +431,6 @@ function LoudnessCard() {
       </div>
       <div className="set-note">
         {t('Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest are measured automatically a few tracks ahead of what is playing, so there is nothing to start by hand.')}
-      </div>
-    </Card>
-  )
-}
-
-function EqualizerCard() {
-  const t = useT()
-  const { settings, update } = useSettings()
-  const equalizer = settings.audio.equalizer
-  const [presetName, setPresetName] = useState('')
-
-  const commitEqualizer = (next: EqualizerSettings) => {
-    update({ audio: { equalizer: next } })
-    playerController.setEqualizer(next)
-  }
-
-  const setPreset = (preset: EqualizerPreset) => {
-    const bands: EqualizerBands = preset === 'custom'
-      ? [...equalizer.bands] as EqualizerBands
-      : [...EQUALIZER_PRESETS[preset]] as EqualizerBands
-    commitEqualizer({ ...equalizer, preset, bands, selectedUserPresetId: null })
-  }
-
-  const selectPreset = (value: string) => {
-    if (value.startsWith('user:')) {
-      const saved = equalizer.userPresets.find((preset) => preset.id === value.slice(5))
-      if (!saved) return
-      commitEqualizer({
-        ...equalizer,
-        preset: 'custom',
-        bands: [...saved.bands] as EqualizerBands,
-        selectedUserPresetId: saved.id,
-      })
-      return
-    }
-    setPreset(value as EqualizerPreset)
-  }
-
-  const savePreset = () => {
-    const name = presetName.trim().slice(0, 32)
-    if (!name) return
-    const existing = equalizer.userPresets.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase())
-    if (!existing && equalizer.userPresets.length >= MAX_USER_EQUALIZER_PRESETS) return
-    const id = existing?.id ?? window.crypto.randomUUID()
-    const saved = { id, name, bands: [...equalizer.bands] as EqualizerBands }
-    const userPresets = existing
-      ? equalizer.userPresets.map((preset) => preset.id === id ? saved : preset)
-      : [...equalizer.userPresets, saved]
-    commitEqualizer({ ...equalizer, preset: 'custom', userPresets, selectedUserPresetId: id })
-    setPresetName('')
-  }
-
-  const deleteSelectedPreset = () => {
-    if (!equalizer.selectedUserPresetId) return
-    commitEqualizer({
-      ...equalizer,
-      userPresets: equalizer.userPresets.filter((preset) => preset.id !== equalizer.selectedUserPresetId),
-      selectedUserPresetId: null,
-    })
-  }
-
-  const setBand = (index: number, value: number) => {
-    const bands = [...equalizer.bands] as EqualizerBands
-    bands[index] = value
-    commitEqualizer({ ...equalizer, preset: 'custom', bands, selectedUserPresetId: null })
-  }
-
-  return (
-    <Card title={t('Equalizer')} desc={t('Shape the sound with five adjustable frequency bands.')}>
-      <div className="set-row">
-        <span className="set-row-label">{t('Enable equalizer')}</span>
-        <button
-          className={equalizer.enabled ? 'switch is-on' : 'switch'}
-          role="switch"
-          aria-checked={equalizer.enabled}
-          aria-label={t('Enable equalizer')}
-          onClick={() => commitEqualizer({ ...equalizer, enabled: !equalizer.enabled })}
-        />
-      </div>
-      <div className="set-row eq-control-row" style={{ marginTop: 6 }}>
-        <span className="set-row-label">{t('Equalizer preset')}</span>
-        <div className="eq-preset-select">
-          <select
-            className="select"
-            value={equalizer.selectedUserPresetId ? `user:${equalizer.selectedUserPresetId}` : equalizer.preset}
-            onChange={(e) => selectPreset(e.target.value)}
-          >
-            <option value="flat">{t('Flat')}</option>
-            <option value="bass">{t('Bass boost')}</option>
-            <option value="treble">{t('Treble')}</option>
-            <option value="vocal">{t('Vocal')}</option>
-            <option value="rock">{t('Rock')}</option>
-            <option value="custom">{t('Custom')}</option>
-            {equalizer.userPresets.length > 0 && (
-              <optgroup label={t('Saved presets')}>
-                {equalizer.userPresets.map((preset) => (
-                  <option key={preset.id} value={`user:${preset.id}`}>{preset.name}</option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-          {equalizer.selectedUserPresetId && (
-            <button
-              className="icon-btn eq-delete-preset"
-              onClick={deleteSelectedPreset}
-              aria-label={t('Delete saved preset')}
-              title={t('Delete saved preset')}
-            >
-              <Trash2 size={14} />
-            </button>
-          )}
-        </div>
-      </div>
-      <div className="set-row eq-control-row">
-        <span className="set-row-label">{t('Save as preset')}</span>
-        <div className="eq-save-row">
-          <input
-            className="text-input"
-            value={presetName}
-            maxLength={32}
-            placeholder={t('Preset name')}
-            onChange={(e) => setPresetName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') savePreset() }}
-            aria-label={t('Preset name')}
-          />
-          <button
-            className="btn"
-            disabled={!presetName.trim() || (!equalizer.userPresets.some((preset) => preset.name.toLocaleLowerCase() === presetName.trim().toLocaleLowerCase()) && equalizer.userPresets.length >= MAX_USER_EQUALIZER_PRESETS)}
-            onClick={savePreset}
-          >
-            {t('Save')}
-          </button>
-        </div>
-      </div>
-      {EQUALIZER_BANDS.map((band, index) => (
-        <SliderRow
-          key={band.frequency}
-          label={t(band.label)}
-          min={EQUALIZER_MIN_DB}
-          max={EQUALIZER_MAX_DB}
-          step={1}
-          value={equalizer.bands[index]}
-          display={`${equalizer.bands[index] > 0 ? '+' : ''}${equalizer.bands[index]} dB`}
-          onChange={(value) => setBand(index, value)}
-        />
-      ))}
-      <div className="set-note">
-        {t('The equalizer applies to local and cached tracks. Uncached SoundCloud streams bypass the audio graph. Tempo automatically reduces gain to protect against clipping. You can save up to 12 named presets.')}
       </div>
     </Card>
   )
@@ -1396,7 +1237,6 @@ export default function SettingsPage() {
                 </div>
               </Card>
               <LoudnessCard />
-              <EqualizerCard />
             </>
           ) : null}
 

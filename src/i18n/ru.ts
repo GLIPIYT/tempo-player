@@ -413,9 +413,11 @@ export const ru: Record<string, string> = {
   Treble: 'Высокие частоты',
   Vocal: 'Вокал',
   Rock: 'Рок',
-  'The equalizer applies to local and cached tracks. Uncached SoundCloud streams bypass the audio graph. Tempo automatically reduces gain to protect against clipping.':
-    'Эквалайзер действует на локальные и кэшированные треки. Потоки SoundCloud без кэша обходят аудиограф. Tempo автоматически снижает уровень сигнала, чтобы избежать перегруза. Можно сохранить до 12 именных пресетов.',
+  'Custom curve': 'Своя кривая',
+  'The equalizer applies to local and cached tracks. Uncached SoundCloud streams bypass it. Boosted peaks are limited only when needed. Save up to 12 named presets.':
+    'Эквалайзер работает с локальными и кэшированными треками. Стримы SoundCloud без кэша его обходят. Пики при усилении ограничиваются только при необходимости. Можно сохранить до 12 именных пресетов.',
   'Playback speed': 'Скорость воспроизведения',
+  'Playback speed and equalizer': 'Скорость и эквалайзер',
   'Reset speed': 'Сбросить скорость',
   'Preserve pitch': 'Сохранять тональность',
   'Player bar layout': 'Вид плейбара',
