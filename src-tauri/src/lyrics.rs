@@ -19,12 +19,37 @@ pub struct OnlineLyrics {
     pub synced_lrc: Option<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OnlineLyricsCandidate {
     pub provider: String,
     pub plain: Option<String>,
     pub synced_lrc: Option<String>,
+    pub id: Option<i64>,
+    pub track_name: Option<String>,
+    pub artist_name: Option<String>,
+    pub album_name: Option<String>,
+    pub duration: Option<f64>,
+    pub instrumental: Option<bool>,
+}
+
+fn lyrics_variants(provider: &str, lyrics: OnlineLyrics) -> Vec<OnlineLyricsCandidate> {
+    let mut out = Vec::with_capacity(2);
+    if let Some(synced_lrc) = lyrics.synced_lrc.filter(|text| !text.trim().is_empty()) {
+        out.push(OnlineLyricsCandidate {
+            provider: provider.to_string(),
+            synced_lrc: Some(synced_lrc),
+            ..OnlineLyricsCandidate::default()
+        });
+    }
+    if let Some(plain) = lyrics.plain.filter(|text| !text.trim().is_empty()) {
+        out.push(OnlineLyricsCandidate {
+            provider: provider.to_string(),
+            plain: Some(plain),
+            ..OnlineLyricsCandidate::default()
+        });
+    }
+    out
 }
 
 fn client() -> &'static Client {
@@ -170,6 +195,63 @@ fn pick_lrclib(json: &Value) -> Option<OnlineLyrics> {
         }
     }
     plain_only
+}
+
+fn lrclib_candidates(json: &Value) -> Vec<OnlineLyricsCandidate> {
+    let Some(records) = json.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for record in records {
+        let lyrics = OnlineLyrics {
+            plain: record
+                .get("plainLyrics")
+                .and_then(Value::as_str)
+                .filter(|text| !text.trim().is_empty())
+                .map(str::to_owned),
+            synced_lrc: record
+                .get("syncedLyrics")
+                .and_then(Value::as_str)
+                .filter(|text| !text.trim().is_empty())
+                .map(str::to_owned),
+        };
+        let mut variants = lyrics_variants("lrclib", lyrics);
+        for candidate in &mut variants {
+            candidate.id = record.get("id").and_then(Value::as_i64);
+            candidate.track_name = record
+                .get("trackName")
+                .or_else(|| record.get("name"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            candidate.artist_name = record.get("artistName").and_then(Value::as_str).map(str::to_owned);
+            candidate.album_name = record.get("albumName").and_then(Value::as_str).map(str::to_owned);
+            candidate.duration = record.get("duration").and_then(Value::as_f64);
+            candidate.instrumental = record.get("instrumental").and_then(Value::as_bool);
+        }
+        out.extend(variants);
+    }
+    out
+}
+
+async fn lrclib_candidates_provider(artist: String, title: String) -> Vec<OnlineLyricsCandidate> {
+    let base = "https://lrclib.net/api/search";
+    let exact = get_json(&format!(
+        "{base}?artist_name={}&track_name={}",
+        urlencode(&artist),
+        urlencode(&title)
+    ))
+    .await
+    .ok();
+    if let Some(json) = exact {
+        let candidates = lrclib_candidates(&json);
+        if !candidates.is_empty() {
+            return candidates;
+        }
+    }
+    get_json(&format!("{base}?q={}%20{}", urlencode(&artist), urlencode(&title)))
+        .await
+        .map(|json| lrclib_candidates(&json))
+        .unwrap_or_default()
 }
 
 async fn lrclib_provider(artist: String, title: String) -> Option<OnlineLyrics> {
@@ -496,61 +578,25 @@ pub async fn fetch_online_lyrics_all(artist: &str, title: &str) -> Result<Vec<On
     let ct_ov = ct.clone();
     let ca_ge = ca.clone();
     let ct_ge = ct.clone();
-    let mut handles: Vec<tokio::task::JoinHandle<(usize, Option<OnlineLyricsCandidate>)>> = Vec::new();
+    let mut handles: Vec<tokio::task::JoinHandle<(usize, Vec<OnlineLyricsCandidate>)>> = Vec::new();
     handles.push(tokio::spawn(async move {
-        let r = lrclib_provider(ca_lr, ct_lr).await;
-        (
-            0usize,
-            r.map(|v| OnlineLyricsCandidate {
-                provider: "lrclib".to_string(),
-                plain: v.plain,
-                synced_lrc: v.synced_lrc,
-            }),
-        )
+        (0usize, lrclib_candidates_provider(ca_lr, ct_lr).await)
     }));
     handles.push(tokio::spawn(async move {
         let r = textyl_provider(ca_tx, ct_tx).await;
-        (
-            1usize,
-            r.map(|v| OnlineLyricsCandidate {
-                provider: "textyl".to_string(),
-                plain: v.plain,
-                synced_lrc: v.synced_lrc,
-            }),
-        )
+        (1usize, r.map(|v| lyrics_variants("textyl", v)).unwrap_or_default())
     }));
     handles.push(tokio::spawn(async move {
         let r = musixmatch_provider(ca_mx, ct_mx).await;
-        (
-            2usize,
-            r.map(|v| OnlineLyricsCandidate {
-                provider: "musixmatch".to_string(),
-                plain: v.plain,
-                synced_lrc: v.synced_lrc,
-            }),
-        )
+        (2usize, r.map(|v| lyrics_variants("musixmatch", v)).unwrap_or_default())
     }));
     handles.push(tokio::spawn(async move {
         let r = lyrics_ovh_provider(ca_ov, ct_ov).await;
-        (
-            3usize,
-            r.map(|v| OnlineLyricsCandidate {
-                provider: "lyrics.ovh".to_string(),
-                plain: v.plain,
-                synced_lrc: v.synced_lrc,
-            }),
-        )
+        (3usize, r.map(|v| lyrics_variants("lyrics.ovh", v)).unwrap_or_default())
     }));
     handles.push(tokio::spawn(async move {
         let r = genius_provider(ca_ge, ct_ge).await;
-        (
-            4usize,
-            r.map(|v| OnlineLyricsCandidate {
-                provider: "genius".to_string(),
-                plain: v.plain,
-                synced_lrc: v.synced_lrc,
-            }),
-        )
+        (4usize, r.map(|v| lyrics_variants("genius", v)).unwrap_or_default())
     }));
     let deadline = tokio::time::Instant::now() + Duration::from_secs(14);
     let mut pending = handles;
@@ -563,10 +609,13 @@ pub async fn fetch_online_lyrics_all(artist: &str, title: &str) -> Result<Vec<On
         match tokio::time::timeout(remaining, select_all(pending)).await {
             Ok((out, _idx, rest)) => {
                 pending = rest;
-                if let Ok((prio, Some(cand))) = out {
-                    if cand.plain.is_some() || cand.synced_lrc.is_some() {
-                        collected.push((prio, cand));
-                    }
+                if let Ok((prio, candidates)) = out {
+                    collected.extend(
+                        candidates
+                            .into_iter()
+                            .filter(|candidate| candidate.plain.is_some() || candidate.synced_lrc.is_some())
+                            .map(|candidate| (prio, candidate)),
+                    );
                 }
             }
             Err(_) => break,
@@ -576,12 +625,15 @@ pub async fn fetch_online_lyrics_all(artist: &str, title: &str) -> Result<Vec<On
     let mut seen: HashSet<String> = HashSet::new();
     let mut deduped: Vec<OnlineLyricsCandidate> = Vec::new();
     for (_, c) in collected {
-        if let Some(ref s) = c.synced_lrc {
-            let key = s.trim().to_string();
-            if seen.contains(&key) {
-                continue;
-            }
-            seen.insert(key);
+        let body = c.synced_lrc.as_deref().or(c.plain.as_deref()).unwrap_or_default().trim();
+        let identity = c
+            .id
+            .map(|id| format!("id:{id}"))
+            .unwrap_or_else(|| format!("body:{}", body.to_lowercase()));
+        let kind = if c.synced_lrc.is_some() { "synced" } else { "plain" };
+        let key = format!("{}\0{}\0{}", c.provider, identity, kind);
+        if !seen.insert(key) {
+            continue;
         }
         deduped.push(c);
     }

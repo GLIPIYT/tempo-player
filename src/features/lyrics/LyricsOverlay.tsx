@@ -10,7 +10,7 @@ import { fmtTime } from '../../utils/format'
 import { api } from '../../api/client'
 import type { LyricsOverride } from '../../types/models'
 import { EmbeddedTagsLyricsProvider } from './embeddedProvider'
-import { fetchOnlineLyricsCandidates } from './onlineProvider'
+import { fetchOnlineLyricsCandidates, toLyricsCandidates } from './onlineProvider'
 import type { LyricsCandidate } from './onlineProvider'
 import type { LyricsLine, LyricsResult } from './types'
 import { formatLrc, parseLrc } from './lrc'
@@ -570,6 +570,15 @@ function ProviderDropdown({
           {candidates.map((c, i) => {
             const isSelected = i === selectedIndex
             const isSynced = Boolean(c.syncedLrc) || c.result.kind === 'synced'
+            const metadata = [
+              c.trackName,
+              c.artistName,
+              c.albumName,
+              c.duration != null ? fmtTime(c.duration) : null,
+              c.instrumental ? t('Instrumental') : null,
+            ]
+              .filter((part): part is string => Boolean(part?.trim()))
+              .join(' · ')
             return (
               <button
                 key={`${c.provider}-${i}`}
@@ -582,11 +591,14 @@ function ProviderDropdown({
                 }}
               >
                 <span className="lyr-prov-item-main">
-                  <span className="lyr-prov-item-name">{providerLabel(c.provider, t)}</span>
-                  <span className={'lyr-prov-badge' + (isSynced ? ' is-synced' : ' is-plain')}>
-                    {isSynced ? t('SYNCED') : t('TEXT')}
+                  <span className="lyr-prov-item-heading">
+                    <span className="lyr-prov-item-name">{providerLabel(c.provider, t)}</span>
+                    <span className={'lyr-prov-badge' + (isSynced ? ' is-synced' : ' is-plain')}>
+                      {isSynced ? t('SYNCED') : t('TEXT')}
+                    </span>
+                    {i === pinnedIndex && <Pin size={12} className="lyr-prov-item-pin" />}
                   </span>
-                  {i === pinnedIndex && <Pin size={12} className="lyr-prov-item-pin" />}
+                  {metadata && <span className="lyr-prov-item-meta" title={metadata}>{metadata}</span>}
                 </span>
                 {isSelected && <Check size={14} className="lyr-prov-item-check" />}
               </button>
@@ -1006,26 +1018,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       setUnavailableHint(false)
       try {
         const raw = await api.fetchOnlineLyricsAll(a, tt)
-        const out: LyricsCandidate[] = []
-        const seen = new Set<string>()
-        for (const entry of raw) {
-          let res: LyricsResult | null = null
-          if (entry.syncedLrc) {
-            const lines = parseLrc(entry.syncedLrc)
-            if (lines && lines.length > 0) res = { kind: 'synced', lines }
-          }
-          if (!res) {
-            const plain = entry.plain?.trim()
-            if (plain) res = { kind: 'plain', text: plain }
-          }
-          if (!res) continue
-          if (entry.syncedLrc) {
-            const norm = entry.syncedLrc.trim().toLowerCase().slice(0, 120)
-            if (seen.has(norm)) continue
-            seen.add(norm)
-          }
-          out.push({ provider: entry.provider, result: res, plain: entry.plain, syncedLrc: entry.syncedLrc })
-        }
+        const out = toLyricsCandidates(raw)
         const embeddedOnly = candidates.filter((c) => c.provider === 'embedded')
         const combined = [...embeddedOnly, ...out]
         setSearchedAs({ artist: a, title: tt })

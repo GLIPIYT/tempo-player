@@ -261,6 +261,7 @@ export const ru: Record<string, string> = {
   Embedded: 'Встроенные',
   SYNCED: 'СИНХР.',
   TEXT: 'ТЕКСТ',
+  Instrumental: 'Инструментал',
   'Search manually': 'Искать вручную',
   'Auto (reset)': 'Авто (сбросить)',
   'These lyrics are pinned to this track': 'Этот текст закреплён за треком',

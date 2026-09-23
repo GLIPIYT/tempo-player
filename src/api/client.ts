@@ -13,6 +13,7 @@ import type {
   HistoryEntry,
   LibraryFolder,
   LyricsOverride,
+  OnlineLyricsCandidateData,
   Playlist,
   PlaylistTrack,
   ScanSummary,
@@ -292,10 +293,7 @@ export const api = {
   upsertScTrack: (track: Omit<ScTrack, 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'> & Partial<Pick<ScTrack, 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'>>) =>
     invoke<number>('sc_upsert_track', { track }),
   fetchOnlineLyricsAll: (artist: string, title: string) =>
-    invoke<Array<{ provider: string; plain: string | null; syncedLrc: string | null }>>('fetch_online_lyrics_all', {
-      artist,
-      title,
-    }),
+    invoke<OnlineLyricsCandidateData[]>('fetch_online_lyrics_all', { artist, title }),
   addScTrackToPlaylist: (playlistId: number, track: ScTrack) =>
     invoke<number>('add_sc_track_to_playlist', { playlistId, track }),
   scCacheInfo: () =>

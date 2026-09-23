@@ -312,6 +312,19 @@ export interface LyricsOverride {
   updatedAt: number
 }
 
+/** One selectable lyrics result returned by the online-provider search. */
+export interface OnlineLyricsCandidateData {
+  provider: string
+  plain: string | null
+  syncedLrc: string | null
+  id: number | null
+  trackName: string | null
+  artistName: string | null
+  albumName: string | null
+  duration: number | null
+  instrumental: boolean | null
+}
+
 export interface DailyMinutes {
   date: string
   minutes: number
