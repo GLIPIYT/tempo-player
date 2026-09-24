@@ -66,17 +66,17 @@ function CurrentPage() {
     case 'search':
       return <SearchPage />
     case 'album':
-      return <AlbumDetailPage albumId={view.id} />
+      return <AlbumDetailPage key={view.id} albumId={view.id} />
     case 'artist':
-      return <ArtistDetailPage artistId={view.id} />
+      return <ArtistDetailPage key={view.id} artistId={view.id} />
     case 'playlist':
-      return <PlaylistDetailPage playlistId={view.id} />
+      return <PlaylistDetailPage key={view.id} playlistId={view.id} />
     case 'sc-playlist':
-      return <ScPlaylistPage playlistId={view.id} />
+      return <ScPlaylistPage key={view.id} playlistId={view.id} />
     case 'sc-artist':
-      return <ScArtistPage artistId={view.id} />
+      return <ScArtistPage key={view.id} artistId={view.id} />
     case 'yt-collection':
-      return <YtCollectionPage kind={view.kind} id={view.id} />
+      return <YtCollectionPage key={`${view.kind}:${view.id}`} kind={view.kind} id={view.id} />
   }
 }
 
