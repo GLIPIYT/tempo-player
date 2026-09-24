@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tempo 1.0 — визуальный ремастер</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; color: #edf0f5; background: #090b10; }
+    button, select { font: inherit; }
+    button { color: inherit; cursor: pointer; }
+    .deck { max-width: 1800px; margin: 0 auto; padding: 22px 24px 48px; }
+    .deck-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 8px 0 21px; border-bottom: 1px solid #222631; }
+    .deck-eyebrow { color: #a0a7b8; text-transform: uppercase; letter-spacing: .18em; font: 700 10px/1.4 "Segoe UI", sans-serif; }
+    .deck-title { margin: 8px 0 6px; font-size: clamp(25px, 3vw, 42px); line-height: 1; letter-spacing: -.055em; }
+    .deck-lede { margin: 0; max-width: 590px; color: #a0a7b8; font-size: 13px; line-height: 1.55; }
+    .deck-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+    .deck-actions select, .mode-button { border: 1px solid #303746; border-radius: 10px; background: #11151d; color: #e9edf7; padding: 9px 12px; font-size: 12px; }
+    .mode-button { transition: .18s ease; }
+    .mode-button:hover, .mode-button.is-active { border-color: #b9f36f; color: #d4ff9e; background: #1b2417; }
+    .deck-meta { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 14px 0; color: #9098a9; font-size: 11px; }
+    .deck-meta strong { color: #dce2ed; font-weight: 600; }
+    .deck-grid { display: grid; grid-template-columns: 205px minmax(0,1fr); gap: 18px; align-items: start; }
+    .route-panel { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; border: 1px solid #222733; border-radius: 15px; padding: 12px; background: #0f1219; }
+    .route-group { margin: 0 0 13px; }
+    .route-group:last-child { margin-bottom: 0; }
+    .route-group-title { margin: 3px 7px 6px; color: #737d90; font-size: 9px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+    .route-button { width: 100%; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 9px; padding: 8px 9px; text-align: left; color: #a9b1c1; background: transparent; font-size: 11px; transition: .16s ease; }
+    .route-button:hover { color: #fff; background: #1a1e28; }
+    .route-button.is-active { color: #dcffb1; background: #1b2517; box-shadow: inset 2px 0 #b9f36f; }
+    .route-icon { width: 19px; color: #8790a2; text-align: center; font-size: 14px; }
+    .stage { min-width: 0; }
+    .concept-labels { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin-bottom: 9px; }
+    .concept-label { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 6px 12px; border: 1px solid #262b37; border-radius: 11px; background: #10131a; }
+    .concept-tag { width: 23px; height: 23px; display: grid; place-items: center; border-radius: 7px; color: #111; background: #c1f278; font-size: 10px; font-weight: 800; }
+    .concept-label:nth-child(2) .concept-tag { color: #fff; background: #a577fa; }
+    .concept-name { color: #f4f6fc; font-size: 11px; font-weight: 700; }
+    .concept-caption { margin-left: auto; color: #8e96a7; font-size: 9px; }
+    .preview-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+    .preview-grid.single { grid-template-columns: minmax(0,1fr); }
+    .preview-grid.single .preview-card { display: none; }
+    .preview-grid.single[data-single="a"] .preview-card[data-skin="studio"],
+    .preview-grid.single[data-single="b"] .preview-card[data-skin="pulse"] { display: block; }
+    .preview-card { min-width: 0; overflow: hidden; border: 1px solid #282e3a; border-radius: 14px; background: #0e1118; box-shadow: 0 18px 50px #0005; }
+    .preview-card-head { height: 31px; display: flex; align-items: center; gap: 7px; padding: 0 11px; color: #8e97a8; font-size: 9px; }
+    .window-dots { display: flex; gap: 4px; margin-right: 6px; }
+    .window-dots i { width: 6px; height: 6px; border-radius: 50%; background: #474e5d; }
+    .window-dots i:first-child { background: #fe766d; }
+    .window-dots i:nth-child(2) { background: #efc25c; }
+    .window-dots i:nth-child(3) { background: #72d589; }
+    .preview-card-head strong { margin-left: auto; font-weight: 600; color: #b5bdcb; }
+    .app-frame { --bg:#101515; --elev:#161e1d; --surface:#1a2422; --surface2:#202b29; --line:#293532; --text:#eff4eb; --muted:#9daaa2; --accent:#c2f578; --accent2:#7fdbca; --glow:#c2f57820; min-height: 700px; display: flex; flex-direction: column; color: var(--text); background: var(--bg); overflow: hidden; }
+    .app-frame[data-skin="pulse"] { --bg:#11101b; --elev:#171627; --surface:#201e32; --surface2:#29263e; --line:#38334e; --text:#f6f2ff; --muted:#aaa3bd; --accent:#b888ff; --accent2:#63ddf4; --glow:#a678f526; }
+    .titlebar { height: 29px; display: flex; align-items: center; gap: 7px; padding: 0 9px; background: var(--elev); border-bottom: 1px solid var(--line); color: var(--muted); font-size: 8px; }
+    .brand-mark { width: 16px; height: 16px; display: grid; place-items: center; border-radius: 5px; color: #101410; background: var(--accent); font-size: 10px; font-weight: 900; }
+    [data-skin="pulse"] .brand-mark { color: white; background: linear-gradient(135deg,var(--accent),#725dff); }
+    .window-actions { margin-left: auto; display: flex; gap: 11px; color: #768071; font-size: 10px; }
+    .app-shell { min-height: 0; flex: 1; display: grid; grid-template-columns: 151px minmax(0,1fr); grid-template-rows: minmax(0,1fr) 70px; }
+    .sidebar { grid-column: 1; grid-row: 1 / span 2; display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 12px 8px 9px; background: var(--elev); border-right: 1px solid var(--line); }
+    .app-brand { display: flex; align-items: center; gap: 7px; padding: 0 7px 14px; color: var(--text); font-size: 12px; font-weight: 800; letter-spacing: -.04em; }
+    .app-brand small { color: var(--muted); font-size: 8px; font-weight: 500; letter-spacing: .02em; }
+    .nav-caption { margin: 8px 7px 5px; color: var(--muted); opacity: .7; text-transform: uppercase; letter-spacing: .14em; font-size: 7px; font-weight: 700; }
+    .app-nav { display: grid; gap: 2px; }
+    .app-nav-item { display: flex; align-items: center; gap: 8px; height: 25px; padding: 0 7px; border-radius: 7px; color: var(--muted); font-size: 9px; white-space: nowrap; }
+    .app-nav-item .route-icon { width: 13px; font-size: 11px; }
+    .app-nav-item.active { color: var(--text); background: var(--surface2); }
+    .app-nav-item.active .route-icon { color: var(--accent); }
+    .favorite-list { display: grid; gap: 2px; overflow: hidden; }
+    .favorite { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 8px; white-space: nowrap; }
+    .favorite .mini-art { width: 20px; height: 20px; border-radius: 5px; }
+    .sidebar-bottom { margin-top: auto; padding-top: 7px; border-top: 1px solid var(--line); display: grid; gap: 5px; }
+    .profile-link { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 8px; }
+    .avatar { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; color: #171319; background: linear-gradient(135deg,#ffd078,#dc648d); font-size: 8px; font-weight: 800; }
+    .main { min-width: 0; min-height: 0; grid-column: 2; grid-row: 1; display: flex; flex-direction: column; }
+    .topbar { height: 42px; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: color-mix(in srgb,var(--bg),var(--elev) 60%); border-bottom: 1px solid var(--line); }
+    .history-arrows { color: var(--muted); font-size: 14px; letter-spacing: 4px; }
+    .searchbar { min-width: 0; max-width: 320px; flex: 1; display: flex; align-items: center; gap: 7px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--muted); font-size: 8px; }
+    .top-actions { margin-left: auto; display: flex; gap: 8px; color: var(--muted); font-size: 9px; }
+    .main-content { min-height: 0; flex: 1; overflow: auto; padding: 14px 15px 18px; scrollbar-color: color-mix(in srgb,var(--accent),transparent 45%) transparent; scrollbar-width: thin; }
+    .main-content::-webkit-scrollbar, .route-panel::-webkit-scrollbar { width: 5px; height: 5px; }
+    .main-content::-webkit-scrollbar-thumb, .route-panel::-webkit-scrollbar-thumb { border-radius: 9px; background: color-mix(in srgb,var(--accent),transparent 48%); }
+    .main-content::-webkit-scrollbar-track, .route-panel::-webkit-scrollbar-track { background: transparent; }
+    .player { grid-column: 2; grid-row: 2; display: grid; grid-template-columns: minmax(95px,1fr) minmax(140px,1.25fr) minmax(75px,.9fr); align-items: center; gap: 9px; padding: 7px 10px; border-top: 1px solid var(--line); background: var(--elev); }
+    .now-playing { min-width: 0; display: flex; align-items: center; gap: 7px; }
+    .now-playing .art { width: 35px; height: 35px; border-radius: 7px; flex: 0 0 auto; }
+    .now-copy { min-width: 0; }
+    .now-copy strong, .now-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .now-copy strong { color: var(--text); font-size: 8px; }
+    .now-copy span { margin-top: 3px; color: var(--muted); font-size: 7px; }
+    .player-center { display: grid; gap: 6px; }
+    .transport { display: flex; align-items: center; justify-content: center; gap: 12px; color: var(--muted); font-size: 9px; }
+    .transport .play { width: 23px; height: 23px; display: grid; place-items: center; border-radius: 50%; color: #101510; background: var(--accent); font-size: 10px; }
+    [data-skin="pulse"] .transport .play { color: #161322; }
+    .progress { display: flex; align-items: center; gap: 5px; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 6px; }
+    .progress-line { height: 3px; flex: 1; border-radius: 8px; background: linear-gradient(90deg,var(--accent) 34%,var(--surface2) 34%); }
+    .player-tools { display: flex; justify-content: flex-end; align-items: center; gap: 8px; color: var(--muted); font-size: 8px; }
+    .tool-pill { border: 1px solid var(--line); border-radius: 6px; padding: 4px 5px; color: var(--accent); font-size: 7px; }
+    .page { max-width: 100%; }
+    .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+    .eyebrow { color: var(--accent2); text-transform: uppercase; letter-spacing: .16em; font-size: 7px; font-weight: 800; }
+    h1,h2,h3,p { margin-top: 0; }
+    .page-heading h1 { margin: 4px 0 4px; color: var(--text); font-size: 20px; line-height: 1.06; letter-spacing: -.045em; }
+    .page-heading p { margin: 0; color: var(--muted); font-size: 8px; line-height: 1.45; }
+    .page-action { flex: 0 0 auto; border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; color: var(--text); background: var(--surface); font-size: 7px; white-space: nowrap; }
+    .page-action.primary { border-color: transparent; color: #13180e; background: var(--accent); font-weight: 800; }
+    [data-skin="pulse"] .page-action.primary { color: #161322; }
+    .section-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 16px 0 8px; }
+    .section-head h2 { margin: 0; color: var(--text); font-size: 10px; letter-spacing: -.015em; }
+    .section-head span { color: var(--muted); font-size: 7px; }
+    .hero { position: relative; overflow: hidden; min-height: 150px; display: grid; grid-template-columns: minmax(0,1fr) minmax(118px,.7fr); align-items: center; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(115deg,var(--surface),var(--elev)); }
+    [data-skin="pulse"] .hero { border-color: color-mix(in srgb,var(--accent),var(--line) 75%); background: radial-gradient(ellipse at 90% 15%,#734ba94a,transparent 45%),linear-gradient(120deg,#201d35,#171524); box-shadow: 0 14px 34px var(--glow); }
+    .hero-copy { position: relative; z-index: 1; }
+    .hero-copy h2 { max-width: 270px; margin: 7px 0; font-size: clamp(18px,2.5vw,27px); line-height: 1.02; letter-spacing: -.05em; }
+    .hero-copy p { max-width: 230px; margin: 0 0 11px; color: var(--muted); font-size: 8px; line-height: 1.5; }
+    .hero-art { position: relative; justify-self: end; width: min(100%,150px); aspect-ratio: 1/1; transform: rotate(2deg); box-shadow: 0 14px 24px #0007; }
+    [data-skin="studio"] .hero-art { border-radius: 8px; }
+    [data-skin="pulse"] .hero-art { border-radius: 15px; transform: rotate(-4deg); box-shadow: 0 0 0 5px #ffffff0a,0 20px 40px #07040f99; }
+    .stat-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; margin-top: 9px; }
+    .stat { border-top: 1px solid var(--line); padding: 7px 2px 0; }
+    .stat strong { display: block; color: var(--text); font-size: 12px; letter-spacing: -.04em; }
+    .stat span { color: var(--muted); font-size: 7px; }
+    .cover-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; }
+    .cover-card { min-width: 0; }
+    .art { position: relative; isolation: isolate; overflow: hidden; display: grid; place-items: center; aspect-ratio: 1/1; border-radius: 9px; background: radial-gradient(circle at 28% 26%,var(--c3,#f5d07b) 0 5%,transparent 6%),linear-gradient(145deg,var(--c1,#284a50),var(--c2,#bd6d71)); }
+    .art::before { content:""; position:absolute; width:67%; aspect-ratio:1; border:1px solid #ffffff57; border-radius:50%; transform:translate(17%,10%); box-shadow:0 0 24px #fff2,inset 0 0 18px #ffffff10; }
+    .art::after { content:""; position:absolute; width:19%; aspect-ratio:1; border-radius:50%; background:linear-gradient(145deg,#f5efdc,#efc37e); opacity:.9; box-shadow:0 0 24px #fff6; }
+    .art i { position:absolute; z-index:1; width:45%; height:1px; transform:rotate(-38deg); background:#fff9; }
+    .art-1 { --c1:#384548; --c2:#c17262; --c3:#e9cf8a; background:radial-gradient(ellipse at 70% 32%,#f0c278 0 8%,transparent 9%),linear-gradient(145deg,#253b42,#bc685b 68%,#e8ac69); }
+    .art-2 { --c1:#243b72; --c2:#a147af; --c3:#f1b3d4; background:radial-gradient(circle at 62% 55%,#fa92d7 0 9%,transparent 10%),linear-gradient(150deg,#0a4970,#5c61ce 50%,#d3619d); }
+    .art-3 { --c1:#17524b; --c2:#bad36d; --c3:#f0f1ad; background:radial-gradient(ellipse at 52% 48%,#e8f49e 0 10%,transparent 11%),linear-gradient(135deg,#123d46,#157c6b 52%,#b4c764); }
+    .art-4 { --c1:#543d70; --c2:#d5816d; --c3:#f7cf95; background:radial-gradient(circle at 48% 26%,#ffe2a3 0 8%,transparent 9%),linear-gradient(145deg,#362b67,#8754a8 48%,#de8d6d); }
+    .art-5 { --c1:#212a3e; --c2:#4dc1cf; --c3:#d7f7fa; background:radial-gradient(ellipse at 62% 40%,#a5fbef 0 7%,transparent 8%),linear-gradient(145deg,#142136,#136d80 57%,#7ce1d3); }
+    .art-6 { --c1:#5e2b36; --c2:#e39c53; --c3:#ffe1a4; background:radial-gradient(circle at 40% 40%,#ffd68b 0 8%,transparent 9%),linear-gradient(135deg,#502438,#a84f54 55%,#efb560); }
+    .art-7 { --c1:#263747; --c2:#a9a1ca; --c3:#f5efe7; background:radial-gradient(circle at 61% 27%,#fff7e9 0 6%,transparent 7%),linear-gradient(135deg,#202c43,#707c9b 55%,#d5b3c8); }
+    .art-8 { --c1:#183d31; --c2:#96bd6d; --c3:#e2f1a7; background:radial-gradient(ellipse at 43% 64%,#f0f6b5 0 10%,transparent 11%),linear-gradient(135deg,#132e35,#367057 53%,#b3c96d); }
+    .cover-title { position: absolute; z-index: 2; left: 7px; right: 7px; bottom: 7px; color: #fff; text-shadow: 0 1px 8px #000b; text-transform: uppercase; letter-spacing: .12em; font-size: 6px; font-weight: 900; }
+    .cover-name { overflow: hidden; margin-top: 5px; color: var(--text); text-overflow: ellipsis; white-space: nowrap; font-size: 8px; font-weight: 700; }
+    .cover-by { overflow: hidden; margin-top: 2px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: 7px; }
+    .track-list { display: grid; gap: 2px; }
+    .track-row { min-width: 0; display: grid; grid-template-columns: 17px 25px minmax(0,1fr) 47px 20px; align-items: center; gap: 7px; min-height: 35px; padding: 3px 6px; border-bottom: 1px solid color-mix(in srgb,var(--line),transparent 32%); border-radius: 5px; color: var(--muted); font-size: 7px; }
+    .track-row.active { color: var(--text); background: color-mix(in srgb,var(--accent),transparent 90%); }
+    .track-no { text-align: center; font-variant-numeric: tabular-nums; }
+    .track-row .mini-art { width: 25px; height: 25px; border-radius: 5px; }
+    .track-meta { min-width: 0; }
+    .track-meta strong,.track-meta span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .track-meta strong { color: var(--text); font-size: 8px; font-weight: 650; }
+    .track-meta span { margin-top: 2px; color: var(--muted); font-size: 7px; }
+    .track-wave { height: 12px; display: flex; align-items: center; gap: 1px; opacity: .65; }
+    .track-wave i { width: 2px; border-radius: 2px; background: var(--accent2); }
+    .track-time { text-align: right; font-variant-numeric: tabular-nums; }
+    .filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin: 10px 0 9px; }
+    .filter { border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; color: var(--muted); background: var(--surface); font-size: 7px; }
+    .filter.selected { color: var(--text); border-color: color-mix(in srgb,var(--accent),var(--line) 40%); background: var(--glow); }
+    .search-input { display:flex; align-items:center; gap:7px; padding:10px 11px; margin-bottom:10px; border:1px solid var(--line); border-radius:9px; color:var(--muted); background:var(--surface); font-size:9px; }
+    .artist-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px 7px; }
+    .artist-card { min-width:0; text-align:center; }
+    .artist-avatar { width: min(100%,82px); margin: 0 auto; border-radius:50%; box-shadow:0 6px 20px #0004; }
+    .artist-avatar.art::after { width:12%; }
+    .artist-avatar.art::before { width:78%; }
+    .artist-name { overflow:hidden; margin-top:6px; color:var(--text); text-overflow:ellipsis; white-space:nowrap; font-size:8px; font-weight:700; }
+    .artist-sub { margin-top:2px; color:var(--muted); font-size:7px; }
+    .dual-layout { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(105px,.7fr); gap:10px; align-items:start; }
+    .surface { border:1px solid var(--line); border-radius:10px; padding:10px; background:var(--surface); }
+    [data-skin="pulse"] .surface { box-shadow:0 6px 20px #06040f35; }
+    .surface-title { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; color:var(--text); font-size:9px; font-weight:700; }
+    .surface-title small { color:var(--muted); font-size:7px; font-weight:500; }
+    .bar-chart { height:100px; display:flex; align-items:end; gap:5px; padding:9px 3px 0; border-bottom:1px solid var(--line); background:repeating-linear-gradient(to bottom,transparent 0 24px,color-mix(in srgb,var(--line),transparent 20%) 25px 26px); }
+    .bar-chart i { flex:1; min-width:4px; border-radius:4px 4px 0 0; background:linear-gradient(0deg,var(--accent),var(--accent2)); opacity:.83; }
+    .setting-group { display:grid; gap:0; }
+    .setting-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:9px; min-height:37px; border-bottom:1px solid var(--line); }
+    .setting-row:last-child { border-bottom:0; }
+    .setting-row strong,.setting-row span { display:block; }
+    .setting-row strong { color:var(--text); font-size:8px; font-weight:650; }
+    .setting-row span { margin-top:3px; color:var(--muted); font-size:7px; }
+    .switch { width:25px; height:14px; border-radius:20px; padding:2px; background:var(--accent); }
+    .switch::after { content:""; width:10px; height:10px; display:block; margin-left:auto; border-radius:50%; background:#fff; }
+    .pill-select { border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); background:var(--surface2); font-size:7px; }
+    .detail-hero { display:grid; grid-template-columns:minmax(100px,.65fr) minmax(0,1.35fr); align-items:end; gap:13px; padding:11px; border:1px solid var(--line); border-radius:12px; background:linear-gradient(120deg,var(--surface),var(--elev)); }
+    [data-skin="pulse"] .detail-hero { background:radial-gradient(ellipse at 18% 20%,#7c50b440,transparent 55%),linear-gradient(125deg,#221e35,#171524); }
+    .detail-hero .art { width:100%; max-width:145px; box-shadow:0 12px 24px #0006; }
+    .detail-copy h1 { margin:5px 0 4px; color:var(--text); font-size:19px; line-height:1.02; letter-spacing:-.05em; }
+    .detail-copy p { margin:0 0 9px; color:var(--muted); font-size:8px; line-height:1.45; }
+    .detail-actions { display:flex; flex-wrap:wrap; gap:5px; }
+    .source-badge { display:inline-flex; align-items:center; gap:4px; border:1px solid color-mix(in srgb,var(--accent2),var(--line) 55%); border-radius:20px; padding:4px 7px; color:var(--accent2); font-size:7px; font-weight:700; }
+    .mosaic { display:grid; grid-template-columns:repeat(2,1fr); gap:3px; width:100%; max-width:145px; aspect-ratio:1; overflow:hidden; border-radius:10px; box-shadow:0 12px 24px #0006; }
+    .mosaic .art { border-radius:2px; }
+    .tagline { display:flex; align-items:center; gap:5px; color:var(--muted); font-size:7px; }
+    .tagline strong { color:var(--text); }
+    .inline-promo { display:flex; align-items:center; justify-content:space-between; gap:9px; padding:10px; border-radius:9px; background:color-mix(in srgb,var(--accent2),transparent 90%); color:var(--text); font-size:8px; }
+    .inline-promo span { color:var(--muted); font-size:7px; }
+    .settings-tabs { display:flex; gap:5px; margin-bottom:10px; padding-bottom:7px; border-bottom:1px solid var(--line); }
+    .settings-tabs span { padding:5px 8px; border-radius:6px; color:var(--muted); font-size:7px; }
+    .settings-tabs span:first-child { color:var(--text); background:var(--surface2); }
+    .palette { display:flex; gap:5px; }
+    .palette i { width:12px; height:12px; border-radius:50%; background:#bd80ff; }
+    .palette i:nth-child(2) { background:#c0ef73; }.palette i:nth-child(3) { background:#60d9ed; }.palette i:nth-child(4) { background:#f37e9f; }
+    .tabular-num { font-variant-numeric:tabular-nums; }
+    .icon-gallery { margin:19px 0 0; padding:14px; border:1px solid #262b37; border-radius:14px; background:#10131a; }
+    .icon-gallery-head { display:flex; justify-content:space-between; align-items:baseline; gap:14px; margin-bottom:11px; }
+    .icon-gallery h2 { margin:0; font-size:12px; }.icon-gallery p { margin:0; color:#8e96a7; font-size:9px; }
+    .icon-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:10px; }
+    .icon-item { min-width:0; padding:9px; border:1px solid #262b37; border-radius:10px; background:#0b0d13; }
+    .icon-item img { display:block; width:100%; aspect-ratio:1; object-fit:contain; border-radius:7px; background:#080a10; }
+    .icon-item strong { display:block; overflow:hidden; margin-top:7px; color:#e1e5ef; text-overflow:ellipsis; white-space:nowrap; font-size:8px; }
+    .icon-item span { display:block; margin-top:3px; color:#8790a2; font-size:7px; }
+    .footnote { margin-top:10px; color:#70798b; font-size:9px; line-height:1.5; }
+    [data-skin="pulse"] .app-brand { letter-spacing:.02em; }
+    [data-skin="pulse"] .cover-card .art { border-radius:12px; }
+    [data-skin="studio"] .section-head { border-bottom:1px solid var(--line); padding-bottom:6px; }
+    [data-skin="studio"] .track-row.active { box-shadow:inset 2px 0 var(--accent); }
+    [data-skin="pulse"] .track-row.active { outline:1px solid color-mix(in srgb,var(--accent),transparent 72%); }
+    @media (max-width: 1050px) {
+      .deck { padding:16px; }.deck-head { align-items:flex-start; flex-direction:column; gap:13px; }
+      .deck-grid { grid-template-columns:1fr; }.route-panel { position:static; max-height:none; display:flex; gap:14px; overflow:auto; }
+      .route-group { flex:0 0 auto; min-width:140px; }.preview-grid { grid-template-columns:1fr; }
+      .concept-labels { display:none; }.app-frame { min-height:680px; }
+    }
+    @media (max-width: 560px) {
+      .deck-actions { width:100%; }.deck-actions select { flex:1; min-width:0; }
+      .app-shell { grid-template-columns:110px minmax(0,1fr); grid-template-rows:minmax(0,1fr) 66px; }
+      .sidebar { padding-inline:5px; }.app-nav-item { font-size:8px; }.app-shell .page-heading h1 { font-size:17px; }
+      .player { grid-template-columns:minmax(75px,1fr) minmax(100px,1.2fr); }.player-tools { display:none; }
+      .cover-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }.icon-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="deck">
+    <header class="deck-head">
+      <div>
+        <div class="deck-eyebrow">Tempo Player · направление к релизу 1.0.0</div>
+        <h1 class="deck-title">Большая музыка.<br>Новый Tempo.</h1>
+        <p class="deck-lede">Интерактивное сравнение двух визуальных направлений на каждой странице плеера. Выбери раздел слева, затем сравни варианты A и B или раскрой понравившийся на всю ширину.</p>
+      </div>
+      <div class="deck-actions" aria-label="Режим просмотра">
+        <button class="mode-button is-active" data-mode="compare">Сравнить A / B</button>
+        <button class="mode-button" data-mode="a">Только A</button>
+        <button class="mode-button" data-mode="b">Только B</button>
+      </div>
+    </header>
+    <div class="deck-meta"><span id="current-label"><strong>Главная</strong> · 14 экранов в проекте</span><span>A — Sonic Editorial &nbsp;·&nbsp; B — Pulse Neon</span></div>
+    <div class="deck-grid">
+      <nav class="route-panel" id="route-panel" aria-label="Страницы Tempo"></nav>
+      <section class="stage" aria-live="polite">
+        <div class="concept-labels">
+          <div class="concept-label"><span class="concept-tag">A</span><span class="concept-name">Sonic Editorial</span><span class="concept-caption">воздух · обложка · ясность</span></div>
+          <div class="concept-label"><span class="concept-tag">B</span><span class="concept-name">Pulse Neon</span><span class="concept-caption">энергия · движение · цвет</span></div>
+        </div>
+        <div class="preview-grid" id="preview-grid" data-single="a"></div>
+      </section>
+    </div>
+    <section class="icon-gallery">
+      <div class="icon-gallery-head"><h2>Сохранённые варианты иконок</h2><p>Отдельные исходники: docs/brand/icon-concepts/variants/</p></div>
+      <div class="icon-grid" id="icon-grid"></div>
+      <p class="footnote">Макет использует вымышленные названия и декоративные обложки. Это визуальный прототип: действия в нём иллюстративны, а текущие страницы приложения не изменены.</p>
+    </section>
+  </div>
+  <script>
+    const pages = [
+      {id:'home',label:'Главная',group:'Основное',icon:'⌂',title:'Для тебя',sub:'СВЕЖЕЕ ИЗ ТВОЕЙ КОЛЛЕКЦИИ'},
+      {id:'library',label:'Медиатека',group:'Основное',icon:'♫',title:'Медиатека',sub:'ВСЯ МУЗЫКА В ОДНОМ МЕСТЕ'},
+      {id:'search',label:'Поиск',group:'Основное',icon:'⌕',title:'Найди свой звук',sub:'ЛОКАЛЬНОЕ · SOUNDCLOUD · YOUTUBE'},
+      {id:'albums',label:'Альбомы',group:'Коллекция',icon:'◉',title:'Альбомы',sub:'ИЗБРАННОЕ И НЕДАВНОЕ'},
+      {id:'artists',label:'Исполнители',group:'Коллекция',icon:'♙',title:'Исполнители',sub:'ГОЛОСА ТВОЕЙ КОЛЛЕКЦИИ'},
+      {id:'playlists',label:'Плейлисты',group:'Коллекция',icon:'☷',title:'Плейлисты',sub:'ПОДБОРКИ ПОД ТВОЙ РИТМ'},
+      {id:'profile',label:'Профиль',group:'Личное',icon:'◌',title:'Твой музыкальный след',sub:'СТАТИСТИКА И ИСТОРИЯ'},
+      {id:'settings',label:'Настройки',group:'Личное',icon:'☼',title:'Настройки',sub:'TEMPO ПОД ТЕБЯ'},
+      {id:'album-detail',label:'Альбом · детали',group:'Страницы деталей',icon:'▣',title:'Альбом',sub:'ОБЛОЖКА · МЕТАДАННЫЕ · ТРЕКЛИСТ'},
+      {id:'artist-detail',label:'Исполнитель · детали',group:'Страницы деталей',icon:'♬',title:'Исполнитель',sub:'ПОПУЛЯРНОЕ · ДИСКОГРАФИЯ'},
+      {id:'playlist-detail',label:'Плейлист · детали',group:'Страницы деталей',icon:'≡',title:'Плейлист',sub:'ПОРЯДОК · ОЧЕРЕДЬ · НАСТРОЕНИЕ'},
+      {id:'sc-artist',label:'SoundCloud · артист',group:'Внешние источники',icon:'◖',title:'Страница SoundCloud',sub:'ИСПОЛНИТЕЛЬ · РЕЛИЗЫ · КЭШ'},
+      {id:'sc-playlist',label:'SoundCloud · плейлист',group:'Внешние источники',icon:'◖',title:'Подборка SoundCloud',sub:'ВНЕШНИЙ ИСТОЧНИК'},
+      {id:'yt-collection',label:'YouTube · коллекция',group:'Внешние источники',icon:'▶',title:'YouTube Music',sub:'КОЛЛЕКЦИЯ · ЗАГРУЗКА · ОЧЕРЕДЬ'},
+    ];
+    const albumData = [
+      ['После дождя','Luma Grey',1],['Glass Garden','Mira Sol',2],['Тихий ток','Northbound',3],['Ночь и неон','Serein',4],
+      ['Синие часы','Vanta',5],['Медленный свет','Runa Vale',6],['В стороне','Atelier 4',7],['Пульс города','Kite Atlas',8],
+    ];
+    const trackData = [
+      ['Тихий ток','Northbound','03:42',3],['Пока горит','Luma Grey','04:08',1],['Blue Hour','Mira Sol','03:16',2],
+      ['Сквозь стекло','Serein','05:01',4],['Без слов','Runa Vale','02:58',6],['Sideways','Atelier 4','03:38',7],
+    ];
+    const artistData = [['Luma Grey','12 треков',1],['Mira Sol','8 альбомов',2],['Northbound','34 трека',3],['Serein','16 треков',4],['Vanta','21 трек',5],['Runa Vale','11 треков',6],['Atelier 4','7 альбомов',7],['Kite Atlas','18 треков',8]];
+    const waveHeights = [4,8,6,10,5,12,7,9,4,11,6,8,3,9,5];
+    function art(index, label='', extra='') { return `<div class="art art-${((index-1)%8)+1} ${extra}"><i></i>${label?`<span class="cover-title">${label}</span>`:''}</div>`; }
+    function coverCard(row, index) { return `<div class="cover-card">${art(row[2],row[0])}<div class="cover-name">${row[0]}</div><div class="cover-by">${row[1]}</div></div>`; }
+    function tracks(count=5, active=0) { return `<div class="track-list">${trackData.slice(0,count).map((row,i)=>`<div class="track-row ${i===active?'active':''}"><span class="track-no">${i===active?'♫':String(i+1).padStart(2,'0')}</span>${art(row[3],'','mini-art')}<span class="track-meta"><strong>${row[0]}</strong><span>${row[1]}</span></span><span class="track-wave">${waveHeights.slice(i,i+8).map((h)=>`<i style="height:${h}px"></i>`).join('')}</span><span class="track-time">${row[2]}</span></div>`).join('')}</div>`; }
+    function heading(page, action='') { return `<div class="page-heading"><div><div class="eyebrow">${page.sub}</div><h1>${page.title}</h1><p>${page.id==='home'?'Подборка, которую хочется включить прямо сейчас.':'Твоя музыка — в своём порядке.'}</p></div>${action?`<button class="page-action ${action.includes('＋')?'primary':''}">${action}</button>`:''}</div>`; }
+    function section(title, hint='Показать всё') { return `<div class="section-head"><h2>${title}</h2><span>${hint}　↗</span></div>`; }
+    function playlistCards() { return `<div class="cover-grid">${[['Вечерний импульс','Обновлено сегодня',4],['Для прогулки','26 треков',5],['Тихие комнаты','18 треков',7],['Избранное','Твои любимые',3]].map((r)=>`<div class="cover-card">${art(r[2],r[0])}<div class="cover-name">${r[0]}</div><div class="cover-by">${r[1]}</div></div>`).join('')}</div>`; }
+    function artistGrid() { return `<div class="artist-grid">${artistData.map((r)=>`<div class="artist-card">${art(r[2],r[0],'artist-avatar')}<div class="artist-name">${r[0]}</div><div class="artist-sub">${r[1]}</div></div>`).join('')}</div>`; }
+    function detailActions(labels='▶ Слушать всё|♡ В избранное|···') { return `<div class="detail-actions">${labels.split('|').map((x,i)=>`<button class="page-action ${i===0?'primary':''}">${x}</button>`).join('')}</div>`; }
+    function body(page) {
+      switch(page.id) {
+        case 'home': return `${heading(page,'⟳ Обновить')}<div class="hero"><div class="hero-copy"><div class="eyebrow">МИКС ДНЯ · 18 ТРЕКОВ</div><h2>Вечерний<br>импульс</h2><p>Знакомое рядом с тем, что ещё не успел полюбить.</p><button class="page-action primary">▶　Слушать микс</button></div>${art(4,'Вечерний импульс','hero-art')}</div><div class="stat-row"><div class="stat"><strong>248</strong><span>треков в коллекции</span></div><div class="stat"><strong>18</strong><span>добавлено за неделю</span></div><div class="stat"><strong>32 ч</strong><span>вместе с музыкой</span></div></div>${section('Недавно добавлено')}<div class="cover-grid">${albumData.slice(0,4).map(coverCard).join('')}</div>${section('Вернуться к прослушиванию','Продолжить')}<div class="surface">${tracks(3,0)}</div>`;
+        case 'library': return `${heading(page,'＋ Добавить папку')}<div class="filter-row"><span class="filter selected">Все треки · 248</span><span class="filter">Недавно добавленные</span><span class="filter">Любимые</span><span class="pill-select">Сначала новые　⌄</span></div><div class="surface"><div class="surface-title"><span>Название</span><small>Исполнитель　　　　　　　　　Альбом　　　　　　　　Время</small></div>${tracks(6,1)}</div><div class="inline-promo" style="margin-top:9px"><div><strong>Музыка обновлена</strong><br><span>Последнее сканирование · 4 минуты назад</span></div><span>248 треков</span></div>`;
+        case 'albums': return `${heading(page,'＋ Новая подборка')}<div class="filter-row"><span class="filter selected">Все</span><span class="filter">Избранное</span><span class="filter">Недавно добавленные</span><span class="pill-select">По названию　⌄</span></div><div class="cover-grid">${albumData.map(coverCard).join('')}</div>`;
+        case 'artists': return `${heading(page)}<div class="filter-row"><span class="filter selected">Все исполнители · 36</span><span class="filter">Избранное · 8</span><span class="pill-select">По имени　⌄</span></div>${artistGrid()}`;
+        case 'playlists': return `${heading(page,'＋ Создать плейлист')}<div class="filter-row"><span class="filter selected">Мои · 12</span><span class="filter">Закреплённые</span><button class="filter">Импортировать M3U</button></div>${playlistCards()}<div class="inline-promo" style="margin-top:14px"><div><strong>Добавь музыку в свою историю</strong><br><span>Перетащи треки сюда или создай плейлист</span></div><span>＋</span></div>`;
+        case 'search': return `${heading(page)}<div class="search-input"><span>⌕</span><span>Попробуй: исполнитель, название или настроение…</span><span style="margin-left:auto">Ctrl K</span></div><div class="filter-row"><span class="filter selected">Всё</span><span class="filter">Треки</span><span class="filter">Альбомы</span><span class="filter">Артисты</span><span class="filter">SoundCloud</span><span class="filter">YouTube</span></div><div class="dual-layout"><div><div class="surface-title">Локальные треки <small>12 результатов</small></div>${tracks(3,2)}<div class="surface-title" style="margin-top:12px">SoundCloud <small class="source-badge">Внешний источник</small></div>${tracks(2,0)}</div><div class="surface"><div class="surface-title">Лучшее совпадение</div>${art(2,'Glass Garden')}<div class="cover-name">Glass Garden</div><div class="cover-by">Mira Sol · Альбом</div><button class="page-action" style="margin-top:9px">Открыть альбом　↗</button></div></div>`;
+        case 'profile': return `${heading(page,'✎ Изменить профиль')}<div class="surface" style="display:flex;align-items:center;gap:12px"><div class="avatar" style="width:52px;height:52px;font-size:15px">Т</div><div><div class="eyebrow">ТВОЙ TEMPO</div><h2 style="margin:4px 0;font-size:17px">Твоя музыкальная история</h2><p style="margin:0;color:var(--muted);font-size:8px">Слушаешь с октября 2024</p></div></div><div class="stat-row"><div class="stat"><strong>1 284</strong><span>прослушано треков</span></div><div class="stat"><strong>76 ч</strong><span>время с музыкой</span></div><div class="stat"><strong>92</strong><span>исполнителя</span></div></div><div class="dual-layout" style="margin-top:10px"><div class="surface"><div class="surface-title">Твоя активность <small>14 дней　⌄</small></div><div class="bar-chart">${[22,37,27,61,47,75,38,56,84,42,63,94,49,71,54,80,37,67].map((h)=>`<i style="height:${h}%"></i>`).join('')}</div></div><div class="surface"><div class="surface-title">Чаще слушаешь <small>за 14 дней</small></div>${artistData.slice(0,4).map((a,i)=>`<div class="setting-row"><strong>${a[0]}</strong><span>#${i+1}</span></div>`).join('')}</div></div>${section('Недавние впечатления')}<div class="surface">${tracks(3,3)}</div>`;
+        case 'settings': return `${heading(page)}<div class="settings-tabs"><span>Внешний вид</span><span>Звук</span><span>Лирика</span><span>Библиотека</span><span>Интеграции</span></div><div class="dual-layout"><div class="surface"><div class="surface-title">Тема и цвет <small>ПРЕДПРОСМОТР</small></div><div class="setting-group"><div class="setting-row"><div><strong>Цветовая тема</strong><span>Сохраняет выбранный характер Tempo</span></div><div class="palette"><i></i><i></i><i></i><i></i></div></div><div class="setting-row"><div><strong>Фон приложения</strong><span>Своя фотография или градиент</span></div><span class="pill-select">Выбрать　⌄</span></div><div class="setting-row"><div><strong>Плотность интерфейса</strong><span>Размер строк и сеток</span></div><span class="pill-select">Комфортная　⌄</span></div><div class="setting-row"><div><strong>Показывать визуализатор</strong><span>Рядом с прогрессом воспроизведения</span></div><i class="switch"></i></div><div class="setting-row"><div><strong>Размер окна</strong><span>Масштаб элементов приложения</span></div><span class="pill-select">100%　⌄</span></div></div></div><div class="surface"><div class="surface-title">Предпросмотр темы <small>ЖИВОЙ ВИД</small></div>${art(5,'Под водой')}<div class="setting-row" style="margin-top:8px"><div><strong>Сохранить как пресет</strong><span>Твоя персональная тема</span></div><button class="page-action">Сохранить</button></div></div></div>`;
+        case 'album-detail': return `${heading({ ...page,title:'После дождя',sub:'АЛЬБОМ · 2025'},'···')}<div class="detail-hero">${art(1,'После дождя')}<div class="detail-copy"><div class="eyebrow">АЛЬБОМ · 2025 · 9 ТРЕКОВ</div><h1>После дождя</h1><p><strong>Luma Grey</strong> · 31 минута<br>Альбом добавлен в медиатеку в этом месяце.</p>${detailActions()}</div></div>${section('Треклист','9 треков · 31 мин')}<div class="surface">${tracks(6,1)}</div>`;
+        case 'artist-detail': return `${heading({ ...page,title:'Luma Grey',sub:'ИСПОЛНИТЕЛЬ'},'✎ Изображение')}<div class="detail-hero">${art(1,'LUMA GREY','artist-avatar')}<div class="detail-copy"><div class="eyebrow">ИЗБРАННЫЙ ИСПОЛНИТЕЛЬ</div><h1>Luma Grey</h1><p>12 треков · 3 альбома<br>Из локальной музыкальной библиотеки.</p>${detailActions('▶ Слушать популярное|♡ В избранном|···')}</div></div><div class="dual-layout" style="margin-top:11px"><div><div class="section-head"><h2>Популярные треки</h2><span>Вся дискография ↗</span></div>${tracks(4,0)}</div><div><div class="section-head"><h2>Альбомы</h2></div>${albumData.slice(0,2).map((a)=>`<div class="setting-row">${art(a[2],'','mini-art')}<div><strong>${a[0]}</strong><span>${a[1]}</span></div><span>▶</span></div>`).join('')}</div></div>`;
+        case 'playlist-detail': return `${heading({ ...page,title:'Вечерний импульс',sub:'ПЛЕЙЛИСТ · 18 ТРЕКОВ'},'···')}<div class="detail-hero"><div class="mosaic">${[1,2,4,6].map((n)=>art(n)).join('')}</div><div class="detail-copy"><div class="eyebrow">ПЛЕЙЛИСТ · ИЗМЕНЁН СЕГОДНЯ</div><h1>Вечерний импульс</h1><p>Треки для прогулки по городу и мыслей, которые хочется дослушать.</p>${detailActions('▶ Слушать всё|↓ Сохранить M3U|♡ Закреплено')}</div></div>${section('Очередность','Перетащи, чтобы изменить')}<div class="surface">${tracks(6,2)}</div>`;
+        case 'sc-artist': return `${heading({ ...page,title:'Mira Sol',sub:'SOUNDCLOUD · ИСПОЛНИТЕЛЬ'},'↗ Открыть')}<div class="detail-hero">${art(2,'MIRA SOL','artist-avatar')}<div class="detail-copy"><span class="source-badge">◖ SoundCloud · онлайн</span><h1>Mira Sol</h1><p>38 треков · 6 релизов<br>Внешний каталог; добавление в медиатеку происходит после кэширования.</p>${detailActions('▶ Слушать релизы|↓ Кэшировать артиста|♡ В избранное')}</div></div>${section('Релизы','6 релизов')}<div class="cover-grid">${albumData.slice(1,5).map(coverCard).join('')}</div>${section('Новые треки','Все треки ↗')}<div class="surface">${tracks(4,2)}</div>`;
+        case 'sc-playlist': return `${heading({ ...page,title:'Late night sketches',sub:'SOUNDCLOUD · ПОДБОРКА'},'↗ Источник')}<div class="detail-hero">${art(5,'LATE NIGHT')}<div class="detail-copy"><span class="source-badge">◖ SoundCloud · 24 трека</span><h1>Late night sketches</h1><p>Подборка от Mira Sol<br>Ещё не сохранена локально. Кэшируй, чтобы добавить музыку в медиатеку.</p>${detailActions('▶ Слушать|↓ Кэшировать|♡ В избранное')}</div></div>${section('Треки подборки','24 трека')}<div class="surface">${tracks(6,2)}</div>`;
+        case 'yt-collection': return `${heading({ ...page,title:'Ночной маршрут',sub:'YOUTUBE MUSIC · PLAYLIST'},'↗ Открыть')}<div class="detail-hero">${art(6,'НОЧНОЙ МАРШРУТ')}<div class="detail-copy"><span class="source-badge" style="color:#ff8f9a;border-color:#fb687c">▶ YouTube Music · плейлист</span><h1>Ночной маршрут</h1><p>Собрано Vanta · 32 трека<br>Качество загрузки зависит от доступности источника.</p>${detailActions('▶ Слушать|↓ Скачать коллекцию|···')}</div></div><div class="inline-promo" style="margin-top:9px"><div><strong>Коллекция готова к загрузке</strong><br><span>Выбери формат и качество аудио перед импортом</span></div><button class="page-action primary">Настроить загрузку</button></div>${section('Список треков','32 трека')}<div class="surface">${tracks(5,1)}</div>`;
+      }
+      return `${heading(page)}`;
+    }
+    function sidebar(page) {
+      const main = pages.slice(0,6);
+      const active = ['album-detail'].includes(page.id)?'albums':['artist-detail'].includes(page.id)?'artists':['playlist-detail'].includes(page.id)?'playlists':page.id;
+      return `<aside class="sidebar"><div class="app-brand"><span class="brand-mark">T</span><span>tempo<br><small>music library</small></span></div><div class="nav-caption">Слушать</div><div class="app-nav">${main.slice(0,3).map(p=>`<div class="app-nav-item ${active===p.id?'active':''}"><span class="route-icon">${p.icon}</span>${p.label}</div>`).join('')}</div><div class="nav-caption">Коллекция</div><div class="app-nav">${main.slice(3).map(p=>`<div class="app-nav-item ${active===p.id?'active':''}"><span class="route-icon">${p.icon}</span>${p.label}</div>`).join('')}</div><div class="nav-caption">Закреплено</div><div class="favorite-list">${[['Вечерний импульс',4],['Избранное',3],['Luma Grey',1]].map(x=>`<div class="favorite">${art(x[1],'','mini-art')}<span>${x[0]}</span></div>`).join('')}</div><div class="sidebar-bottom"><div class="profile-link"><span class="avatar">Т</span>Моя музыка</div><div class="app-nav-item ${page.id==='settings'?'active':''}"><span class="route-icon">☼</span>Настройки</div></div></aside>`;
+    }
+    function frame(page, skin) {
+      const skinName = skin==='studio'?'Sonic Editorial':'Pulse Neon';
+      return `<article class="preview-card" data-skin="${skin}"><div class="preview-card-head"><span class="window-dots"><i></i><i></i><i></i></span>Tempo Player <strong>${skin==='studio'?'A':'B'} · ${skinName}</strong></div><div class="app-frame" data-skin="${skin}"><div class="titlebar"><span class="brand-mark">T</span><span>Tempo Player</span><span class="window-actions">⌕　—　□　×</span></div><div class="app-shell">${sidebar(page)}<main class="main"><div class="topbar"><span class="history-arrows">‹ ›</span><div class="searchbar"><span>⌕</span>Треки, альбомы, исполнители…</div><div class="top-actions"><span>⌘ K</span><span>◌</span></div></div><div class="main-content"><div class="page">${body(page)}</div></div></main><footer class="player"><div class="now-playing">${art(3,'','mini-art')}<div class="now-copy"><strong>Тихий ток</strong><span>Northbound · Тихий ток</span></div></div><div class="player-center"><div class="transport"><span>⤨</span><span>◂</span><span class="play">Ⅱ</span><span>▸</span><span>↻</span></div><div class="progress"><span>1:24</span><span class="progress-line"></span><span>3:42</span></div></div><div class="player-tools"><span>♫ Текст</span><span class="tool-pill">1.00×</span><span>▥ EQ</span><span>▤</span><span>◖</span></div></footer></div></article>`;
+    }
+    function render() {
+      const page = pages.find(p=>p.id===selected) || pages[0];
+      document.getElementById('current-label').innerHTML = `<strong>${page.label}</strong> · ${page.sub.toLowerCase()}`;
+      document.getElementById('route-panel').innerHTML = [...new Set(pages.map(p=>p.group))].map(group=>`<div class="route-group"><div class="route-group-title">${group}</div>${pages.filter(p=>p.group===group).map(p=>`<button class="route-button ${selected===p.id?'is-active':''}" data-page="${p.id}"><span class="route-icon">${p.icon}</span>${p.label}</button>`).join('')}</div>`).join('');
+      const grid = document.getElementById('preview-grid');
+      grid.classList.toggle('single',mode!=='compare');
+      grid.dataset.single = mode;
+      grid.innerHTML = frame(page,'studio') + frame(page,'pulse');
+      document.querySelectorAll('.mode-button').forEach((b)=>b.classList.toggle('is-active',b.dataset.mode===mode));
+      document.querySelectorAll('[data-page]').forEach((b)=>b.addEventListener('click',()=>{selected=b.dataset.page;render()}));
+    }
+    const params = new URLSearchParams(window.location.search);
+    let selected = pages.some((p)=>p.id===params.get('page')) ? params.get('page') : 'home';
+    let mode = ['compare','a','b'].includes(params.get('mode')) ? params.get('mode') : 'compare';
+    document.querySelectorAll('.mode-button').forEach((b)=>b.addEventListener('click',()=>{mode=b.dataset.mode;render()}));
+    document.getElementById('icon-grid').innerHTML = [
+      ['pulse-violet-cyan.png','Pulse','Фиолетовый · циан'],['pulse-cream-coral.png','Pulse','Сливочный · коралл'],['pulse-forest-lime.png','Pulse','Хвойный · лайм'],
+      ['orbit-indigo-cyan.png','Orbit','Индиго · циан'],['orbit-ivory-coral.png','Orbit','Слоновая кость · коралл'],['orbit-plum-lime.png','Orbit','Сливовый · лайм'],
+    ].map((x)=>`<div class="icon-item"><img src="../../brand/icon-concepts/variants/${x[0]}" alt="${x[1]} — ${x[2]}"><strong>${x[1]}</strong><span>${x[2]}</span></div>`).join('');
+    render();
+  </script>
+</body>
+</html>
