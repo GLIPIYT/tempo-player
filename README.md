@@ -65,7 +65,7 @@ GitHub Actions runs frontend type checks, tests, hook-order and lint checks, wor
 
 ## Project
 
-Tempo is in alpha (`0.8.3`) and Windows-first. The release workflow currently publishes a Windows installer. Network access is used by online features and the updater; the local library does not require an account or cloud service.
+Tempo is in alpha (`0.9.0`) and Windows-first. The release workflow currently publishes a Windows installer. Network access is used by online features and the updater; the local library does not require an account or cloud service.
 
 [Releases](https://github.com/GLIPIYT/tempo-player/releases) · [Issues](https://github.com/GLIPIYT/tempo-player/issues) · [Architecture](ARCHITECTURE.md)
 

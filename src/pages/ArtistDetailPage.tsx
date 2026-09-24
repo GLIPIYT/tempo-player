@@ -27,14 +27,14 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
   const tracks = useAsync(() => api.getArtistTracks(artistId), [artistId, version])
   const fav = useAsync(() => api.isFavoriteArtist(artistId), [artistId, version])
 
-  if (loading) {
+  if (loading && data === null) {
     return (
       <div className="page">
         <div className="muted">{t('Loading…')}</div>
       </div>
     )
   }
-  if (error) {
+  if (error && data === null) {
     return (
       <div className="page">
         <div className="error-line">{error}</div>

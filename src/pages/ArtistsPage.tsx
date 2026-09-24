@@ -80,7 +80,7 @@ export default function ArtistsPage() {
       </div>
 
       {error ? <div className="error-line">{error}</div> : null}
-      {loading ? (
+      {loading && data === null ? (
         <div className="muted">{t('Loading…')}</div>
       ) : !data || data.length === 0 ? (
         <EmptyState

@@ -21,14 +21,14 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
   const { data, loading, error, reload } = useAsync(() => api.getAlbum(albumId), [albumId, version])
   const fav = useAsync(() => api.isFavoriteAlbum(albumId), [albumId, version])
 
-  if (loading) {
+  if (loading && data === null) {
     return (
       <div className="page">
         <div className="muted">{t('Loading…')}</div>
       </div>
     )
   }
-  if (error) {
+  if (error && data === null) {
     return (
       <div className="page">
         <div className="error-line">{error}</div>

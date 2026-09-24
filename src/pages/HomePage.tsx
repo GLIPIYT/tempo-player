@@ -49,6 +49,15 @@ function dedupeRecent(entries: { track: Track }[], limit: number): Track[] {
   return out
 }
 
+function stableMixRank(id: number): number {
+  let hash = 2166136261
+  for (const char of String(id)) {
+    hash ^= char.charCodeAt(0)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
 export default function HomePage() {
   const t = useT()
   const { settings } = useSettings()
@@ -62,9 +71,7 @@ export default function HomePage() {
   const top = useAsync(() => api.getTopTracks(12), [version])
   const played = useAsync(async () => dedupeRecent((await api.getAnalytics('30d')).recent, 10), [version])
   const unknownArtist = t('Unknown artist')
-  // Memoised so the fallback keeps one identity: a bare `?? []` handed the
-  // hour-mixes memo a fresh array every render, which re-ran it - and re-ran
-  // the shuffle inside it - for nothing.
+  // Keep the fallback identity stable while the first result is loading.
   const hourPicksList = useMemo(() => hourPicks.data ?? [], [hourPicks.data])
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
   const nickname = settings.profile.nickname
@@ -73,18 +80,22 @@ export default function HomePage() {
     const mixes: { key: string; title: string; tracks: Track[] }[] = []
     const byArtist = new Map<string, Track[]>()
     for (const tr of hourPicksList) {
-      const artist = tr.artistName ?? unknownArtist
+      const artist = tr.artistName?.trim()
+      if (
+        !artist ||
+        artist.toLowerCase() === unknownArtist.toLowerCase() ||
+        artist.toLowerCase() === 'unknown artist' ||
+        artist.toLowerCase() === 'неизвестный исполнитель'
+      ) continue
       const list = byArtist.get(artist)
       if (list) list.push(tr)
       else byArtist.set(artist, [tr])
     }
     if (hourPicksList.length >= 4) {
-      const shuffled = hourPicksList.slice()
-      for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1))
-        ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-      }
-      mixes.push({ key: 'mix', title: t('Hour mix'), tracks: shuffled.slice(0, 24) })
+      const ordered = hourPicksList
+        .slice()
+        .sort((a, b) => stableMixRank(a.id) - stableMixRank(b.id) || a.id - b.id)
+      mixes.push({ key: 'mix', title: t('Hour mix'), tracks: ordered.slice(0, 24) })
     }
     const artistMixes = [...byArtist.entries()]
       .filter(([, list]) => list.length >= 3)
@@ -101,7 +112,7 @@ export default function HomePage() {
   const [ctx, setCtx] = useState<TrackContextRequest | null>(null)
   useHiddenSections()
 
-  if (recent.loading) {
+  if (recent.loading && recent.data === null) {
     return (
       <div className="page">
         <div className="muted">{t('Loading…')}</div>
@@ -110,7 +121,7 @@ export default function HomePage() {
   }
 
   const error = recent.error ?? foldersApi.error
-  if (error) {
+  if (error && recent.data === null) {
     return (
       <div className="page">
         <div className="error-line">{error}</div>
@@ -186,6 +197,7 @@ export default function HomePage() {
 
   return (
     <div className="page">
+      {error ? <div className="error-line">{error}</div> : null}
       <div className="hero">
         <div className="hero-main">
           <h1 className="hero-title">

@@ -81,7 +81,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
     if (orderOverride !== null && !detail.loading) setOrderOverride(null)
   }, [detail.loading, orderOverride])
 
-  if (detail.loading && orderOverride === null) {
+  if (detail.loading && detail.data === null && orderOverride === null) {
     return (
       <div className="page">
         <div className="muted">{t('Loading…')}</div>
