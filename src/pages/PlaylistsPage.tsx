@@ -12,6 +12,7 @@ import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
 import { toast } from '../components/common/Toast'
+import CacheBadge from '../soundcloud/CacheBadge'
 
 export default function PlaylistsPage() {
   const { navigate } = useNav()
@@ -97,29 +98,49 @@ export default function PlaylistsPage() {
           }
         />
       ) : (
-        <div className="cards-grid">
-          {data.map((pl) => {
-            const displayName = playlistDisplayName(pl, pl.name, t)
-            return (
-              <button
-                key={pl.id}
-                className="card"
-                onClick={() => navigate({ name: 'playlist', id: pl.id })}
-                title={displayName}
-              >
-                <div className="playlist-tile">
-                  {pl.coverPath ? (
-                    <Cover path={pl.coverPath} label={displayName} size={200} />
-                  ) : (
-                    <ListMusic size={28} />
-                  )}
-                </div>
-                <span className="card-title">{displayName}</span>
-                <span className="card-sub">{pl.trackCount ?? 0} {t('tracks')}</span>
-              </button>
-            )
-          })}
-        </div>
+        <>
+          <section className="playlist-library-feature">
+            <div className="playlist-library-copy">
+              <div className="section-label">{t('Your collection')}</div>
+              <h2>{t('Playlists that sound like you')}</h2>
+              <p>{data.length} {t('playlists')} · {t('All your mixes in one place.')}</p>
+            </div>
+            <div className="playlist-feature-mosaic" aria-hidden="true">
+              {data.slice(0, 4).map((pl) => (
+                <span key={pl.id} className="playlist-feature-cover">
+                  <CacheBadge kind="playlist" scId={null} localId={pl.id}>
+                    {pl.coverPath ? <Cover path={pl.coverPath} label={pl.name} size={58} /> : <ListMusic size={22} />}
+                  </CacheBadge>
+                </span>
+              ))}
+            </div>
+          </section>
+          <div className="cards-grid">
+            {data.map((pl) => {
+              const displayName = playlistDisplayName(pl, pl.name, t)
+              return (
+                <button
+                  key={pl.id}
+                  className="card"
+                  onClick={() => navigate({ name: 'playlist', id: pl.id })}
+                  title={displayName}
+                >
+                  <div className="playlist-tile">
+                    <CacheBadge kind="playlist" scId={null} localId={pl.id}>
+                      {pl.coverPath ? (
+                        <Cover path={pl.coverPath} label={displayName} size={200} />
+                      ) : (
+                        <ListMusic size={28} />
+                      )}
+                    </CacheBadge>
+                  </div>
+                  <span className="card-title">{displayName}</span>
+                  <span className="card-sub">{pl.trackCount ?? 0} {t('tracks')}</span>
+                </button>
+              )
+            })}
+          </div>
+        </>
       )}
 
       <Modal open={creating} title={t('New playlist')} onClose={() => setCreating(false)}>

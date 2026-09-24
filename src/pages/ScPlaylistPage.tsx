@@ -3,10 +3,10 @@ import { Download, ExternalLink, Lock, Play, Star } from 'lucide-react'
 import { api } from '../api/client'
 import type { ScPlaylistDetail, ScTrack } from '../types/models'
 import ScArtwork from '../components/common/ScArtwork'
-import DetailLayout from '../components/common/DetailLayout'
+import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import BrandIcon from '../components/common/BrandIcon'
 import { toast } from '../components/common/Toast'
-import CacheBadge from '../soundcloud/CacheBadge'
+import CacheBadge, { CacheProgress } from '../soundcloud/CacheBadge'
 import { useNav } from '../state/nav'
 import { usePlayer } from '../player'
 import { useT } from '../i18n'
@@ -95,7 +95,7 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
   }
 
   return (
-    <DetailLayout
+    <EditorialDetailLayout
       onBack={() => navigate({ name: 'search' })}
       backLabel={t('Back to search')}
       art={
@@ -155,6 +155,8 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
         </>
       }
     >
+      <CacheProgress kind="playlist" scId={playlist.id} />
+
       <div className="sc-list">
         {tracks.map((trk) => {
           const playableHere = trk.streamable && (trk.hasProgressive || trk.hasHls)
@@ -176,6 +178,6 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
           )
         })}
       </div>
-    </DetailLayout>
+    </EditorialDetailLayout>
   )
 }

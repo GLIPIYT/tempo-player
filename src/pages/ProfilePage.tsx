@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
-import { ImagePlus, Pencil, User } from 'lucide-react'
+import { BarChart3, Grid2X2, ImagePlus, Pencil, User } from 'lucide-react'
 import { api } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
@@ -30,6 +30,7 @@ export default function ProfilePage() {
   const version = useLibraryVersion()
   const lang = resolveLang(settings.lang)
   const [range, setRange] = useState<14 | 30>(14)
+  const [activityView, setActivityView] = useState<'graph' | 'grid'>('graph')
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
   const [avatarBusy, setAvatarBusy] = useState(false)
@@ -55,6 +56,15 @@ export default function ProfilePage() {
     return out
   }, [daily.data, range])
   const chartMax = Math.max(30, ...chart.map((d) => d.minutes))
+  const activityGrid = useMemo(() => {
+    if (chart.length === 0) return []
+    const first = new Date(`${chart[0].date}T00:00:00`)
+    const mondayOffset = (first.getDay() + 6) % 7
+    return [...Array.from({ length: mondayOffset }, () => null), ...chart]
+  }, [chart])
+  const activeDays = chart.filter((day) => day.minutes > 0).length
+  const activityTotal = chart.reduce((sum, day) => sum + day.minutes, 0)
+  const weekdays = lang === 'ru' ? ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
   const saveName = () => {
     const trimmed = nameDraft.trim()
@@ -153,38 +163,90 @@ export default function ProfilePage() {
       </div>
 
       <section className="home-section">
-        <div className="home-section-head">
+        <div className="home-section-head profile-chart-head">
           <span className="home-section-title">{t('Listening per day')}</span>
-          <div className="seg">
-            <button
-              className={range === 14 ? 'seg-btn is-active' : 'seg-btn'}
-              onClick={() => setRange(14)}
-            >
-              {t('Week and a half')}
-            </button>
-            <button
-              className={range === 30 ? 'seg-btn is-active' : 'seg-btn'}
-              onClick={() => setRange(30)}
-            >
-              {t('Month')}
-            </button>
+          <div className="profile-chart-controls">
+            <div className="seg profile-view-toggle" role="group" aria-label={t('Activity view')}>
+              <button
+                className={activityView === 'graph' ? 'seg-btn is-active' : 'seg-btn'}
+                aria-pressed={activityView === 'graph'}
+                onClick={() => setActivityView('graph')}
+              >
+                <BarChart3 size={13} />
+                {t('Graph')}
+              </button>
+              <button
+                className={activityView === 'grid' ? 'seg-btn is-active' : 'seg-btn'}
+                aria-pressed={activityView === 'grid'}
+                onClick={() => setActivityView('grid')}
+              >
+                <Grid2X2 size={13} />
+                {t('Grid')}
+              </button>
+            </div>
+            <div className="seg profile-range-toggle" role="group" aria-label={t('Time range')}>
+              <button
+                className={range === 14 ? 'seg-btn is-active' : 'seg-btn'}
+                aria-pressed={range === 14}
+                onClick={() => setRange(14)}
+              >
+                {t('Week and a half')}
+              </button>
+              <button
+                className={range === 30 ? 'seg-btn is-active' : 'seg-btn'}
+                aria-pressed={range === 30}
+                onClick={() => setRange(30)}
+              >
+                {t('Month')}
+              </button>
+            </div>
           </div>
         </div>
-        <div className="chart">
-          {chart.map((d) => (
-            <div
-              key={d.date}
-              className="chart-bar-wrap"
-              title={`${dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
-            >
+        {activityView === 'graph' ? (
+          <div className="chart" aria-label={t('Listening per day')}>
+            {chart.map((d) => (
               <div
-                className="chart-bar"
-                style={{ height: `${Math.max(3, (d.minutes / chartMax) * 100)}%` }}
-              />
-              <span className="chart-day">{dayLabel(d.date, lang).split(' ')[0]}</span>
+                key={d.date}
+                className="chart-bar-wrap"
+                title={`${dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
+              >
+                <div
+                  className="chart-bar"
+                  style={{ height: `${Math.max(3, (d.minutes / chartMax) * 100)}%` }}
+                />
+                <span className="chart-day">{dayLabel(d.date, lang).split(' ')[0]}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="activity-grid-wrap">
+            <div className="activity-weekdays" aria-hidden="true">
+              {weekdays.map((day) => <span key={day}>{day}</span>)}
             </div>
-          ))}
-        </div>
+            <div className="activity-grid" role="grid" aria-label={t('Listening per day')}>
+              {activityGrid.map((d, index) => {
+                if (d === null) return <span key={`empty-${index}`} className="activity-cell is-empty" role="presentation" />
+                const level = d.minutes === 0 ? 0 : Math.max(1, Math.ceil((d.minutes / chartMax) * 4))
+                return (
+                  <span
+                    key={d.date}
+                    className="activity-cell"
+                    data-level={Math.min(4, level)}
+                    role="gridcell"
+                    aria-label={`${dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
+                    title={`${dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
+                  />
+                )
+              })}
+            </div>
+            <div className="activity-grid-footer">
+              <span>{activeDays} {t('active days')} · {hourLabel(activityTotal)}</span>
+              <span className="activity-legend" aria-label={t('Less to more listening')}>
+                <span /> <i data-level="1" /> <i data-level="2" /> <i data-level="3" /> <i data-level="4" />
+              </span>
+            </div>
+          </div>
+        )}
       </section>
 
       <div className="profile-columns">

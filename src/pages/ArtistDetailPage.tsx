@@ -11,7 +11,8 @@ import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { usePlayer } from '../player'
 import { tracksToUnified, trackToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
-import DetailLayout from '../components/common/DetailLayout'
+import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
+import CacheBadge from '../soundcloud/CacheBadge'
 import CardPlayButton from '../components/common/CardPlayButton'
 import TrackList from '../components/common/TrackList'
 import EmptyState from '../components/common/EmptyState'
@@ -79,33 +80,35 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
   }
 
   return (
-    <DetailLayout
+    <EditorialDetailLayout
       onBack={() => navigate({ name: 'artists' })}
       backLabel={t('Artists')}
       round
       art={
-        <button
-          className="avatar-edit"
-          title={t('Change image')}
-          disabled={imageBusy}
-          onClick={() => void changeImage()}
-        >
-          {artist.imagePath ? (
-            <img
-              className="profile-avatar"
-              style={{ width: '100%', height: '100%' }}
-              src={convertFileSrc(artist.imagePath)}
-              alt=""
-              draggable={false}
-            />
-          ) : (
-            <Cover label={artist.name} size={232} rounded />
-          )}
-          <span className="avatar-edit-overlay">
-            <ImagePlus size={16} />
-            <span>{t('Change image')}</span>
-          </span>
-        </button>
+        <CacheBadge kind="artist" scId={null} localId={artistId}>
+          <button
+            className="avatar-edit"
+            title={t('Change image')}
+            disabled={imageBusy}
+            onClick={() => void changeImage()}
+          >
+            {artist.imagePath ? (
+              <img
+                className="profile-avatar"
+                style={{ width: '100%', height: '100%' }}
+                src={convertFileSrc(artist.imagePath)}
+                alt=""
+                draggable={false}
+              />
+            ) : (
+              <Cover label={artist.name} size={232} rounded />
+            )}
+            <span className="avatar-edit-overlay">
+              <ImagePlus size={16} />
+              <span>{t('Change image')}</span>
+            </span>
+          </button>
+        </CacheBadge>
       }
       kind={t('Artist')}
       title={artist.name}
@@ -190,6 +193,6 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
           <TrackList tracks={artistTracks} />
         </section>
       ) : null}
-    </DetailLayout>
+    </EditorialDetailLayout>
   )
 }

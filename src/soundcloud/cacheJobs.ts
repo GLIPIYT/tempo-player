@@ -131,15 +131,19 @@ export function cancelCacheJob(id: string): void {
  * so a card in the search results and the same playlist in the sidebar both
  * find it. `null` means nothing is being cached.
  */
-export function useCachePercent(kind: CacheKind, scId: string | null, localId?: number | null): number | null {
+export function useCacheJob(kind: CacheKind, scId: string | null, localId?: number | null): CacheJob | null {
   const all = useSyncExternalStore(subscribeCacheJobs, getCacheJobs, getCacheJobs)
-  const job = all.find(
+  return all.find(
     (j) =>
       j.kind === kind &&
       j.state === 'running' &&
       ((scId !== null && j.id === `${kind}:${scId}`) ||
         (localId != null && j.localId === localId)),
-  )
+  ) ?? null
+}
+
+export function useCachePercent(kind: CacheKind, scId: string | null, localId?: number | null): number | null {
+  const job = useCacheJob(kind, scId, localId)
   if (!job || job.total === 0) return null
   return Math.min(100, Math.round((job.done / job.total) * 100))
 }

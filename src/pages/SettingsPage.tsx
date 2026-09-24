@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSPropert
 import { open } from '@tauri-apps/plugin-dialog'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import {
+  Check,
   ChevronDown,
   EyeOff,
   FolderOpen,
@@ -72,6 +73,14 @@ const NAV: { id: Category; key: string; Icon: IconType }[] = [
   { id: 'storage', key: 'Storage', Icon: HardDrive },
   { id: 'about', key: 'About', Icon: Info },
 ]
+
+const CATEGORY_DESCRIPTIONS: Record<Category, string> = {
+  general: 'Language, launch and app behavior.',
+  appearance: 'Theme, typography and listening visuals.',
+  library: 'Folders, scanning and collection organization.',
+  storage: 'Downloads, cache and local data.',
+  about: 'Version, updates and Tempo details.',
+}
 
 const FALLBACK_FONTS = [
   'Segoe UI',
@@ -880,6 +889,8 @@ export default function SettingsPage() {
   const [sysFonts, setSysFonts] = useState<string[] | null>(null)
   const [fontBusy, setFontBusy] = useState(false)
   const [bgBusy, setBgBusy] = useState(false)
+  const activeCategory = NAV.find((item) => item.id === cat) ?? NAV[0]
+  const ActiveCategoryIcon = activeCategory.Icon
 
   const fontMode: FontMode =
     settings.font.importedPath !== null ? 'file' : settings.font.family !== null ? 'system' : 'default'
@@ -1035,16 +1046,31 @@ export default function SettingsPage() {
               <button
                 key={id}
                 className={cat === id ? 'set-nav-item is-active' : 'set-nav-item'}
+                aria-current={cat === id ? 'page' : undefined}
                 onClick={() => setCat(id)}
               >
-                <Icon size={16} />
-                {t(key)}
+                <span className="set-nav-icon"><Icon size={17} /></span>
+                <span className="set-nav-copy">
+                  <span>{t(key)}</span>
+                  <small>{t(CATEGORY_DESCRIPTIONS[id])}</small>
+                </span>
+                <ChevronDown className="set-nav-arrow" size={14} />
               </button>
             ))}
           </nav>
         </div>
 
         <div className="set-content">
+          <header className="set-category-head">
+            <span className="set-category-icon"><ActiveCategoryIcon size={21} /></span>
+            <span className="set-category-copy">
+              <span className="set-category-kicker">{t('Settings')}</span>
+              <h2>{t(activeCategory.key)}</h2>
+              <span className="set-category-description">{t(CATEGORY_DESCRIPTIONS[cat])}</span>
+            </span>
+            <span className="set-auto-apply"><Check size={13} />{t('Changes apply immediately.')}</span>
+          </header>
+
           {cat === 'general' ? (
             <>
               <Card title={t('Language')} desc={t('Interface language. System follows your OS setting.')}>

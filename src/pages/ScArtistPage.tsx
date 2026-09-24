@@ -3,11 +3,11 @@ import { Check, ExternalLink, Lock, Play, Star } from 'lucide-react'
 import { api } from '../api/client'
 import type { ScArtist, ScPlaylist, ScTrack } from '../types/models'
 import ScArtwork from '../components/common/ScArtwork'
-import DetailLayout from '../components/common/DetailLayout'
+import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import BrandIcon from '../components/common/BrandIcon'
 import { ScPlaylistCard } from '../components/common/ScCards'
 import { toast } from '../components/common/Toast'
-import CacheBadge from '../soundcloud/CacheBadge'
+import CacheBadge, { CacheProgress } from '../soundcloud/CacheBadge'
 import { useNav } from '../state/nav'
 import { usePlayer } from '../player'
 import { useT } from '../i18n'
@@ -105,7 +105,7 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
   }
 
   return (
-    <DetailLayout
+    <EditorialDetailLayout
       onBack={() => navigate({ name: 'search' })}
       backLabel={t('Back to search')}
       round
@@ -162,6 +162,8 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
         </>
       }
     >
+      <CacheProgress kind="artist" scId={artist.id} />
+
       {tracks.length > 0 ? (
         <>
           <div className="section-label">{t('Tracks')}</div>
@@ -210,6 +212,6 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
           </div>
         </>
       ) : null}
-    </DetailLayout>
+    </EditorialDetailLayout>
   )
 }

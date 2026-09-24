@@ -4,7 +4,7 @@ import { getSettings } from '../state/settings'
 import { useNav } from '../state/nav'
 import { useT } from '../i18n'
 import { usePlayer } from '../player'
-import DetailLayout from '../components/common/DetailLayout'
+import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import BrandIcon from '../components/common/BrandIcon'
 import ScArtwork from '../components/common/ScArtwork'
 import LoadingLine from '../components/common/LoadingLine'
@@ -18,7 +18,7 @@ import {
 } from '../youtube/collectionSaver'
 import { fmtTime } from '../utils/format'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
-import { Copy, ExternalLink, Play, Star } from 'lucide-react'
+import { Copy, Download, ExternalLink, Play, Star } from 'lucide-react'
 import { toast } from '../components/common/Toast'
 import type { YtCollectionDetail } from '../types/models'
 
@@ -98,6 +98,8 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
 
   const kindLabel =
     kind === 'album' ? t('Album') : kind === 'artist' ? t('Artist') : t('Playlist')
+  const pageSave = saving?.id === id ? saving : null
+  const anotherSaveRunning = saving?.state === 'running' && saving.id !== id
 
   // An album arrives as "Album - <name>", with the kind already spelled out.
   const name = detail
@@ -165,7 +167,7 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
   }
 
   return (
-    <DetailLayout
+    <EditorialDetailLayout
       onBack={() => navigate({ name: 'search' })}
       backLabel={t('Back to search')}
       round={kind === 'artist'}
@@ -219,28 +221,50 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
               <Star size={14} fill={isFav ? 'currentColor' : 'none'} />
             </button>
           ) : null}
-          {saving?.state === 'running' ? (
+          {pageSave?.state === 'running' ? (
             <button type="button" className="btn" onClick={cancelSave}>
-              {t('Cancel')} · {saving.done}/{saving.total}
+              {t('Cancel')} · {pageSave.done}/{pageSave.total}
             </button>
           ) : (
             <button
               type="button"
               className="btn"
-              disabled={tracks.length === 0}
+              disabled={tracks.length === 0 || anotherSaveRunning}
+              title={anotherSaveRunning ? t('Another collection is being saved.') : undefined}
               onClick={() => void saveCollection(id, name, detail.tracks)}
             >
-              {t('Save to library')}
+              {anotherSaveRunning ? t('Another collection is being saved.') : t('Save to library')}
             </button>
           )}
         </>
       }
     >
-      {saving && saving.state !== 'running' ? (
-        <div className="muted settings-line">
-          {saving.failed > 0
-            ? `${t('Saved')} ${saving.done - saving.failed} ${t('of')} ${saving.total} · ${saving.failed} ${t('unavailable')}`
-            : `${t('Saved')} ${saving.done} ${t('tracks')}`}
+      {pageSave?.state === 'running' ? (
+        <div className="collection-save-progress" role="status" aria-live="polite">
+          <div className="collection-save-heading">
+            <span><Download size={14} />{t('Saving')}</span>
+            <strong>{pageSave.done} / {pageSave.total}</strong>
+          </div>
+          <div
+            className="collection-save-track"
+            role="progressbar"
+            aria-label={t('Saving')}
+            aria-valuemin={0}
+            aria-valuemax={pageSave.total}
+            aria-valuenow={pageSave.done}
+          >
+            <span style={{ width: `${pageSave.total === 0 ? 0 : (pageSave.done / pageSave.total) * 100}%` }} />
+          </div>
+          {pageSave.failed > 0 ? (
+            <div className="collection-save-meta">{pageSave.failed} {t('unavailable')}</div>
+          ) : null}
+        </div>
+      ) : pageSave ? (
+        <div className="collection-save-result" role="status">
+          {pageSave.state === 'cancelled' ? `${t('Saving stopped')} · ` : ''}
+          {pageSave.failed > 0
+            ? `${t('Saved')} ${pageSave.done - pageSave.failed} ${t('of')} ${pageSave.total} · ${pageSave.failed} ${t('unavailable')}`
+            : `${t('Saved')} ${pageSave.done} ${t('tracks')}`}
         </div>
       ) : null}
       <div className="sc-list">
@@ -261,6 +285,6 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
           </div>
         ))}
       </div>
-    </DetailLayout>
+    </EditorialDetailLayout>
   )
 }

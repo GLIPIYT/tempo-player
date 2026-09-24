@@ -1,5 +1,5 @@
-import type { MouseEvent as ReactMouseEvent } from 'react'
-import { MicVocal, Play, Star, StarOff } from 'lucide-react'
+import { useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { MicVocal, Play, Search, Star, StarOff } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
 import type { Artist } from '../types/models'
@@ -11,8 +11,8 @@ import { tracksToUnified } from '../utils/unified'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import Cover from '../components/common/Cover'
-import CardPlayButton from '../components/common/CardPlayButton'
 import EmptyState from '../components/common/EmptyState'
+import CacheBadge from '../soundcloud/CacheBadge'
 
 export default function ArtistsPage() {
   const { navigate } = useNav()
@@ -20,6 +20,10 @@ export default function ArtistsPage() {
   const player = usePlayer()
   const version = useLibraryVersion()
   const { data, loading, error } = useAsync(() => api.listArtists(''), [version])
+  const [query, setQuery] = useState('')
+  const visibleArtists = (data ?? []).filter((artist) =>
+    artist.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  )
 
   const playArtist = async (artistId: number) => {
     try {
@@ -72,10 +76,32 @@ export default function ArtistsPage() {
 
   return (
     <div className="page">
-      <div className="page-head">
-        <div>
+      <div className="artist-library-hero">
+        <div className="artist-library-copy">
+          <div className="section-label">{t('Your collection')}</div>
           <h1 className="page-title">{t('Artists')}</h1>
-          <div className="page-sub">{data ? `${data.length} ${t('artists')}` : t('Loading…')}</div>
+          <p className="artist-library-count">
+            {data ? `${data.length} ${t('artists')}` : t('Loading…')}
+          </p>
+          <label className="artist-library-search">
+            <Search size={15} />
+            <input
+              type="search"
+              value={query}
+              aria-label={t('Search artists')}
+              placeholder={t('Search artists')}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
+        </div>
+        <div className="artist-library-art" aria-hidden="true">
+          {(data ?? []).slice(0, 3).map((artist, index) => (
+            <span key={artist.id} className={`artist-library-orbit orbit-${index + 1}`}>
+              <CacheBadge kind="artist" scId={null} localId={artist.id}>
+                <Cover path={artist.imagePath} label={artist.name} size={82} rounded />
+              </CacheBadge>
+            </span>
+          ))}
         </div>
       </div>
 
@@ -88,26 +114,42 @@ export default function ArtistsPage() {
           title={t('No artists found')}
           hint={t('Artists appear after your library has been scanned.')}
         />
+      ) : visibleArtists.length === 0 ? (
+        <EmptyState
+          icon={<Search size={30} />}
+          title={t('No artists match')}
+          hint={t('Try another artist name.')}
+        />
       ) : (
-        <div className="arow-list">
-          {data.map((a) => (
-            <button
-              key={a.id}
-              className="arow"
-              onClick={() => navigate({ name: 'artist', id: a.id })}
-              onContextMenu={(e) => artistMenu(e, a)}
-            >
-              <Cover label={a.name} size={44} rounded />
-              <span className="arow-name">{a.name}</span>
-              <span className="arow-meta">
-                {a.albumCount ?? 0} {t('albums')} · {a.trackCount ?? 0} {t('tracks')}
-              </span>
-              <CardPlayButton
-                className="arow-play"
-                label={`${t('Play')} ${a.name}`}
-                onPlay={() => void playArtist(a.id)}
-              />
-            </button>
+        <div className="artist-library-grid">
+          {visibleArtists.map((a) => (
+            <div key={a.id} className="artist-library-card">
+              <button
+                type="button"
+                className="artist-library-open"
+                onClick={() => navigate({ name: 'artist', id: a.id })}
+                onContextMenu={(e) => artistMenu(e, a)}
+                title={a.name}
+              >
+                <span className="artist-library-cover">
+                  <CacheBadge kind="artist" scId={null} localId={a.id}>
+                    <Cover path={a.imagePath} label={a.name} size={92} rounded />
+                  </CacheBadge>
+                </span>
+                <span className="artist-library-name">{a.name}</span>
+                <span className="artist-library-meta">
+                  {a.albumCount ?? 0} {t('albums')} · {a.trackCount ?? 0} {t('tracks')}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="artist-library-play"
+                aria-label={`${t('Play')} ${a.name}`}
+                onClick={() => void playArtist(a.id)}
+              >
+                <Play size={15} fill="currentColor" />
+              </button>
+            </div>
           ))}
         </div>
       )}

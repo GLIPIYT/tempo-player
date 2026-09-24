@@ -13,7 +13,8 @@ import { fmtTime } from '../utils/format'
 import { trackToUnified } from '../utils/unified'
 import { playlistDisplayName } from '../utils/playlists'
 import Cover from '../components/common/Cover'
-import DetailLayout from '../components/common/DetailLayout'
+import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
+import CacheBadge from '../soundcloud/CacheBadge'
 import { toast } from '../components/common/Toast'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
@@ -189,17 +190,19 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const isLikes = playlist?.isLikes === true
 
   return (
-    <DetailLayout
+    <EditorialDetailLayout
       onBack={() => navigate({ name: 'playlists' })}
       backLabel={t('Playlists')}
       art={
-        playlist?.coverPath ? (
-          <Cover path={playlist.coverPath} label={displayName} size={232} />
-        ) : (
-          <span className="detail-side-fallback">
-            <ListMusic size={34} />
-          </span>
-        )
+        <CacheBadge kind="playlist" scId={null} localId={playlistId}>
+          {playlist?.coverPath ? (
+            <Cover path={playlist.coverPath} label={displayName} size={232} />
+          ) : (
+            <span className="detail-side-fallback">
+              <ListMusic size={34} />
+            </span>
+          )}
+        </CacheBadge>
       }
       kind={t('Playlist')}
       title={displayName}
@@ -425,6 +428,6 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
           </button>
         </div>
       </Modal>
-    </DetailLayout>
+    </EditorialDetailLayout>
   )
 }
