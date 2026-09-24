@@ -10,8 +10,6 @@ use tokio::sync::Mutex;
 
 const DESKTOP_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
-const MXM_CREDENTIAL_SERVICE: &str = "Tempo Player";
-const MXM_CREDENTIAL_USER: &str = "musixmatch-api-key";
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,46 +70,6 @@ fn client() -> &'static Client {
 fn cache_slot() -> &'static Mutex<HashMap<String, Option<OnlineLyrics>>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Option<OnlineLyrics>>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn mxm_credential() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(MXM_CREDENTIAL_SERVICE, MXM_CREDENTIAL_USER)
-        .map_err(|_| "Could not access the system credential store".to_string())
-}
-
-fn stored_musixmatch_api_key() -> Option<String> {
-    mxm_credential().ok()?.get_password().ok()
-}
-
-pub fn has_musixmatch_api_key() -> Result<bool, String> {
-    let entry = mxm_credential()?;
-    match entry.get_password() {
-        Ok(_) => Ok(true),
-        Err(keyring::Error::NoEntry) => Ok(false),
-        Err(_) => Err("Could not read the system credential store".to_string()),
-    }
-}
-
-pub fn set_musixmatch_api_key(api_key: &str) -> Result<(), String> {
-    let api_key = api_key.trim();
-    if api_key.is_empty() {
-        return Err("Musixmatch API key cannot be empty".to_string());
-    }
-    mxm_credential()?
-        .set_password(api_key)
-        .map_err(|_| "Could not save the key to the system credential store".to_string())
-}
-
-pub fn clear_musixmatch_api_key() -> Result<(), String> {
-    let entry = mxm_credential()?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(_) => Err("Could not remove the key from the system credential store".to_string()),
-    }
-}
-
-pub async fn clear_online_lyrics_cache() {
-    cache_slot().lock().await.clear();
 }
 
 fn sec_to_lrc_time(sec: f64) -> String {
@@ -345,74 +303,6 @@ async fn textyl_provider(artist: String, title: String) -> Option<OnlineLyrics> 
     }
 }
 
-fn parse_mxm_subtitle(body: &str) -> Option<String> {
-    let trimmed = body.trim();
-    let looks_json = trimmed.starts_with('[')
-        && serde_json::from_str::<Value>(trimmed).map(|v| v.is_array()).unwrap_or(false);
-    if looks_json {
-        let arr = serde_json::from_str::<Value>(trimmed).ok()?;
-        let lines: Vec<(f64, String)> = arr
-            .as_array()?
-            .iter()
-            .filter_map(|item| {
-                let text = item.get("text").and_then(|v| v.as_str())?.to_string();
-                let total = item.pointer("/time/total").and_then(|v| v.as_f64())?;
-                Some((total, text))
-            })
-            .collect();
-        if lines.is_empty() {
-            None
-        } else {
-            Some(lines_to_lrc(&lines))
-        }
-    } else {
-        let re = Regex::new(r"\[\d{1,2}:\d{2}").ok()?;
-        if re.is_match(trimmed) {
-            Some(trimmed.to_string())
-        } else {
-            None
-        }
-    }
-}
-
-async fn musixmatch_provider(
-    artist: String,
-    title: String,
-    api_key: Option<String>,
-) -> Option<OnlineLyrics> {
-    let api_key = api_key?;
-    let response = client()
-        .get("https://api.musixmatch.com/ws/1.1/matcher.subtitle.get")
-        .query(&[
-            ("q_artist", artist.as_str()),
-            ("q_track", title.as_str()),
-            ("subtitle_format", "lrc"),
-            ("apikey", api_key.as_str()),
-        ])
-        .send()
-        .await
-        .ok()?
-        .error_for_status()
-        .ok()?
-        .json::<Value>()
-        .await
-        .ok()?;
-    if response.pointer("/message/header/status_code").and_then(Value::as_i64) != Some(200) {
-        return None;
-    }
-    let subtitle = response.pointer("/message/body/subtitle")?;
-    let body = subtitle.get("subtitle_body").and_then(Value::as_str)?;
-    let synced_lrc = parse_mxm_subtitle(body)?;
-    Some(OnlineLyrics {
-        plain: None,
-        synced_lrc: Some(synced_lrc),
-        copyright: subtitle
-            .get("lyrics_copyright")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-    })
-}
-
 async fn lyrics_ovh_provider(artist: String, title: String) -> Option<OnlineLyrics> {
     if artist.is_empty() {
         return None;
@@ -556,14 +446,11 @@ pub async fn fetch_online_lyrics(artist: &str, title: &str) -> Result<Option<Onl
     }
     let artist = artist.trim().to_string();
     let title = title.trim().to_string();
-    let musixmatch_api_key = stored_musixmatch_api_key();
     let chain = async move {
         for (va, vt) in build_variants(&artist, &title) {
-            let mxm_key = musixmatch_api_key.clone();
             let g1_tasks: Vec<std::pin::Pin<Box<dyn Future<Output = Option<OnlineLyrics>> + Send>>> = vec![
                 Box::pin(lrclib_provider(va.clone(), vt.clone())),
                 Box::pin(textyl_provider(va.clone(), vt.clone())),
-                Box::pin(musixmatch_provider(va.clone(), vt.clone(), mxm_key)),
             ];
             let found = race_first(g1_tasks).await;
             let found = match found {
@@ -612,9 +499,6 @@ pub async fn fetch_online_lyrics_all(artist: &str, title: &str) -> Result<Vec<On
     let ct_lr = ct.clone();
     let ca_tx = ca.clone();
     let ct_tx = ct.clone();
-    let ca_mx = ca.clone();
-    let ct_mx = ct.clone();
-    let mxm_key = stored_musixmatch_api_key();
     let ca_ov = ca.clone();
     let ct_ov = ct.clone();
     let ca_ge = ca.clone();
@@ -628,16 +512,12 @@ pub async fn fetch_online_lyrics_all(artist: &str, title: &str) -> Result<Vec<On
         (1usize, r.map(|v| lyrics_variants("textyl", v)).unwrap_or_default())
     }));
     handles.push(tokio::spawn(async move {
-        let r = musixmatch_provider(ca_mx, ct_mx, mxm_key).await;
-        (2usize, r.map(|v| lyrics_variants("musixmatch", v)).unwrap_or_default())
-    }));
-    handles.push(tokio::spawn(async move {
         let r = lyrics_ovh_provider(ca_ov, ct_ov).await;
-        (3usize, r.map(|v| lyrics_variants("lyrics.ovh", v)).unwrap_or_default())
+        (2usize, r.map(|v| lyrics_variants("lyrics.ovh", v)).unwrap_or_default())
     }));
     handles.push(tokio::spawn(async move {
         let r = genius_provider(ca_ge, ct_ge).await;
-        (4usize, r.map(|v| lyrics_variants("genius", v)).unwrap_or_default())
+        (3usize, r.map(|v| lyrics_variants("genius", v)).unwrap_or_default())
     }));
     let deadline = tokio::time::Instant::now() + Duration::from_secs(14);
     let mut pending = handles;
@@ -713,19 +593,6 @@ mod tests {
         let v = build_variants("A", "B");
         assert_eq!(v[0], ("A".to_string(), "B".to_string()));
         assert!(v.iter().any(|(a, _)| a.is_empty()));
-    }
-
-    #[test]
-    fn mxm_json_array_converts_to_lrc() {
-        let body = r#"[{"text":"hello","time":{"total":1.0}},{"text":"world","time":{"total":3.5}}]"#;
-        let lrc = parse_mxm_subtitle(body).unwrap();
-        assert_eq!(lrc, "[00:01.00] hello\n[00:03.50] world");
-    }
-
-    #[test]
-    fn mxm_raw_lrc_passthrough() {
-        assert_eq!(parse_mxm_subtitle("[00:01.00] hi").as_deref(), Some("[00:01.00] hi"));
-        assert!(parse_mxm_subtitle("just plain words").is_none());
     }
 
     #[test]

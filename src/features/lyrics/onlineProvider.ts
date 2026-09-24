@@ -91,7 +91,7 @@ export function clearOnlineLyricsCandidateCache(): void {
 
 export const OnlineLyricsProvider: LyricsProvider = {
   id: 'online',
-  name: 'Online (LRCLib/Musixmatch/...)',
+  name: 'Online (LRCLib/Textyl/...)',
   async getLyrics(track: UnifiedTrack): Promise<LyricsResult | null> {
     if (!track.dbId && track.source === 'local') return null
     const key = cacheKey(track)

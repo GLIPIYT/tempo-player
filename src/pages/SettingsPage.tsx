@@ -17,7 +17,6 @@ import {
   Trash2,
 } from 'lucide-react'
 import { api } from '../api/client'
-import { clearOnlineLyricsCandidateCache } from '../features/lyrics/onlineProvider'
 import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useScanProgress } from '../hooks/useScanProgress'
@@ -881,59 +880,9 @@ export default function SettingsPage() {
   const [sysFonts, setSysFonts] = useState<string[] | null>(null)
   const [fontBusy, setFontBusy] = useState(false)
   const [bgBusy, setBgBusy] = useState(false)
-  const [musixmatchKeyConfigured, setMusixmatchKeyConfigured] = useState(false)
-  const [musixmatchKeyDraft, setMusixmatchKeyDraft] = useState('')
-  const [musixmatchKeyBusy, setMusixmatchKeyBusy] = useState(false)
 
   const fontMode: FontMode =
     settings.font.importedPath !== null ? 'file' : settings.font.family !== null ? 'system' : 'default'
-
-  useEffect(() => {
-    let cancelled = false
-    void api
-      .getMusixmatchApiKeyStatus()
-      .then((configured) => {
-        if (!cancelled) setMusixmatchKeyConfigured(configured)
-      })
-      .catch(() => {
-        if (!cancelled) toast.show(t('Could not check Musixmatch key status'), 'error')
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [t])
-
-  const saveMusixmatchKey = async () => {
-    const apiKey = musixmatchKeyDraft.trim()
-    if (!apiKey) return
-    setMusixmatchKeyBusy(true)
-    try {
-      await api.setMusixmatchApiKey(apiKey)
-      clearOnlineLyricsCandidateCache()
-      setMusixmatchKeyConfigured(true)
-      setMusixmatchKeyDraft('')
-      toast.show(t('Musixmatch key saved securely'), 'success')
-    } catch {
-      toast.show(t('Could not save Musixmatch key'), 'error')
-    } finally {
-      setMusixmatchKeyBusy(false)
-    }
-  }
-
-  const removeMusixmatchKey = async () => {
-    setMusixmatchKeyBusy(true)
-    try {
-      await api.clearMusixmatchApiKey()
-      clearOnlineLyricsCandidateCache()
-      setMusixmatchKeyConfigured(false)
-      setMusixmatchKeyDraft('')
-      toast.show(t('Musixmatch key removed'), 'success')
-    } catch {
-      toast.show(t('Could not remove Musixmatch key'), 'error')
-    } finally {
-      setMusixmatchKeyBusy(false)
-    }
-  }
 
   useEffect(() => {
     if (fontMode !== 'system' || sysFonts !== null) return
@@ -1170,48 +1119,6 @@ export default function SettingsPage() {
                     </div>
                   </>
                 ) : null}
-                <div className="set-row" style={{ marginTop: 12 }}>
-                  <span className="set-row-label">{t('Musixmatch API key')}</span>
-                  <span className="set-note" style={{ margin: 0 }}>
-                    {musixmatchKeyConfigured ? t('Configured on this device') : t('Not configured')}
-                  </span>
-                </div>
-                <div className="set-row" style={{ marginTop: 6, gap: 8 }}>
-                  <input
-                    className="text-input stack-input"
-                    type="password"
-                    value={musixmatchKeyDraft}
-                    placeholder={musixmatchKeyConfigured ? t('Enter a new key to replace it') : t('Paste your API key')}
-                    autoComplete="new-password"
-                    spellCheck={false}
-                    onChange={(event) => setMusixmatchKeyDraft(event.target.value)}
-                    aria-label={t('Musixmatch API key')}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={musixmatchKeyBusy || !musixmatchKeyDraft.trim()}
-                    onClick={() => void saveMusixmatchKey()}
-                  >
-                    {t('Save key')}
-                  </button>
-                  {musixmatchKeyConfigured && (
-                    <button
-                      type="button"
-                      className="btn"
-                      disabled={musixmatchKeyBusy}
-                      onClick={() => void removeMusixmatchKey()}
-                    >
-                      {t('Remove saved key')}
-                    </button>
-                  )}
-                </div>
-                <div className="set-note">
-                  {t('Musixmatch lyrics require your own API key and an eligible plan. The key is kept in the operating system credential store.')}{' '}
-                  <a href="https://developer.musixmatch.com/" target="_blank" rel="noreferrer">
-                    {t('Open Musixmatch developer portal')}
-                  </a>
-                </div>
                 <div className="set-row" style={{ marginTop: 6 }}>
                   <span className="set-row-label">{t('Save lyrics to cache')}</span>
                   <button

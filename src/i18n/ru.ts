@@ -325,21 +325,6 @@ export const ru: Record<string, string> = {
   'Auto-generated playlists from what you usually play around this time of day':
     'Автоплейлисты из того, что ты обычно слушаешь в это время суток',
   Integrations: 'Интеграции',
-  'Musixmatch API key': 'Ключ API Musixmatch',
-  'Configured on this device': 'Настроен на этом устройстве',
-  'Not configured': 'Не настроен',
-  'Enter a new key to replace it': 'Вставьте новый ключ для замены',
-  'Paste your API key': 'Вставьте ключ API',
-  'Save key': 'Сохранить ключ',
-  'Remove saved key': 'Удалить ключ',
-  'Musixmatch lyrics require your own API key and an eligible plan. The key is kept in the operating system credential store.':
-    'Для текстов Musixmatch нужен личный ключ API и подходящий тариф. Ключ хранится в системном хранилище учётных данных.',
-  'Open Musixmatch developer portal': 'Открыть портал разработчика Musixmatch',
-  'Could not check Musixmatch key status': 'Не удалось проверить статус ключа Musixmatch',
-  'Musixmatch key saved securely': 'Ключ Musixmatch сохранён в системном хранилище',
-  'Could not save Musixmatch key': 'Не удалось сохранить ключ Musixmatch',
-  'Musixmatch key removed': 'Ключ Musixmatch удалён',
-  'Could not remove Musixmatch key': 'Не удалось удалить ключ Musixmatch',
   'Discord Application ID': 'Discord Application ID',
   'Create an app at discord.com/developers and paste its Application ID. The synced lyrics line shows up in your status while it plays.':
     'Application ID уже вшит — поле можно не трогать. Свой ID нужен, только если хочешь своё приложение с обложками: создай его на discord.com/developers и вставь сюда. В статусе будет показываться активная строчка синхронизированной лирики.',
