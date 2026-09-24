@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::future::select_all;
 use regex::Regex;
@@ -10,6 +11,11 @@ use tokio::sync::Mutex;
 
 const DESKTOP_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+const MXM_BASE_URL: &str = "https://apic-desktop.musixmatch.com/ws/1.1/";
+const MXM_APP_ID: &str = "web-desktop-app-v1.0";
+const MXM_USER_AGENT: &str =
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const MXM_TOKEN_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +38,56 @@ pub struct OnlineLyricsCandidate {
     pub duration: Option<f64>,
     pub instrumental: Option<bool>,
     pub copyright: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct MusixmatchLyrics {
+    lrc: String,
+    commontrack_id: Option<i64>,
+    track_name: Option<String>,
+    artist_name: Option<String>,
+    album_name: Option<String>,
+    duration: Option<f64>,
+    instrumental: Option<bool>,
+    copyright: Option<String>,
+}
+
+impl MusixmatchLyrics {
+    fn into_online_lyrics(self) -> OnlineLyrics {
+        OnlineLyrics {
+            plain: None,
+            synced_lrc: Some(self.lrc),
+            copyright: self.copyright,
+        }
+    }
+
+    fn into_candidate(self) -> OnlineLyricsCandidate {
+        OnlineLyricsCandidate {
+            provider: "musixmatch".to_string(),
+            plain: None,
+            synced_lrc: Some(self.lrc),
+            id: self.commontrack_id,
+            track_name: self.track_name,
+            artist_name: self.artist_name,
+            album_name: self.album_name,
+            duration: self.duration,
+            instrumental: self.instrumental,
+            copyright: self.copyright,
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedMusixmatchToken {
+    token: String,
+    saved_at_unix: u64,
+}
+
+#[derive(Clone)]
+struct CachedMusixmatchToken {
+    token: String,
+    expires_at: Instant,
 }
 
 fn lyrics_variants(provider: &str, lyrics: OnlineLyrics) -> Vec<OnlineLyricsCandidate> {
@@ -70,6 +126,156 @@ fn client() -> &'static Client {
 fn cache_slot() -> &'static Mutex<HashMap<String, Option<OnlineLyrics>>> {
     static CACHE: OnceLock<Mutex<HashMap<String, Option<OnlineLyrics>>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn musixmatch_token_slot() -> &'static Mutex<Option<CachedMusixmatchToken>> {
+    static TOKEN: OnceLock<Mutex<Option<CachedMusixmatchToken>>> = OnceLock::new();
+    TOKEN.get_or_init(|| Mutex::new(None))
+}
+
+fn unix_time_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
+async fn musixmatch_get(endpoint: &str, params: &[(&str, String)]) -> Option<Value> {
+    let mut query = vec![
+        ("app_id".to_string(), MXM_APP_ID.to_string()),
+        ("format".to_string(), "json".to_string()),
+    ];
+    query.extend(
+        params
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), value.clone())),
+    );
+
+    let response = client()
+        .get(format!("{MXM_BASE_URL}{endpoint}"))
+        .header("User-Agent", MXM_USER_AGENT)
+        .header("Cookie", "x-mxm-token-guid=")
+        .query(&query)
+        .send()
+        .await
+        .ok()?;
+    let status = response.status();
+    if status.as_u16() == 401 {
+        let body = response.json::<Value>().await.ok().filter(|body| {
+            json_contains_status_code(body, 401)
+        });
+        return Some(body.unwrap_or_else(|| {
+            serde_json::json!({"message": {"header": {"status_code": 401}}})
+        }));
+    }
+    if !status.is_success() {
+        return None;
+    }
+    response.json::<Value>().await.ok()
+}
+
+async fn musixmatch_user_token(
+    force_refresh: bool,
+    cache_file: Option<PathBuf>,
+) -> Option<String> {
+    let mut memory_cache = musixmatch_token_slot().lock().await;
+    if !force_refresh {
+        if let Some(cached) = memory_cache
+            .as_ref()
+            .filter(|cached| cached.expires_at > Instant::now())
+        {
+            return Some(cached.token.clone());
+        }
+
+        if let Some(path) = cache_file.as_ref() {
+            if let Ok(contents) = tokio::fs::read(path).await {
+                if let Ok(persisted) = serde_json::from_slice::<PersistedMusixmatchToken>(&contents)
+                {
+                    let age = unix_time_secs().saturating_sub(persisted.saved_at_unix);
+                    if age < MXM_TOKEN_TTL.as_secs()
+                        && !persisted.token.starts_with("UpgradeOnly")
+                        && !persisted.token.trim().is_empty()
+                    {
+                        let expires_in = MXM_TOKEN_TTL.saturating_sub(Duration::from_secs(age));
+                        *memory_cache = Some(CachedMusixmatchToken {
+                            token: persisted.token.clone(),
+                            expires_at: Instant::now() + expires_in,
+                        });
+                        return Some(persisted.token);
+                    }
+                }
+            }
+        }
+    }
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().to_string())
+        .unwrap_or_else(|_| "0".to_string());
+    let response = musixmatch_get("token.get", &[("t", timestamp)]).await?;
+    if response
+        .pointer("/message/header/status_code")
+        .and_then(Value::as_i64)
+        != Some(200)
+    {
+        return None;
+    }
+    let token = response
+        .pointer("/message/body/user_token")
+        .and_then(Value::as_str)?
+        .trim();
+    if token.is_empty() || token.starts_with("UpgradeOnly") {
+        return None;
+    }
+
+    let token = token.to_string();
+    let saved_at_unix = unix_time_secs();
+    *memory_cache = Some(CachedMusixmatchToken {
+        token: token.clone(),
+        expires_at: Instant::now() + MXM_TOKEN_TTL,
+    });
+
+    if let Some(path) = cache_file {
+        if let Some(parent) = path.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+        if let Ok(contents) = serde_json::to_vec(&PersistedMusixmatchToken {
+            token: token.clone(),
+            saved_at_unix,
+        }) {
+            let _ = tokio::fs::write(path, contents).await;
+        }
+    }
+
+    Some(token)
+}
+
+fn json_contains_status_code(value: &Value, status: i64) -> bool {
+    match value {
+        Value::Object(object) => object.iter().any(|(key, value)| {
+            (key == "status_code" && value.as_i64() == Some(status))
+                || json_contains_status_code(value, status)
+        }),
+        Value::Array(values) => values
+            .iter()
+            .any(|value| json_contains_status_code(value, status)),
+        _ => false,
+    }
+}
+
+fn normalize_musixmatch_text(value: &str) -> String {
+    let lower = value.to_lowercase();
+    lower.chars().filter(|character| character.is_alphanumeric()).collect()
+}
+
+fn musixmatch_field_matches(actual: &str, requested: &str) -> bool {
+    let actual = normalize_musixmatch_text(actual);
+    let requested = normalize_musixmatch_text(requested);
+    !actual.is_empty()
+        && !requested.is_empty()
+        && (actual == requested
+            || (requested.chars().count() >= 4 && actual.contains(&requested))
+            || (actual.chars().count() >= 4 && requested.contains(&actual)))
 }
 
 fn sec_to_lrc_time(sec: f64) -> String {
@@ -303,6 +509,116 @@ async fn textyl_provider(artist: String, title: String) -> Option<OnlineLyrics> 
     }
 }
 
+async fn musixmatch_request(
+    artist: &str,
+    title: &str,
+    album: &str,
+    duration_sec: Option<f64>,
+    token: &str,
+) -> Option<Value> {
+    let duration = duration_sec
+        .filter(|duration| duration.is_finite() && *duration > 0.0)
+        .map(|duration| duration.floor().to_string())
+        .unwrap_or_default();
+    let params = [
+        ("namespace", "lyrics_richsynched".to_string()),
+        ("subtitle_format", "lrc".to_string()),
+        ("q_track", title.to_string()),
+        ("q_artist", artist.to_string()),
+        ("q_album", album.to_string()),
+        ("q_duration", duration),
+        ("usertoken", token.to_string()),
+    ];
+    let params: Vec<_> = params
+        .iter()
+        .map(|(key, value)| (*key, value.clone()))
+        .collect();
+    musixmatch_get("macro.subtitles.get", &params).await
+}
+
+async fn musixmatch_provider(
+    artist: String,
+    title: String,
+    album: String,
+    duration_sec: Option<f64>,
+    token_cache_file: Option<PathBuf>,
+) -> Option<MusixmatchLyrics> {
+    if artist.trim().is_empty() || title.trim().is_empty() {
+        return None;
+    }
+
+    let mut token = musixmatch_user_token(false, token_cache_file.clone()).await?;
+    let mut response = musixmatch_request(&artist, &title, &album, duration_sec, &token).await?;
+    if json_contains_status_code(&response, 401) {
+        token = musixmatch_user_token(true, token_cache_file).await?;
+        response = musixmatch_request(&artist, &title, &album, duration_sec, &token).await?;
+    }
+    if response
+        .pointer("/message/header/status_code")
+        .and_then(Value::as_i64)
+        != Some(200)
+    {
+        return None;
+    }
+
+    let track = response
+        .pointer("/message/body/macro_calls/matcher.track.get/message/body/track")?;
+    let track_name = track.get("track_name").and_then(Value::as_str)?.trim();
+    let artist_name = track.get("artist_name").and_then(Value::as_str)?.trim();
+    if !musixmatch_field_matches(track_name, &title)
+        || !musixmatch_field_matches(artist_name, &artist)
+    {
+        return None;
+    }
+
+    let instrumental = track
+        .get("instrumental")
+        .and_then(|value| value.as_bool().or_else(|| value.as_i64().map(|n| n != 0)));
+    if instrumental == Some(true) {
+        return None;
+    }
+
+    let track_duration = track
+        .get("track_length")
+        .and_then(|value| value.as_f64().or_else(|| value.as_i64().map(|n| n as f64)));
+    if let (Some(requested), Some(returned)) = (duration_sec, track_duration) {
+        if requested.is_finite() && requested > 0.0 && (requested - returned).abs() > 15.0 {
+            return None;
+        }
+    }
+
+    let subtitle_list = response
+        .pointer("/message/body/macro_calls/track.subtitles.get/message/body/subtitle_list")?
+        .as_array()?;
+    let subtitle = subtitle_list.iter().find_map(|item| {
+        let subtitle = item.get("subtitle")?;
+        let body = subtitle.get("subtitle_body")?.as_str()?.trim();
+        if body.is_empty() || !body.contains('[') {
+            None
+        } else {
+            Some((subtitle, body.to_string()))
+        }
+    })?;
+
+    Some(MusixmatchLyrics {
+        lrc: subtitle.1,
+        commontrack_id: track.get("commontrack_id").and_then(Value::as_i64),
+        track_name: Some(track_name.to_string()),
+        artist_name: Some(artist_name.to_string()),
+        album_name: track
+            .get("album_name")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        duration: track_duration,
+        instrumental,
+        copyright: subtitle
+            .0
+            .get("lyrics_copyright")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    })
+}
+
 async fn lyrics_ovh_provider(artist: String, title: String) -> Option<OnlineLyrics> {
     if artist.is_empty() {
         return None;
@@ -436,11 +752,24 @@ async fn race_first(
 
 use std::future::Future;
 
-pub async fn fetch_online_lyrics(artist: &str, title: &str) -> Result<Option<OnlineLyrics>, String> {
+pub async fn fetch_online_lyrics(
+    artist: &str,
+    title: &str,
+    album: Option<&str>,
+    duration_sec: Option<f64>,
+    token_cache_file: Option<PathBuf>,
+) -> Result<Option<OnlineLyrics>, String> {
     if title.trim().is_empty() {
         return Ok(None);
     }
-    let key = format!("{}|{}", artist.trim().to_lowercase(), title.trim().to_lowercase());
+    let album = album.unwrap_or_default().trim().to_string();
+    let key = format!(
+        "{}|{}|{}|{}",
+        artist.trim().to_lowercase(),
+        title.trim().to_lowercase(),
+        album.to_lowercase(),
+        duration_sec.map(|duration| duration.round() as i64).unwrap_or_default()
+    );
     if let Some(cached) = cache_slot().lock().await.get(&key) {
         return Ok(cached.clone());
     }
@@ -448,9 +777,24 @@ pub async fn fetch_online_lyrics(artist: &str, title: &str) -> Result<Option<Onl
     let title = title.trim().to_string();
     let chain = async move {
         for (va, vt) in build_variants(&artist, &title) {
+            let mxm_artist = va.clone();
+            let mxm_title = vt.clone();
+            let mxm_album = album.clone();
+            let mxm_token_cache = token_cache_file.clone();
             let g1_tasks: Vec<std::pin::Pin<Box<dyn Future<Output = Option<OnlineLyrics>> + Send>>> = vec![
                 Box::pin(lrclib_provider(va.clone(), vt.clone())),
                 Box::pin(textyl_provider(va.clone(), vt.clone())),
+                Box::pin(async move {
+                    musixmatch_provider(
+                        mxm_artist,
+                        mxm_title,
+                        mxm_album,
+                        duration_sec,
+                        mxm_token_cache,
+                    )
+                    .await
+                    .map(MusixmatchLyrics::into_online_lyrics)
+                }),
             ];
             let found = race_first(g1_tasks).await;
             let found = match found {
@@ -471,7 +815,7 @@ pub async fn fetch_online_lyrics(artist: &str, title: &str) -> Result<Option<Onl
         }
         None
     };
-    let result = tokio::time::timeout(Duration::from_secs(12), chain).await.unwrap_or(None);
+    let result = tokio::time::timeout(Duration::from_secs(18), chain).await.unwrap_or(None);
     let mut cache = cache_slot().lock().await;
     if cache.len() >= 256 {
         if let Some(first) = cache.keys().next().cloned() {
@@ -482,7 +826,13 @@ pub async fn fetch_online_lyrics(artist: &str, title: &str) -> Result<Option<Onl
     Ok(result)
 }
 
-pub async fn fetch_online_lyrics_all(artist: &str, title: &str) -> Result<Vec<OnlineLyricsCandidate>, String> {
+pub async fn fetch_online_lyrics_all(
+    artist: &str,
+    title: &str,
+    album: Option<&str>,
+    duration_sec: Option<f64>,
+    token_cache_file: Option<PathBuf>,
+) -> Result<Vec<OnlineLyricsCandidate>, String> {
     if title.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -499,6 +849,10 @@ pub async fn fetch_online_lyrics_all(artist: &str, title: &str) -> Result<Vec<On
     let ct_lr = ct.clone();
     let ca_tx = ca.clone();
     let ct_tx = ct.clone();
+    let ca_mx = ca.clone();
+    let ct_mx = ct.clone();
+    let album_mx = album.unwrap_or_default().trim().to_string();
+    let token_cache_mx = token_cache_file;
     let ca_ov = ca.clone();
     let ct_ov = ct.clone();
     let ca_ge = ca.clone();
@@ -512,14 +866,18 @@ pub async fn fetch_online_lyrics_all(artist: &str, title: &str) -> Result<Vec<On
         (1usize, r.map(|v| lyrics_variants("textyl", v)).unwrap_or_default())
     }));
     handles.push(tokio::spawn(async move {
+        let r = musixmatch_provider(ca_mx, ct_mx, album_mx, duration_sec, token_cache_mx).await;
+        (2usize, r.map(|v| vec![v.into_candidate()]).unwrap_or_default())
+    }));
+    handles.push(tokio::spawn(async move {
         let r = lyrics_ovh_provider(ca_ov, ct_ov).await;
-        (2usize, r.map(|v| lyrics_variants("lyrics.ovh", v)).unwrap_or_default())
+        (3usize, r.map(|v| lyrics_variants("lyrics.ovh", v)).unwrap_or_default())
     }));
     handles.push(tokio::spawn(async move {
         let r = genius_provider(ca_ge, ct_ge).await;
-        (3usize, r.map(|v| lyrics_variants("genius", v)).unwrap_or_default())
+        (4usize, r.map(|v| lyrics_variants("genius", v)).unwrap_or_default())
     }));
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(14);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(18);
     let mut pending = handles;
     let mut collected: Vec<(usize, OnlineLyricsCandidate)> = Vec::new();
     while !pending.is_empty() {

@@ -23,11 +23,11 @@ export interface LyricsCandidate {
 }
 
 function cacheKey(track: UnifiedTrack): string {
-  return `${track.artists[0] ?? ''}|${track.title}`
+  return `${track.artists[0] ?? ''}|${track.title}|${track.album ?? ''}|${track.durationSec ?? ''}`
 }
 
-function candidateKey(artist: string, title: string): string {
-  return `${artist.trim().toLowerCase()}|${title.trim().toLowerCase()}`
+function candidateKey(artist: string, title: string, album: string | null, durationSec: number | null): string {
+  return `${artist.trim().toLowerCase()}|${title.trim().toLowerCase()}|${album?.trim().toLowerCase() ?? ''}|${durationSec ?? ''}`
 }
 
 function store(key: string, value: LyricsResult | null): void {
@@ -71,11 +71,13 @@ export async function fetchOnlineLyricsCandidates(
   title: string,
   _track?: UnifiedTrack,
 ): Promise<LyricsCandidate[]> {
-  const key = candidateKey(artist, title)
+  const album = _track?.album ?? null
+  const durationSec = _track?.durationSec ?? null
+  const key = candidateKey(artist, title, album, durationSec)
   if (candidateCache.has(key)) return candidateCache.get(key) ?? []
   let raw: OnlineLyricsCandidateData[]
   try {
-    raw = await api.fetchOnlineLyricsAll(artist, title)
+    raw = await api.fetchOnlineLyricsAll(artist, title, album, durationSec)
   } catch {
     return []
   }
@@ -91,14 +93,14 @@ export function clearOnlineLyricsCandidateCache(): void {
 
 export const OnlineLyricsProvider: LyricsProvider = {
   id: 'online',
-  name: 'Online (LRCLib/Textyl/...)',
+  name: 'Online (LRCLib/Musixmatch/...)',
   async getLyrics(track: UnifiedTrack): Promise<LyricsResult | null> {
     if (!track.dbId && track.source === 'local') return null
     const key = cacheKey(track)
     if (cache.has(key)) return cache.get(key) ?? null
     let data: { plain: string | null; syncedLrc: string | null } | null
     try {
-      data = await api.fetchOnlineLyrics(track.artists[0] ?? '', track.title)
+      data = await api.fetchOnlineLyrics(track.artists[0] ?? '', track.title, track.album, track.durationSec)
     } catch {
       return null
     }

@@ -28,7 +28,14 @@ export const lyricsService = {
   getCurrent: (): CurrentLyrics | null => current,
   /** Fetches (embedded -> online) lyrics for the track once per track change. */
   ensure: (
-    track: { sourceId: string; title: string; artists: string[]; dbId: number | null },
+    track: {
+      sourceId: string
+      title: string
+      artists: string[]
+      dbId: number | null
+      album?: string | null
+      durationSec?: number | null
+    },
     cacheOnline: boolean,
   ): void => {
     if (currentKey === track.sourceId) return
@@ -54,7 +61,14 @@ export const lyricsService = {
 }
 
 async function fetchLyrics(
-  track: { sourceId: string; title: string; artists: string[]; dbId: number | null },
+  track: {
+    sourceId: string
+    title: string
+    artists: string[]
+    dbId: number | null
+    album?: string | null
+    durationSec?: number | null
+  },
   cacheOnline: boolean,
 ): Promise<LyricsResult | null> {
   // What the user pinned outranks everything, including embedded tags, so the
@@ -81,7 +95,12 @@ async function fetchLyrics(
   }
   if (!track.title.trim()) return null
   try {
-    const data = await api.fetchOnlineLyrics(track.artists[0] ?? '', track.title)
+    const data = await api.fetchOnlineLyrics(
+      track.artists[0] ?? '',
+      track.title,
+      track.album ?? null,
+      track.durationSec ?? null,
+    )
     if (!data) return null
     let res: LyricsResult | null = null
     if (data.syncedLrc) {

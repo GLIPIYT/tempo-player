@@ -292,8 +292,12 @@ export const api = {
   scPrecache: (trackId: string) => invoke<void>('sc_precache', { trackId }),
   upsertScTrack: (track: Omit<ScTrack, 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'> & Partial<Pick<ScTrack, 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'>>) =>
     invoke<number>('sc_upsert_track', { track }),
-  fetchOnlineLyricsAll: (artist: string, title: string) =>
-    invoke<OnlineLyricsCandidateData[]>('fetch_online_lyrics_all', { artist, title }),
+  fetchOnlineLyricsAll: (
+    artist: string,
+    title: string,
+    album: string | null = null,
+    durationSec: number | null = null,
+  ) => invoke<OnlineLyricsCandidateData[]>('fetch_online_lyrics_all', { artist, title, album, durationSec }),
   addScTrackToPlaylist: (playlistId: number, track: ScTrack) =>
     invoke<number>('add_sc_track_to_playlist', { playlistId, track }),
   scCacheInfo: () =>
@@ -302,9 +306,16 @@ export const api = {
   clearScCache: () => invoke<void>('clear_sc_cache'),
   setScCacheLimit: (bytes: number) => invoke<void>('sc_set_cache_limit', { bytes }),
 
-  fetchOnlineLyrics: (artist: string, title: string) =>
+  fetchOnlineLyrics: (
+    artist: string,
+    title: string,
+    album: string | null = null,
+    durationSec: number | null = null,
+  ) =>
     invoke<{ plain: string | null; syncedLrc: string | null; copyright: string | null } | null>('fetch_online_lyrics', {
       artist,
       title,
+      album,
+      durationSec,
     }),
 }

@@ -613,18 +613,48 @@ pub async fn sc_stream_url(track_id: String) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn fetch_online_lyrics(
+    app: AppHandle,
     artist: String,
     title: String,
+    album: Option<String>,
+    duration_sec: Option<f64>,
 ) -> Result<Option<crate::lyrics::OnlineLyrics>, String> {
-    crate::lyrics::fetch_online_lyrics(&artist, &title).await
+    let token_cache_file = app
+        .path()
+        .app_local_data_dir()
+        .ok()
+        .map(|path| path.join("musixmatch-user-token.json"));
+    crate::lyrics::fetch_online_lyrics(
+        &artist,
+        &title,
+        album.as_deref(),
+        duration_sec,
+        token_cache_file,
+    )
+    .await
 }
 
 #[tauri::command]
 pub async fn fetch_online_lyrics_all(
+    app: AppHandle,
     artist: String,
     title: String,
+    album: Option<String>,
+    duration_sec: Option<f64>,
 ) -> Result<Vec<crate::lyrics::OnlineLyricsCandidate>, String> {
-    crate::lyrics::fetch_online_lyrics_all(&artist, &title).await
+    let token_cache_file = app
+        .path()
+        .app_local_data_dir()
+        .ok()
+        .map(|path| path.join("musixmatch-user-token.json"));
+    crate::lyrics::fetch_online_lyrics_all(
+        &artist,
+        &title,
+        album.as_deref(),
+        duration_sec,
+        token_cache_file,
+    )
+    .await
 }
 
 #[tauri::command]
