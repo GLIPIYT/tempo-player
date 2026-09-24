@@ -75,7 +75,12 @@
   transition: opacity .6s ease, visibility 0s;
 }
 
-.home-mix-stage.is-picker-open .home-mix-slide { visibility: hidden; pointer-events: none; }
+.home-mix-stage.is-picker-open .home-mix-slide {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity .28s ease, visibility 0s linear .28s;
+}
 
 .home-mix-copy {
   position: relative;
@@ -345,6 +350,18 @@
   border-radius: 0;
   background: color-mix(in srgb, var(--bg-elevated) 88%, var(--accent) 12%);
   box-shadow: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity .28s ease, transform .28s ease, visibility 0s linear .28s;
+}
+.home-mix-stage.is-picker-open .home-mix-picker {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition: opacity .28s ease, transform .28s ease, visibility 0s;
 }
 
 .home-mix-picker-heading {
@@ -386,7 +403,7 @@
   background: var(--surface);
   text-align: left;
 }
-.home-mix-choice .cover { width: 100% !important; height: auto !important; aspect-ratio: 1; object-fit: cover; }
+.home-mix-choice .cover { width: 132px !important; height: 132px !important; align-self: center; object-fit: cover; }
 .home-mix-choice:hover,
 .home-mix-choice[aria-current='true'] {
   border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
@@ -574,6 +591,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .home-mix-slide,
+  .home-mix-stage.is-picker-open .home-mix-slide,
+  .home-mix-stage .home-mix-picker,
+  .home-mix-stage.is-picker-open .home-mix-picker,
   .home-mix-dots button::before,
   .home-mix-picker-button > svg { transition: none; }
 }

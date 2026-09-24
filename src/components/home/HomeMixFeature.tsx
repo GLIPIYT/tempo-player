@@ -140,7 +140,7 @@ export default function HomeMixFeature({
             <article
               key={mix.key}
               className={`home-mix-slide${current ? ' is-active' : ''}`}
-              aria-hidden={!current}
+              aria-hidden={!current || pickerOpen}
               onContextMenu={(event) => onMixMenu(event, mix)}
             >
               <div className="home-mix-copy">
@@ -183,8 +183,7 @@ export default function HomeMixFeature({
             </article>
           )
         })}
-        {pickerOpen ? (
-          <div className="home-mix-picker" id="home-mix-picker">
+        <div className="home-mix-picker" id="home-mix-picker" aria-hidden={!pickerOpen}>
             <div className="home-mix-picker-heading"><strong>{t('All mixes')}</strong><span>{t('Choose a mix')}</span></div>
             <div className={`home-mix-picker-rail${mixes.length < 4 ? ' is-short' : ''}`}>
               {mixes.map((mix, index) => (
@@ -193,6 +192,7 @@ export default function HomeMixFeature({
                   ref={index === 0 ? firstChoiceRef : undefined}
                   type="button"
                   className="home-mix-choice"
+                  tabIndex={pickerOpen ? 0 : -1}
                   aria-current={index === activeIndex ? 'true' : undefined}
                   onClick={() => chooseMix(index)}
                   onContextMenu={(event) => onMixMenu(event, mix)}
@@ -206,8 +206,7 @@ export default function HomeMixFeature({
                 </button>
               ))}
             </div>
-          </div>
-        ) : null}
+        </div>
         <div className="home-mix-controls">
           <button
             ref={pickerButtonRef}
