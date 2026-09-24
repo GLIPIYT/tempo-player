@@ -59,26 +59,10 @@ export default function PlaylistsPage() {
 
   return (
     <div className="page">
-      <div className="page-head">
+      <div className="page-head playlist-library-heading">
         <div>
           <h1 className="page-title">{t('Playlists')}</h1>
-          <div className="page-sub">{data ? `${data.length} ${t('playlists')}` : t('Loading…')}</div>
-        </div>
-        <div className="page-actions">
-          <button className="btn" onClick={() => void importM3u8()} title={t('Import playlist (m3u8)')}>
-            <Upload size={15} />
-            m3u8
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              setName('')
-              setCreating(true)
-            }}
-          >
-            <Plus size={15} />
-            {t('New playlist')}
-          </button>
+          <div className="page-sub">{t('Playlists for every mood.')}</div>
         </div>
       </div>
 
@@ -91,51 +75,76 @@ export default function PlaylistsPage() {
           title={t('No playlists yet')}
           hint={t('Create a playlist and add tracks to it.')}
           action={
-            <button className="btn btn-primary" onClick={() => setCreating(true)}>
-              <Plus size={15} />
-              {t('New playlist')}
-            </button>
+            <div className="playlist-empty-actions">
+              <button className="btn btn-primary" onClick={() => setCreating(true)}>
+                <Plus size={15} />
+                {t('New playlist')}
+              </button>
+              <button className="btn" onClick={() => void importM3u8()} title={t('Import playlist (m3u8)')}>
+                <Upload size={15} />
+                m3u8
+              </button>
+            </div>
           }
         />
       ) : (
         <>
           <section className="playlist-library-feature">
+            <div className="playlist-feature-mosaic" aria-hidden="true">
+              {[0, 1, 2, 3].map((index) => {
+                const pl = data[index % data.length]!
+                return (
+                  <span key={`${pl.id}-${index}`} className="playlist-feature-cover">
+                    <CacheBadge kind="playlist" scId={null} localId={pl.id}>
+                      {pl.coverPath ? <Cover path={pl.coverPath} label={pl.name} size={58} /> : <ListMusic size={22} />}
+                    </CacheBadge>
+                  </span>
+                )
+              })}
+            </div>
             <div className="playlist-library-copy">
               <div className="section-label">{t('Your collection')}</div>
-              <h2>{t('Playlists that sound like you')}</h2>
-              <p>{data.length} {t('playlists')} · {t('All your mixes in one place.')}</p>
-            </div>
-            <div className="playlist-feature-mosaic" aria-hidden="true">
-              {data.slice(0, 4).map((pl) => (
-                <span key={pl.id} className="playlist-feature-cover">
-                  <CacheBadge kind="playlist" scId={null} localId={pl.id}>
-                    {pl.coverPath ? <Cover path={pl.coverPath} label={pl.name} size={58} /> : <ListMusic size={22} />}
-                  </CacheBadge>
-                </span>
-              ))}
+              <h2>{data.length} {t('playlists')}</h2>
+              <p>{t('All your mixes in one place.')}</p>
+              <div className="playlist-feature-actions">
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setName('')
+                    setCreating(true)
+                  }}
+                >
+                  <Plus size={15} />
+                  {t('New playlist')}
+                </button>
+                <button className="btn" onClick={() => void importM3u8()} title={t('Import playlist (m3u8)')}>
+                  <Upload size={15} />
+                  {t('Import')}
+                </button>
+              </div>
             </div>
           </section>
-          <div className="cards-grid">
+          <div className="playlist-library-grid">
             {data.map((pl) => {
               const displayName = playlistDisplayName(pl, pl.name, t)
               return (
                 <button
                   key={pl.id}
-                  className="card"
+                  className="playlist-library-card"
                   onClick={() => navigate({ name: 'playlist', id: pl.id })}
                   title={displayName}
                 >
-                  <div className="playlist-tile">
+                  <span className="playlist-library-cover">
                     <CacheBadge kind="playlist" scId={null} localId={pl.id}>
                       {pl.coverPath ? (
                         <Cover path={pl.coverPath} label={displayName} size={200} />
                       ) : (
-                        <ListMusic size={28} />
+                        <span className="playlist-library-fallback"><ListMusic size={28} /></span>
                       )}
                     </CacheBadge>
-                  </div>
-                  <span className="card-title">{displayName}</span>
-                  <span className="card-sub">{pl.trackCount ?? 0} {t('tracks')}</span>
+                  </span>
+                  <span className="playlist-library-name">{displayName}</span>
+                  <span className="playlist-library-meta">{pl.trackCount ?? 0} {t('tracks')}</span>
                 </button>
               )
             })}

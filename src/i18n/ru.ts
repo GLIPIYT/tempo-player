@@ -28,6 +28,8 @@ export const ru: Record<string, string> = {
   artists: 'исполнителей',
   'Artists appear after your library has been scanned.':
     'Исполнители появятся после сканирования библиотеки.',
+  'Your collection, gathered around artists.': 'Ваша музыкальная коллекция по исполнителям.',
+  'Find an artist and return to their music.': 'Найдите исполнителя и вернитесь к его музыке.',
   'All your mixes in one place.': 'Все ваши подборки собраны здесь.',
   'Another collection is being saved.': 'Сейчас сохраняется другая коллекция.',
   auto: 'авто',
@@ -93,6 +95,7 @@ export const ru: Record<string, string> = {
   Home: 'Главная',
   'Import font file': 'Импортировать файл шрифта',
   'Import image': 'Импортировать изображение',
+  Import: 'Импортировать',
   'Installed fonts': 'Установленные шрифты',
   'Interface language. System follows your OS setting.':
     'Язык интерфейса. При системном значении используется настройка ОС.',
@@ -137,6 +140,7 @@ export const ru: Record<string, string> = {
   Playlist: 'Плейлист',
   'Playlist name': 'Название плейлиста',
   Playlists: 'Плейлисты',
+  'Playlists for every mood.': 'Подборки для любого настроения.',
   playlists: 'плейлистов',
   Previous: 'Предыдущий',
   'Previous track': 'Предыдущий трек',

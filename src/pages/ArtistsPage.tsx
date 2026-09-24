@@ -76,13 +76,32 @@ export default function ArtistsPage() {
 
   return (
     <div className="page">
-      <div className="artist-library-hero">
+      <div className="page-head artist-library-heading">
+        <div>
+          <h1 className="page-title">{t('Artists')}</h1>
+          <div className="page-sub">{t('Your collection, gathered around artists.')}</div>
+        </div>
+      </div>
+
+      <section className="artist-library-hero">
+        <div className="artist-library-art" aria-hidden="true">
+          {(data ?? []).slice(0, 3).map((artist, index) => (
+            <span key={artist.id} className={`artist-library-orbit orbit-${index + 1}`}>
+              <CacheBadge kind="artist" scId={null} localId={artist.id}>
+                <Cover path={artist.imagePath} label={artist.name} size={82} rounded />
+              </CacheBadge>
+            </span>
+          ))}
+          {data?.length === 0 ? (
+            <span className="artist-library-orbit orbit-1">
+              <Cover path={null} label={t('Artists')} size={82} rounded />
+            </span>
+          ) : null}
+        </div>
         <div className="artist-library-copy">
           <div className="section-label">{t('Your collection')}</div>
-          <h1 className="page-title">{t('Artists')}</h1>
-          <p className="artist-library-count">
-            {data ? `${data.length} ${t('artists')}` : t('Loading…')}
-          </p>
+          <h2>{data ? `${data.length} ${t('artists')}` : t('Loading…')}</h2>
+          <p>{t('Find an artist and return to their music.')}</p>
           <label className="artist-library-search">
             <Search size={15} />
             <input
@@ -94,16 +113,7 @@ export default function ArtistsPage() {
             />
           </label>
         </div>
-        <div className="artist-library-art" aria-hidden="true">
-          {(data ?? []).slice(0, 3).map((artist, index) => (
-            <span key={artist.id} className={`artist-library-orbit orbit-${index + 1}`}>
-              <CacheBadge kind="artist" scId={null} localId={artist.id}>
-                <Cover path={artist.imagePath} label={artist.name} size={82} rounded />
-              </CacheBadge>
-            </span>
-          ))}
-        </div>
-      </div>
+      </section>
 
       {error ? <div className="error-line">{error}</div> : null}
       {loading && data === null ? (
