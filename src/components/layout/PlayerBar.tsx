@@ -495,10 +495,66 @@ function PlayerBarContent() {
 
                 <div className="pb-speed-divider" />
 
-                <div className="pb-eq-heading">
-                  <div>
-                    <div className="pb-eq-title">{t('Equalizer')}</div>
-                    <div className="pb-eq-subtitle">{t('10 bands, up to ±18 dB')}</div>
+                <div className="pb-eq-control-row">
+                  <div className="pb-eq-preset-picker" ref={presetPickerRef}>
+                    <div className="pb-eq-preset-row">
+                      <button
+                        type="button"
+                        className={'pb-eq-preset-trigger' + (presetMenuOpen ? ' is-open' : '')}
+                        ref={presetTriggerRef}
+                        onClick={() => setPresetMenuOpen((open) => !open)}
+                        aria-expanded={presetMenuOpen}
+                        aria-controls={presetMenuOpen ? 'pb-eq-preset-list' : undefined}
+                        aria-label={`${t('Equalizer preset')}: ${selectedPresetName}`}
+                      >
+                        <span className="pb-eq-preset-name">{selectedPresetName}</span>
+                        <PresetCurve bands={equalizer.bands} />
+                        <ChevronDown size={14} className="pb-eq-preset-chevron" aria-hidden="true" />
+                      </button>
+                      {equalizer.selectedUserPresetId ? (
+                        <button
+                          className="icon-btn pb-eq-delete"
+                          onClick={deleteEqualizerPreset}
+                          aria-label={t('Delete saved preset')}
+                          title={t('Delete saved preset')}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      ) : null}
+                    </div>
+                    {presetMenuOpen ? (
+                      <div className="pb-eq-preset-list" id="pb-eq-preset-list">
+                        {EQUALIZER_PRESET_KEYS.map((preset) => (
+                          <button
+                            type="button"
+                            key={preset}
+                            className={'pb-eq-preset-option' + (selectedPresetValue === preset ? ' is-selected' : '')}
+                            aria-pressed={selectedPresetValue === preset}
+                            onClick={() => selectEqualizerPreset(preset)}
+                          >
+                            <span className="pb-eq-preset-name">{t(EQUALIZER_PRESET_LABELS[preset])}</span>
+                            <PresetCurve bands={preset === 'custom' ? equalizer.bands : EQUALIZER_PRESETS[preset]} />
+                            {selectedPresetValue === preset ? <Check size={13} /> : <span className="pb-eq-preset-check" />}
+                          </button>
+                        ))}
+                        {equalizer.userPresets.length > 0 ? (
+                          <div className="pb-eq-preset-group">{t('Saved presets')}</div>
+                        ) : null}
+                        {equalizer.userPresets.map((preset) => (
+                          <button
+                            type="button"
+                            key={preset.id}
+                            className={'pb-eq-preset-option' + (selectedPresetValue === `user:${preset.id}` ? ' is-selected' : '')}
+                            aria-pressed={selectedPresetValue === `user:${preset.id}`}
+                            onClick={() => selectEqualizerPreset(`user:${preset.id}`)}
+                          >
+                            <span className="pb-eq-preset-name">{preset.name}</span>
+                            <PresetCurve bands={preset.bands} />
+                            {selectedPresetValue === `user:${preset.id}` ? <Check size={13} /> : <span className="pb-eq-preset-check" />}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   <button
                     className={equalizer.enabled ? 'switch is-on' : 'switch'}
@@ -507,67 +563,6 @@ function PlayerBarContent() {
                     aria-label={t('Enable equalizer')}
                     onClick={() => commitEqualizer({ ...equalizer, enabled: !equalizer.enabled })}
                   />
-                </div>
-
-                <div className="pb-eq-preset-picker" ref={presetPickerRef}>
-                  <div className="pb-eq-preset-row">
-                    <button
-                      type="button"
-                      className={'pb-eq-preset-trigger' + (presetMenuOpen ? ' is-open' : '')}
-                      ref={presetTriggerRef}
-                      onClick={() => setPresetMenuOpen((open) => !open)}
-                      aria-expanded={presetMenuOpen}
-                      aria-controls={presetMenuOpen ? 'pb-eq-preset-list' : undefined}
-                      aria-label={`${t('Equalizer preset')}: ${selectedPresetName}`}
-                    >
-                      <span className="pb-eq-preset-name">{selectedPresetName}</span>
-                      <PresetCurve bands={equalizer.bands} />
-                      <ChevronDown size={14} className="pb-eq-preset-chevron" aria-hidden="true" />
-                    </button>
-                    {equalizer.selectedUserPresetId ? (
-                      <button
-                        className="icon-btn pb-eq-delete"
-                        onClick={deleteEqualizerPreset}
-                        aria-label={t('Delete saved preset')}
-                        title={t('Delete saved preset')}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    ) : null}
-                  </div>
-                  {presetMenuOpen ? (
-                    <div className="pb-eq-preset-list" id="pb-eq-preset-list">
-                      {EQUALIZER_PRESET_KEYS.map((preset) => (
-                        <button
-                          type="button"
-                          key={preset}
-                          className={'pb-eq-preset-option' + (selectedPresetValue === preset ? ' is-selected' : '')}
-                          aria-pressed={selectedPresetValue === preset}
-                          onClick={() => selectEqualizerPreset(preset)}
-                        >
-                          <span className="pb-eq-preset-name">{t(EQUALIZER_PRESET_LABELS[preset])}</span>
-                          <PresetCurve bands={preset === 'custom' ? equalizer.bands : EQUALIZER_PRESETS[preset]} />
-                          {selectedPresetValue === preset ? <Check size={13} /> : <span className="pb-eq-preset-check" />}
-                        </button>
-                      ))}
-                      {equalizer.userPresets.length > 0 ? (
-                        <div className="pb-eq-preset-group">{t('Saved presets')}</div>
-                      ) : null}
-                      {equalizer.userPresets.map((preset) => (
-                        <button
-                          type="button"
-                          key={preset.id}
-                          className={'pb-eq-preset-option' + (selectedPresetValue === `user:${preset.id}` ? ' is-selected' : '')}
-                          aria-pressed={selectedPresetValue === `user:${preset.id}`}
-                          onClick={() => selectEqualizerPreset(`user:${preset.id}`)}
-                        >
-                          <span className="pb-eq-preset-name">{preset.name}</span>
-                          <PresetCurve bands={preset.bands} />
-                          {selectedPresetValue === `user:${preset.id}` ? <Check size={13} /> : <span className="pb-eq-preset-check" />}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
                 </div>
 
                 <div className="pb-eq-bands">
@@ -619,9 +614,6 @@ function PlayerBarContent() {
                   >
                     {t('Save')}
                   </button>
-                </div>
-                <div className="pb-eq-note">
-                  {t('EQ works on local and cached tracks. Live SoundCloud streams are excluded. Save up to 12 presets.')}
                 </div>
               </div>
             )}

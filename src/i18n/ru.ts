@@ -400,8 +400,6 @@ export const ru: Record<string, string> = {
   'Normalize volume': 'Нормализовать громкость',
   'Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest are measured automatically a few tracks ahead of what is playing, so there is nothing to start by hand.':
     'Треки выравниваются к общей громкости. Файлы с тегами ReplayGain используют их сразу, остальные измеряются автоматически на несколько треков вперёд от играющего — запускать вручную ничего не нужно.',
-  Equalizer: 'Эквалайзер',
-  '10 bands, up to ±18 dB': '10 полос, до ±18 дБ',
   'Enable equalizer': 'Включить эквалайзер',
   'Equalizer preset': 'Пресет эквалайзера',
   'Saved presets': 'Сохранённые пресеты',
@@ -414,8 +412,6 @@ export const ru: Record<string, string> = {
   Vocal: 'Вокал',
   Rock: 'Рок',
   'Custom curve': 'Своя кривая',
-  'EQ works on local and cached tracks. Live SoundCloud streams are excluded. Save up to 12 presets.':
-    'EQ работает с локальными и кэшированными треками. Потоки SoundCloud без кэша его обходят. Можно сохранить до 12 пресетов.',
   'Playback speed': 'Скорость воспроизведения',
   'Playback speed and equalizer': 'Скорость и эквалайзер',
   'Reset speed': 'Сбросить скорость',
