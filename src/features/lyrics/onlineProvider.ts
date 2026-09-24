@@ -19,6 +19,7 @@ export interface LyricsCandidate {
   albumName?: OnlineLyricsCandidateData['albumName']
   duration?: OnlineLyricsCandidateData['duration']
   instrumental?: OnlineLyricsCandidateData['instrumental']
+  copyright?: OnlineLyricsCandidateData['copyright']
 }
 
 function cacheKey(track: UnifiedTrack): string {
@@ -81,6 +82,11 @@ export async function fetchOnlineLyricsCandidates(
   const out = toLyricsCandidates(raw)
   storeCandidates(key, out)
   return out
+}
+
+export function clearOnlineLyricsCandidateCache(): void {
+  cache.clear()
+  candidateCache.clear()
 }
 
 export const OnlineLyricsProvider: LyricsProvider = {

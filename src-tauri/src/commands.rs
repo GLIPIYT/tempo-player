@@ -628,6 +628,25 @@ pub async fn fetch_online_lyrics_all(
 }
 
 #[tauri::command]
+pub fn get_musixmatch_api_key_status() -> Result<bool, String> {
+    crate::lyrics::has_musixmatch_api_key()
+}
+
+#[tauri::command]
+pub async fn set_musixmatch_api_key(api_key: String) -> Result<(), String> {
+    crate::lyrics::set_musixmatch_api_key(&api_key)?;
+    crate::lyrics::clear_online_lyrics_cache().await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clear_musixmatch_api_key() -> Result<(), String> {
+    crate::lyrics::clear_musixmatch_api_key()?;
+    crate::lyrics::clear_online_lyrics_cache().await;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn sc_get_playback(
     app: AppHandle,
     state: State<'_, AppState>,

@@ -323,6 +323,7 @@ export interface OnlineLyricsCandidateData {
   albumName: string | null
   duration: number | null
   instrumental: boolean | null
+  copyright?: string | null
 }
 
 export interface DailyMinutes {

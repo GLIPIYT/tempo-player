@@ -1203,6 +1203,9 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
               {showManual && manualForm}
             </div>
           )}
+          {selected?.copyright?.trim() && (
+            <div className="lyr-copyright">{selected.copyright}</div>
+          )}
           {searching && viewCandidates.length > 0 && <LoadingMark />}
           {mode === 'synced' && selected?.result.kind === 'synced' && (
             <SyncedView key={`${trackKey}-${viewSelectedIndex}-${offsetMs}`} lines={selected.result.lines} />

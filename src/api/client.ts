@@ -294,6 +294,9 @@ export const api = {
     invoke<number>('sc_upsert_track', { track }),
   fetchOnlineLyricsAll: (artist: string, title: string) =>
     invoke<OnlineLyricsCandidateData[]>('fetch_online_lyrics_all', { artist, title }),
+  getMusixmatchApiKeyStatus: () => invoke<boolean>('get_musixmatch_api_key_status'),
+  setMusixmatchApiKey: (apiKey: string) => invoke<void>('set_musixmatch_api_key', { apiKey }),
+  clearMusixmatchApiKey: () => invoke<void>('clear_musixmatch_api_key'),
   addScTrackToPlaylist: (playlistId: number, track: ScTrack) =>
     invoke<number>('add_sc_track_to_playlist', { playlistId, track }),
   scCacheInfo: () =>
@@ -303,7 +306,7 @@ export const api = {
   setScCacheLimit: (bytes: number) => invoke<void>('sc_set_cache_limit', { bytes }),
 
   fetchOnlineLyrics: (artist: string, title: string) =>
-    invoke<{ plain: string | null; syncedLrc: string | null } | null>('fetch_online_lyrics', {
+    invoke<{ plain: string | null; syncedLrc: string | null; copyright: string | null } | null>('fetch_online_lyrics', {
       artist,
       title,
     }),
