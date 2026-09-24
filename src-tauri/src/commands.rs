@@ -340,6 +340,16 @@ pub fn list_playlists(state: State<'_, AppState>) -> Result<Vec<Playlist>, Strin
 }
 
 #[tauri::command]
+pub fn list_playlist_play_stats(state: State<'_, AppState>) -> Result<Vec<crate::models::PlaylistPlayStat>, String> {
+    state.db.list_playlist_play_stats()
+}
+
+#[tauri::command]
+pub fn record_playlist_start(state: State<'_, AppState>, playlist_id: i64) -> Result<(), String> {
+    state.db.record_playlist_start(playlist_id)
+}
+
+#[tauri::command]
 pub fn get_playlist(state: State<'_, AppState>, playlist_id: i64) -> Result<Vec<PlaylistTrack>, String> {
     state.db.get_playlist_tracks(playlist_id)
 }
@@ -1150,6 +1160,11 @@ pub fn list_liked_track_ids(state: State<'_, AppState>) -> Result<Vec<i64>, Stri
 #[tauri::command]
 pub fn get_top_tracks(state: State<'_, AppState>, limit: i64) -> Result<Vec<crate::models::TopTrackItem>, String> {
     state.db.get_top_tracks(limit)
+}
+
+#[tauri::command]
+pub fn get_dormant_tracks(state: State<'_, AppState>, before_secs: i64, limit: i64) -> Result<Vec<Track>, String> {
+    state.db.get_dormant_tracks(before_secs, limit)
 }
 
 #[tauri::command]

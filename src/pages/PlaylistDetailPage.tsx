@@ -216,7 +216,10 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
           {tracks.length > 0 ? (
             <button
               className="btn btn-primary"
-              onClick={() => player.playTracks(tracks.map((t) => trackToUnified(t)), 0)}
+              onClick={() => {
+                player.playTracks(tracks.map((t) => trackToUnified(t)), 0)
+                void api.recordPlaylistStart(playlistId).then(() => bumpLibraryVersion()).catch((cause: unknown) => toast.show(String(cause), 'error'))
+              }}
             >
               {t('Play all')}
             </button>

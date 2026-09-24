@@ -312,6 +312,12 @@ export interface LyricsOverride {
   updatedAt: number
 }
 
+export interface PlaylistPlayStat {
+  playlistId: number
+  playCount: number
+  lastPlayedAt: number
+}
+
 /** One selectable lyrics result returned by the online-provider search. */
 export interface OnlineLyricsCandidateData {
   provider: string

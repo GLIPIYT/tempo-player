@@ -98,6 +98,14 @@ pub struct PlaylistTrack {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PlaylistPlayStat {
+    pub playlist_id: i64,
+    pub play_count: i64,
+    pub last_played_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AlbumDetail {
     pub album: Album,
     pub tracks: Vec<Track>,

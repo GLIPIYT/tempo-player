@@ -3,9 +3,10 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { Eye, EyeOff, FolderPlus, Play, RefreshCw } from 'lucide-react'
+import { Eye, EyeOff, FolderPlus, Play, RefreshCw, UserRound } from 'lucide-react'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '../api/client'
-import type { TopTrackItem, Track } from '../types/models'
+import type { Playlist, PlaylistPlayStat, TopTrackItem, Track } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
@@ -13,6 +14,9 @@ import { useScanProgress } from '../hooks/useScanProgress'
 import { useSettings } from '../state/settings'
 import { useT } from '../i18n'
 import { usePlayer } from '../player'
+import { useNav } from '../state/nav'
+import { bumpLibraryVersion } from '../utils/libraryVersion'
+import { toast } from '../components/common/Toast'
 import { trackToUnified } from '../utils/unified'
 import HomeMixFeature from '../components/home/HomeMixFeature'
 import HomeShelves from '../components/home/HomeShelves'
@@ -60,14 +64,22 @@ export default function HomePage() {
   const t = useT()
   const { settings } = useSettings()
   const player = usePlayer()
+  const { navigate } = useNav()
   const foldersApi = useFolders()
   const scan = useScanProgress()
   const version = useLibraryVersion()
   const total = useAsync(() => api.countTracks(), [version])
-  const recent = useAsync(() => api.listTracks('', 12, 0), [version])
+  const recent = useAsync(() => api.listTracks('', 10, 0), [version])
   const hourPicks = useAsync(() => api.getHourPicks(30), [version])
-  const top = useAsync(() => api.getTopTracks(12), [version])
+  const top = useAsync(() => api.getTopTracks(40), [version])
   const played = useAsync(async () => dedupeRecent((await api.getAnalytics('30d')).recent, 10), [version])
+  const dormant = useAsync(() => api.getDormantTracks(Math.floor(Date.now() / 1000) - 30 * 86400, 24), [version])
+  const playlistData = useAsync(async () => {
+    const [playlists, stats] = await Promise.all([api.listPlaylists(), api.listPlaylistPlayStats()])
+    const likes = playlists.find((playlist) => playlist.isLikes)
+    const likedTracks = likes ? (await api.getPlaylist(likes.id)).map((row) => row.track).reverse().slice(0, 24) : []
+    return { playlists, stats, likes, likedTracks }
+  }, [version])
   const unknownArtist = t('Unknown artist')
   // Keep the fallback identity stable while the first result is loading.
   const hourPicksList = useMemo(() => hourPicks.data ?? [], [hourPicks.data])
@@ -139,24 +151,24 @@ export default function HomePage() {
    * Right-click menu for a section header or a generated mix: play the lot, or
    * hide it for the rest of the day.
    */
-  const sectionMenu = (e: ReactMouseEvent, opts: { title: string; id: string; tracks: Track[] }) => {
+  const sectionMenu = (e: ReactMouseEvent, opts: { title: string; id: string; tracks?: Track[] }) => {
     e.preventDefault()
     e.stopPropagation()
-    const items: ContextMenuItem[] = [
-      {
+    const items: ContextMenuItem[] = []
+    const sectionTracks = opts.tracks
+    if (sectionTracks) items.push({
         id: 'play',
         label: t('Play all'),
         icon: <Play size={13} />,
-        disabled: opts.tracks.length === 0,
-        onSelect: () => playSection(opts.tracks, 0),
-      },
-      {
+        disabled: sectionTracks.length === 0,
+        onSelect: () => playSection(sectionTracks, 0),
+      })
+    items.push({
         id: 'hide',
         label: t('Hide until tomorrow'),
         icon: <EyeOff size={13} />,
         onSelect: () => hideSectionUntilTomorrow(opts.id),
-      },
-    ]
+      })
     if (anySectionHidden()) {
       items.push({
         id: 'unhide',
@@ -175,16 +187,45 @@ export default function HomePage() {
 
   const hidden = (id: string) => isSectionHidden(id)
   const visibleMixes = hourMixes.filter((mix) => !hidden(`home.mix:${mix.key}`))
+  const playlistStats = new Map((playlistData.data?.stats ?? []).map((stat: PlaylistPlayStat) => [stat.playlistId, stat]))
+  const candidatePlaylists = (playlistData.data?.playlists ?? []).filter((playlist) => !playlist.isLikes && (playlist.trackCount ?? 0) > 0)
+  const hasPlaylistHistory = candidatePlaylists.some((playlist) => playlistStats.has(playlist.id))
+  const featuredPlaylists = candidatePlaylists
+    .sort((a, b) => hasPlaylistHistory
+      ? (playlistStats.get(b.id)?.playCount ?? 0) - (playlistStats.get(a.id)?.playCount ?? 0)
+        || (playlistStats.get(b.id)?.lastPlayedAt ?? 0) - (playlistStats.get(a.id)?.lastPlayedAt ?? 0)
+        || b.updatedAt - a.updatedAt
+      : Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt - a.updatedAt)
+    .slice(0, 6)
+
+  const playPlaylist = async (playlist: Playlist) => {
+    try {
+      const tracks = (await api.getPlaylist(playlist.id)).map((row) => row.track)
+      if (tracks.length === 0) return
+      player.playTracks(tracks.map(trackToUnified), 0)
+      await api.recordPlaylistStart(playlist.id)
+      bumpLibraryVersion()
+    } catch (cause) {
+      toast.show(String(cause), 'error')
+    }
+  }
 
   return (
     <div className="page tempo-home">
       {error ? <div className="error-line">{error}</div> : null}
       <div className="hero">
         <div className="hero-main">
-          <h1 className="hero-title">
-            {t(greeting)}
-            {nickname ? `, ${nickname}` : ''}
-          </h1>
+          <div className="home-greeting">
+            <span className="home-avatar" aria-hidden="true">
+              {settings.profile.avatarPath
+                ? <img src={convertFileSrc(settings.profile.avatarPath)} alt="" draggable={false} />
+                : <UserRound size={24} strokeWidth={1.7} />}
+            </span>
+            <h1 className="hero-title">
+              {t(greeting)}
+              {nickname ? `, ${nickname}` : ''}
+            </h1>
+          </div>
           <div className="hero-sub">{t('Your music is here. Start with what fits this hour.')}</div>
         </div>
         <div className="page-actions">
@@ -245,8 +286,15 @@ export default function HomePage() {
             topTracks={topTracks}
             recentAdded={recentAdded}
             recentPlays={recentPlays}
+            dormantTracks={dormant.data ?? []}
+            likedTracks={playlistData.data?.likedTracks ?? []}
+            likesPlaylist={playlistData.data?.likes ?? null}
+            featuredPlaylists={featuredPlaylists}
+            hasPlaylistHistory={hasPlaylistHistory}
             unknownArtist={unknownArtist}
             onPlay={playSection}
+            onPlayPlaylist={(playlist) => void playPlaylist(playlist)}
+            onOpenPlaylist={(playlist) => navigate({ name: 'playlist', id: playlist.id })}
             onTrackMenu={trackContext}
             onSectionMenu={sectionMenu}
           />

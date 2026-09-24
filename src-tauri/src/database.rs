@@ -16,7 +16,7 @@ pub struct KnownYtTrack {
 
 use crate::models::{
     Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, FavoriteOrderEntry, FileStamp,
-    HiddenTrack, HistoryEntryDto, LibraryFolder, LyricsOverride, Playlist, PlaylistTrack,
+    HiddenTrack, HistoryEntryDto, LibraryFolder, LyricsOverride, Playlist, PlaylistPlayStat, PlaylistTrack,
     SearchResults, StatsSummary, TopArtistItem, TopTrackItem, Track, TrackInput,
 };
 
@@ -291,9 +291,18 @@ CREATE TABLE IF NOT EXISTS track_loudness (
 );
 "#;
 
+const MIGRATION_14: &str = r#"
+CREATE TABLE IF NOT EXISTS playlist_play_stats (
+    playlist_id INTEGER PRIMARY KEY REFERENCES playlists(id) ON DELETE CASCADE,
+    play_count INTEGER NOT NULL DEFAULT 0,
+    last_played_at INTEGER NOT NULL
+);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
     MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_13,
+    MIGRATION_14,
 ];
 
 pub struct Db {
@@ -878,6 +887,32 @@ impl Db {
         })
     }
 
+    pub fn list_playlist_play_stats(&self) -> Result<Vec<PlaylistPlayStat>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT playlist_id, play_count, last_played_at FROM playlist_play_stats ORDER BY play_count DESC, last_played_at DESC"
+            ).map_err(db_err)?;
+            let rows = stmt.query_map([], |row| Ok(PlaylistPlayStat {
+                playlist_id: row.get(0)?,
+                play_count: row.get(1)?,
+                last_played_at: row.get(2)?,
+            })).map_err(db_err)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)
+        })
+    }
+
+    pub fn record_playlist_start(&self, playlist_id: i64) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO playlist_play_stats (playlist_id, play_count, last_played_at) \
+                 SELECT id, 1, ?2 FROM playlists WHERE id = ?1 \
+                 ON CONFLICT(playlist_id) DO UPDATE SET play_count = play_count + 1, last_played_at = excluded.last_played_at",
+                params![playlist_id, now()],
+            ).map_err(db_err)?;
+            Ok(())
+        })
+    }
+
     /// Creates or finds an artist by name, for imports that arrive without one.
     pub fn ensure_artist(&self, name: &str) -> Result<i64, String> {
         self.with_conn(|conn| get_or_create_artist(conn, name))
@@ -1279,6 +1314,21 @@ impl Db {
 
     pub fn get_top_tracks(&self, limit: i64) -> Result<Vec<TopTrackItem>, String> {
         self.with_conn(|conn| fetch_top_tracks(conn, None, limit))
+    }
+
+    pub fn get_dormant_tracks(&self, before_secs: i64, limit: i64) -> Result<Vec<Track>, String> {
+        self.with_conn(|conn| {
+            let sql = format!(
+                "SELECT {} FROM {} WHERE t.last_played_at IS NOT NULL \
+                 AND t.last_played_at <= ?1 \
+                 AND (t.folder_id IS NOT NULL OR (t.source <> 'local' AND t.cached_at IS NOT NULL)) \
+                 ORDER BY t.last_played_at ASC, t.id ASC LIMIT ?2",
+                TRACK_COLUMNS, TRACK_FROM
+            );
+            let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+            let rows = stmt.query_map(params![before_secs, limit.max(0)], |row| map_track_at(row, 0)).map_err(db_err)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)
+        })
     }
 
     pub fn get_hour_picks(&self, limit: i64) -> Result<Vec<Track>, String> {
@@ -4492,6 +4542,35 @@ mod tests {
         let picks = db.get_hour_picks(5).unwrap();
         assert_eq!(picks.len(), 1);
         assert_eq!(picks[0].id, now_track);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn home_dormant_tracks_and_playlist_starts_use_real_history() {
+        let (db, dir) = test_db("homehistory");
+        let folder = db.add_library_folder(r"C:\homehistory").unwrap();
+        let old = seed_track(&db, folder.id, r"C:\homehistory\old.mp3", "Old", "A", None, 60.0);
+        let recent = seed_track(&db, folder.id, r"C:\homehistory\recent.mp3", "Recent", "A", None, 60.0);
+        seed_track(&db, folder.id, r"C:\homehistory\never.mp3", "Never", "A", None, 60.0);
+        db.with_conn(|conn| {
+            conn.execute("UPDATE tracks SET last_played_at = ?1 WHERE id = ?2", params![now() - 31 * 86400, old]).map_err(db_err)?;
+            Ok(())
+        }).unwrap();
+        db.bump_play_count(recent).unwrap();
+        let dormant = db.get_dormant_tracks(now() - 30 * 86400, 10).unwrap();
+        assert_eq!(dormant.iter().map(|track| track.id).collect::<Vec<_>>(), vec![old]);
+
+        let playlist = db.create_playlist("Played often").unwrap();
+        assert!(db.list_playlist_play_stats().unwrap().is_empty());
+        db.record_playlist_start(playlist.id).unwrap();
+        db.record_playlist_start(playlist.id).unwrap();
+        let stats = db.list_playlist_play_stats().unwrap();
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].playlist_id, playlist.id);
+        assert_eq!(stats[0].play_count, 2);
+        db.delete_playlist(playlist.id).unwrap();
+        assert!(db.list_playlist_play_stats().unwrap().is_empty());
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

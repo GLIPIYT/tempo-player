@@ -386,6 +386,12 @@ export const ru: Record<string, string> = {
   'Picked from what you usually play around this time of day':
     'Собрано из того, что вы обычно слушаете в это время суток',
   'Most played': 'Часто слушаете',
+  'Long time no listen': 'Давно не слушали',
+  'Frequently played playlists': 'Часто включаете',
+  'Your playlists': 'Ваши плейлисты',
+  'Open Likes': 'Открыть «Лайки»',
+  'Scroll left': 'Прокрутить влево',
+  'Scroll right': 'Прокрутить вправо',
   'Your all-time favorites by play count': 'Самые прослушиваемые треки за всё время',
   Unlimited: 'Без ограничений',
   'Cache limit': 'Лимит кэша',

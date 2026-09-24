@@ -15,6 +15,7 @@ import type {
   LyricsOverride,
   OnlineLyricsCandidateData,
   Playlist,
+  PlaylistPlayStat,
   PlaylistTrack,
   ScanSummary,
   ScArtist,
@@ -66,6 +67,8 @@ export const api = {
     invoke<void>('rename_playlist', { playlistId, name }),
   deletePlaylist: (playlistId: number) => invoke<void>('delete_playlist', { playlistId }),
   listPlaylists: () => invoke<Playlist[]>('list_playlists'),
+  listPlaylistPlayStats: () => invoke<PlaylistPlayStat[]>('list_playlist_play_stats'),
+  recordPlaylistStart: (playlistId: number) => invoke<void>('record_playlist_start', { playlistId }),
   getPlaylist: (playlistId: number) => invoke<PlaylistTrack[]>('get_playlist', { playlistId }),
   playlistAddTrack: (playlistId: number, trackId: number) =>
     invoke<void>('playlist_add_track', { playlistId, trackId }),
@@ -84,6 +87,8 @@ export const api = {
 
   getTopTracks: (limit: number) =>
     invoke<TopTrackItem[]>('get_top_tracks', { limit }),
+  getDormantTracks: (beforeSecs: number, limit: number) =>
+    invoke<Track[]>('get_dormant_tracks', { beforeSecs, limit }),
   getHourPicks: (limit: number) => invoke<Track[]>('get_hour_picks', { limit }),
 
   setPlaylistPinned: (playlistId: number, pinned: boolean) =>
