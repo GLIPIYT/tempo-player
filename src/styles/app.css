@@ -4342,23 +4342,6 @@ html.has-bg .app-content {
 }
 
 
-/* ── Hour mix cards ───────────────────────────────────────────────────── */
-
-.hour-mix-tile {
-  position: relative;
-  margin-bottom: 10px;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.hour-mix-tile .cover {
-  width: 100% !important;
-  height: auto !important;
-  aspect-ratio: 1 / 1;
-  display: block;
-}
-
-
 /* ── Sidebar drop target + misc ───────────────────────────────────────── */
 
 .fav-item.is-drop-target {

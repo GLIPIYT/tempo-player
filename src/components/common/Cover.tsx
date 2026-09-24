@@ -6,6 +6,7 @@ interface CoverProps {
   label: string
   size?: number
   rounded?: boolean
+  loading?: 'eager' | 'lazy'
 }
 
 function srcFor(path: string): string {
@@ -24,7 +25,7 @@ function hueFor(label: string): number {
   return h
 }
 
-export default function Cover({ path, label, size = 48, rounded = false }: CoverProps) {
+export default function Cover({ path, label, size = 48, rounded = false, loading = 'lazy' }: CoverProps) {
   const [failed, setFailed] = useState(false)
 
   useEffect(() => {
@@ -40,7 +41,7 @@ export default function Cover({ path, label, size = 48, rounded = false }: Cover
         className="cover"
         src={srcFor(path)}
         alt=""
-        loading="lazy"
+        loading={loading}
         draggable={false}
         onError={() => setFailed(true)}
         style={base}
