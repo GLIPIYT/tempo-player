@@ -3,7 +3,7 @@ import { DEFAULT_EQUALIZER_SETTINGS, EQUALIZER_BANDS, type EqualizerSettings } f
 const SEEK_SETTLE_MS = 250
 const RESYNC_GAP_SEC = 1.5
 const BUFFER_DONE_FRAC = 0.999
-/** How often the graph's output is sampled, and when to give up on it. */
+/** How often the source is sampled, and when to give up on the graph. */
 const SILENCE_CHECK_MS = 500
 const SILENCE_GIVE_UP_MS = 3000
 /** Peak deviation from silence, on the 0-255 byte scale, treated as audible. */
@@ -57,8 +57,10 @@ export class AudioEngine {
   private gainNode: GainNode | null = null
   private compressorNode: DynamicsCompressorNode | null = null
   private analyser: AnalyserNode | null = null
-  private analyserBuf: Uint8Array<ArrayBuffer> | null = null
-  /** Accumulated time the graph has been silent while the element advanced. */
+  /** Monitors the source before volume and EQ, for the graph silence watchdog. */
+  private sourceMonitor: AnalyserNode | null = null
+  private sourceMonitorBuf: Uint8Array<ArrayBuffer> | null = null
+  /** Accumulated time the source has been silent while the element advanced. */
   private silentMs = 0
   private lastSilenceCheck = 0
   /** Set once the graph has been abandoned; it is never rebuilt afterwards. */
@@ -587,7 +589,7 @@ export class AudioEngine {
    * the user with no sound at all.
    */
   private checkSilence(el: HTMLAudioElement): void {
-    if (!this.analyser || !this.analyserBuf || this.graphDisabled) return
+    if (!this.sourceMonitor || !this.sourceMonitorBuf || this.graphDisabled) return
     // The tap only ever carries the local channel. A stream track plays through
     // an element that is deliberately never routed, so it reads as silence here
     // without meaning anything - and tripping on it kills the graph for the
@@ -599,10 +601,10 @@ export class AudioEngine {
     const now = performance.now()
     if (now - this.lastSilenceCheck < SILENCE_CHECK_MS) return
     this.lastSilenceCheck = now
-    this.analyser.getByteTimeDomainData(this.analyserBuf)
+    this.sourceMonitor.getByteTimeDomainData(this.sourceMonitorBuf)
     let peak = 0
-    for (let i = 0; i < this.analyserBuf.length; i += 8) {
-      const deviation = Math.abs(this.analyserBuf[i] - 128)
+    for (let i = 0; i < this.sourceMonitorBuf.length; i += 8) {
+      const deviation = Math.abs(this.sourceMonitorBuf[i] - 128)
       if (deviation > peak) peak = deviation
     }
     // a little tolerance: material can be genuinely quiet for a moment
@@ -618,7 +620,8 @@ export class AudioEngine {
     this.graphDisabled = true
     this.silentMs = 0
     this.analyser = null
-    this.analyserBuf = null
+    this.sourceMonitor = null
+    this.sourceMonitorBuf = null
     this.gainNode = null
     this.compressorNode = null
     this.eqFilters = []
@@ -662,6 +665,18 @@ export class AudioEngine {
       // it here; play() also retries after the next direct user gesture.
       if (ctx.state === 'suspended') void ctx.resume().catch(() => {})
       const source = ctx.createMediaElementSource(el)
+      // Watch the raw media-element signal: mute and EQ attenuation must not
+      // look like a broken or CORS-silenced source to the watchdog.
+      if (!this.sourceMonitor) {
+        const monitor = ctx.createAnalyser()
+        monitor.fftSize = FFT_SIZE
+        monitor.minDecibels = ANALYSER_MIN_DB
+        monitor.maxDecibels = ANALYSER_MAX_DB
+        this.sourceMonitor = monitor
+        this.sourceMonitorBuf = new Uint8Array(monitor.fftSize)
+      }
+      source.connect(this.sourceMonitor)
+
       let previous: AudioNode = source
       const eqFilters = EQUALIZER_BANDS.map(({ frequency, type }) => {
         const filter = ctx.createBiquadFilter()
@@ -697,7 +712,6 @@ export class AudioEngine {
         analyser.maxDecibels = ANALYSER_MAX_DB
         compressor.connect(analyser)
         this.analyser = analyser
-        this.analyserBuf = new Uint8Array(analyser.fftSize)
       }
       this.ctx = ctx
       this.gainNode = gain
@@ -710,7 +724,8 @@ export class AudioEngine {
       this.gainNode = null
       this.compressorNode = null
       this.analyser = null
-      this.analyserBuf = null
+      this.sourceMonitor = null
+      this.sourceMonitorBuf = null
     }
   }
 

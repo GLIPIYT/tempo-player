@@ -35,9 +35,20 @@ export default function HourMixPage({ mix }: { mix: HourMix }) {
 
   return (
     <EditorialDetailLayout
+      className="local-playlist-page hour-mix-page"
       onBack={() => navigate({ name: 'home' })}
       backLabel={t('Home')}
-      art={<Cover path={mix.tracks.find((track) => track.coverPath)?.coverPath ?? null} label={mix.title} size={232} />}
+      art={
+        mix.tracks.length > 1 ? (
+          <div className="playlist-cover-mosaic" aria-label={t('Playlist cover')}>
+            {mix.tracks.slice(0, 4).map((track) => (
+              <Cover key={track.id} path={track.coverPath} label={track.title} size={112} />
+            ))}
+          </div>
+        ) : (
+          <Cover path={mix.tracks[0]?.coverPath ?? null} label={mix.title} size={232} />
+        )
+      }
       kind={t(mix.key === 'mix' ? 'For this hour' : 'Artist mix')}
       title={mix.title}
       meta={<span>{mix.tracks.length} {t(mix.tracks.length === 1 ? 'track' : 'tracks')} · {t('From your library')}</span>}
@@ -54,7 +65,7 @@ export default function HourMixPage({ mix }: { mix: HourMix }) {
         </>
       }
     >
-      <TrackList tracks={mix.tracks} />
+      <TrackList tracks={mix.tracks} showHeader />
     </EditorialDetailLayout>
   )
 }
