@@ -1589,10 +1589,31 @@ pub fn export_playlist_m3u8(
 ) -> Result<usize, String> {
     let rows = state.db.get_playlist_tracks(playlist_id)?;
     let cache_dir = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
+    write_tracks_m3u8(rows.into_iter().map(|row| row.track), &path, &cache_dir)
+}
+
+#[tauri::command]
+pub fn export_tracks_m3u8(
+    state: State<'_, AppState>,
+    track_ids: Vec<i64>,
+    path: String,
+) -> Result<usize, String> {
+    if track_ids.is_empty() || track_ids.len() > 500 {
+        return Err("invalid track count".into());
+    }
+    let tracks = state.db.get_tracks_by_ids(&track_ids)?;
+    let cache_dir = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
+    write_tracks_m3u8(tracks, &path, &cache_dir)
+}
+
+fn write_tracks_m3u8(
+    tracks: impl IntoIterator<Item = Track>,
+    path: &str,
+    cache_dir: &Path,
+) -> Result<usize, String> {
     let mut out = String::from("#EXTM3U\n");
     let mut count = 0usize;
-    for row in rows {
-        let track = &row.track;
+    for track in tracks {
         let location = match track.source.as_str() {
             "soundcloud" => {
                 let Some(external_id) = &track.external_id else { continue };

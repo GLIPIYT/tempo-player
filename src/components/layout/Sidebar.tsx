@@ -76,6 +76,8 @@ function activeFor(view: View): string | null {
       return 'artists'
     case 'playlist':
       return 'playlists'
+    case 'hour-mix':
+      return 'home'
     case 'search':
     case 'settings':
       return null

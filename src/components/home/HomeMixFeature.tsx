@@ -3,20 +3,15 @@ import { ChevronDown, ChevronLeft, ChevronRight, Clock3, ListMusic, Play } from 
 import type { Track } from '../../types/models'
 import { resolveLang, useT, type Lang } from '../../i18n'
 import { useSettings } from '../../state/settings'
+import type { HourMix } from '../../utils/hourMixes'
 import Cover from '../common/Cover'
 
-export interface HomeMix {
-  key: string
-  title: string
-  tracks: Track[]
-}
-
 interface HomeMixFeatureProps {
-  mixes: HomeMix[]
+  mixes: HourMix[]
   onPlay: (tracks: Track[], index: number) => void
-  onMixMenu: (event: MouseEvent, mix: HomeMix) => void
+  onOpen: (mix: HourMix) => void
+  onMixMenu: (event: MouseEvent, mix: HourMix) => void
   onSectionMenu: (event: MouseEvent) => void
-  onTrackMenu: (event: MouseEvent, track: Track, tracks: Track[], index: number) => void
 }
 
 function trackCount(count: number, t: (key: string) => string, lang: Lang): string {
@@ -25,16 +20,16 @@ function trackCount(count: number, t: (key: string) => string, lang: Lang): stri
   return `${count} ${t(form)}`
 }
 
-function mixCover(mix: HomeMix): string | null {
+function mixCover(mix: HourMix): string | null {
   return mix.tracks.find((track) => track.coverPath)?.coverPath ?? null
 }
 
 export default function HomeMixFeature({
   mixes,
   onPlay,
+  onOpen,
   onMixMenu,
   onSectionMenu,
-  onTrackMenu,
 }: HomeMixFeatureProps) {
   const t = useT()
   const { settings } = useSettings()
@@ -45,7 +40,6 @@ export default function HomeMixFeature({
   const pointerInput = useRef(false)
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [tracksOpen, setTracksOpen] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [visible, setVisible] = useState(!document.hidden)
@@ -76,7 +70,7 @@ export default function HomeMixFeature({
 
   useEffect(() => {
     const keys = mixKeys ? mixKeys.split('\u0001') : []
-    if (keys.length < 2 || hovered || focused || pickerOpen || tracksOpen || !visible || reducedMotion) return
+    if (keys.length < 2 || hovered || focused || pickerOpen || !visible || reducedMotion) return
     const delay = Math.max(3000, manualUntil - Date.now())
     const timer = window.setTimeout(() => {
       setSelectedKey((current) => {
@@ -86,7 +80,7 @@ export default function HomeMixFeature({
       setManualUntil(0)
     }, delay)
     return () => window.clearTimeout(timer)
-  }, [mixKeys, selectedKey, hovered, focused, pickerOpen, tracksOpen, visible, reducedMotion, manualUntil])
+  }, [mixKeys, selectedKey, hovered, focused, pickerOpen, visible, reducedMotion, manualUntil])
 
   useEffect(() => {
     if (!pickerOpen) return
@@ -105,7 +99,6 @@ export default function HomeMixFeature({
     setSelectedKey(mixes[(index + mixes.length) % mixes.length].key)
     setManualUntil(Date.now() + 9000)
     setPickerOpen(false)
-    setTracksOpen(false)
   }
 
   const onBlur = (event: FocusEvent<HTMLElement>) => {
@@ -127,7 +120,6 @@ export default function HomeMixFeature({
         if (event.key === 'Escape') {
           if (pickerOpen) pickerButtonRef.current?.focus()
           setPickerOpen(false)
-          setTracksOpen(false)
         }
       }}
     >
@@ -155,16 +147,15 @@ export default function HomeMixFeature({
                     : t('Tracks by this artist in your hourly picks')}
                 </p>
                 <div className="home-mix-actions">
-                  <button type="button" className="home-mix-play" onClick={() => onPlay(mix.tracks, 0)}>
+                  <button type="button" className="home-mix-play" tabIndex={current && !pickerOpen ? 0 : -1} onClick={() => onPlay(mix.tracks, 0)}>
                     <Play size={15} fill="currentColor" />
                     {t('Play mix')}
                   </button>
                   <button
                     type="button"
                     className="home-mix-view"
-                    aria-expanded={current && tracksOpen}
-                    aria-controls="home-mix-tracks"
-                    onClick={() => setTracksOpen((open) => !open)}
+                    tabIndex={current && !pickerOpen ? 0 : -1}
+                    onClick={() => onOpen(mix)}
                   >
                     <ListMusic size={15} />
                     {t('View tracks')}
@@ -216,7 +207,6 @@ export default function HomeMixFeature({
             aria-controls="home-mix-picker"
             onClick={() => {
               setPickerOpen((open) => !open)
-              setTracksOpen(false)
             }}
           >
             <span className="home-mix-stack" aria-hidden="true">
@@ -246,26 +236,6 @@ export default function HomeMixFeature({
         </div>
       </div>
 
-      {tracksOpen ? (
-        <div className="home-mix-track-list" id="home-mix-tracks">
-          <div className="home-mix-picker-heading"><strong>{activeMix.title}</strong><span>{trackCount(activeMix.tracks.length, t, lang)}</span></div>
-          <div className="home-mix-track-grid">
-            {activeMix.tracks.map((track, index) => (
-              <button
-                key={track.id}
-                type="button"
-                className="home-mix-track"
-                onClick={() => onPlay(activeMix.tracks, index)}
-                onContextMenu={(event) => onTrackMenu(event, track, activeMix.tracks, index)}
-              >
-                <Cover path={track.coverPath} label={track.title} size={42} />
-                <span><strong>{track.title}</strong><small>{track.artistName ?? t('Unknown artist')}</small></span>
-                <Play size={14} />
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
     </section>
   )
 }

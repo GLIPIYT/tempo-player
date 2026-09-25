@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 import { useSettings } from './settings'
+import type { HourMix } from '../utils/hourMixes'
 
 export type View =
   | { name: 'home' }
@@ -13,6 +14,7 @@ export type View =
   | { name: 'album'; id: number }
   | { name: 'artist'; id: number }
   | { name: 'playlist'; id: number }
+  | { name: 'hour-mix'; mix: HourMix }
   /** SoundCloud pages, browsed live and not written to the library. */
   | { name: 'sc-playlist'; id: string }
   | { name: 'sc-artist'; id: string }

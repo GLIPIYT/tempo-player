@@ -1,5 +1,5 @@
-import { useRef, useState, type MouseEvent, type PointerEvent } from 'react'
-import { ArrowUpRight, ChevronDown, ChevronLeft, ChevronRight, Play } from 'lucide-react'
+import { useRef, type MouseEvent, type PointerEvent } from 'react'
+import { ArrowUpRight, ChevronLeft, ChevronRight, Play } from 'lucide-react'
 import type { Playlist, TopTrackItem, Track } from '../../types/models'
 import { useT } from '../../i18n'
 import { beginTrackDrag, consumeDragClick } from '../../dnd/trackDrag'
@@ -84,7 +84,6 @@ function TrackRail({ title, id, tracks, unknownArtist, caption, onOpen, onPlay, 
 
 export default function HomeShelves({ topTracks, recentAdded, recentPlays, dormantTracks, likedTracks, likesPlaylist, featuredPlaylists, hasPlaylistHistory, unknownArtist, onPlay, onPlayPlaylist, onOpenPlaylist, onTrackMenu, onSectionMenu }: HomeShelvesProps) {
   const t = useT()
-  const [showAllPlayed, setShowAllPlayed] = useState(false)
   const topList = topTracks.map((item) => item.track)
   const playCounts = new Map(topTracks.map((item) => [item.track.id, item.playCount]))
   const playedVisible = recentPlays.length > 0 && !isSectionHidden('home.played')
@@ -98,19 +97,12 @@ export default function HomeShelves({ topTracks, recentAdded, recentPlays, dorma
         <section className="home-section">
           <div className="home-section-head" onContextMenu={(event) => onSectionMenu(event, { title: t('Recently played'), id: 'home.played', tracks: recentPlays })}>
             <span className="home-section-title">{t('Listened recently')}</span>
-            {recentPlays.length > 3 ? (
-              <button type="button" className="home-section-more" onClick={() => setShowAllPlayed((value) => !value)}>
-                {t(showAllPlayed ? 'Show less' : 'Show all')}
-                <ChevronDown size={14} className={showAllPlayed ? 'is-open' : undefined} />
-              </button>
-            ) : null}
           </div>
-          <div className="home-return-grid">
-            {recentPlays.slice(0, showAllPlayed ? recentPlays.length : 3).map((track, index) => (
+          <div className="home-return-grid" tabIndex={0} aria-label={t('Listened recently')}>
+            {recentPlays.map((track, index) => (
               <button key={track.id} type="button" className="home-return-card" onClick={() => { if (!consumeDragClick()) onPlay(recentPlays, index) }} onPointerDown={(event) => startDrag(event, track)} onContextMenu={(event) => onTrackMenu(event, track, recentPlays, index)}>
-                <Cover path={track.coverPath} label={track.title} size={54} />
+                <Cover path={track.coverPath} label={track.title} size={160} />
                 <span><strong>{track.title}</strong><small>{track.artistName ?? unknownArtist}</small></span>
-                <Play size={15} />
               </button>
             ))}
           </div>

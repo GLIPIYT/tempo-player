@@ -14,6 +14,7 @@ import SearchPage from './pages/SearchPage'
 import AlbumDetailPage from './pages/AlbumDetailPage'
 import ArtistDetailPage from './pages/ArtistDetailPage'
 import PlaylistDetailPage from './pages/PlaylistDetailPage'
+import HourMixPage from './pages/HourMixPage'
 import Onboarding from './components/onboarding/Onboarding'
 import PresenceBridge from './components/integration/PresenceBridge'
 import MiniPlayerBridge from './components/integration/MiniPlayerBridge'
@@ -72,6 +73,8 @@ function CurrentPage() {
       return <ArtistDetailPage key={view.id} artistId={view.id} />
     case 'playlist':
       return <PlaylistDetailPage key={view.id} playlistId={view.id} />
+    case 'hour-mix':
+      return <HourMixPage key={view.mix.key} mix={view.mix} />
     case 'sc-playlist':
       return <ScPlaylistPage key={view.id} playlistId={view.id} />
     case 'sc-artist':

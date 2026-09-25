@@ -151,6 +151,8 @@ export const api = {
 
   exportPlaylistM3u8: (playlistId: number, path: string) =>
     invoke<number>('export_playlist_m3u8', { playlistId, path }),
+  exportTracksM3u8: (trackIds: number[], path: string) =>
+    invoke<number>('export_tracks_m3u8', { trackIds, path }),
   importPlaylistM3u8: (path: string, name: string) =>
     invoke<Playlist>('import_playlist_m3u8', { path, name }),
 

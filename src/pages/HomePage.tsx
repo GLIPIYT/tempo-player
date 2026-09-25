@@ -24,6 +24,7 @@ import EmptyState from '../components/common/EmptyState'
 import ScanLine from '../components/common/ScanLine'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import TrackContextMenu, { type TrackContextRequest } from '../components/common/TrackContextMenu'
+import { buildHourMixes } from '../utils/hourMixes'
 import {
   anySectionHidden,
   hideSectionUntilTomorrow,
@@ -51,15 +52,6 @@ function dedupeRecent(entries: { track: Track }[], limit: number): Track[] {
   return out
 }
 
-function stableMixRank(id: number): number {
-  let hash = 2166136261
-  for (const char of String(id)) {
-    hash ^= char.charCodeAt(0)
-    hash = Math.imul(hash, 16777619)
-  }
-  return hash >>> 0
-}
-
 export default function HomePage() {
   const t = useT()
   const { settings } = useSettings()
@@ -72,7 +64,10 @@ export default function HomePage() {
   const recent = useAsync(() => api.listTracks('', 10, 0), [version])
   const hourPicks = useAsync(() => api.getHourPicks(30), [version])
   const top = useAsync(() => api.getTopTracks(40), [version])
-  const played = useAsync(async () => dedupeRecent((await api.getAnalytics('30d')).recent, 10), [version])
+  const played = useAsync(async () => {
+    const since = Math.floor(Date.now() / 1000) - 30 * 86400
+    return dedupeRecent((await api.getHistory(100, 0)).filter((entry) => entry.playedAt >= since), 16)
+  }, [version])
   const dormant = useAsync(() => api.getDormantTracks(Math.floor(Date.now() / 1000) - 30 * 86400, 24), [version])
   const playlistData = useAsync(async () => {
     const [playlists, stats] = await Promise.all([api.listPlaylists(), api.listPlaylistPlayStats()])
@@ -85,39 +80,12 @@ export default function HomePage() {
   const hourPicksList = useMemo(() => hourPicks.data ?? [], [hourPicks.data])
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
   const nickname = settings.profile.nickname
-  const hourMixes = useMemo(() => {
-    if (hourPicksList.length === 0) return []
-    const mixes: { key: string; title: string; tracks: Track[] }[] = []
-    const byArtist = new Map<string, Track[]>()
-    for (const tr of hourPicksList) {
-      const artist = tr.artistName?.trim()
-      if (
-        !artist ||
-        artist.toLowerCase() === unknownArtist.toLowerCase() ||
-        artist.toLowerCase() === 'unknown artist' ||
-        artist.toLowerCase() === 'неизвестный исполнитель'
-      ) continue
-      const list = byArtist.get(artist)
-      if (list) list.push(tr)
-      else byArtist.set(artist, [tr])
-    }
-    if (hourPicksList.length >= 4) {
-      const ordered = hourPicksList
-        .slice()
-        .sort((a, b) => stableMixRank(a.id) - stableMixRank(b.id) || a.id - b.id)
-      mixes.push({ key: 'mix', title: t('Hour mix'), tracks: ordered.slice(0, 24) })
-    }
-    const artistMixes = [...byArtist.entries()]
-      .filter(([, list]) => list.length >= 3)
-      .sort((a, b) => b[1].length - a[1].length)
-      .slice(0, 3)
-    for (const [artist, list] of artistMixes) {
-      mixes.push({ key: `artist:${artist}`, title: artist, tracks: list })
-    }
-    return mixes
-  }, [hourPicksList, unknownArtist, t])
+  const hourMixes = useMemo(
+    () => buildHourMixes(hourPicksList, unknownArtist, t('Music for this hour')),
+    [hourPicksList, unknownArtist, t],
+  )
 
-  // Reuse one track menu for cards across the home shelves and mix track list.
+  // Reuse one track menu for cards across the home shelves.
   const [ctx, setCtx] = useState<TrackContextRequest | null>(null)
   useHiddenSections()
 
@@ -272,13 +240,13 @@ export default function HomePage() {
             <HomeMixFeature
               mixes={visibleMixes}
               onPlay={playSection}
+              onOpen={(mix) => navigate({ name: 'hour-mix', mix })}
               onMixMenu={(event, mix) =>
                 sectionMenu(event, { title: mix.title, id: 'home.mix:' + mix.key, tracks: mix.tracks })
               }
               onSectionMenu={(event) =>
                 sectionMenu(event, { title: t('For this hour'), id: 'home.hour', tracks: hourPicksList })
               }
-              onTrackMenu={trackContext}
             />
           ) : null}
 

@@ -327,8 +327,7 @@
   background: var(--accent-strong);
 }
 
-.home-mix-picker,
-.home-mix-track-list {
+.home-mix-picker {
   margin-top: 9px;
   padding: 13px;
   border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
@@ -423,27 +422,6 @@
 .home-mix-choice-copy strong { margin: 2px 0; font-size: 12px; }
 .home-mix-choice-copy span { color: var(--text-muted); font-size: 10px; }
 
-.home-mix-track-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
-.home-mix-track {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  text-align: left;
-}
-.home-mix-track:hover { background: var(--surface-hover); border-color: var(--accent); }
-.home-mix-track .cover { flex: none; }
-.home-mix-track > span { min-width: 0; flex: 1; }
-.home-mix-track strong,
-.home-mix-track small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.home-mix-track strong { font-size: 11px; }
-.home-mix-track small { color: var(--text-muted); font-size: 10px; }
-.home-mix-track > svg { flex: none; color: var(--accent-strong); }
-
 .tempo-home .home-section { margin-bottom: 25px; }
 .tempo-home .home-section-head { justify-content: space-between; margin-bottom: 12px; }
 .tempo-home .home-section-title {
@@ -452,38 +430,38 @@
   font-weight: 700;
   letter-spacing: -.025em;
 }
-.home-section-more {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 0;
-  color: var(--accent-strong);
-  font-size: 11px;
+.home-return-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max(112px, calc(12.5% - 7px));
+  gap: 8px;
+  max-width: 100%;
+  padding-bottom: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 70%, transparent) transparent;
 }
-.home-section-more:hover { color: var(--text); }
-.home-section-more svg { transition: transform .2s ease; }
-.home-section-more svg.is-open { transform: rotate(180deg); }
-
-.home-return-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.home-return-grid::-webkit-scrollbar { height: 5px; }
+.home-return-grid::-webkit-scrollbar-thumb { border-radius: 5px; background: color-mix(in srgb, var(--accent) 70%, transparent); }
 .home-return-card {
   display: flex;
-  align-items: center;
-  gap: 11px;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
-  padding: 9px;
+  padding: 6px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 9px;
   background: var(--surface);
   text-align: left;
 }
 .home-return-card:hover { border-color: var(--accent); background: var(--surface-hover); }
-.home-return-card .cover { flex: none; }
-.home-return-card > span { min-width: 0; flex: 1; }
+.home-return-card .cover { width: 100% !important; height: auto !important; aspect-ratio: 1; object-fit: cover; }
+.home-return-card > span { min-width: 0; width: 100%; }
 .home-return-card strong,
 .home-return-card small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.home-return-card strong { font-size: 12px; }
+.home-return-card strong { font-size: 11px; }
 .home-return-card small { margin-top: 2px; color: var(--text-muted); font-size: 10px; }
-.home-return-card > svg { flex: none; color: var(--accent-strong); }
 
 .home-content-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr); align-items: start; gap: 30px; }
 .home-content-main, .home-content-side { min-width: 0; }
@@ -561,7 +539,6 @@
   .home-mix-slide { grid-template-columns: minmax(0, 1fr) 210px; }
   .home-mix-copy { padding: 23px; }
   .home-mix-art-card { width: min(64%, 180px); }
-  .home-return-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .home-content-grid { grid-template-columns: 1fr; gap: 0; }
   .home-new-list, .home-playlist-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -582,10 +559,8 @@
   .home-mix-count,
   .home-mix-dots { display: none; }
   .home-mix-picker-button { gap: 6px; }
-  .home-return-grid { grid-template-columns: 1fr; }
   .home-avatar { width: 40px; height: 40px; }
   .home-mix-stage .home-mix-picker { padding: 18px 14px; }
-  .home-mix-track-grid { grid-template-columns: 1fr; }
   .home-new-list, .home-playlist-list { grid-template-columns: 1fr; }
 }
 

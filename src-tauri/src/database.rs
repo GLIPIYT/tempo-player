@@ -1363,6 +1363,24 @@ impl Db {
         })
     }
 
+    pub fn get_tracks_by_ids(&self, ids: &[i64]) -> Result<Vec<Track>, String> {
+        self.with_conn(|conn| {
+            let sql = format!("SELECT {} FROM {} WHERE t.id = ?1", TRACK_COLUMNS, TRACK_FROM);
+            let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+            let mut tracks = Vec::with_capacity(ids.len());
+            for id in ids {
+                if let Some(track) = stmt
+                    .query_row(params![id], |row| map_track_at(row, 0))
+                    .optional()
+                    .map_err(db_err)?
+                {
+                    tracks.push(track);
+                }
+            }
+            Ok(tracks)
+        })
+    }
+
     pub fn mark_sc_cached(&self, external_id: &str, size: i64) -> Result<(), String> {
         self.with_conn(|conn| {
             conn.execute(
