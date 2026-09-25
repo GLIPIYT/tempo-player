@@ -22,18 +22,31 @@
     @media(max-width:680px){.preview-bar{position:static;gap:10px;padding:10px}.back-link{margin-left:auto}.preview-controls{width:100%;justify-content:space-between}.showcase{width:calc(100% - 10px);padding-top:13px}.showcase-top{align-items:start}.showcase-top h1{font-size:22px}.app-shell{height:720px;grid-template-columns:1fr;grid-template-rows:27px minmax(0,1fr) 62px;border-radius:10px}.app-shell .sidebar{display:none}.app-shell .workspace{grid-column:1;grid-row:2}.app-shell .playerbar{grid-column:1;grid-row:3;padding-inline:11px}.app-shell .topbar{padding-inline:10px}.app-shell .screen{padding:14px 11px 20px}.app-shell.is-narrow{grid-template-columns:1fr}.app-shell.is-narrow .sidebar{display:none}.app-shell.is-narrow .workspace{grid-column:1}.app-shell .track-first,.app-shell .catalog-layout,.app-shell .best-layout,.app-shell .best-bottom{grid-template-columns:minmax(0,1fr)}.app-shell .track-aside,.app-shell .type-rail{display:none}.app-shell .source-grid{grid-template-columns:minmax(0,1fr)}.app-shell .source-lane{display:block}.app-shell .lane-result{display:grid}.app-shell .spotlight{grid-template-columns:94px minmax(0,1fr);gap:10px;min-height:140px;padding:10px}.app-shell .spotlight .art{width:88px;height:88px}.app-shell .spotlight h3{font-size:18px}.app-shell .spotlight p{font-size:9px}.app-shell .cover-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.app-shell .result-row{grid-template-columns:18px 35px minmax(0,1fr) 40px;gap:7px;padding-inline:3px}.app-shell .result-row .art{width:34px;height:34px}.app-shell .result-row .provider-tag{display:none}.app-shell .toolbar{align-items:flex-start;flex-direction:column}.app-shell .source-filter{font-size:8px}.app-shell .playerbar{grid-template-columns:1fr 1fr}.app-shell .now-cover{width:35px;height:35px}.app-shell .transport .progress{display:none}.app-shell .top-search{display:none}}
     @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important}}
   </style>
+  <style>
+    .preview-state{display:flex;align-items:center;gap:7px;padding:3px 8px;border:1px solid var(--color-line);border-radius:9px;background:var(--color-shell);color:var(--color-muted);font-size:10px;white-space:nowrap}.preview-state select{max-width:142px;border:0;background:transparent;color:var(--color-text);font:inherit}.preview-state select:focus-visible{outline:2px solid var(--color-accent-strong);outline-offset:2px}
+    .top-search{min-width:180px;width:min(360px,55%);margin:auto}.top-search input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--color-text);font:inherit}.top-search input:focus-visible{outline:0}
+    .catalog-layout{grid-template-columns:164px minmax(0,1fr);gap:20px}.type-rail{display:flex;flex-direction:column;gap:3px;padding:7px}.type-item{min-height:37px;padding:0 10px;font-size:11px}.type-item[aria-pressed=true]{box-shadow:inset 2px 0 var(--color-accent-strong)}.type-item .count{min-width:18px;text-align:right}.catalog-toolbar{min-height:31px;margin:0 0 11px}.catalog-toolbar h3{font-size:17px}.catalog-source-group{margin:0 0 20px}.catalog-source-head{display:flex;align-items:center;gap:9px;min-height:34px;margin-bottom:5px;border-bottom:1px solid var(--color-line)}.catalog-source-head .provider-mark{width:20px;height:20px}.catalog-source-head strong{font:600 12px var(--font-display)}.catalog-source-count{margin-left:auto;color:var(--color-dim);font-size:9px}.catalog-subgroup{margin-top:10px}.catalog-subhead{margin:0 0 5px;color:var(--color-muted);font-size:10px;font-weight:600}.catalog-artists .collection-row{min-height:49px}.catalog-artists .art{border-radius:50%}.catalog-source-error{padding:15px 11px;border:1px solid #62484a;border-radius:7px;background:#281d22;color:#efb1a4;font-size:11px}.catalog-empty{display:grid;place-items:center;min-height:230px;padding:26px;text-align:center}.catalog-empty-mark{display:grid;place-items:center;width:41px;height:41px;margin-bottom:10px;border:1px solid var(--color-line);border-radius:50%;color:var(--color-accent);font-size:20px}.catalog-empty h4{margin:0;font:600 15px var(--font-display)}.catalog-empty p{margin:5px 0 0;color:var(--color-muted);font-size:10px}.catalog-skeleton{display:grid;gap:7px;padding:5px 0 11px}.catalog-skeleton i{display:block;height:44px;border-radius:6px;background:linear-gradient(90deg,var(--color-surface),var(--color-raised),var(--color-surface));background-size:200% 100%;animation:catalog-shimmer 1.35s ease-in-out infinite}.catalog-skeleton i:nth-child(2){width:91%}.catalog-skeleton i:nth-child(3){width:84%}@keyframes catalog-shimmer{to{background-position:-200% 0}}
+    @media(max-width:930px){.app-shell.is-narrow .catalog-layout{grid-template-columns:134px minmax(0,1fr)}.app-shell:not(.is-narrow) .catalog-layout{grid-template-columns:134px minmax(0,1fr)}}
+    @media(max-width:680px){.preview-controls{flex-wrap:wrap}.preview-state{margin-left:auto}.top-search{min-width:0;width:auto;flex:1}.app-shell .top-search{display:flex}.catalog-layout,.app-shell.is-narrow .catalog-layout,.app-shell:not(.is-narrow) .catalog-layout{grid-template-columns:minmax(0,1fr)}.app-shell .type-rail{display:flex;flex-direction:row;overflow:auto;padding:3px;border:0;border-bottom:1px solid var(--color-line);border-radius:0;background:transparent}.app-shell .type-item{flex:none;min-height:31px;width:auto;padding:0 10px;white-space:nowrap}.app-shell .type-item[aria-pressed=true]{box-shadow:inset 0 -2px var(--color-accent-strong)}.catalog-source-group{margin-bottom:15px}.catalog-source-head{min-height:31px}.catalog-source-head .provider-tag{display:none}.preview-state select{max-width:120px}}
+    @media(prefers-reduced-motion:reduce){.catalog-skeleton i{animation:none}}
+  </style>
+  <style>
+    .catalog-result-row{display:grid;grid-template-columns:20px 40px minmax(0,1fr) 42px;align-items:center;gap:10px;min-height:53px;padding:5px 8px;border-bottom:1px solid color-mix(in srgb,var(--color-line) 75%,transparent)}.catalog-result-row:hover{background:color-mix(in srgb,var(--color-raised) 68%,transparent)}.catalog-result-row .result-art{width:38px;height:38px}.catalog-track-copy{min-width:0}.catalog-track-copy b,.catalog-track-copy small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.catalog-track-copy b{font-size:10px;font-weight:600}.catalog-track-copy small{margin-top:3px;color:var(--color-muted);font-size:9px}.catalog-artist{min-height:47px;padding:5px 4px}.catalog-artist .art{width:38px;height:38px}.catalog-artist span:nth-child(2){min-width:0}.catalog-artist b,.catalog-artist small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.catalog-artist b{font-size:10px}.catalog-artist small{margin-top:2px;color:var(--color-muted);font-size:9px}
+    @media(max-width:680px){.catalog-result-row{grid-template-columns:17px 34px minmax(0,1fr) 38px;gap:7px;padding-inline:2px}.catalog-result-row .result-art{width:32px;height:32px}.catalog-artist .provider-tag{display:none}}
+  </style>
 </head>
 <body>
   <header class="preview-bar">
     <a class="preview-brand" href="./remaining-page-variants.html#page=search" aria-label="Tempo: все страницы"><span class="tempo-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><strong>Tempo</strong></a>
     <a class="back-link" href="./remaining-page-variants.html#page=search">← Все страницы</a>
     <div class="preview-controls">
-      <div class="segmented" role="group" aria-label="Вариант поиска"><button type="button" data-variant="a" aria-pressed="true">A</button><button type="button" data-variant="b" aria-pressed="false">Б</button><button type="button" data-variant="c" aria-pressed="false">В</button><button type="button" data-variant="d" aria-pressed="false">Г</button></div>
+      <div class="segmented" role="group" aria-label="Вариант поиска"><button type="button" data-variant="a" aria-pressed="false">A</button><button type="button" data-variant="b" aria-pressed="false">Б</button><button type="button" data-variant="c" aria-pressed="true">В</button><button type="button" data-variant="d" aria-pressed="false">Г</button></div>
       <div class="segmented" role="group" aria-label="Ширина окна"><button type="button" data-width="wide" aria-pressed="true">Широкое</button><button type="button" data-width="narrow" aria-pressed="false">Узкое</button></div>
+      <label class="preview-state" id="preview-state-control" hidden><span>Состояние</span><select id="preview-state" aria-label="Состояние поиска"><option value="ready">Результаты</option><option value="loading">Загрузка</option><option value="empty">Пусто</option><option value="sc-error">SoundCloud недоступен</option></select></label>
     </div>
   </header>
   <main class="showcase">
-    <div class="showcase-top"><div><h1>Поиск</h1><p>Четыре компоновки · один набор результатов</p></div><span class="variant-name" id="variant-name">A · Треки в фокусе</span></div>
+    <div class="showcase-top"><div><h1>Поиск</h1><p>Четыре компоновки · один набор результатов</p></div><span class="variant-name" id="variant-name">В · По типу результата</span></div>
     <section class="app-shell" id="app-shell" aria-label="Предпросмотр поиска Tempo">
       <div class="titlebar"><span>Tempo / Поиск</span><span class="window-buttons" aria-hidden="true"><span>—</span><span>□</span><span>×</span></span></div>
       <aside class="sidebar" aria-label="Навигация">
@@ -47,7 +60,7 @@
         <div class="side-player">СЕЙЧАС ИГРАЕТ<b>After the Rain</b><i></i></div>
       </aside>
       <div class="workspace">
-        <div class="topbar"><button class="nav-button" type="button" aria-label="Назад">‹</button><button class="nav-button" type="button" aria-label="Вперёд">›</button><div class="top-search">⌕ <span>Найти музыку</span></div><span class="avatar" aria-label="Профиль">М</span></div>
+        <div class="topbar"><button class="nav-button" type="button" aria-label="Назад">‹</button><button class="nav-button" type="button" aria-label="Вперёд">›</button><label class="top-search" aria-label="Поиск Tempo"><span aria-hidden="true">⌕</span><input type="search" value="after the rain" data-query aria-label="Поиск музыки"></label><span class="avatar" aria-label="Профиль">М</span></div>
         <div class="screen" id="screen"></div>
       </div>
       <footer class="playerbar"><div class="now-playing"><span class="art rain now-cover"></span><span class="now-copy"><b>After the Rain</b><small>Low Tide · Night Signals</small></span></div><div class="transport"><div class="transport-controls"><span>⇄</span><span>◂</span><button class="play-button" type="button" aria-label="Пауза">Ⅱ</button><span>▸</span><span>↻</span></div><div class="progress"><i></i></div></div><div class="player-tools"><span>♫</span><span>▤</span><span>◖</span><span class="volume"><i></i></span></div></footer>
@@ -78,11 +91,16 @@
       {title:'Rain after dark',artist:'Low Tide',detail:'18 треков',source:'soundcloud',art:'rain',type:'playlist'},
       {title:'Late night mix',artist:'Микс YouTube Music',detail:'30 треков',source:'youtube',art:'blue',type:'playlist'}
     ];
-    const typeLabels={track:'Треки',album:'Альбомы',artist:'Исполнители',playlist:'Плейлисты'};
-    const sourceLabels={tempo:'Tempo',soundcloud:'SoundCloud',youtube:'YouTube Music'};
+    const typeLabels={all:'Все',track:'Треки',album:'Альбомы',playlist:'Плейлисты',artist:'Исполнители'};
+    const sourceLabels={tempo:'Медиатека',soundcloud:'SoundCloud',youtube:'YouTube Music'};
     const sourceMarks={tempo:'T',soundcloud:'◖',youtube:'▶'};
     const variantLabels={a:'A · Треки в фокусе',b:'Б · По источникам',c:'В · По типу результата',d:'Г · Лучшее совпадение'};
-    let variant='a';let narrow=false;let type='track';let source='all';let query='after the rain';
+    const resultsBySource={
+      tempo:{track:tracks.filter(item=>item.source==='tempo'),album:albums.filter(item=>item.source==='tempo'),playlist:[],artist:artists.filter(item=>item.source==='tempo')},
+      soundcloud:{track:tracks.filter(item=>item.source==='soundcloud'),album:albums.filter(item=>item.source==='soundcloud'),playlist:playlists.filter(item=>item.source==='soundcloud'),artist:artists.filter(item=>item.source==='soundcloud')},
+      youtube:{track:tracks.filter(item=>item.source==='youtube'),album:albums.filter(item=>item.source==='youtube'),playlist:playlists.filter(item=>item.source==='youtube'),artist:artists.filter(item=>item.source==='youtube')}
+    };
+    let variant='c';let narrow=false;let type='all';let source='all';let query='after the rain';let previewState='ready';
     function art(name,extra=''){return `<span class="art ${name} ${extra}" aria-hidden="true"></span>`}
     function sourceTag(id){return `<span class="provider-tag"><i class="source-dot ${id==='soundcloud'?'sc':id==='youtube'?'yt':''}"></i>${sourceLabels[id]}</span>`}
     function status(item){return `<span class="status ${item.source==='soundcloud'&&item.state==='В сети'?'online':''}">${item.state}</span>`}
@@ -90,32 +108,72 @@
     function laneRow(item){return `<div class="lane-result" data-search="${`${item.title} ${item.artist} ${item.album??item.detail??''}`.toLocaleLowerCase()}" data-source="${item.source}" data-type="${item.type}">${art(item.art)}<span class="lane-copy"><b>${item.title}</b><small>${item.artist}${item.album?` · ${item.album}`:''}</small></span><span class="play">▶</span></div>`}
     function miniResult(item){return `<div class="side-result" data-search="${`${item.title} ${item.artist}`.toLocaleLowerCase()}" data-source="${item.source}" data-type="${item.type}">${art(item.art)}<span><b>${item.title}</b><small>${item.artist} · ${sourceLabels[item.source]}</small></span></div>`}
     function card(item){const shape=item.type==='artist'?'artist':'';return `<button type="button" class="cover-card ${shape}" data-search="${`${item.title} ${item.artist} ${item.detail??''}`.toLocaleLowerCase()}" data-source="${item.source}" data-type="${item.type}">${art(item.art)}<b>${item.title}</b><small>${item.artist} · ${item.detail??sourceLabels[item.source]}</small></button>`}
-    function escapeAttribute(value){return value.replace(/[&"<>]/g,char=>({'&':'&amp;','"':'&quot;','<':'&lt;','>':'&gt;'}[char]))}
-    function searchField(){return `<label class="search-field"><span class="search-glass" aria-hidden="true">⌕</span><input type="search" value="${escapeAttribute(query)}" aria-label="Поиск музыки" data-query><kbd>Esc</kbd></label>`}
-    function sourceFilters(){return `<div class="sources" aria-label="Источники"><button class="source-filter" data-source-filter="all" aria-pressed="${source==='all'}">Все источники</button><button class="source-filter" data-source-filter="tempo" aria-pressed="${source==='tempo'}"><i class="source-dot"></i>Tempo</button><button class="source-filter" data-source-filter="soundcloud" aria-pressed="${source==='soundcloud'}"><i class="source-dot sc"></i>SoundCloud</button><button class="source-filter" data-source-filter="youtube" aria-pressed="${source==='youtube'}"><i class="source-dot yt"></i>YouTube Music</button></div>`}
-    function typeTabs(){return `<div class="tabs" role="tablist" aria-label="Тип результата">${Object.entries(typeLabels).map(([key,label])=>`<button class="tab" type="button" role="tab" data-type-filter="${key}" aria-pressed="${type===key}">${label}<span class="tab-count">${key==='track'?6:key==='album'?4:key==='artist'?3:3}</span></button>`).join('')}</div>`}
+    function sourceFilters(){return `<div class="sources" role="group" aria-label="Источники"><button class="source-filter" data-source-filter="all" aria-pressed="${source==='all'}">Везде</button><button class="source-filter" data-source-filter="soundcloud" aria-pressed="${source==='soundcloud'}"><i class="source-dot sc"></i>SoundCloud</button><button class="source-filter" data-source-filter="youtube" aria-pressed="${source==='youtube'}"><i class="source-dot yt"></i>YouTube Music</button></div>`}
+    function typeTabs(){return `<div class="tabs" role="tablist" aria-label="Тип результата">${Object.entries(typeLabels).map(([key,label])=>`<button class="tab" type="button" role="tab" data-type-filter="${key}" aria-pressed="${type===key}">${label}</button>`).join('')}</div>`}
     function toolbar(){return `<div class="toolbar">${typeTabs()}${sourceFilters()}</div>`}
     function panel(title,content,tail=''){return `<section class="aside-section"><div class="section-title"><h3>${title}</h3>${tail?`<span>${tail}</span>`:''}</div>${content}</section>`}
-    function pageHead(subtitle){return `<div class="page-heading"><div><h2>Поиск</h2><small>${subtitle}</small></div><span class="status">3 источника</span></div>`}
+    function pageHead(subtitle){const sourceStatus=source==='all'?(type==='playlist'?'2 источника':'3 источника'):sourceLabels[source];return `<div class="page-heading"><div><h2>Поиск</h2><small id="search-subtitle">${subtitle}</small></div><span class="status">${sourceStatus}</span></div>`}
     function renderTrackFirst(){
-      const results={track:tracks,album:albums,artist:artists,playlist:playlists}[type];
-      return `${pageHead('Результаты по запросу «After the Rain»')}${searchField()}${toolbar()}<div class="track-first"><div class="track-main"><div class="result-heading"><h3>${typeLabels[type]}</h3><small>Сначала точные совпадения</small></div>${results.map(resultRow).join('')}<div class="section-title"><h3>Ещё результаты</h3><span>Похожие коллекции</span></div><div class="side-result-grid">${[albums[0],playlists[1]].map(miniResult).join('')}</div></div><aside class="track-aside">${panel('Лучшее совпадение',`<div class="match-card" data-search="after the rain low tide night signals" data-source="tempo" data-type="track">${art('rain')}<h4>After the Rain</h4><p>Low Tide · Night Signals</p><div class="match-actions"><button class="button primary" type="button">▶ Слушать</button><button class="button" type="button">⋯</button></div></div>`,`Tempo`)}${panel('Ещё нашли', [albums[0],artists[0]].map(miniResult).join(''))}</aside></div>`
+      const results=type==='all'?tracks:{track:tracks,album:albums,artist:artists,playlist:playlists}[type];
+      return `${pageHead('Результаты по запросу «After the Rain»')}${toolbar()}<div class="track-first"><div class="track-main"><div class="result-heading"><h3>${type==='all'?'Треки':typeLabels[type]}</h3><small>Сначала точные совпадения</small></div>${results.map(resultRow).join('')}<div class="section-title"><h3>Ещё результаты</h3><span>Похожие коллекции</span></div><div class="side-result-grid">${[albums[0],playlists[1]].map(miniResult).join('')}</div></div><aside class="track-aside">${panel('Лучшее совпадение',`<div class="match-card" data-search="after the rain low tide night signals" data-source="tempo" data-type="track">${art('rain')}<h4>After the Rain</h4><p>Low Tide · Night Signals</p><div class="match-actions"><button class="button primary" type="button">▶ Слушать</button><button class="button" type="button">⋯</button></div></div>`,`Tempo`)}${panel('Ещё нашли', [albums[0],artists[0]].map(miniResult).join(''))}</aside></div>`
     }
     function renderSources(){
       const groups={tempo:[tracks[0],tracks[3],albums[0]],soundcloud:[tracks[1],tracks[4],playlists[1]],youtube:[tracks[2],tracks[5],albums[1]]};
-      return `${pageHead('9 совпадений из всех источников')}${searchField()}<div class="toolbar">${sourceFilters()}<span class="provider-tag">Показываем по источнику</span></div><div class="source-grid">${Object.entries(groups).map(([key,items])=>`<section class="source-lane"><header class="lane-head"><span class="lane-name"><i class="provider-mark ${key==='soundcloud'?'sc':key==='youtube'?'yt':''}">${sourceMarks[key]}</i>${sourceLabels[key]}</span><span class="lane-count">${items.length} результата</span></header><div class="lane-state">${key==='tempo'?'В медиатеке':key==='soundcloud'?'Поток · 1 в кэше':'Можно воспроизводить'}</div>${items.map(laneRow).join('')}<footer class="lane-footer"><span>${key==='tempo'?'Локальный поиск':key==='soundcloud'?'Публичные результаты':'YouTube Music'}</span><span>Все результаты　›</span></footer></section>`).join('')}</div>`
+      return `${pageHead('9 совпадений из всех источников')}<div class="toolbar">${sourceFilters()}<span class="provider-tag">Показываем по источнику</span></div><div class="source-grid">${Object.entries(groups).map(([key,items])=>`<section class="source-lane" data-source-group="${key}"><header class="lane-head"><span class="lane-name"><i class="provider-mark ${key==='soundcloud'?'sc':key==='youtube'?'yt':''}">${sourceMarks[key]}</i>${sourceLabels[key]}</span><span class="lane-count">${items.length} результата</span></header><div class="lane-state">${key==='tempo'?'В медиатеке':key==='soundcloud'?'Поток · 1 в кэше':'Можно воспроизводить'}</div>${items.map(laneRow).join('')}<footer class="lane-footer"><span>${key==='tempo'?'Локальный поиск':key==='soundcloud'?'Публичные результаты':'YouTube Music'}</span><span>Все результаты　›</span></footer></section>`).join('')}</div>`
+    }
+    function escapeHtml(value){return value.replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}
+    function catalogTrack(item,index){return `<div class="catalog-result-row" data-search="${`${item.title} ${item.artist} ${item.album??''}`.toLocaleLowerCase()}" data-source="${item.source}" data-type="track"><span class="result-rank">${index+1}</span>${art(item.art,'result-art')}<span class="catalog-track-copy"><b>${item.title}</b><small>${item.artist}${item.album?` · ${item.album}`:''}</small></span><span class="result-time">${item.time??''}</span></div>`}
+    function catalogArtist(item){return `<div class="collection-row catalog-artist" data-search="${`${item.title} ${item.artist}`.toLocaleLowerCase()}" data-source="${item.source}" data-type="artist">${art(item.art,'round')}<span><b>${item.title}</b><small>${item.artist}</small></span></div>`}
+    function catalogCards(items,kind){return items.length?`<div class="cover-grid ${kind==='playlist'?'type-playlists':''}">${items.map(card).join('')}</div>`:''}
+    function catalogSubgroup(label,content,kind){return content?`<section class="catalog-subgroup" data-kind="${kind}"><h4 class="catalog-subhead">${label}</h4>${content}</section>`:''}
+    function searchableText(item){return `${item.title} ${item.artist} ${item.album??item.detail??''}`.toLocaleLowerCase()}
+    function matchesCatalogQuery(item,searchQuery=query.trim().toLocaleLowerCase()){return searchableText(item).includes(searchQuery)}
+    function providerItems(provider,kind){
+      const results=resultsBySource[provider];
+      if(kind==='all')return provider==='youtube'?results.track:[...results.track,...results.album,...results.playlist,...results.artist];
+      return results[kind]??[];
+    }
+    function providerCount(provider,kind){
+      return providerItems(provider,kind).filter(item=>matchesCatalogQuery(item)).length;
+    }
+    function resultWord(count){const lastTwo=count%100,last=count%10;return lastTwo>=11&&lastTwo<=14?'результатов':last===1?'результат':last>=2&&last<=4?'результата':'результатов'}
+    function providerHeader(provider,count){const label=typeof count==='number'?`${count} ${resultWord(count)}`:count;return `<header class="catalog-source-head"><i class="provider-mark ${provider==='soundcloud'?'sc':provider==='youtube'?'yt':''}">${sourceMarks[provider]}</i><strong>${sourceLabels[provider]}</strong><span class="catalog-source-count">${label}</span></header>`}
+    function providerGroup(provider,content,count){return content?`<section class="catalog-source-group" data-source-group="${provider}">${providerHeader(provider,count)}${content}</section>`:''}
+    function sourceList(kind=type){return source==='all'?(kind==='playlist'?['soundcloud','youtube']:['tempo','soundcloud','youtube']):[source]}
+    function providerReadyContent(provider){
+      const results=resultsBySource[provider];
+      if(type==='all'){
+        const content=provider==='youtube'
+          ? catalogSubgroup('Треки',results.track.map(catalogTrack).join(''),'track')
+          : [
+              catalogSubgroup('Треки',results.track.map(catalogTrack).join(''),'track'),
+              catalogSubgroup('Альбомы',catalogCards(results.album,'album'),'album'),
+              catalogSubgroup('Плейлисты',catalogCards(results.playlist,'playlist'),'playlist'),
+              catalogSubgroup('Исполнители',results.artist.map(catalogArtist).join(''),'artist')
+            ].join('');
+        return providerGroup(provider,content,providerCount(provider,'all'));
+      }
+      const items=results[type]??[];
+      if(items.length===0)return '';
+      const content=type==='track'?items.map(catalogTrack).join():type==='artist'?items.map(catalogArtist).join():catalogCards(items,type);
+      return providerGroup(provider,content,items.length);
     }
     function selectedTypeContent(){
-      const data={track:tracks,album:albums,artist:artists,playlist:playlists}[type];
-      if(type==='track')return `<div class="type-tracks">${data.map(resultRow).join('')}</div>`;
-      return `<div class="cover-grid ${type==='playlist'?'type-playlists':''}">${data.map(card).join('')}</div>`;
+      if(previewState==='empty')return `<div class="catalog-empty"><span class="catalog-empty-mark" aria-hidden="true">⌕</span><div><h4>Ничего не найдено</h4><p>Попробуй изменить запрос.</p></div></div>`;
+      const providers=sourceList();
+      if(previewState==='loading')return providers.map(provider=>providerGroup(provider,`<div class="catalog-skeleton" role="status" aria-label="Идёт поиск"><i></i><i></i><i></i></div>`,'Ищем…')).join('');
+      return providers.map(provider=>{
+        if(previewState==='sc-error'&&provider==='soundcloud')return providerGroup(provider,`<div class="catalog-source-error">SoundCloud недоступен</div>`,'Недоступен');
+        return providerReadyContent(provider);
+      }).join('')||`<div class="catalog-empty"><span class="catalog-empty-mark" aria-hidden="true">⌕</span><div><h4>Ничего не найдено</h4><p>Попробуй изменить запрос.</p></div></div>`;
     }
+    function resultCount(kind){return sourceList(kind).reduce((total,provider)=>total+providerCount(provider,kind),0)}
     function renderTypeFirst(){
-      return `${pageHead('Найдено по названию и исполнителю')}${searchField()}<div class="toolbar">${sourceFilters()}<span class="provider-tag">Точное и похожее совпадение</span></div><div class="catalog-layout"><nav class="type-rail" aria-label="Тип результата">${Object.entries(typeLabels).map(([key,label])=>`<button type="button" class="type-item" data-type-filter="${key}" aria-pressed="${type===key}"><span>${label}</span><span class="count">${key==='track'?6:key==='album'?4:key==='artist'?3:3}</span></button>`).join('')}</nav><section class="catalog-main"><div class="catalog-toolbar"><h3>${typeLabels[type]}</h3><span class="provider-tag">Релевантность ↓</span></div><div id="type-content">${selectedTypeContent()}</div></section></div>`
+      return `${pageHead(escapeHtml(query.trim()?`Результаты для «${query.trim()}»`:'Введите запрос в строке выше'))}<div class="toolbar">${sourceFilters()}</div><div class="catalog-layout"><div class="type-rail" role="group" aria-label="Тип результата">${Object.entries(typeLabels).map(([key,label])=>`<button type="button" class="type-item" data-type-filter="${key}" aria-pressed="${type===key}"><span>${label}</span>${key==='all'?'':`<span class="count" data-count-for="${key}">${resultCount(key)}</span>`}</button>`).join('')}</div><section class="catalog-main"><div class="catalog-toolbar"><h3>${typeLabels[type]}</h3></div><div id="type-content">${selectedTypeContent()}</div><div class="catalog-empty" id="search-intro" hidden><span class="catalog-empty-mark" aria-hidden="true">⌕</span><div><h4>Поиск в медиатеке</h4><p>Введи запрос в строке сверху.</p></div></div><div class="catalog-empty" id="live-empty" hidden><span class="catalog-empty-mark" aria-hidden="true">⌕</span><div><h4>Ничего не найдено</h4><p>Попробуй изменить запрос.</p></div></div></section></div>`
     }
     function renderBestMatch(){
       const alternates=[tracks[1],tracks[2],tracks[5]];
-      return `${pageHead('Точное совпадение найдено в трёх источниках')}${searchField()}<div class="best-layout"><section class="spotlight">${art('rain')}<div><span class="match-label">● Точное совпадение</span><h3>After the Rain</h3><p>Low Tide · Night Signals · 3:42</p><div class="spotlight-meta"><span class="source-pill">${sourceTag('tempo')} В медиатеке</span><span class="source-pill">Альбом · 2025</span></div><div class="match-actions"><button class="button primary" type="button">▶ Слушать</button><button class="button" type="button">♡ В избранное</button></div></div></section><section class="alternate-list"><div class="section-title"><h3>Другие версии</h3><span>2 источника</span></div>${alternates.map(item=>`<div class="alternate-row" data-search="${`${item.title} ${item.artist}`.toLocaleLowerCase()}" data-source="${item.source}" data-type="track">${art(item.art)}<span><b>${item.title}</b><small>${item.artist} · ${item.album}</small></span>${sourceTag(item.source)}</div>`).join('')}</section></div><div class="best-bottom"><section class="alternate-list"><div class="section-title"><h3>Альбомы</h3><span>4 совпадения</span></div>${albums.slice(0,3).map(item=>`<div class="collection-row" data-search="${`${item.title} ${item.artist}`.toLocaleLowerCase()}" data-source="${item.source}" data-type="album">${art(item.art)}<span style="min-width:0;flex:1"><b>${item.title}</b><small>${item.artist} · ${item.detail}</small></span>${sourceTag(item.source)}</div>`).join('')}</section><section class="alternate-list"><div class="section-title"><h3>Исполнители</h3><span>3 совпадения</span></div>${artists.map(item=>`<div class="collection-row" data-search="${`${item.title} ${item.artist}`.toLocaleLowerCase()}" data-source="${item.source}" data-type="artist">${art(item.art,'round')}<span style="min-width:0;flex:1"><b>${item.title}</b><small>${item.artist}</small></span>${sourceTag(item.source)}</div>`).join('')}</section></div>`
+      return `${pageHead('Точное совпадение найдено в трёх источниках')}<div class="best-layout"><section class="spotlight">${art('rain')}<div><span class="match-label">● Точное совпадение</span><h3>After the Rain</h3><p>Low Tide · Night Signals · 3:42</p><div class="spotlight-meta"><span class="source-pill">${sourceTag('tempo')} В медиатеке</span><span class="source-pill">Альбом · 2025</span></div><div class="match-actions"><button class="button primary" type="button">▶ Слушать</button><button class="button" type="button">♡ В избранное</button></div></div></section><section class="alternate-list"><div class="section-title"><h3>Другие версии</h3><span>2 источника</span></div>${alternates.map(item=>`<div class="alternate-row" data-search="${`${item.title} ${item.artist}`.toLocaleLowerCase()}" data-source="${item.source}" data-type="track">${art(item.art)}<span><b>${item.title}</b><small>${item.artist} · ${item.album}</small></span>${sourceTag(item.source)}</div>`).join('')}</section></div><div class="best-bottom"><section class="alternate-list"><div class="section-title"><h3>Альбомы</h3><span>4 совпадения</span></div>${albums.slice(0,3).map(item=>`<div class="collection-row" data-search="${`${item.title} ${item.artist}`.toLocaleLowerCase()}" data-source="${item.source}" data-type="album">${art(item.art)}<span style="min-width:0;flex:1"><b>${item.title}</b><small>${item.artist} · ${item.detail}</small></span>${sourceTag(item.source)}</div>`).join('')}</section><section class="alternate-list"><div class="section-title"><h3>Исполнители</h3><span>3 совпадения</span></div>${artists.map(item=>`<div class="collection-row" data-search="${`${item.title} ${item.artist}`.toLocaleLowerCase()}" data-source="${item.source}" data-type="artist">${art(item.art,'round')}<span style="min-width:0;flex:1"><b>${item.title}</b><small>${item.artist}</small></span>${sourceTag(item.source)}</div>`).join('')}</section></div>`
     }
     const renderers={a:renderTrackFirst,b:renderSources,c:renderTypeFirst,d:renderBestMatch};
     function applyFilters(){
@@ -123,18 +181,55 @@
       document.querySelectorAll('#screen [data-search]').forEach(row=>{
         const matchesQuery=row.dataset.search.includes(query);
         const matchesSource=source==='all'||row.dataset.source===source;
-        const matchesType=variant!=='a'||row.dataset.type===type||row.dataset.type===undefined;
+        const matchesType=variant!=='a'||type==='all'||row.dataset.type===type||row.dataset.type===undefined;
         row.hidden=!(matchesQuery&&matchesSource&&matchesType);
       });
+      document.querySelectorAll('#screen .catalog-subgroup').forEach(group=>{
+        if(previewState==='loading')return;
+        const rows=[...group.querySelectorAll('[data-search]')];
+        group.hidden=rows.length>0&&!rows.some(row=>!row.hidden);
+      });
+      document.querySelectorAll('#screen [data-source-group]').forEach(group=>{
+        if(variant==='b'&&source!=='all'){
+          group.hidden=group.dataset.sourceGroup!==source;
+          return;
+        }
+        if(variant==='c'&&previewState==='loading')return;
+        if(variant==='c'&&group.querySelector('.catalog-source-error'))return;
+        const rows=[...group.querySelectorAll('[data-search]')];
+        if(rows.length>0)group.hidden=!rows.some(row=>!row.hidden);
+      });
+      if(variant==='c'){
+        const content=document.getElementById('type-content');
+        const intro=document.getElementById('search-intro');
+        const empty=document.getElementById('live-empty');
+        const noQuery=previewState==='ready'&&query.length===0;
+        if(content)content.hidden=noQuery;
+        if(intro)intro.hidden=!noQuery;
+        if(empty){
+          const rows=[...document.querySelectorAll('#type-content [data-search]')].filter(row=>!row.closest('.catalog-source-error'));
+          const canShowNoResults=previewState==='ready'||previewState==='sc-error';
+          empty.hidden=!canShowNoResults||query.length===0||rows.length===0||rows.some(row=>!row.hidden);
+        }
+        document.querySelectorAll('#type-content .catalog-source-count').forEach(count=>{
+          const group=count.closest('.catalog-source-group');
+          if(group?.querySelector('.catalog-source-error'))return;
+          const visible=group?[...group.querySelectorAll('[data-search]')].filter(row=>!row.hidden).length:0;
+          count.textContent=`${visible} ${resultWord(visible)}`;
+        });
+        document.querySelectorAll('[data-count-for]').forEach(count=>{count.textContent=resultCount(count.dataset.countFor)});
+      }
     }
     function render(){
       document.getElementById('screen').innerHTML=renderers[variant]();
       applyFilters();
+      document.getElementById('preview-state-control').hidden=variant!=='c';
+      document.getElementById('preview-state').value=previewState;
       document.getElementById('variant-name').textContent=variantLabels[variant];
       document.getElementById('app-shell').classList.toggle('is-narrow',narrow);
       document.querySelectorAll('[data-variant]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.variant===variant)));
       document.querySelectorAll('[data-width]').forEach(button=>button.setAttribute('aria-pressed',String((button.dataset.width==='narrow')===narrow)));
-      history.replaceState(null,'',`#variant=${variant}&width=${narrow?'narrow':'wide'}&type=${type}`);
+      history.replaceState(null,'',`#variant=${variant}&width=${narrow?'narrow':'wide'}&type=${type}&source=${source}&state=${previewState}`);
     }
     document.addEventListener('click',event=>{
       const button=event.target.closest('button');if(!button)return;
@@ -143,13 +238,26 @@
       if(button.dataset.typeFilter){type=button.dataset.typeFilter;render();return}
       if(button.dataset.sourceFilter){source=button.dataset.sourceFilter;render();return}
     });
-    document.getElementById('screen').addEventListener('input',event=>{
-      if(event.target.matches('[data-query]')){query=event.target.value;applyFilters()}
+    document.addEventListener('input',event=>{
+      if(!event.target.matches('[data-query]'))return;
+      query=event.target.value;
+      applyFilters();
+      if(variant==='c'){
+        const subtitle=document.getElementById('search-subtitle');
+        if(subtitle)subtitle.textContent=query.trim()?`Результаты для «${query.trim()}»`:'Введите запрос в строке выше';
+      }
+    });
+    document.getElementById('preview-state').addEventListener('change',event=>{
+      previewState=event.target.value;
+      render();
     });
     const params=new URLSearchParams(location.hash.slice(1));
     if(['a','b','c','d'].includes(params.get('variant')))variant=params.get('variant');
     narrow=params.get('width')==='narrow';
-    if(['track','album','artist','playlist'].includes(params.get('type')))type=params.get('type');
+    if(['all','track','album','artist','playlist'].includes(params.get('type')))type=params.get('type');
+    if(['all','soundcloud','youtube'].includes(params.get('source')))source=params.get('source');
+    if(['ready','loading','empty','sc-error'].includes(params.get('state')))previewState=params.get('state');
+    document.querySelector('[data-query]').value=query;
     render();
   </script>
 </body>
