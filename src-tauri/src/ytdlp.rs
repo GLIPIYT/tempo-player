@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 
 use serde::Serialize;
 use tauri::Emitter;
@@ -409,8 +409,8 @@ pub const BROWSE_DONE_EVENT: &str = "ytdlp://browsed-done";
 /// A search result that is not a track: an album, an artist or a playlist.
 ///
 /// A flat search returns nothing for these but an id and a browse URL - no
-/// name, no cover. Those arrive separately, one at a time, which is why this
-/// carries so little.
+/// name, no cover. Those arrive separately as each page resolves, which is
+/// why this carries so little.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct YtCollectionHit {
@@ -450,6 +450,37 @@ pub struct EnrichDone {
     pub job_id: String,
     /// Set when the run failed, so the UI can say why instead of just stopping.
     pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod collection_tests {
+    use super::*;
+
+    #[test]
+    fn collection_info_keeps_collection_metadata_and_falls_back_to_channel() {
+        let hit = YtCollectionHit {
+            id: "album-id".into(),
+            url: "https://music.youtube.com/playlist?list=album-id".into(),
+        };
+        let json = serde_json::json!({
+            "title": "Album title",
+            "channel": "Artist name",
+            "playlist_count": 12,
+            "thumbnails": [{ "url": "https://example.test/cover.jpg" }]
+        });
+
+        let info = collection_info_from_json(&json, "job-1", &hit);
+
+        assert_eq!(info.job_id, "job-1");
+        assert_eq!(info.id, "album-id");
+        assert_eq!(info.title.as_deref(), Some("Album title"));
+        assert_eq!(info.uploader.as_deref(), Some("Artist name"));
+        assert_eq!(info.count, Some(12));
+        assert_eq!(
+            info.thumbnail_url.as_deref(),
+            Some("https://example.test/cover.jpg")
+        );
+    }
 }
 
 /// What a full extraction adds on top of a flat search.
@@ -758,12 +789,11 @@ pub fn search_collections(
         .collect())
 }
 
-/// Resolves the name, cover and size of each collection, one at a time.
+/// Resolves collection metadata with a small bounded worker pool.
 ///
-/// A page costs about three seconds, so ten albums is half a minute - which is
-/// why this reports each one as it lands rather than returning a list. Flat
-/// mode on the page itself, because a full extraction would enumerate every
-/// track in it: twenty-three seconds instead of three.
+/// Collection lookups are independent and spend most of their time waiting on
+/// YouTube. Four workers reduce the wait for a page of results while keeping
+/// process count bounded. Results are emitted as soon as each lookup finishes.
 pub fn browse_stream(
     app: tauri::AppHandle,
     configured: &str,
@@ -774,55 +804,56 @@ pub fn browse_stream(
     let mut produced = 0usize;
     let mut complaint = String::new();
 
-    for hit in hits {
-        let path = match binary(configured, bin_dir) {
-            Some(p) => p,
-            None => break,
-        };
-        match run(
-            &path,
-            &[
-                "--flat-playlist",
-                "--dump-single-json",
-                "--no-warnings",
-                "--playlist-end",
-                "1",
-                &hit.url,
-            ],
-            120,
-        ) {
-            Ok(out) if out.status.success() => {
-                let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
-                    continue;
-                };
-                let text = |key: &str| {
-                    json.get(key)
-                        .and_then(|v| v.as_str())
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string())
-                };
-                let info = YtCollectionInfo {
-                    job_id: job_id.to_string(),
-                    id: hit.id.clone(),
-                    title: text("title"),
-                    uploader: text("uploader").or_else(|| text("channel")),
-                    count: json.get("playlist_count").and_then(|v| v.as_i64()),
-                    thumbnail_url: json
-                        .get("thumbnails")
-                        .and_then(|v| v.as_array())
-                        .and_then(|list| list.last())
-                        .and_then(|t| t.get("url"))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
-                };
-                produced += 1;
-                let _ = app.emit(BROWSE_EVENT, info);
+    if let Some(path) = binary(configured, bin_dir) {
+        let worker_count = hits.len().min(4);
+        if worker_count > 0 {
+            let (jobs_tx, jobs_rx) = mpsc::channel::<YtCollectionHit>();
+            let (results_tx, results_rx) =
+                mpsc::channel::<Result<Option<YtCollectionInfo>, String>>();
+
+            let jobs_rx = Arc::new(Mutex::new(jobs_rx));
+            let mut workers = Vec::with_capacity(worker_count);
+            for _ in 0..worker_count {
+                let jobs_rx = Arc::clone(&jobs_rx);
+                let results_tx = results_tx.clone();
+                let path = path.clone();
+                let job_id = job_id.to_string();
+                workers.push(std::thread::spawn(move || loop {
+                    let hit = jobs_rx
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .recv();
+                    let Ok(hit) = hit else { break };
+                    if results_tx
+                        .send(resolve_collection_info(&path, &job_id, &hit))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }));
             }
-            Ok(out) => {
-                complaint = String::from_utf8_lossy(&out.stderr).trim().to_string();
+
+            for hit in hits {
+                if jobs_tx.send(hit.clone()).is_err() {
+                    break;
+                }
             }
-            Err(e) => complaint = e,
+            drop(jobs_tx);
+            drop(results_tx);
+
+            for result in results_rx {
+                match result {
+                    Ok(Some(info)) => {
+                        produced += 1;
+                        let _ = app.emit(BROWSE_EVENT, info);
+                    }
+                    Ok(None) => {}
+                    Err(error) => complaint = error,
+                }
+            }
+            for worker in workers {
+                let _ = worker.join();
+            }
         }
     }
 
@@ -849,6 +880,61 @@ pub fn browse_stream(
         },
     );
     Ok(())
+}
+
+fn resolve_collection_info(
+    path: &Path,
+    job_id: &str,
+    hit: &YtCollectionHit,
+) -> Result<Option<YtCollectionInfo>, String> {
+    let out = run(
+        path,
+        &[
+            "--flat-playlist",
+            "--dump-single-json",
+            "--no-warnings",
+            "--playlist-end",
+            "1",
+            &hit.url,
+        ],
+        120,
+    )?;
+
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+
+    Ok(serde_json::from_slice::<serde_json::Value>(&out.stdout)
+        .ok()
+        .map(|json| collection_info_from_json(&json, job_id, hit)))
+}
+
+fn collection_info_from_json(
+    json: &serde_json::Value,
+    job_id: &str,
+    hit: &YtCollectionHit,
+) -> YtCollectionInfo {
+    let text = |key: &str| {
+        json.get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    YtCollectionInfo {
+        job_id: job_id.to_string(),
+        id: hit.id.clone(),
+        title: text("title"),
+        uploader: text("uploader").or_else(|| text("channel")),
+        count: json.get("playlist_count").and_then(|v| v.as_i64()),
+        thumbnail_url: json
+            .get("thumbnails")
+            .and_then(|v| v.as_array())
+            .and_then(|list| list.last())
+            .and_then(|t| t.get("url"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    }
 }
 
 /// One `--dump-json` line, reduced to what the rows need.
@@ -944,4 +1030,3 @@ pub fn download(
         })
         .ok_or_else(|| "yt-dlp reported success but wrote no file".to_string())
 }
-

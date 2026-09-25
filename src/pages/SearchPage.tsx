@@ -432,8 +432,8 @@ export default function SearchPage() {
   }, [trimmed, source])
 
   // The tab picks which of YouTube Music's sections to ask. Albums, artists and
-  // playlists come back as bare ids, so their names are fetched afterwards, one
-  // page at a time.
+  // playlists come back as bare ids, so their metadata is fetched afterwards
+  // and each card appears as soon as it resolves.
   useEffect(() => {
     if (source !== 'youtube' || ytSection === null || trimmed.length === 0) {
       setYtCollStatus('idle')

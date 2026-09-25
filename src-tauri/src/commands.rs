@@ -898,11 +898,10 @@ pub async fn ytdlp_search_collections(
     .map_err(|e| e.to_string())?
 }
 
-/// Resolves the name, cover and size of each collection, one at a time.
+/// Resolves the name, cover and size of each collection with bounded parallelism.
 ///
 /// Returns as soon as the work has been started; results arrive on
-/// `ytdlp://browsed`, because a page costs about three seconds and a batch
-/// would leave every row blank for half a minute.
+/// `ytdlp://browsed` as each page finishes.
 #[tauri::command]
 pub async fn ytdlp_browse(
     app: AppHandle,

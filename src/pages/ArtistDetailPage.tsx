@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { Heart, ImagePlus, Play } from 'lucide-react'
+import { Heart, ImagePlus, Play, Search } from 'lucide-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
-import type { Track } from '../types/models'
+import type { ArtistImageCandidate, Track } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
@@ -16,6 +16,7 @@ import CacheBadge from '../soundcloud/CacheBadge'
 import CardPlayButton from '../components/common/CardPlayButton'
 import TrackList from '../components/common/TrackList'
 import EmptyState from '../components/common/EmptyState'
+import Modal from '../components/common/Modal'
 import { useT } from '../i18n'
 
 export default function ArtistDetailPage({ artistId }: { artistId: number }) {
@@ -24,6 +25,11 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
   const player = usePlayer()
   const version = useLibraryVersion()
   const [imageBusy, setImageBusy] = useState(false)
+  const [imageSearchBusy, setImageSearchBusy] = useState(false)
+  const [imagePickerOpen, setImagePickerOpen] = useState(false)
+  const [imageQuery, setImageQuery] = useState('')
+  const [imageCandidate, setImageCandidate] = useState<ArtistImageCandidate | null>(null)
+  const [imageError, setImageError] = useState<string | null>(null)
   const { data, loading, error, reload } = useAsync(() => api.getArtist(artistId), [artistId, version])
   const tracks = useAsync(() => api.getArtistTracks(artistId), [artistId, version])
   const fav = useAsync(() => api.isFavoriteArtist(artistId), [artistId, version])
@@ -61,7 +67,47 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
     } catch {}
   }
 
-  const changeImage = async () => {
+  const openImagePicker = () => {
+    setImageQuery(artist.name)
+    setImageCandidate(null)
+    setImageError(null)
+    setImagePickerOpen(true)
+  }
+
+  const searchOnlineImage = async () => {
+    const query = imageQuery.trim()
+    if (!query || imageSearchBusy) return
+    setImageSearchBusy(true)
+    setImageCandidate(null)
+    setImageError(null)
+    try {
+      const candidates = await api.searchArtistImages(query)
+      setImageCandidate(candidates[0] ?? null)
+      if (candidates.length === 0) setImageError(t('No image found'))
+    } catch (e) {
+      setImageError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setImageSearchBusy(false)
+    }
+  }
+
+  const useOnlineImage = async () => {
+    if (!imageCandidate || imageBusy) return
+    setImageBusy(true)
+    setImageError(null)
+    try {
+      await api.saveArtistImageFromUrl(artistId, imageCandidate.thumbnailUrl)
+      setImagePickerOpen(false)
+      reload()
+      bumpLibraryVersion()
+    } catch (e) {
+      setImageError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setImageBusy(false)
+    }
+  }
+
+  const chooseLocalImage = async () => {
     if (imageBusy) return
     setImageBusy(true)
     try {
@@ -71,6 +117,7 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
       })
       if (typeof sel === 'string') {
         await api.importArtistImage(artistId, sel)
+        setImagePickerOpen(false)
         reload()
         bumpLibraryVersion()
       }
@@ -89,8 +136,8 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
           <button
             className="avatar-edit"
             title={t('Change image')}
-            disabled={imageBusy}
-            onClick={() => void changeImage()}
+            disabled={imageBusy || imageSearchBusy}
+            onClick={openImagePicker}
           >
             {artist.imagePath ? (
               <img
@@ -193,6 +240,49 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
           <TrackList tracks={artistTracks} />
         </section>
       ) : null}
+
+      <Modal
+        open={imagePickerOpen}
+        title={t('Find artist image')}
+        onClose={() => setImagePickerOpen(false)}
+      >
+        <form
+          className="artist-image-search-row"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void searchOnlineImage()
+          }}
+        >
+          <input
+            className="artist-image-query"
+            aria-label={t('Artist name')}
+            placeholder={t('Artist name')}
+            value={imageQuery}
+            maxLength={150}
+            onChange={(event) => setImageQuery(event.target.value)}
+          />
+          <button className="btn" type="submit" disabled={!imageQuery.trim() || imageSearchBusy || imageBusy}>
+            <Search size={14} />
+            {t('Search')}
+          </button>
+        </form>
+        {imageSearchBusy ? <div className="artist-image-status">{t('Searching…')}</div> : null}
+        {imageError ? <div className="artist-image-status is-error">{imageError}</div> : null}
+        {imageCandidate ? (
+          <div className="artist-image-result">
+            <img src={imageCandidate.thumbnailUrl} alt="" referrerPolicy="no-referrer" />
+            <strong title={imageCandidate.name}>{imageCandidate.name}</strong>
+            <button className="btn btn-primary" disabled={imageBusy} onClick={() => void useOnlineImage()}>
+              {t('Use image')}
+            </button>
+          </div>
+        ) : null}
+        <div className="modal-actions">
+          <button className="btn" disabled={imageBusy} onClick={() => void chooseLocalImage()}>
+            {t('Choose file')}
+          </button>
+        </div>
+      </Modal>
     </EditorialDetailLayout>
   )
 }

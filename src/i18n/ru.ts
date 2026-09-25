@@ -347,6 +347,11 @@ export const ru: Record<string, string> = {
   'Favorite album': 'Любимый альбом',
   'Favorite albums': 'Избранные альбомы',
   'Change image': 'Изменить фото',
+  'Find artist image': 'Найти фото исполнителя',
+  'Artist name': 'Имя исполнителя',
+  'Use image': 'Использовать фото',
+  'Choose file': 'Выбрать файл',
+  'No image found': 'Фото не найдено',
   'Group favorites in sidebar': 'Группировать избранное в сайдбаре',
   'When enabled, favorite playlists, artists and albums are grouped into separate sidebar sections. Turn it off for one continuous list.':
     'Когда включено, избранные плейлисты, исполнители и альбомы сгруппированы по отдельным секциям сайдбара. Выключите, чтобы получить один сплошной список.',

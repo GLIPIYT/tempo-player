@@ -8,6 +8,7 @@ mod models;
 mod scanner;
 mod soundcloud;
 mod soundcloud_store;
+mod theaudiodb;
 mod tray;
 mod updater;
 mod ytdlp;
@@ -178,6 +179,8 @@ pub fn run() {
             commands::list_favorite_albums,
             commands::is_favorite_album,
             commands::import_artist_image,
+            theaudiodb::search_artist_images,
+            theaudiodb::save_artist_image_from_url,
             commands::export_playlist_m3u8,
             commands::export_tracks_m3u8,
             commands::import_playlist_m3u8,

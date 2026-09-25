@@ -6,6 +6,7 @@ import type {
   AnalyticsPeriod,
   Artist,
   ArtistDetail,
+  ArtistImageCandidate,
   CoversCacheInfo,
   DailyMinutes,
   FavoriteOrderEntry,
@@ -143,6 +144,10 @@ export const api = {
 
   importArtistImage: (artistId: number, path: string) =>
     invoke<void>('import_artist_image', { artistId, path }),
+  searchArtistImages: (query: string) =>
+    invoke<ArtistImageCandidate[]>('search_artist_images', { query }),
+  saveArtistImageFromUrl: (artistId: number, url: string) =>
+    invoke<string>('save_artist_image_from_url', { artistId, url }),
 
   hideTrack: (trackId: number) => invoke<string>('hide_track', { trackId }),
   unhideTrack: (path: string) => invoke<boolean>('unhide_track', { path }),
@@ -267,7 +272,7 @@ export const api = {
   ytdlpOpenCollection: (configured: string, url: string) =>
     invoke<YtCollectionDetail>('ytdlp_open_collection', { configured, url }),
 
-  /** Resolves names one at a time on `ytdlp://browsed`. */
+  /** Resolves collection metadata and streams each result on `ytdlp://browsed`. */
   ytdlpBrowse: (configured: string, jobId: string, hits: YtCollectionHit[]) =>
     invoke<void>('ytdlp_browse', { configured, jobId, hits }),
 

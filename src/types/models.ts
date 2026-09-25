@@ -118,6 +118,12 @@ export interface Artist {
   imagePath?: string | null
 }
 
+export interface ArtistImageCandidate {
+  artistId: string
+  name: string
+  thumbnailUrl: string
+}
+
 export interface Album {
   id: number
   title: string
