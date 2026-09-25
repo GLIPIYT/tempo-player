@@ -797,23 +797,245 @@
 /* ── SoundCloud search ────────────────────────────────────────────────────
    Playlists and artists reuse the local card and row shapes, so only the
    artwork sizing and the small extras are new here. */
-.search-tabs {
-  margin-bottom: 14px;
-  width: fit-content;
-}
-
-/* Where to search sits above what to search, so the two rows read in the order
-   the questions are asked. */
+/* The provider selector stays above the category rail. */
 .search-sources {
   margin-bottom: 8px;
   width: fit-content;
 }
 
-.search-sources .seg-btn,
-.search-tabs .seg-btn {
+.search-sources .seg-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.search-sources {
+  width: fit-content;
+  margin-bottom: 13px;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.search-page .page-head {
+  margin-bottom: 14px;
+}
+
+.search-sources::-webkit-scrollbar,
+.search-type-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.search-catalog-layout {
+  display: grid;
+  grid-template-columns: 164px minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+
+.search-type-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.search-type-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.search-type-button:hover:not([aria-pressed='true']) {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.search-type-button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: inset 2px 0 var(--accent);
+}
+
+.search-type-button:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.search-type-count {
+  min-width: 20px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.search-results-column {
+  min-width: 0;
+}
+
+.search-current-scope {
+  margin: 1px 0 12px;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.search-provider-group {
+  min-width: 0;
+  margin-bottom: 20px;
+}
+
+.search-provider-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  margin-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+}
+
+.search-provider-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-elevated);
+  color: var(--accent-strong);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.search-provider-mark.is-library {
+  color: var(--accent);
+}
+
+.search-provider-head strong {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.search-provider-count {
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.search-result-kind + .search-result-kind {
+  margin-top: 13px;
+}
+
+.search-kind-title {
+  margin: 0 0 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.search-result-kind .sc-list {
+  margin-bottom: 0;
+}
+
+.search-provider-message {
+  padding: 12px 2px 14px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.search-provider-message.error-line {
+  margin: 0;
+}
+
+.search-loading-rows {
+  display: grid;
+  gap: 7px;
+  padding: 5px 0 12px;
+}
+
+.search-loading-rows span {
+  display: block;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--surface), var(--surface-hover), var(--surface));
+  background-size: 200% 100%;
+  animation: search-shimmer 1.35s ease-in-out infinite;
+}
+
+.search-loading-rows span:nth-child(2) {
+  width: 91%;
+}
+
+.search-loading-rows span:nth-child(3) {
+  width: 84%;
+}
+
+@keyframes search-shimmer {
+  to { background-position: -200% 0; }
+}
+
+@media (max-width: 760px) {
+  .search-catalog-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .search-type-rail {
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 3px;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    background: transparent;
+    scrollbar-width: none;
+  }
+
+  .search-type-button {
+    flex: none;
+    width: auto;
+    min-height: 32px;
+    padding: 0 10px;
+    white-space: nowrap;
+  }
+
+  .search-type-button[aria-pressed='true'] {
+    background: transparent;
+    box-shadow: inset 0 -2px var(--accent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-loading-rows span {
+    animation: none;
+  }
 }
 
 /* The eyebrow above a detail title, which can carry a source mark. */

@@ -184,6 +184,9 @@ export const ru: Record<string, string> = {
   'Try another search.': 'Попробуйте другой запрос.',
   'Try another artist name.': 'Попробуйте другое имя исполнителя.',
   'Search your library': 'Поиск по библиотеке',
+  'Your library': 'Медиатека',
+  'Find tracks, albums, artists and playlists. Start typing above.':
+    'Ищите треки, альбомы, исполнителей и плейлисты. Введите запрос в строке поиска выше.',
   'Searching…': 'Ищем…',
   Seek: 'Перемотка',
   Settings: 'Настройки',

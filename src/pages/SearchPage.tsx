@@ -20,7 +20,6 @@ import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import ScArtwork, { Spinner } from '../components/common/ScArtwork'
 import BrandIcon, { type BrandMark } from '../components/common/BrandIcon'
-import LoadingLine from '../components/common/LoadingLine'
 import { toast } from '../components/common/Toast'
 import { ScArtistRow, ScPlaylistCard } from '../components/common/ScCards'
 import YtCard from '../components/common/YtCard'
@@ -327,6 +326,9 @@ export default function SearchPage() {
       setLoading(false)
       return
     }
+    setResults(null)
+    setError(null)
+    setLoading(true)
     let cancelled = false
     const timer = window.setTimeout(() => {
       api
@@ -357,9 +359,12 @@ export default function SearchPage() {
       setScArtists([])
       return
     }
+    setScStatus('loading')
+    setScTracks([])
+    setScPlaylists([])
+    setScArtists([])
     let cancelled = false
     const timer = window.setTimeout(() => {
-      setScStatus('loading')
       // All three kinds at once, so switching tabs never waits. Searches are
       // debounced, so a burst of typing still only costs one round.
       Promise.all([
@@ -391,9 +396,11 @@ export default function SearchPage() {
       setYtHits([])
       return
     }
+    setYtStatus('loading')
+    setYtHits([])
+    setYtPending(new Set())
     let cancelled = false
     const timer = window.setTimeout(() => {
-      setYtStatus('loading')
       // A missing yt-dlp lands in the same place as a failed search: the
       // section says YouTube is unavailable rather than pretending it is empty.
       api
@@ -441,11 +448,11 @@ export default function SearchPage() {
       setYtInfo({})
       return
     }
+    setYtCollStatus('loading')
+    setYtHitsColl([])
+    setYtInfo({})
     let cancelled = false
     const timer = window.setTimeout(() => {
-      setYtCollStatus('loading')
-      setYtHitsColl([])
-      setYtInfo({})
       api
         .ytdlpSearchCollections(ytdlpPath(), trimmed, 12, ytSection)
         .then((hits) => {
@@ -560,14 +567,6 @@ export default function SearchPage() {
     }
   }, [])
 
-  const nothing =
-    !loading &&
-    !error &&
-    results != null &&
-    results.tracks.length === 0 &&
-    results.albums.length === 0 &&
-    results.artists.length === 0
-
   /** "All" shows everything; any other tab narrows to just its own kind. */
   const showTab = (id: SearchTab): boolean => tab === 'all' || tab === id
   // SoundCloud models a release as a playlist with `playlist_type: "album"`, so
@@ -597,345 +596,360 @@ export default function SearchPage() {
     player.playTracks(scTracksToUnified(playableTracks), idx)
   }
 
+  const libraryCounts = {
+    tracks: results?.tracks.length ?? 0,
+    albums: results?.albums.length ?? 0,
+    playlists: 0,
+    artists: results?.artists.length ?? 0,
+  }
+  const soundCloudCounts = {
+    tracks: scTracks.length,
+    albums: scAlbums.length,
+    playlists: scPlaylistOnly.length,
+    artists: scArtists.length,
+  }
+  const countCategory = (category: Exclude<SearchTab, 'all'>): number => {
+    let count = 0
+    if (source === 'all') count += libraryCounts[category] + soundCloudCounts[category]
+    else if (source === 'soundcloud') count += soundCloudCounts[category]
+
+    if (category === 'tracks' && source !== 'soundcloud') count += ytHits.length
+    if (
+      source === 'youtube' &&
+      ytSection === category &&
+      (category === 'albums' || category === 'artists' || category === 'playlists')
+    ) {
+      count += ytHitsColl.length
+    }
+    return count
+  }
+  const countTab = (category: SearchTab): number =>
+    category === 'all'
+      ? countCategory('tracks') + countCategory('albums') + countCategory('playlists') + countCategory('artists')
+      : countCategory(category)
+  const currentCount = countTab(tab)
+
+  const localCount = tab === 'all'
+    ? libraryCounts.tracks + libraryCounts.albums + libraryCounts.artists
+    : libraryCounts[tab]
+  const scCount = tab === 'all'
+    ? soundCloudCounts.tracks + soundCloudCounts.albums + soundCloudCounts.playlists + soundCloudCounts.artists
+    : soundCloudCounts[tab]
+  const ytTrackMode = source !== 'soundcloud' && showTab('tracks') && ytSection === null
+  const ytCollectionMode = source === 'youtube' && ytSection !== null
+  const ytCount = ytCollectionMode ? ytHitsColl.length : ytTrackMode ? ytHits.length : 0
+
+  const localRelevant = source === 'all' && tab !== 'playlists'
+  const localPending = localRelevant && (loading || (results === null && error === null))
+  const scRelevant = source !== 'youtube'
+  const scPending = scRelevant && (scStatus === 'idle' || scStatus === 'loading')
+  const ytRelevant = ytTrackMode || ytCollectionMode
+  const ytProviderPending = ytTrackMode
+    ? ytStatus === 'idle' || ytStatus === 'loading'
+    : ytCollectionMode && (ytCollStatus === 'idle' || ytCollStatus === 'loading')
+  const searchPending = localPending || scPending || ytProviderPending
+  const searchError =
+    (localRelevant && error !== null) ||
+    (scRelevant && scStatus === 'error') ||
+    (ytRelevant && (ytTrackMode ? ytStatus === 'error' : ytCollStatus === 'error'))
+  const showNoResults = trimmed.length > 0 && !searchPending && currentCount === 0 && !searchError
+
+  const providerHeading = (name: string, count: number, mark: BrandMark | null) => (
+    <header className="search-provider-head">
+      <span className={'search-provider-mark' + (mark === null ? ' is-library' : '')} aria-hidden="true">
+        {mark ? <BrandIcon mark={mark} size={13} brand /> : 'T'}
+      </span>
+      <strong>{name}</strong>
+      <span className="search-provider-count" aria-label={`${name}: ${count}`}>{count}</span>
+    </header>
+  )
+
+  const searchSkeleton = (
+    <div className="search-loading-rows" role="status" aria-label={t('Searching…')}>
+      <span />
+      <span />
+      <span />
+    </div>
+  )
+
   return (
-    <div className="page">
+    <div className="page search-page">
       <div className="page-head">
         <div>
           <h1 className="page-title">{t('Search')}</h1>
           <div className="page-sub">{trimmed ? `${t('Results for')} "${trimmed}"` : t('Type in the search bar above')}</div>
         </div>
       </div>
-
-      {trimmed.length > 0 ? (
-        <div className="seg search-sources" role="tablist" aria-label={t('Where to search')}>
-          {SEARCH_SOURCES.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              aria-selected={source === entry.id}
-              className={source === entry.id ? 'seg-btn is-active' : 'seg-btn'}
-              onClick={() => setSource(entry.id)}
-            >
-              {entry.mark ? (
-                // The mark carries its own colour only on the chosen chip;
-                // elsewhere it sits back with the label instead of shouting
-                // from a row of grey buttons.
-                <BrandIcon mark={entry.mark} size={13} brand={source === entry.id} />
-              ) : null}
-              <span>{t(entry.label)}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {trimmed.length > 0 ? (
-        <div className="seg search-tabs" role="tablist" aria-label={t('Search scope')}>
-          {SEARCH_TABS.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === entry.id}
-              className={tab === entry.id ? 'seg-btn is-active' : 'seg-btn'}
-              onClick={() => setTab(entry.id)}
-            >
-              {t(entry.label)}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {source !== 'all' ? null : trimmed.length === 0 ? (
+      {trimmed.length === 0 ? (
         <EmptyState
           icon={<Search size={34} />}
           title={t('Search your library')}
-          hint={t('Find tracks, albums and artists. Start typing above.')}
+          hint={t('Find tracks, albums, artists and playlists. Start typing above.')}
         />
-      ) : loading && !results ? (
-        <div className="muted">{t('Searching…')}</div>
-      ) : error ? (
-        <div className="error-line">{error}</div>
-      ) : nothing ? (
-        <EmptyState title={`${t('No results for')} "${trimmed}"`} hint={t('Check the spelling or try a shorter term.')} />
-      ) : results ? (
+      ) : null}
+
+      {trimmed.length > 0 ? (
         <>
-          {showTab('tracks') && results.tracks.length > 0 ? (
-            <>
-              <div className="section-label">{t('Tracks')}</div>
-              <TrackList tracks={results.tracks} showAlbum showIndex />
-            </>
-          ) : null}
-
-          {showTab('albums') && results.albums.length > 0 ? (
-            <>
-              <div className="section-label">{t('Albums')}</div>
-              <div className="cards-grid cards-grid-tight">
-                {results.albums.map((a) => (
-                  <button
-                    key={a.id}
-                    className="card"
-                    onClick={() => navigate({ name: 'album', id: a.id })}
-                    title={a.title}
-                  >
-                    <Cover path={a.coverPath} label={a.title} size={120} />
-                    <span className="card-title">{a.title}</span>
-                    <span className="card-sub">{a.artistName ?? t('Unknown artist')}</span>
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : null}
-
-          {showTab('artists') && results.artists.length > 0 ? (
-            <>
-              <div className="section-label">{t('Artists')}</div>
-              <div className="arow-list">
-                {results.artists.map((ar) => (
-                  <button
-                    key={ar.id}
-                    className="arow"
-                    onClick={() => navigate({ name: 'artist', id: ar.id })}
-                  >
-                    <Cover label={ar.name} size={40} rounded />
-                    <span className="arow-name">{ar.name}</span>
-                    <span className="arow-meta">
-                      {ar.albumCount ?? 0} {t('albums')} · {ar.trackCount ?? 0} {t('tracks')}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : null}
-        </>
-      ) : null}
-
-      {trimmed.length > 0 && source !== 'youtube' ? (
-        <section className="sc-section">
-          <div className="section-label sc-label">
-            <BrandIcon mark="soundcloud" size={14} brand />
-            <span>{t('SoundCloud')}</span>
+          <div className="seg search-sources" role="tablist" aria-label={t('Where to search')}>
+            {SEARCH_SOURCES.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                role="tab"
+                aria-selected={source === entry.id}
+                className={source === entry.id ? 'seg-btn is-active' : 'seg-btn'}
+                onClick={() => setSource(entry.id)}
+              >
+                {entry.mark ? <BrandIcon mark={entry.mark} size={13} brand={source === entry.id} /> : null}
+                <span>{t(entry.label)}</span>
+              </button>
+            ))}
           </div>
-          {scStatus === 'loading' ? (
-            <LoadingLine
-              lines={[t('Searching SoundCloud…'), t('Reading what came back…')]}
-            />
-          ) : scStatus === 'error' ? (
-            <div className="muted sc-status">{t('SoundCloud is unavailable')}</div>
-          ) : scStatus === 'done' &&
-            scTracks.length === 0 &&
-            scPlaylists.length === 0 &&
-            scArtists.length === 0 ? (
-            <div className="muted sc-status">{t('Nothing found on SoundCloud')}</div>
-          ) : scStatus === 'done' ? (
-            <>
-              {showTab('tracks') && scTracks.length > 0 ? (
-                <div className="sc-list">
-                {scTracks.map((trk) => {
-                  const unified = scTrackToUnified(trk)
-                  const idx = playableIdx.get(trk.id)
-                  return (
-                    <div
-                      key={trk.id}
-                      className={'sc-row' + (idx === undefined ? ' is-disabled' : '')}
-                      onClick={() => playSoundCloud(trk)}
-                    >
-                    <ScArtwork url={trk.artworkUrl} title={trk.title} />
-                    <div className="sc-meta">
-                      <span className="sc-title">{trk.title}</span>
-                      <span className="sc-artist">{trk.artist}</span>
-                    </div>
-                    {idx === undefined ? (
-                      <span className="sc-duration">
-                        <Lock size={13} />
-                      </span>
-                    ) : (
-                      <span className="sc-duration">{fmtTime(unified.durationSec)}</span>
-                    )}
-                    {unified.externalUrl ? (
-                      <button
-                        className="icon-btn sc-open"
-                        aria-label={t('Open on SoundCloud')}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          window.open(unified.externalUrl ?? '', '_blank')
-                        }}
-                      >
-                        <ExternalLink size={14} />
-                      </button>
-                    ) : (
-                      <span className="sc-open-spacer" />
-                    )}
-                    <ScRowMenu track={trk} />
-                  </div>
-                )
-              })}
-                </div>
-              ) : null}
 
-              {showTab('albums') && scAlbums.length > 0 ? (
-                <>
-                  <div className="sc-sub-label">{t('Albums')}</div>
-                  <div className="cards-grid cards-grid-tight">
-                    {scAlbums.map((pl) => (
-                      <ScPlaylistCard key={pl.id} playlist={pl} />
-                    ))}
-                  </div>
-                </>
-              ) : null}
-
-              {showTab('playlists') && scPlaylistOnly.length > 0 ? (
-                <>
-                  <div className="sc-sub-label">{t('Playlists')}</div>
-                  <div className="cards-grid cards-grid-tight">
-                    {scPlaylistOnly.map((pl) => (
-                      <ScPlaylistCard key={pl.id} playlist={pl} />
-                    ))}
-                  </div>
-                </>
-              ) : null}
-
-              {showTab('artists') && scArtists.length > 0 ? (
-                <>
-                  <div className="sc-sub-label">{t('Artists')}</div>
-                  <div className="arow-list">
-                    {scArtists.map((ar) => (
-                      <ScArtistRow key={ar.id} artist={ar} />
-                    ))}
-                  </div>
-                </>
-              ) : null}
-
-              {scNote ? <div className="sc-toast">{scNote}</div> : null}
-            </>
-          ) : null}
-        </section>
-      ) : null}
-
-      {trimmed.length > 0 && source === 'youtube' && ytSection !== null ? (
-        <section className="sc-section">
-          <div className="section-label sc-label">
-            <BrandIcon mark="youtubemusic" size={14} brand />
-            <span>
-              {ytSection === 'albums'
-                ? t('Albums')
-                : ytSection === 'artists'
-                  ? t('Artists')
-                  : t('Playlists')}
-            </span>
-          </div>
-          {ytCollStatus === 'loading' ? (
-            <LoadingLine
-              lines={[
-                t('Asking YouTube Music…'),
-                ytSection === 'albums'
-                  ? t('Opening each album…')
-                  : ytSection === 'artists'
-                    ? t('Opening each artist…')
-                    : t('Opening each playlist…'),
-                t('Reading the names…'),
-              ]}
-            />
-          ) : ytCollStatus === 'error' ? (
-            <div className="muted sc-status">{t('YouTube needs yt-dlp')}</div>
-          ) : ytCollStatus === 'done' && ytHitsColl.length === 0 ? (
-            <div className="muted sc-status">{t('Nothing found')}</div>
-          ) : (
-            <div className="cards-grid cards-grid-tight">
-              {ytHitsColl.map((hit) => {
-                const info = ytInfo[hit.id]
-                // Each kind keeps its name somewhere different: an album and a
-                // playlist in the title, an artist in the uploader. An album's
-                // title also arrives with the word "Album" stuck on the front.
-                const name =
-                  ytSection === 'artists'
-                    ? (info?.uploader ?? info?.title ?? null)
-                    : ytSection === 'albums'
-                      ? (info?.title?.replace(/^Album - /i, '') ?? null)
-                      : (info?.title ?? null)
-                return (
-                  <YtCard
-                    key={hit.id}
-                    kind={ytKind}
-                    id={hit.id}
-                    name={name}
-                    sub={info?.uploader ?? null}
-                    count={info?.count ?? null}
-                    thumbnailUrl={info?.thumbnailUrl ?? hit.thumbnailUrl}
-                    fallbackUrls={info?.thumbnailUrls ?? hit.thumbnailUrls}
-                    pending={!info}
-                  />
-                )
-              })}
-            </div>
-          )}
-        </section>
-      ) : null}
-
-      {trimmed.length > 0 && source !== 'soundcloud' && ytSection === null ? (
-        <section className="sc-section">
-          <div className="section-label sc-label">
-            <BrandIcon mark="youtubemusic" size={14} brand />
-            <span>{t('YouTube')}</span>
-          </div>
-          {ytStatus === 'loading' ? (
-            <LoadingLine
-              lines={[
-                t('Searching YouTube…'),
-                t('Looking for songs, not videos…'),
-                t('Reading what came back…'),
-              ]}
-            />
-          ) : ytStatus === 'error' ? (
-            <div className="muted sc-status">{t('YouTube needs yt-dlp')}</div>
-          ) : ytStatus === 'done' && ytHits.length === 0 ? (
-            <div className="muted sc-status">{t('Nothing found on YouTube')}</div>
-          ) : ytStatus === 'done' ? (
-            <div className="sc-list">
-              {ytHits.map((hit) => (
-                <div
-                  key={hit.id}
-                  className="sc-row"
-                  onClick={() => player.playTracks([ytHitToUnified(hit)], 0)}
+          <div className="search-catalog-layout">
+            <div className="search-type-rail" role="group" aria-label={t('Search scope')}>
+              {SEARCH_TABS.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  className="search-type-button"
+                  aria-pressed={tab === entry.id}
+                  onClick={() => setTab(entry.id)}
                 >
-                  {/* Deliberately not `pending`: the cover comes from the
-                      video id and needs no extraction, so it should never wait
-                      on one. It shows its own loading ring and nothing else. */}
-                  <ScArtwork url={hit.thumbnailUrl} title={hit.title} />
-                  <div className="sc-meta">
-                    <span className="sc-title">{hit.title}</span>
-                    <span className="sc-artist">
-                      {ytPending.has(hit.id) ? (
-                        <Spinner size={10} />
-                      ) : (
-                        hit.artist || hit.album || ''
-                      )}
-                    </span>
-                  </div>
-                  <span className="sc-duration">
-                    {ytPending.has(hit.id) ? (
-                      <Spinner size={10} />
-                    ) : hit.durationMs > 0 ? (
-                      fmtTime(hit.durationMs / 1000)
-                    ) : (
-                      '—'
-                    )}
-                  </span>
-                  <button
-                    className="icon-btn sc-open"
-                    aria-label={t('Open on YouTube')}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      window.open(hit.url, '_blank')
-                    }}
-                  >
-                    <ExternalLink size={14} />
-                  </button>
-                </div>
+                  <span>{t(entry.label)}</span>
+                  {entry.id !== 'all' && countTab(entry.id) > 0 ? (
+                    <span className="search-type-count">{countTab(entry.id)}</span>
+                  ) : null}
+                </button>
               ))}
             </div>
-          ) : null}
-        </section>
+
+            <div className="search-results-column">
+              <h2 className="search-current-scope">
+                {t(SEARCH_TABS.find((entry) => entry.id === tab)?.label ?? 'All')}
+              </h2>
+              {localRelevant && (localPending || error !== null || localCount > 0) ? (
+                <section className="search-provider-group">
+                  {providerHeading(t('Your library'), localCount, null)}
+                  {localPending ? (
+                    searchSkeleton
+                  ) : error ? (
+                    <div className="search-provider-message error-line">{error}</div>
+                  ) : results ? (
+                    <>
+                      {showTab('tracks') && results.tracks.length > 0 ? (
+                        <section className="search-result-kind">
+                          {tab === 'all' ? <h3 className="search-kind-title">{t('Tracks')}</h3> : null}
+                          <TrackList tracks={results.tracks} showAlbum showIndex />
+                        </section>
+                      ) : null}
+                      {showTab('albums') && results.albums.length > 0 ? (
+                        <section className="search-result-kind">
+                          {tab === 'all' ? <h3 className="search-kind-title">{t('Albums')}</h3> : null}
+                          <div className="cards-grid cards-grid-tight">
+                            {results.albums.map((album) => (
+                              <button
+                                key={album.id}
+                                className="card"
+                                onClick={() => navigate({ name: 'album', id: album.id })}
+                                title={album.title}
+                              >
+                                <Cover path={album.coverPath} label={album.title} size={120} />
+                                <span className="card-title">{album.title}</span>
+                                <span className="card-sub">{album.artistName ?? t('Unknown artist')}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                      ) : null}
+                      {showTab('artists') && results.artists.length > 0 ? (
+                        <section className="search-result-kind">
+                          {tab === 'all' ? <h3 className="search-kind-title">{t('Artists')}</h3> : null}
+                          <div className="arow-list">
+                            {results.artists.map((artist) => (
+                              <button
+                                key={artist.id}
+                                className="arow"
+                                onClick={() => navigate({ name: 'artist', id: artist.id })}
+                              >
+                                <Cover label={artist.name} size={40} rounded />
+                                <span className="arow-name">{artist.name}</span>
+                                <span className="arow-meta">
+                                  {artist.albumCount ?? 0} {t('albums')} · {artist.trackCount ?? 0} {t('tracks')}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                      ) : null}
+                    </>
+                  ) : null}
+                </section>
+              ) : null}
+
+              {scRelevant && (scPending || scStatus === 'error' || scCount > 0) ? (
+                <section className="search-provider-group">
+                  {providerHeading(t('SoundCloud'), scCount, 'soundcloud')}
+                  {scPending ? (
+                    searchSkeleton
+                  ) : scStatus === 'error' ? (
+                    <div className="search-provider-message muted">{t('SoundCloud is unavailable')}</div>
+                  ) : (
+                    <>
+                      {showTab('tracks') && scTracks.length > 0 ? (
+                        <section className="search-result-kind">
+                          {tab === 'all' ? <h3 className="search-kind-title">{t('Tracks')}</h3> : null}
+                          <div className="sc-list">
+                            {scTracks.map((track) => {
+                              const unified = scTrackToUnified(track)
+                              const idx = playableIdx.get(track.id)
+                              return (
+                                <div
+                                  key={track.id}
+                                  className={'sc-row' + (idx === undefined ? ' is-disabled' : '')}
+                                  onClick={() => playSoundCloud(track)}
+                                >
+                                  <ScArtwork url={track.artworkUrl} title={track.title} />
+                                  <div className="sc-meta">
+                                    <span className="sc-title">{track.title}</span>
+                                    <span className="sc-artist">{track.artist}</span>
+                                  </div>
+                                  {idx === undefined ? (
+                                    <span className="sc-duration"><Lock size={13} /></span>
+                                  ) : (
+                                    <span className="sc-duration">{fmtTime(unified.durationSec)}</span>
+                                  )}
+                                  {unified.externalUrl ? (
+                                    <button
+                                      className="icon-btn sc-open"
+                                      aria-label={t('Open on SoundCloud')}
+                                      onClick={(event) => {
+                                        event.stopPropagation()
+                                        window.open(unified.externalUrl ?? '', '_blank')
+                                      }}
+                                    >
+                                      <ExternalLink size={14} />
+                                    </button>
+                                  ) : (
+                                    <span className="sc-open-spacer" />
+                                  )}
+                                  <ScRowMenu track={track} />
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </section>
+                      ) : null}
+
+                      {showTab('albums') && scAlbums.length > 0 ? (
+                        <section className="search-result-kind">
+                          {tab === 'all' ? <h3 className="search-kind-title">{t('Albums')}</h3> : null}
+                          <div className="cards-grid cards-grid-tight">
+                            {scAlbums.map((playlist) => <ScPlaylistCard key={playlist.id} playlist={playlist} />)}
+                          </div>
+                        </section>
+                      ) : null}
+
+                      {showTab('playlists') && scPlaylistOnly.length > 0 ? (
+                        <section className="search-result-kind">
+                          {tab === 'all' ? <h3 className="search-kind-title">{t('Playlists')}</h3> : null}
+                          <div className="cards-grid cards-grid-tight">
+                            {scPlaylistOnly.map((playlist) => <ScPlaylistCard key={playlist.id} playlist={playlist} />)}
+                          </div>
+                        </section>
+                      ) : null}
+
+                      {showTab('artists') && scArtists.length > 0 ? (
+                        <section className="search-result-kind">
+                          {tab === 'all' ? <h3 className="search-kind-title">{t('Artists')}</h3> : null}
+                          <div className="arow-list">
+                            {scArtists.map((artist) => <ScArtistRow key={artist.id} artist={artist} />)}
+                          </div>
+                        </section>
+                      ) : null}
+                      {scNote ? <div className="sc-toast">{scNote}</div> : null}
+                    </>
+                  )}
+                </section>
+              ) : null}
+
+              {ytRelevant && (ytProviderPending || (ytTrackMode && ytStatus === 'error') || (ytCollectionMode && ytCollStatus === 'error') || ytCount > 0) ? (
+                <section className="search-provider-group">
+                  {providerHeading(t('YouTube Music'), ytCount, 'youtubemusic')}
+                  {ytProviderPending ? (
+                    searchSkeleton
+                  ) : (ytTrackMode && ytStatus === 'error') || (ytCollectionMode && ytCollStatus === 'error') ? (
+                    <div className="search-provider-message muted">{t('YouTube needs yt-dlp')}</div>
+                  ) : ytCollectionMode && ytSection ? (
+                    <div className="cards-grid cards-grid-tight">
+                      {ytHitsColl.map((hit) => {
+                        const info = ytInfo[hit.id]
+                        // Names come from different fields depending on collection kind.
+                        const name =
+                          ytSection === 'artists'
+                            ? (info?.uploader ?? info?.title ?? null)
+                            : ytSection === 'albums'
+                              ? (info?.title?.replace(/^Album - /i, '') ?? null)
+                              : (info?.title ?? null)
+                        return (
+                          <YtCard
+                            key={hit.id}
+                            kind={ytKind}
+                            id={hit.id}
+                            name={name}
+                            sub={info?.uploader ?? null}
+                            count={info?.count ?? null}
+                            thumbnailUrl={info?.thumbnailUrl ?? hit.thumbnailUrl}
+                            fallbackUrls={info?.thumbnailUrls ?? hit.thumbnailUrls}
+                            pending={!info}
+                          />
+                        )
+                      })}
+                    </div>
+                  ) : ytTrackMode && ytStatus === 'done' ? (
+                    <section className="search-result-kind">
+                      {tab === 'all' ? <h3 className="search-kind-title">{t('Tracks')}</h3> : null}
+                      <div className="sc-list">
+                        {ytHits.map((hit) => (
+                          <div
+                            key={hit.id}
+                            className="sc-row"
+                            onClick={() => player.playTracks([ytHitToUnified(hit)], 0)}
+                          >
+                            <ScArtwork url={hit.thumbnailUrl} title={hit.title} />
+                            <div className="sc-meta">
+                              <span className="sc-title">{hit.title}</span>
+                              <span className="sc-artist">
+                                {ytPending.has(hit.id) ? <Spinner size={10} /> : hit.artist || hit.album || ''}
+                              </span>
+                            </div>
+                            <span className="sc-duration">
+                              {ytPending.has(hit.id) ? <Spinner size={10} /> : hit.durationMs > 0 ? fmtTime(hit.durationMs / 1000) : '—'}
+                            </span>
+                            <button
+                              className="icon-btn sc-open"
+                              aria-label={t('Open on YouTube')}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                window.open(hit.url, '_blank')
+                              }}
+                            >
+                              <ExternalLink size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+                </section>
+              ) : null}
+
+              {showNoResults ? (
+                <EmptyState title={`${t('No results for')} "${trimmed}"`} hint={t('Check the spelling or try a shorter term.')} />
+              ) : null}
+            </div>
+          </div>
+        </>
       ) : null}
     </div>
   )
