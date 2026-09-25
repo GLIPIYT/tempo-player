@@ -17,9 +17,8 @@ import { favoritePlaylist, requestPlaylistCache } from '../soundcloud/cacheJobs'
 /**
  * A SoundCloud playlist or release, read live.
  *
- * Nothing here reaches the library until it is cached or favorited - this is
- * the look-before-you-keep view, and the two buttons that change that are in
- * the side column where they stay put.
+ * Nothing here reaches the library until it is cached or favorited. The cover,
+ * cache state, and playback actions stay together above the track list.
  */
 export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
   const t = useT()
@@ -96,6 +95,7 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
 
   return (
     <EditorialDetailLayout
+      className="sc-playlist-page"
       onBack={() => navigate({ name: 'search' })}
       backLabel={t('Back to search')}
       art={
@@ -157,6 +157,10 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
     >
       <CacheProgress kind="playlist" scId={playlist.id} />
 
+      <div className="detail-tracklist-heading sc-tracklist-heading">
+        <h2>{t('Tracks')}</h2>
+        <span>{playable.length} / {tracks.length}</span>
+      </div>
       <div className="sc-list">
         {tracks.map((trk) => {
           const playableHere = trk.streamable && (trk.hasProgressive || trk.hasHls)

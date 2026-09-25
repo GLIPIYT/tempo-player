@@ -128,6 +128,7 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
 
   return (
     <EditorialDetailLayout
+      className="local-artist-page"
       onBack={() => navigate({ name: 'artists' })}
       backLabel={t('Artists')}
       round
@@ -202,44 +203,49 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
       }
     >
 
-      {albums.length === 0 ? (
-        <EmptyState title={t('No albums for this artist')} hint={t('Tracks may be filed without album metadata.')} />
-      ) : (
-        <div className="cards-grid">
-          {albums.map((a) => (
-            <button
-              key={a.id}
-              className="card"
-              onClick={() => navigate({ name: 'album', id: a.id })}
-              title={a.title}
-            >
-              <span className="card-cover">
-                <Cover path={a.coverPath} label={a.title} size={120} />
-                <CardPlayButton
-                  label={`${t('Play')} ${a.title}`}
-                  onPlay={() => void playAlbum(a.id)}
-                />
-              </span>
-              <span className="card-title">{a.title}</span>
-              <span className="card-sub">
-                {a.year != null ? `${a.year} · ` : ''}
-                {(a.trackCount ?? 0) === 1
-                  ? `${a.trackCount ?? 0} ${t('track')}`
-                  : `${a.trackCount ?? 0} ${t('tracks')}`}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-
       {artistTracks.length > 0 ? (
         <section className="home-section">
           <div className="home-section-head">
             <span className="home-section-title">{t('Tracks')}</span>
           </div>
-          <TrackList tracks={artistTracks} />
+          <TrackList tracks={artistTracks} showHeader />
         </section>
       ) : null}
+
+      {albums.length === 0 ? (
+        <EmptyState title={t('No albums for this artist')} hint={t('Tracks may be filed without album metadata.')} />
+      ) : (
+        <section className="home-section artist-albums-section">
+          <div className="home-section-head">
+            <span className="home-section-title">{t('Albums')}</span>
+          </div>
+          <div className="cards-grid">
+            {albums.map((a) => (
+              <button
+                key={a.id}
+                className="card"
+                onClick={() => navigate({ name: 'album', id: a.id })}
+                title={a.title}
+              >
+                <span className="card-cover">
+                  <Cover path={a.coverPath} label={a.title} size={120} />
+                  <CardPlayButton
+                    label={`${t('Play')} ${a.title}`}
+                    onPlay={() => void playAlbum(a.id)}
+                  />
+                </span>
+                <span className="card-title">{a.title}</span>
+                <span className="card-sub">
+                  {a.year != null ? `${a.year} · ` : ''}
+                  {(a.trackCount ?? 0) === 1
+                    ? `${a.trackCount ?? 0} ${t('track')}`
+                    : `${a.trackCount ?? 0} ${t('tracks')}`}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <Modal
         open={imagePickerOpen}

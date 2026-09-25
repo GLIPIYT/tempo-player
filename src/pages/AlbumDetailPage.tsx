@@ -7,7 +7,7 @@ import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { usePlayer } from '../player'
 import { tracksToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
-import DetailLayout from '../components/common/DetailLayout'
+import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import EmptyState from '../components/common/EmptyState'
 import TrackList from '../components/common/TrackList'
 import { useT } from '../i18n'
@@ -44,7 +44,8 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
   const unknownArtist = t('Unknown artist')
 
   return (
-    <DetailLayout
+    <EditorialDetailLayout
+      className="local-album-page"
       onBack={() => navigate({ name: 'albums' })}
       backLabel={t('Albums')}
       art={<Cover path={album.coverPath} label={album.title} size={232} />}
@@ -107,8 +108,14 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
       {tracks.length === 0 ? (
         <EmptyState title={t('This album has no tracks')} hint={t('Rescan your library if this seems wrong.')} />
       ) : (
-        <TrackList tracks={tracks} showAlbum={false} showIndex />
+        <section className="detail-tracklist-section">
+          <div className="detail-tracklist-heading">
+            <h2>{t('Tracks')}</h2>
+            <span>{tracks.length} {tracks.length === 1 ? t('track') : t('tracks')}</span>
+          </div>
+          <TrackList tracks={tracks} showAlbum={false} showIndex showHeader />
+        </section>
       )}
-    </DetailLayout>
+    </EditorialDetailLayout>
   )
 }

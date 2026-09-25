@@ -106,6 +106,7 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
 
   return (
     <EditorialDetailLayout
+      className="sc-artist-page"
       onBack={() => navigate({ name: 'search' })}
       backLabel={t('Back to search')}
       round
@@ -166,7 +167,10 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
 
       {tracks.length > 0 ? (
         <>
-          <div className="section-label">{t('Tracks')}</div>
+          <div className="detail-tracklist-heading sc-tracklist-heading">
+            <h2>{t('Tracks')}</h2>
+            <span>{playable.length} / {tracks.length}</span>
+          </div>
           <div className="sc-list">
             {tracks.map((trk) => {
               const playableHere = trk.streamable && (trk.hasProgressive || trk.hasHls)

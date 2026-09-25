@@ -45,6 +45,89 @@
 .collection-library-search input::placeholder { color: var(--text-muted); }
 .collection-library-toolbar .select { min-width: 150px; height: 35px; }
 
+.library-remaster-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.library-remaster-search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  color: var(--text-muted);
+}
+
+.library-remaster-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+}
+
+.library-remaster-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.library-remaster-search input::placeholder { color: var(--text-muted); }
+
+.library-remaster-search > button {
+  display: grid;
+  flex: none;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-muted);
+}
+
+.library-remaster-search > button:hover { background: var(--surface-hover); color: var(--text); }
+.library-remaster-toolbar > .select { min-width: 160px; min-height: 38px; }
+
+.library-remaster-filters {
+  display: flex;
+  gap: 7px;
+  margin: 0 0 13px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 35%, transparent) transparent;
+}
+
+.library-remaster-filter {
+  flex: none;
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  transition: color .14s ease, background-color .14s ease, border-color .14s ease;
+}
+
+.library-remaster-filter:hover { color: var(--text); background: var(--surface-hover); }
+.library-remaster-filter.is-active { color: var(--text); border-color: var(--border); background: var(--surface); }
+.library-remaster-empty { padding: 24px 10px; }
+
+.library-remaster-filters:focus-visible,
+.library-remaster-filter:focus-visible,
+.library-remaster-search > button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Artists: one wide portrait, two supporting artists, then an image gallery. */
 .artist-gallery-spotlight {
   display: grid;
@@ -254,6 +337,8 @@
   .collection-library-heading .page-actions { flex-wrap: wrap; }
   .collection-library-toolbar { align-items: stretch; flex-wrap: wrap; }
   .collection-library-toolbar .collection-library-search { flex: 1; min-width: 170px; }
+  .library-remaster-toolbar { align-items: stretch; flex-direction: column; }
+  .library-remaster-toolbar > .select { width: 100%; }
   .artist-gallery-spotlight { grid-template-columns: minmax(0, 1fr); }
   .artist-gallery-featured-side { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto; }
   .artist-gallery-featured-row { padding: 8px; }

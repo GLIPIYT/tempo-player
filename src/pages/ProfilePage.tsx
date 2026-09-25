@@ -19,6 +19,10 @@ function dayLabel(dateStr: string, lang: 'ru' | 'en'): string {
   return d.toLocaleDateString(localeFor(lang), { day: 'numeric', month: 'short' })
 }
 
+function monthLabel(date: Date, lang: 'ru' | 'en'): string {
+  return date.toLocaleDateString(localeFor(lang), { month: 'short' })
+}
+
 function hourLabel(minutes: number): string {
   if (minutes >= 60) return `${(minutes / 60).toFixed(1)} h`
   return `${Math.round(minutes)} min`
@@ -29,7 +33,7 @@ export default function ProfilePage() {
   const t = useT()
   const version = useLibraryVersion()
   const lang = resolveLang(settings.lang)
-  const [range, setRange] = useState<14 | 30>(14)
+  const [range, setRange] = useState<30 | 365>(365)
   const [activityView, setActivityView] = useState<'graph' | 'grid'>('graph')
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
@@ -43,7 +47,7 @@ export default function ProfilePage() {
   const summary = stats.data?.summary
   const totalHours = summary ? Math.round((summary.totalMinutes / 60) * 10) / 10 : 0
 
-  const chart = useMemo(() => {
+  const activityDays = useMemo(() => {
     const map = new Map((daily.data ?? []).map((d) => [d.date, d.minutes]))
     const out: { date: string; minutes: number }[] = []
     const today = new Date()
@@ -55,15 +59,35 @@ export default function ProfilePage() {
     }
     return out
   }, [daily.data, range])
+  const chart = useMemo(() => {
+    if (range === 30) {
+      return activityDays.map((day) => ({
+        ...day,
+        label: dayLabel(day.date, lang).split(' ')[0],
+      }))
+    }
+
+    const today = new Date()
+    const byMonth = new Map<string, number>()
+    for (const day of activityDays) {
+      const key = day.date.slice(0, 7)
+      byMonth.set(key, (byMonth.get(key) ?? 0) + day.minutes)
+    }
+    return Array.from({ length: 12 }, (_, index) => {
+      const date = new Date(today.getFullYear(), today.getMonth() - 11 + index, 1)
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+      return { date: `${key}-01`, label: monthLabel(date, lang), minutes: byMonth.get(key) ?? 0 }
+    })
+  }, [activityDays, lang, range])
   const chartMax = Math.max(30, ...chart.map((d) => d.minutes))
   const activityGrid = useMemo(() => {
-    if (chart.length === 0) return []
-    const first = new Date(`${chart[0].date}T00:00:00`)
+    if (activityDays.length === 0) return []
+    const first = new Date(`${activityDays[0].date}T00:00:00`)
     const mondayOffset = (first.getDay() + 6) % 7
-    return [...Array.from({ length: mondayOffset }, () => null), ...chart]
-  }, [chart])
-  const activeDays = chart.filter((day) => day.minutes > 0).length
-  const activityTotal = chart.reduce((sum, day) => sum + day.minutes, 0)
+    return [...Array.from({ length: mondayOffset }, () => null), ...activityDays]
+  }, [activityDays])
+  const activeDays = activityDays.filter((day) => day.minutes > 0).length
+  const activityTotal = activityDays.reduce((sum, day) => sum + day.minutes, 0)
   const weekdays = lang === 'ru' ? ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
   const saveName = () => {
@@ -89,7 +113,7 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="page">
+    <div className="page profile-page-remaster">
       <div className="profile-head">
         <button
           className="avatar-edit"
@@ -156,15 +180,15 @@ export default function ProfilePage() {
             <span className="profile-stat-label">{t('plays')}</span>
           </div>
           <div className="profile-stat">
-            <span className="profile-stat-num">{stats.data ? stats.data.topArtists.length : '—'}</span>
-            <span className="profile-stat-label">{t('artists')}</span>
+            <span className="profile-stat-num">{summary ? `${Math.round(summary.avgCompletionPct)}%` : '—'}</span>
+            <span className="profile-stat-label">{t('Avg completion')}</span>
           </div>
         </div>
       </div>
 
       <section className="home-section">
         <div className="home-section-head profile-chart-head">
-          <span className="home-section-title">{t('Listening per day')}</span>
+          <span className="home-section-title">{t('Listening activity')}</span>
           <div className="profile-chart-controls">
             <div className="seg profile-view-toggle" role="group" aria-label={t('Activity view')}>
               <button
@@ -186,35 +210,35 @@ export default function ProfilePage() {
             </div>
             <div className="seg profile-range-toggle" role="group" aria-label={t('Time range')}>
               <button
-                className={range === 14 ? 'seg-btn is-active' : 'seg-btn'}
-                aria-pressed={range === 14}
-                onClick={() => setRange(14)}
-              >
-                {t('Week and a half')}
-              </button>
-              <button
                 className={range === 30 ? 'seg-btn is-active' : 'seg-btn'}
                 aria-pressed={range === 30}
                 onClick={() => setRange(30)}
               >
-                {t('Month')}
+                {t('Last 30 days')}
+              </button>
+              <button
+                className={range === 365 ? 'seg-btn is-active' : 'seg-btn'}
+                aria-pressed={range === 365}
+                onClick={() => setRange(365)}
+              >
+                {t('Last 12 months')}
               </button>
             </div>
           </div>
         </div>
         {activityView === 'graph' ? (
-          <div className="chart" aria-label={t('Listening per day')}>
+          <div className={range === 365 ? 'chart is-year' : 'chart'} aria-label={t('Listening activity')}>
             {chart.map((d) => (
               <div
                 key={d.date}
                 className="chart-bar-wrap"
-                title={`${dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
+                title={`${range === 365 ? d.label : dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
               >
                 <div
                   className="chart-bar"
                   style={{ height: `${Math.max(3, (d.minutes / chartMax) * 100)}%` }}
                 />
-                <span className="chart-day">{dayLabel(d.date, lang).split(' ')[0]}</span>
+                <span className="chart-day">{d.label}</span>
               </div>
             ))}
           </div>
@@ -223,7 +247,7 @@ export default function ProfilePage() {
             <div className="activity-weekdays" aria-hidden="true">
               {weekdays.map((day) => <span key={day}>{day}</span>)}
             </div>
-            <div className="activity-grid" role="grid" aria-label={t('Listening per day')}>
+            <div className="activity-grid" role="grid" aria-label={t('Listening activity')}>
               {activityGrid.map((d, index) => {
                 if (d === null) return <span key={`empty-${index}`} className="activity-cell is-empty" role="presentation" />
                 const level = d.minutes === 0 ? 0 : Math.max(1, Math.ceil((d.minutes / chartMax) * 4))

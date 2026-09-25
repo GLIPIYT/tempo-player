@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react'
 
 /** A cover-led detail page with the collection and its content in one flow. */
 export default function EditorialDetailLayout({
+  className = '',
   onBack,
   backLabel,
   art,
@@ -13,6 +14,7 @@ export default function EditorialDetailLayout({
   actions,
   children,
 }: {
+  className?: string
   onBack: () => void
   backLabel: string
   art: ReactNode
@@ -24,7 +26,7 @@ export default function EditorialDetailLayout({
   children: ReactNode
 }) {
   return (
-    <div className="page editorial-detail-page">
+    <div className={`page editorial-detail-page ${className}`.trim()}>
       <button className="back-link" onClick={onBack}>
         <ArrowLeft size={14} />
         <span>{backLabel}</span>

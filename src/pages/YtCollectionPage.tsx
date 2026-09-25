@@ -168,6 +168,7 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
 
   return (
     <EditorialDetailLayout
+      className="yt-collection-page"
       onBack={() => navigate({ name: 'search' })}
       backLabel={t('Back to search')}
       round={kind === 'artist'}
@@ -273,6 +274,10 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
             : `${t('Saved')} ${pageSave.done} ${t('tracks')}`}
         </div>
       ) : null}
+      <div className="detail-tracklist-heading yt-tracklist-heading">
+        <h2>{t('Tracklist')}</h2>
+        <span>{tracks.length} {tracks.length === 1 ? t('track') : t('tracks')}</span>
+      </div>
       <div className="sc-list">
         {tracks.map((track, index) => (
           <div

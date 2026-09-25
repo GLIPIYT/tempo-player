@@ -191,11 +191,23 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
 
   return (
     <EditorialDetailLayout
+      className="local-playlist-page"
       onBack={() => navigate({ name: 'playlists' })}
       backLabel={t('Playlists')}
       art={
         <CacheBadge kind="playlist" scId={null} localId={playlistId}>
-          {playlist?.coverPath ? (
+          {items.length > 1 ? (
+            <div className="playlist-cover-mosaic" aria-label={t('Playlist cover')}>
+              {items.slice(0, 4).map((item) => (
+                <Cover
+                  key={`${item.track.id}-${item.position}`}
+                  path={item.track.coverPath}
+                  label={item.track.title}
+                  size={112}
+                />
+              ))}
+            </div>
+          ) : playlist?.coverPath ? (
             <Cover path={playlist.coverPath} label={displayName} size={232} />
           ) : (
             <span className="detail-side-fallback">
@@ -286,7 +298,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
         />
       ) : (
         <div
-          className="tl tl-withactions"
+          className="tl tl-withactions tl-has-header"
           onDragOver={(e) => {
             if (dragFromPos === null || items.length === 0) return
             e.preventDefault()
@@ -300,6 +312,14 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
             dropAtInsertion(dragFromPos, items.length)
           }}
         >
+          <div className="tl-head playlist-track-head" aria-hidden="true">
+            <span className="tl-head-index">#</span>
+            <span>{t('Title')}</span>
+            <span className="tl-head-album">{t('Album')}</span>
+            <span>{t('Duration')}</span>
+            <span className="tl-head-remove" />
+            <span className="tl-head-menu" />
+          </div>
           {items.map((p, i) => {
             const t = p.track
             const playing = player.currentTrack?.sourceId === String(t.id)

@@ -14,10 +14,11 @@ interface TrackListProps {
   tracks: Track[]
   showAlbum?: boolean
   showIndex?: boolean
+  showHeader?: boolean
   onPlayAt?: (index: number) => void
 }
 
-export default function TrackList({ tracks, showAlbum = true, showIndex = true, onPlayAt }: TrackListProps) {
+export default function TrackList({ tracks, showAlbum = true, showIndex = true, showHeader = false, onPlayAt }: TrackListProps) {
   const t = useT()
   const player = usePlayer()
   // one handle per rendered row, so right-clicking a row opens that row's menu
@@ -34,9 +35,19 @@ export default function TrackList({ tracks, showAlbum = true, showIndex = true, 
   const cls = ['tl']
   if (!showAlbum) cls.push('tl-noalbum')
   if (!showIndex) cls.push('tl-noindex')
+  if (showHeader) cls.push('tl-has-header')
 
   return (
     <div className={cls.join(' ')}>
+      {showHeader ? (
+        <div className="tl-head" aria-hidden="true">
+          {showIndex ? <span>#</span> : null}
+          <span>{t('Title')}</span>
+          {showAlbum ? <span className="tl-head-album">{t('Album')}</span> : null}
+          <span>{t('Duration')}</span>
+          <span />
+        </div>
+      ) : null}
       {tracks.map((t, i) => {
         const playing = player.currentTrack?.sourceId === String(t.id)
         return (
