@@ -861,7 +861,8 @@ export default function SearchPage() {
                     name={name}
                     sub={info?.uploader ?? null}
                     count={info?.count ?? null}
-                    thumbnailUrl={info?.thumbnailUrl ?? null}
+                    thumbnailUrl={info?.thumbnailUrl ?? hit.thumbnailUrl}
+                    fallbackUrls={info?.thumbnailUrls ?? hit.thumbnailUrls}
                     pending={!info}
                   />
                 )

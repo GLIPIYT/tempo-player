@@ -171,7 +171,13 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
       onBack={() => navigate({ name: 'search' })}
       backLabel={t('Back to search')}
       round={kind === 'artist'}
-      art={<ScArtwork url={detail.thumbnailUrl} title={name} />}
+      art={
+        <ScArtwork
+          url={detail.thumbnailUrl}
+          fallbackUrls={detail.thumbnailUrls}
+          title={name}
+        />
+      }
       kind={
         <>
           <span>{kindLabel}</span>

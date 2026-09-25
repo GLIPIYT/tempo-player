@@ -25,6 +25,7 @@ export default function YtCard({
   sub,
   count,
   thumbnailUrl,
+  fallbackUrls = [],
   pending = false,
 }: {
   kind: 'album' | 'artist' | 'playlist'
@@ -33,6 +34,7 @@ export default function YtCard({
   sub: string | null
   count: number | null
   thumbnailUrl: string | null
+  fallbackUrls?: string[]
   pending?: boolean
 }) {
   const t = useT()
@@ -82,7 +84,12 @@ export default function YtCard({
       onContextMenu={onContextMenu}
     >
       <span className="sc-card-art">
-        <ScArtwork url={thumbnailUrl} title={name ?? ''} pending={pending} />
+        <ScArtwork
+          url={thumbnailUrl}
+          fallbackUrls={fallbackUrls}
+          title={name ?? ''}
+          pending={pending}
+        />
         {mine ? (
           <span className="cache-badge">
             {mine.state === 'running'

@@ -1,0 +1,31 @@
+/* Tempo preview tokens · Listening Console · nocturnal / focused / editorial */
+:root {
+  --color-outer: #090d13;
+  --color-shell: #101722;
+  --color-sidebar: #0d141e;
+  --color-surface: #151f2d;
+  --color-raised: #1a2839;
+  --color-hover: #223449;
+  --color-line: #27374a;
+  --color-text: #e8eef6;
+  --color-muted: #9aa8ba;
+  --color-dim: #6f8095;
+  --color-accent: #7db5d8;
+  --color-accent-strong: #b3ddf2;
+  --color-warm: #efaa76;
+  --color-good: #89c4a0;
+  --color-warning: #e8c381;
+  --font-display: Bahnschrift, "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  --font-body: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --ease-out: cubic-bezier(.2, .75, .25, 1);
+  --dur-fast: 140ms;
+}

@@ -91,7 +91,7 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
     }
   }
 
-  const useOnlineImage = async () => {
+  const saveOnlineImage = async () => {
     if (!imageCandidate || imageBusy) return
     setImageBusy(true)
     setImageError(null)
@@ -272,7 +272,7 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
           <div className="artist-image-result">
             <img src={imageCandidate.thumbnailUrl} alt="" referrerPolicy="no-referrer" />
             <strong title={imageCandidate.name}>{imageCandidate.name}</strong>
-            <button className="btn btn-primary" disabled={imageBusy} onClick={() => void useOnlineImage()}>
+            <button className="btn btn-primary" disabled={imageBusy} onClick={() => void saveOnlineImage()}>
               {t('Use image')}
             </button>
           </div>

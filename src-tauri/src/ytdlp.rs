@@ -416,6 +416,10 @@ pub const BROWSE_DONE_EVENT: &str = "ytdlp://browsed-done";
 pub struct YtCollectionHit {
     pub id: String,
     pub url: String,
+    #[serde(default)]
+    pub thumbnail_url: Option<String>,
+    #[serde(default)]
+    pub thumbnail_urls: Vec<String>,
 }
 
 /// What a collection's page turned out to say about itself.
@@ -432,6 +436,7 @@ pub struct YtCollectionInfo {
     pub uploader: Option<String>,
     pub count: Option<i64>,
     pub thumbnail_url: Option<String>,
+    pub thumbnail_urls: Vec<String>,
 }
 
 /// Emitted once per track as its metadata resolves.
@@ -461,12 +466,19 @@ mod collection_tests {
         let hit = YtCollectionHit {
             id: "album-id".into(),
             url: "https://music.youtube.com/playlist?list=album-id".into(),
+            thumbnail_url: Some("https://example.test/search.jpg".into()),
+            thumbnail_urls: vec!["https://example.test/search.jpg".into()],
         };
         let json = serde_json::json!({
             "title": "Album title",
             "channel": "Artist name",
             "playlist_count": 12,
-            "thumbnails": [{ "url": "https://example.test/cover.jpg" }]
+            "thumbnail": "https://example.test/mqdefault.jpg",
+            "thumbnails": [
+                { "url": "https://example.test/mqdefault.jpg" },
+                { "url": "https://example.test/sddefault.jpg" },
+                { "url": "https://example.test/maxresdefault.jpg" }
+            ]
         });
 
         let info = collection_info_from_json(&json, "job-1", &hit);
@@ -478,7 +490,16 @@ mod collection_tests {
         assert_eq!(info.count, Some(12));
         assert_eq!(
             info.thumbnail_url.as_deref(),
-            Some("https://example.test/cover.jpg")
+            Some("https://example.test/search.jpg")
+        );
+        assert_eq!(
+            info.thumbnail_urls,
+            vec![
+                "https://example.test/search.jpg",
+                "https://example.test/mqdefault.jpg",
+                "https://example.test/sddefault.jpg",
+                "https://example.test/maxresdefault.jpg"
+            ]
         );
     }
 }
@@ -635,6 +656,7 @@ pub struct YtCollectionDetail {
     pub uploader: Option<String>,
     pub count: Option<i64>,
     pub thumbnail_url: Option<String>,
+    pub thumbnail_urls: Vec<String>,
     pub tracks: Vec<YtSearchHit>,
 }
 
@@ -678,6 +700,7 @@ pub fn open_collection(
         .map(|list| list.iter().filter_map(map_hit).collect())
         .unwrap_or_default();
 
+    let thumbnail_urls = thumbnail_urls(&json);
     Ok(YtCollectionDetail {
         id: text("id").unwrap_or_default(),
         title: text("title"),
@@ -686,13 +709,8 @@ pub fn open_collection(
             .get("playlist_count")
             .and_then(|v| v.as_i64())
             .or(Some(tracks.len() as i64)),
-        thumbnail_url: json
-            .get("thumbnails")
-            .and_then(|v| v.as_array())
-            .and_then(|list| list.last())
-            .and_then(|t| t.get("url"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+        thumbnail_url: thumbnail_urls.first().cloned(),
+        thumbnail_urls,
         tracks,
     })
 }
@@ -781,9 +799,12 @@ pub fn search_collections(
     Ok(entries
         .iter()
         .filter_map(|item| {
+            let thumbnail_urls = thumbnail_urls(item);
             Some(YtCollectionHit {
                 id: item.get("id").and_then(|v| v.as_str())?.to_string(),
                 url: item.get("url").and_then(|v| v.as_str())?.to_string(),
+                thumbnail_url: thumbnail_urls.first().cloned(),
+                thumbnail_urls,
             })
         })
         .collect())
@@ -921,19 +942,56 @@ fn collection_info_from_json(
             .filter(|s| !s.is_empty())
             .map(str::to_string)
     };
+    let hit_thumbnails = if hit.thumbnail_urls.is_empty() {
+        hit.thumbnail_url.iter().cloned().collect()
+    } else {
+        hit.thumbnail_urls.clone()
+    };
+    let thumbnail_urls = merge_thumbnail_urls(&hit_thumbnails, &thumbnail_urls(json));
     YtCollectionInfo {
         job_id: job_id.to_string(),
         id: hit.id.clone(),
         title: text("title"),
         uploader: text("uploader").or_else(|| text("channel")),
         count: json.get("playlist_count").and_then(|v| v.as_i64()),
-        thumbnail_url: json
-            .get("thumbnails")
-            .and_then(|v| v.as_array())
-            .and_then(|list| list.last())
-            .and_then(|t| t.get("url"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
+        thumbnail_url: thumbnail_urls
+            .first()
+            .cloned()
+            .or_else(|| hit.thumbnail_url.clone()),
+        thumbnail_urls,
+    }
+}
+
+/// Image candidates in the order yt-dlp reports them. Search results often
+/// include a usable early `thumbnail` before the optional size variants.
+fn thumbnail_urls(json: &serde_json::Value) -> Vec<String> {
+    let mut urls = Vec::new();
+    if let Some(url) = json.get("thumbnail").and_then(|v| v.as_str()) {
+        push_thumbnail(&mut urls, url);
+    }
+    if let Some(list) = json.get("thumbnails").and_then(|v| v.as_array()) {
+        for url in list
+            .iter()
+            .filter_map(|thumbnail| thumbnail.get("url").and_then(|v| v.as_str()))
+        {
+            push_thumbnail(&mut urls, url);
+        }
+    }
+    urls
+}
+
+fn merge_thumbnail_urls(first: &[String], second: &[String]) -> Vec<String> {
+    let mut urls = Vec::new();
+    for url in first.iter().chain(second) {
+        push_thumbnail(&mut urls, url);
+    }
+    urls
+}
+
+fn push_thumbnail(urls: &mut Vec<String>, url: &str) {
+    let url = url.trim();
+    if !url.is_empty() && !urls.iter().any(|existing| existing == url) {
+        urls.push(url.to_string());
     }
 }
 

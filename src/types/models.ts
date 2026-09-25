@@ -69,6 +69,8 @@ export interface YtSearchHit {
 export interface YtCollectionHit {
   id: string
   url: string
+  thumbnailUrl: string | null
+  thumbnailUrls: string[]
 }
 
 /** What a collection's page says about itself, once it has been opened. */
@@ -79,6 +81,7 @@ export interface YtCollectionInfo {
   uploader: string | null
   count: number | null
   thumbnailUrl: string | null
+  thumbnailUrls: string[]
 }
 
 /** A collection opened for preview, with everything it holds. */
@@ -89,6 +92,7 @@ export interface YtCollectionDetail {
   uploader: string | null
   count: number | null
   thumbnailUrl: string | null
+  thumbnailUrls: string[]
   tracks: YtSearchHit[]
 }
 
