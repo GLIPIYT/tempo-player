@@ -46,6 +46,7 @@ import { bumpLibraryVersion } from './utils/libraryVersion'
 import { likesStore } from './utils/likesStore'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import './styles/app.css'
+import './styles/collections.css'
 import './styles/home.css'
 
 function CurrentPage() {

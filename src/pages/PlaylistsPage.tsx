@@ -1,27 +1,60 @@
 import { useState } from 'react'
-import { ListMusic, Plus, Upload } from 'lucide-react'
+import { ListMusic, Play, Plus, Search, Star, Upload } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
 import type { Playlist } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
-import { useT } from '../i18n'
+import { resolveLang, useT } from '../i18n'
+import { formatCount } from '../i18n/count'
+import { useSettings } from '../state/settings'
 import { playlistDisplayName } from '../utils/playlists'
+import { usePlayer } from '../player'
+import { trackToUnified } from '../utils/unified'
+import { bumpLibraryVersion } from '../utils/libraryVersion'
 import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
 import { toast } from '../components/common/Toast'
 import CacheBadge from '../soundcloud/CacheBadge'
 
+type PlaylistSort = 'name' | 'updated' | 'tracks'
+
 export default function PlaylistsPage() {
   const { navigate } = useNav()
   const t = useT()
+  const { settings } = useSettings()
+  const lang = resolveLang(settings.lang)
+  const player = usePlayer()
   const version = useLibraryVersion()
   const { data, loading, error, reload } = useAsync(() => api.listPlaylists(), [version])
+  const previews = useAsync(() => api.listPlaylistCoverPreviews(), [version])
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<PlaylistSort>('name')
+  const search = query.trim().toLocaleLowerCase()
+  const visiblePlaylists = (data ?? [])
+    .filter((playlist) => playlistDisplayName(playlist, playlist.name, t).toLocaleLowerCase().includes(search))
+    .sort((a, b) => {
+      if (sort === 'updated') return b.updatedAt - a.updatedAt || a.id - b.id
+      if (sort === 'tracks') return (b.trackCount ?? 0) - (a.trackCount ?? 0) || a.name.localeCompare(b.name)
+      return playlistDisplayName(a, a.name, t).localeCompare(playlistDisplayName(b, b.name, t))
+    })
+
+  const playPlaylist = async (playlist: Playlist) => {
+    try {
+      const tracks = (await api.getPlaylist(playlist.id)).map((row) => row.track)
+      if (tracks.length === 0) return
+      player.playTracks(tracks.map(trackToUnified), 0)
+      await api.recordPlaylistStart(playlist.id)
+      bumpLibraryVersion()
+    } catch (cause: unknown) {
+      toast.show(cause instanceof Error ? cause.message : String(cause), 'error')
+    }
+  }
 
   const importM3u8 = async () => {
     try {
@@ -58,12 +91,28 @@ export default function PlaylistsPage() {
   }
 
   return (
-    <div className="page">
-      <div className="page-head playlist-library-heading">
+    <div className="page playlist-list-page">
+      <div className="page-head collection-library-heading">
         <div>
           <h1 className="page-title">{t('Playlists')}</h1>
-          <div className="page-sub">{t('Playlists for every mood.')}</div>
+          <div className="page-sub">{data ? formatCount(data.length, 'playlist', t, lang) : t('Loading…')}</div>
         </div>
+        <div className="page-actions">
+          <button className="btn btn-primary" onClick={() => { setName(''); setCreating(true) }}><Plus size={15} />{t('New playlist')}</button>
+          <button className="btn" onClick={() => void importM3u8()} title={t('Import playlist (m3u8)')}><Upload size={15} />{t('Import')}</button>
+        </div>
+      </div>
+
+      <div className="collection-library-toolbar">
+        <label className="collection-library-search">
+          <Search size={15} />
+          <input type="search" value={query} aria-label={t('Search playlists')} placeholder={t('Search playlists')} onChange={(event) => setQuery(event.target.value)} />
+        </label>
+        <select className="select" value={sort} aria-label={t('Sort by')} onChange={(event) => setSort(event.target.value as PlaylistSort)}>
+          <option value="name">{t('Sort by title')}</option>
+          <option value="updated">{t('Recently updated')}</option>
+          <option value="tracks">{t('Most tracks')}</option>
+        </select>
       </div>
 
       {error ? <div className="error-line">{error}</div> : null}
@@ -74,78 +123,28 @@ export default function PlaylistsPage() {
           icon={<ListMusic size={34} />}
           title={t('No playlists yet')}
           hint={t('Create a playlist and add tracks to it.')}
-          action={
-            <div className="playlist-empty-actions">
-              <button className="btn btn-primary" onClick={() => setCreating(true)}>
-                <Plus size={15} />
-                {t('New playlist')}
-              </button>
-              <button className="btn" onClick={() => void importM3u8()} title={t('Import playlist (m3u8)')}>
-                <Upload size={15} />
-                m3u8
-              </button>
-            </div>
-          }
         />
+      ) : visiblePlaylists.length === 0 ? (
+        <EmptyState icon={<Search size={30} />} title={t('No playlists match')} hint={t('Try another search.')} />
       ) : (
         <>
-          <section className="playlist-library-feature">
-            <div className="playlist-feature-mosaic" aria-hidden="true">
-              {[0, 1, 2, 3].map((index) => {
-                const pl = data[index % data.length]!
-                return (
-                  <span key={`${pl.id}-${index}`} className="playlist-feature-cover">
-                    <CacheBadge kind="playlist" scId={null} localId={pl.id}>
-                      {pl.coverPath ? <Cover path={pl.coverPath} label={pl.name} size={58} /> : <ListMusic size={22} />}
-                    </CacheBadge>
-                  </span>
-                )
-              })}
-            </div>
-            <div className="playlist-library-copy">
-              <div className="section-label">{t('Your collection')}</div>
-              <h2>{data.length} {t('playlists')}</h2>
-              <p>{t('All your mixes in one place.')}</p>
-              <div className="playlist-feature-actions">
-                <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    setName('')
-                    setCreating(true)
-                  }}
-                >
-                  <Plus size={15} />
-                  {t('New playlist')}
-                </button>
-                <button className="btn" onClick={() => void importM3u8()} title={t('Import playlist (m3u8)')}>
-                  <Upload size={15} />
-                  {t('Import')}
-                </button>
-              </div>
-            </div>
-          </section>
-          <div className="playlist-library-grid">
-            {data.map((pl) => {
-              const displayName = playlistDisplayName(pl, pl.name, t)
+          <div className="playlist-list-header" aria-hidden="true"><span>{t('Playlist')}</span><span></span><span>{t('Tracks')}</span><span></span></div>
+          <div className="playlist-list-rows">
+            {visiblePlaylists.map((playlist) => {
+              const displayName = playlistDisplayName(playlist, playlist.name, t)
+              const covers = previews.data?.[playlist.id] ?? (playlist.coverPath ? [playlist.coverPath] : [])
               return (
-                <button
-                  key={pl.id}
-                  className="playlist-library-card"
-                  onClick={() => navigate({ name: 'playlist', id: pl.id })}
-                  title={displayName}
-                >
-                  <span className="playlist-library-cover">
-                    <CacheBadge kind="playlist" scId={null} localId={pl.id}>
-                      {pl.coverPath ? (
-                        <Cover path={pl.coverPath} label={displayName} size={200} />
-                      ) : (
-                        <span className="playlist-library-fallback"><ListMusic size={28} /></span>
-                      )}
-                    </CacheBadge>
-                  </span>
-                  <span className="playlist-library-name">{displayName}</span>
-                  <span className="playlist-library-meta">{pl.trackCount ?? 0} {t('tracks')}</span>
-                </button>
+                <div key={playlist.id} className="playlist-list-row">
+                  <button type="button" className="playlist-list-open" onClick={() => navigate({ name: 'playlist', id: playlist.id })} title={displayName}>
+                    <span className="playlist-list-cover"><CacheBadge kind="playlist" scId={null} localId={playlist.id}>
+                      {playlist.coverPath ? <Cover path={playlist.coverPath} label={displayName} size={56} /> : <span className="playlist-list-fallback"><ListMusic size={24} /></span>}
+                    </CacheBadge></span>
+                    <span className="playlist-list-title"><strong>{displayName}</strong>{playlist.pinned ? <small><Star size={12} fill="currentColor" /> {t('Pinned')}</small> : null}</span>
+                  </button>
+                  <div className="playlist-list-covers" aria-hidden="true">{covers.map((path) => <Cover key={path} path={path} label={displayName} size={30} />)}</div>
+                  <span className="playlist-list-count">{formatCount(playlist.trackCount ?? 0, 'track', t, lang)}</span>
+                  <button type="button" className="playlist-list-play" disabled={(playlist.trackCount ?? 0) === 0} aria-label={`${t('Play all')}: ${displayName}`} onClick={() => void playPlaylist(playlist)}><Play size={16} fill="currentColor" /></button>
+                </div>
               )
             })}
           </div>

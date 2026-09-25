@@ -901,6 +901,32 @@ impl Db {
         })
     }
 
+    /// Up to four distinct track covers per playlist for the compact library list.
+    pub fn list_playlist_cover_previews(&self) -> Result<HashMap<i64, Vec<String>>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "WITH covers AS (\
+                   SELECT pt.playlist_id, t.cover_path, MIN(pt.position) AS first_position \
+                   FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id \
+                   WHERE t.cover_path IS NOT NULL AND t.cover_path <> '' \
+                   GROUP BY pt.playlist_id, t.cover_path\
+                 ), ranked AS (\
+                   SELECT playlist_id, cover_path, \
+                     ROW_NUMBER() OVER (PARTITION BY playlist_id ORDER BY first_position) AS ordinal \
+                   FROM covers\
+                 ) SELECT playlist_id, cover_path FROM ranked WHERE ordinal <= 4 \
+                   ORDER BY playlist_id, ordinal"
+            ).map_err(db_err)?;
+            let rows = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))).map_err(db_err)?;
+            let mut previews: HashMap<i64, Vec<String>> = HashMap::new();
+            for row in rows {
+                let (playlist_id, cover_path) = row.map_err(db_err)?;
+                previews.entry(playlist_id).or_default().push(cover_path);
+            }
+            Ok(previews)
+        })
+    }
+
     pub fn record_playlist_start(&self, playlist_id: i64) -> Result<(), String> {
         self.with_conn(|conn| {
             conn.execute(

@@ -5,7 +5,9 @@ import { api } from '../api/client'
 import type { Artist } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
-import { useT } from '../i18n'
+import { resolveLang, useT } from '../i18n'
+import { formatCount } from '../i18n/count'
+import { useSettings } from '../state/settings'
 import { usePlayer } from '../player'
 import { tracksToUnified } from '../utils/unified'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
@@ -17,21 +19,27 @@ import CacheBadge from '../soundcloud/CacheBadge'
 export default function ArtistsPage() {
   const { navigate } = useNav()
   const t = useT()
+  const { settings } = useSettings()
+  const lang = resolveLang(settings.lang)
   const player = usePlayer()
   const version = useLibraryVersion()
   const { data, loading, error } = useAsync(() => api.listArtists(''), [version])
+  const analytics = useAsync(() => api.getAnalytics('all'), [version])
   const [query, setQuery] = useState('')
-  const visibleArtists = (data ?? []).filter((artist) =>
-    artist.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
-  )
+  const search = query.trim().toLocaleLowerCase()
+  const visibleArtists = (data ?? []).filter((artist) => artist.name.toLocaleLowerCase().includes(search))
+  const byId = new Map((data ?? []).map((artist) => [artist.id, artist]))
+  const ranked = (analytics.data?.topArtists ?? [])
+    .map((item) => byId.get(item.artist.id))
+    .filter((artist): artist is Artist => artist !== undefined)
+  const featured = (ranked.length > 0 ? ranked : data ?? []).slice(0, 3)
+  const featuredIds = new Set(featured.map((artist) => artist.id))
+  const remaining = search ? visibleArtists : visibleArtists.filter((artist) => !featuredIds.has(artist.id))
 
   const playArtist = async (artistId: number) => {
     try {
-      const detail = await api.getArtist(artistId)
-      const first = detail.albums[0]
-      if (!first) return
-      const albumDetail = await api.getAlbum(first.id)
-      if (albumDetail.tracks.length > 0) player.playTracks(tracksToUnified(albumDetail.tracks), 0)
+      const tracks = await api.getArtistTracks(artistId)
+      if (tracks.length > 0) player.playTracks(tracksToUnified(tracks), 0)
     } catch {}
   }
 
@@ -75,48 +83,26 @@ export default function ArtistsPage() {
   }
 
   return (
-    <div className="page">
-      <div className="page-head artist-library-heading">
+    <div className="page artist-gallery-page">
+      <div className="page-head collection-library-heading">
         <div>
           <h1 className="page-title">{t('Artists')}</h1>
-          <div className="page-sub">{t('Your collection, gathered around artists.')}</div>
+          <div className="page-sub">{data ? formatCount(data.length, 'artist', t, lang) : t('Loading…')}</div>
         </div>
+        <label className="collection-library-search">
+          <Search size={15} />
+          <input
+            type="search"
+            value={query}
+            aria-label={t('Search artists')}
+            placeholder={t('Search artists')}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
       </div>
 
-      <section className="artist-library-hero">
-        <div className="artist-library-art" aria-hidden="true">
-          {(data ?? []).slice(0, 3).map((artist, index) => (
-            <span key={artist.id} className={`artist-library-orbit orbit-${index + 1}`}>
-              <CacheBadge kind="artist" scId={null} localId={artist.id}>
-                <Cover path={artist.imagePath} label={artist.name} size={82} rounded />
-              </CacheBadge>
-            </span>
-          ))}
-          {data?.length === 0 ? (
-            <span className="artist-library-orbit orbit-1">
-              <Cover path={null} label={t('Artists')} size={82} rounded />
-            </span>
-          ) : null}
-        </div>
-        <div className="artist-library-copy">
-          <div className="section-label">{t('Your collection')}</div>
-          <h2>{data ? `${data.length} ${t('artists')}` : t('Loading…')}</h2>
-          <p>{t('Find an artist and return to their music.')}</p>
-          <label className="artist-library-search">
-            <Search size={15} />
-            <input
-              type="search"
-              value={query}
-              aria-label={t('Search artists')}
-              placeholder={t('Search artists')}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </label>
-        </div>
-      </section>
-
       {error ? <div className="error-line">{error}</div> : null}
-      {loading && data === null ? (
+      {(loading && data === null) || (analytics.loading && analytics.data === null) ? (
         <div className="muted">{t('Loading…')}</div>
       ) : !data || data.length === 0 ? (
         <EmptyState
@@ -131,37 +117,56 @@ export default function ArtistsPage() {
           hint={t('Try another artist name.')}
         />
       ) : (
-        <div className="artist-library-grid">
-          {visibleArtists.map((a) => (
-            <div key={a.id} className="artist-library-card">
-              <button
-                type="button"
-                className="artist-library-open"
-                onClick={() => navigate({ name: 'artist', id: a.id })}
-                onContextMenu={(e) => artistMenu(e, a)}
-                title={a.name}
-              >
-                <span className="artist-library-cover">
-                  <CacheBadge kind="artist" scId={null} localId={a.id}>
-                    <Cover path={a.imagePath} label={a.name} size={92} rounded />
+        <>
+          {!search && featured[0] ? (
+            <section className={`artist-gallery-spotlight${featured.length === 1 ? ' is-single' : ''}`}>
+              <div className="artist-gallery-lead">
+                <button type="button" className="artist-gallery-lead-open" onClick={() => navigate({ name: 'artist', id: featured[0].id })} onContextMenu={(event) => artistMenu(event, featured[0])}>
+                  <CacheBadge kind="artist" scId={null} localId={featured[0].id}>
+                    <Cover path={featured[0].imagePath} label={featured[0].name} size={480} />
                   </CacheBadge>
-                </span>
-                <span className="artist-library-name">{a.name}</span>
-                <span className="artist-library-meta">
-                  {a.albumCount ?? 0} {t('albums')} · {a.trackCount ?? 0} {t('tracks')}
-                </span>
-              </button>
-              <button
-                type="button"
-                className="artist-library-play"
-                aria-label={`${t('Play')} ${a.name}`}
-                onClick={() => void playArtist(a.id)}
-              >
-                <Play size={15} fill="currentColor" />
-              </button>
-            </div>
-          ))}
-        </div>
+                  <span className="artist-gallery-lead-copy">
+                    <small>{t(ranked.length > 0 ? 'Most played' : 'Your collection')}</small>
+                    <strong>{featured[0].name}</strong>
+                    <span>{formatCount(featured[0].albumCount ?? 0, 'album', t, lang)} · {formatCount(featured[0].trackCount ?? 0, 'track', t, lang)}</span>
+                  </span>
+                </button>
+                <button type="button" className="artist-gallery-lead-play" aria-label={`${t('Play all')}: ${featured[0].name}`} onClick={() => void playArtist(featured[0].id)}><Play size={18} fill="currentColor" /></button>
+              </div>
+              {featured.length > 1 ? (
+                <div className={`artist-gallery-featured-side${featured.length === 2 ? ' is-one' : ''}`}>
+                  {featured.slice(1).map((artist) => (
+                    <div key={artist.id} className="artist-gallery-featured-row">
+                      <button type="button" className="artist-gallery-featured-open" onClick={() => navigate({ name: 'artist', id: artist.id })} onContextMenu={(event) => artistMenu(event, artist)}>
+                        <CacheBadge kind="artist" scId={null} localId={artist.id}><Cover path={artist.imagePath} label={artist.name} size={76} rounded /></CacheBadge>
+                        <span><strong>{artist.name}</strong><small>{formatCount(artist.albumCount ?? 0, 'album', t, lang)} · {formatCount(artist.trackCount ?? 0, 'track', t, lang)}</small></span>
+                      </button>
+                      <button type="button" className="artist-gallery-inline-play" aria-label={`${t('Play all')}: ${artist.name}`} onClick={() => void playArtist(artist.id)}><Play size={15} fill="currentColor" /></button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
+          {remaining.length > 0 ? (
+            <section className="artist-gallery-section">
+              {!search ? <h2>{t('Other artists')}</h2> : null}
+              <div className="artist-gallery-grid">
+                {remaining.map((artist) => (
+                  <div key={artist.id} className="artist-gallery-card">
+                    <button type="button" className="artist-gallery-card-open" onClick={() => navigate({ name: 'artist', id: artist.id })} onContextMenu={(event) => artistMenu(event, artist)}>
+                      <span className="artist-gallery-card-art"><CacheBadge kind="artist" scId={null} localId={artist.id}><Cover path={artist.imagePath} label={artist.name} size={180} /></CacheBadge></span>
+                      <strong title={artist.name}>{artist.name}</strong>
+                      <small>{formatCount(artist.albumCount ?? 0, 'album', t, lang)} · {formatCount(artist.trackCount ?? 0, 'track', t, lang)}</small>
+                    </button>
+                    <button type="button" className="artist-gallery-card-play" aria-label={`${t('Play all')}: ${artist.name}`} onClick={() => void playArtist(artist.id)}><Play size={15} fill="currentColor" /></button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </>
       )}
     </div>
   )

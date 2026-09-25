@@ -95,6 +95,7 @@ pub fn run() {
             commands::rename_playlist,
             commands::delete_playlist,
             commands::list_playlists,
+            commands::list_playlist_cover_previews,
             commands::list_playlist_play_stats,
             commands::record_playlist_start,
             commands::get_playlist,

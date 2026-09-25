@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FocusEvent, type MouseEvent } from 'react'
 import { ChevronDown, ChevronLeft, ChevronRight, Clock3, ListMusic, Play } from 'lucide-react'
 import type { Track } from '../../types/models'
-import { resolveLang, useT, type Lang } from '../../i18n'
+import { resolveLang, useT } from '../../i18n'
+import { formatCount } from '../../i18n/count'
 import { useSettings } from '../../state/settings'
 import type { HourMix } from '../../utils/hourMixes'
 import Cover from '../common/Cover'
@@ -12,12 +13,6 @@ interface HomeMixFeatureProps {
   onOpen: (mix: HourMix) => void
   onMixMenu: (event: MouseEvent, mix: HourMix) => void
   onSectionMenu: (event: MouseEvent) => void
-}
-
-function trackCount(count: number, t: (key: string) => string, lang: Lang): string {
-  const plural = new Intl.PluralRules(lang).select(count)
-  const form = plural === 'one' ? 'track' : plural === 'few' ? 'tracks few' : 'tracks'
-  return `${count} ${t(form)}`
 }
 
 function mixCover(mix: HourMix): string | null {
@@ -161,7 +156,7 @@ export default function HomeMixFeature({
                     {t('View tracks')}
                   </button>
                 </div>
-                <span className="home-mix-meta">{trackCount(mix.tracks.length, t, lang)} · {t('From your library')}</span>
+                <span className="home-mix-meta">{formatCount(mix.tracks.length, 'track', t, lang)} · {t('From your library')}</span>
               </div>
               <div className="home-mix-art" aria-hidden="true">
                 <div className="home-mix-art-back"><Cover path={art} label={mix.title} size={360} loading="eager" /></div>
@@ -192,7 +187,7 @@ export default function HomeMixFeature({
                   <span className="home-mix-choice-copy">
                     <small>{mix.key === 'mix' ? t('For this hour') : t('Artist mix')}</small>
                     <strong>{mix.key === 'mix' ? t('Music for this hour') : mix.title}</strong>
-                    <span>{trackCount(mix.tracks.length, t, lang)}</span>
+                    <span>{formatCount(mix.tracks.length, 'track', t, lang)}</span>
                   </span>
                 </button>
               ))}

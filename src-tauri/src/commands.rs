@@ -340,6 +340,11 @@ pub fn list_playlists(state: State<'_, AppState>) -> Result<Vec<Playlist>, Strin
 }
 
 #[tauri::command]
+pub fn list_playlist_cover_previews(state: State<'_, AppState>) -> Result<std::collections::HashMap<i64, Vec<String>>, String> {
+    state.db.list_playlist_cover_previews()
+}
+
+#[tauri::command]
 pub fn list_playlist_play_stats(state: State<'_, AppState>) -> Result<Vec<crate::models::PlaylistPlayStat>, String> {
     state.db.list_playlist_play_stats()
 }

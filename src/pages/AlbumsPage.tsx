@@ -1,25 +1,40 @@
-import type { MouseEvent as ReactMouseEvent } from 'react'
-import { Play, Star, StarOff } from 'lucide-react'
+import { useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { Play, Search, Star, StarOff } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
 import type { Album } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
-import { useT } from '../i18n'
+import { resolveLang, useT } from '../i18n'
+import { formatCount } from '../i18n/count'
+import { useSettings } from '../state/settings'
 import { usePlayer } from '../player'
 import { tracksToUnified } from '../utils/unified'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import Cover from '../components/common/Cover'
-import CardPlayButton from '../components/common/CardPlayButton'
 import EmptyState from '../components/common/EmptyState'
+
+type AlbumSort = 'title' | 'artist' | 'year'
 
 export default function AlbumsPage() {
   const { navigate } = useNav()
   const t = useT()
+  const { settings } = useSettings()
+  const lang = resolveLang(settings.lang)
   const player = usePlayer()
   const version = useLibraryVersion()
   const { data, loading, error } = useAsync(() => api.listAlbums(''), [version])
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<AlbumSort>('title')
+  const search = query.trim().toLocaleLowerCase()
+  const visibleAlbums = (data ?? [])
+    .filter((album) => `${album.title} ${album.artistName ?? ''}`.toLocaleLowerCase().includes(search))
+    .sort((a, b) => {
+      if (sort === 'year') return (b.year ?? -1) - (a.year ?? -1) || a.title.localeCompare(b.title)
+      if (sort === 'artist') return (a.artistName ?? '').localeCompare(b.artistName ?? '') || a.title.localeCompare(b.title)
+      return a.title.localeCompare(b.title)
+    })
 
   const playAlbum = async (albumId: number) => {
     try {
@@ -61,12 +76,24 @@ export default function AlbumsPage() {
   }
 
   return (
-    <div className="page">
-      <div className="page-head">
+    <div className="page album-wall-page">
+      <div className="page-head collection-library-heading">
         <div>
           <h1 className="page-title">{t('Albums')}</h1>
-          <div className="page-sub">{data ? `${data.length} ${t('albums')}` : t('Loading…')}</div>
+          <div className="page-sub">{data ? formatCount(data.length, 'album', t, lang) : t('Loading…')}</div>
         </div>
+      </div>
+
+      <div className="collection-library-toolbar">
+        <label className="collection-library-search">
+          <Search size={15} />
+          <input type="search" value={query} aria-label={t('Search albums')} placeholder={t('Search albums')} onChange={(event) => setQuery(event.target.value)} />
+        </label>
+        <select className="select" value={sort} aria-label={t('Sort by')} onChange={(event) => setSort(event.target.value as AlbumSort)}>
+          <option value="title">{t('Sort by title')}</option>
+          <option value="artist">{t('Sort by artist')}</option>
+          <option value="year">{t('Sort by year')}</option>
+        </select>
       </div>
 
       {error ? <div className="error-line">{error}</div> : null}
@@ -74,29 +101,19 @@ export default function AlbumsPage() {
         <div className="muted">{t('Loading…')}</div>
       ) : !data || data.length === 0 ? (
         <EmptyState title={t('No albums found')} hint={t('Albums appear after your library has been scanned.')} />
+      ) : visibleAlbums.length === 0 ? (
+        <EmptyState icon={<Search size={30} />} title={t('No albums match')} hint={t('Try another search.')} />
       ) : (
-        <div className="cards-grid">
-          {data.map((a) => (
-            <button
-              key={a.id}
-              className="card"
-              onClick={() => navigate({ name: 'album', id: a.id })}
-              onContextMenu={(e) => albumMenu(e, a)}
-              title={a.title}
-            >
-              <span className="card-cover">
-                <Cover path={a.coverPath} label={a.title} size={120} />
-                <CardPlayButton
-                  label={`${t('Play')} ${a.title}`}
-                  onPlay={() => void playAlbum(a.id)}
-                />
-              </span>
-              <span className="card-title">{a.title}</span>
-              <span className="card-sub">
-                {a.artistName ?? t('Unknown artist')}
-                {a.year != null ? ` · ${a.year}` : ''}
-              </span>
-            </button>
+        <div className="album-wall-grid">
+          {visibleAlbums.map((album) => (
+            <div key={album.id} className="album-wall-item">
+              <button type="button" className="album-wall-open" onClick={() => navigate({ name: 'album', id: album.id })} onContextMenu={(event) => albumMenu(event, album)} title={album.title}>
+                <span className="album-wall-cover"><Cover path={album.coverPath} label={album.title} size={170} /></span>
+                <strong>{album.title}</strong>
+                <small>{album.artistName ?? t('Unknown artist')}{album.year != null ? ` · ${album.year}` : ''}</small>
+              </button>
+              <button type="button" className="album-wall-play" aria-label={`${t('Play all')}: ${album.title}`} onClick={() => void playAlbum(album.id)}><Play size={15} fill="currentColor" /></button>
+            </div>
           ))}
         </div>
       )}

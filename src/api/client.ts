@@ -67,6 +67,7 @@ export const api = {
     invoke<void>('rename_playlist', { playlistId, name }),
   deletePlaylist: (playlistId: number) => invoke<void>('delete_playlist', { playlistId }),
   listPlaylists: () => invoke<Playlist[]>('list_playlists'),
+  listPlaylistCoverPreviews: () => invoke<Record<string, string[]>>('list_playlist_cover_previews'),
   listPlaylistPlayStats: () => invoke<PlaylistPlayStat[]>('list_playlist_play_stats'),
   recordPlaylistStart: (playlistId: number) => invoke<void>('record_playlist_start', { playlistId }),
   getPlaylist: (playlistId: number) => invoke<PlaylistTrack[]>('get_playlist', { playlistId }),
