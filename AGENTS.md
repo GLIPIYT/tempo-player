@@ -1,5 +1,11 @@
 # Repository guidance
 
+## UI text
+
+- Keep interface copy short and useful. Every heading, label, hint, and empty state must help the user understand a control or make a decision.
+- Avoid decorative or generic descriptions, repeated information, and placeholder marketing phrases. Prefer the control and its value when they explain themselves.
+- In previews and finished screens alike, use real product labels and minimal sample content. Review new text and remove anything that does not improve clarity.
+
 ## Release notes
 
 - Keep the release notes in English first and Russian second. Finish the complete English section before starting the Russian one.

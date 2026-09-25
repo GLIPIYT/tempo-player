@@ -11,7 +11,9 @@ import {
   HardDrive,
   Info,
   LibraryBig,
+  Music2,
   Palette,
+  Play,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -26,6 +28,7 @@ import {
   VISUALIZER_BARS_MIN,
   clampMiniShowMs,
   useSettings,
+  type AppSettings,
   type StartupPage,
   type VisualizerStyle,
 } from '../state/settings'
@@ -49,6 +52,7 @@ import { TOKEN_VARS } from '../types/theme'
 import { CUSTOM_DEFAULT_BASE, PRESETS, getPreset } from '../theme/presets'
 import { parseHex, toHex } from '../theme/engine'
 import UpdateDialog from '../updater/UpdateDialog'
+import VisualizerPreview from '../components/settings/VisualizerPreview'
 import {
   appVersion,
   forgetSkippedVersions,
@@ -73,14 +77,6 @@ const NAV: { id: Category; key: string; Icon: IconType }[] = [
   { id: 'storage', key: 'Storage', Icon: HardDrive },
   { id: 'about', key: 'About', Icon: Info },
 ]
-
-const CATEGORY_DESCRIPTIONS: Record<Category, string> = {
-  general: 'Language, launch and app behavior.',
-  appearance: 'Theme, typography and listening visuals.',
-  library: 'Folders, scanning and collection organization.',
-  storage: 'Downloads, cache and local data.',
-  about: 'Version, updates and Tempo details.',
-}
 
 const FALLBACK_FONTS = [
   'Segoe UI',
@@ -173,6 +169,7 @@ function Segmented<T extends string>(props: {
         <button
           key={o.value}
           className={o.value === props.value ? 'seg-btn is-active' : 'seg-btn'}
+          aria-pressed={o.value === props.value}
           onClick={() => props.onChange(o.value)}
         >
           {o.label}
@@ -222,6 +219,7 @@ function CommitSlider(props: {
   value: number
   format: (v: number) => string
   onCommit: (v: number) => void
+  onDraftChange?: (v: number | null) => void
 }) {
   const t = useT()
   const [draft, setDraft] = useState<number | null>(null)
@@ -234,6 +232,7 @@ function CommitSlider(props: {
     draftRef.current = null
     setDraft(null)
     props.onCommit(d)
+    props.onDraftChange?.(null)
   }
 
   // The pointer listeners are installed once per drag, so they would otherwise
@@ -262,10 +261,12 @@ function CommitSlider(props: {
       draftRef.current = null
       setDraft(null)
       props.onCommit(v)
+      props.onDraftChange?.(null)
       return
     }
     draftRef.current = v
     setDraft(v)
+    props.onDraftChange?.(v)
   }
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -889,11 +890,28 @@ export default function SettingsPage() {
   const [sysFonts, setSysFonts] = useState<string[] | null>(null)
   const [fontBusy, setFontBusy] = useState(false)
   const [bgBusy, setBgBusy] = useState(false)
+  const [visualizerDraft, setVisualizerDraft] = useState<Partial<AppSettings['visualizer']>>({})
   const activeCategory = NAV.find((item) => item.id === cat) ?? NAV[0]
   const ActiveCategoryIcon = activeCategory.Icon
 
   const fontMode: FontMode =
     settings.font.importedPath !== null ? 'file' : settings.font.family !== null ? 'system' : 'default'
+
+  const previewVisualizer = useMemo(
+    () => ({ ...settings.visualizer, ...visualizerDraft }),
+    [settings.visualizer, visualizerDraft],
+  )
+  const previewVisualizerValue = (
+    key: 'bars' | 'heightPx' | 'opacityPct' | 'smoothing',
+    value: number | null,
+  ) => {
+    setVisualizerDraft((previous) => {
+      const next = { ...previous }
+      if (value === null) delete next[key]
+      else next[key] = value
+      return next
+    })
+  }
 
   useEffect(() => {
     if (fontMode !== 'system' || sysFonts !== null) return
@@ -1039,7 +1057,6 @@ export default function SettingsPage() {
         <div className="set-side">
           <div className="set-head">
             <h1 className="page-title">{t('Settings')}</h1>
-            <div className="page-sub">{t('Personalize Tempo')}</div>
           </div>
           <nav className="set-nav">
             {NAV.map(({ id, key, Icon }) => (
@@ -1047,12 +1064,14 @@ export default function SettingsPage() {
                 key={id}
                 className={cat === id ? 'set-nav-item is-active' : 'set-nav-item'}
                 aria-current={cat === id ? 'page' : undefined}
-                onClick={() => setCat(id)}
+                onClick={() => {
+                  setCat(id)
+                  if (id !== 'appearance') setVisualizerDraft({})
+                }}
               >
                 <span className="set-nav-icon"><Icon size={17} /></span>
                 <span className="set-nav-copy">
                   <span>{t(key)}</span>
-                  <small>{t(CATEGORY_DESCRIPTIONS[id])}</small>
                 </span>
                 <ChevronDown className="set-nav-arrow" size={14} />
               </button>
@@ -1060,13 +1079,11 @@ export default function SettingsPage() {
           </nav>
         </div>
 
-        <div className="set-content">
+        <div className={cat === 'appearance' ? 'set-content set-appearance-content' : 'set-content'}>
           <header className="set-category-head">
             <span className="set-category-icon"><ActiveCategoryIcon size={21} /></span>
             <span className="set-category-copy">
-              <span className="set-category-kicker">{t('Settings')}</span>
               <h2>{t(activeCategory.key)}</h2>
-              <span className="set-category-description">{t(CATEGORY_DESCRIPTIONS[cat])}</span>
             </span>
             <span className="set-auto-apply"><Check size={13} />{t('Changes apply immediately.')}</span>
           </header>
@@ -1268,7 +1285,7 @@ export default function SettingsPage() {
 
           {cat === 'appearance' ? (
             <>
-              <Card title={t('Theme')} desc={t('Pick a preset or build your own palette.')}>
+              <Card title={t('Theme')}>
                 <div className="theme-grid">
                   {PRESETS.map((p) => (
                     <button
@@ -1296,7 +1313,7 @@ export default function SettingsPage() {
               </Card>
 
               {settings.theme.kind === 'custom' ? (
-                <Card title={t('Custom theme')} desc={t('Three colors drive the whole palette. Changes apply live.')}>
+                <Card title={t('Custom theme')}>
                   <div className="set-row">
                     <span className="set-row-label">{t('Accent')}</span>
                     <ColorField value={custom.base.accent} onChange={(accent) => updateCustom({ ...custom, base: { ...custom.base, accent } })} />
@@ -1371,7 +1388,7 @@ export default function SettingsPage() {
                 </Card>
               ) : null}
 
-              <Card title={t('Font')} desc={t('Typeface, size and interface scale.')}>
+              <Card title={t('Font')}>
                 <div className="set-row">
                   <span className="set-row-label">{t('Source')}</span>
                   <Segmented<FontMode>
@@ -1432,8 +1449,8 @@ export default function SettingsPage() {
                   </div>
                 ) : null}
 
-                <div className="font-preview">
-                  {t('The quick brown fox — Быстрая рыжая лиса 0123456789')}
+                <div className="font-preview" style={{ fontSize: settings.font.sizePx }}>
+                  Аа Бб Вв Aa Bb Cc 0123456789
                 </div>
 
                 <CommitSlider
@@ -1456,7 +1473,7 @@ export default function SettingsPage() {
                 />
               </Card>
 
-              <Card title={t('Background image')} desc={t('A picture behind the library view. Dim and blur it to taste.')}>
+              <Card title={t('Background image')}>
                 <div className="set-row">
                   <span className="set-row-label">
                     {settings.background.path ? fileName(settings.background.path) : t('No image selected')}
@@ -1476,10 +1493,16 @@ export default function SettingsPage() {
                   </div>
                 </div>
                 {settings.background.path ? (
-                  <div
-                    className="bg-thumb"
-                    style={{ backgroundImage: `url("${convertFileSrc(settings.background.path)}")` }}
-                  />
+                  <div className="set-bg-preview" role="img" aria-label={t('Background image')}>
+                    <div
+                      className="set-bg-preview-image"
+                      style={{
+                        backgroundImage: `url("${convertFileSrc(settings.background.path)}")`,
+                        filter: `blur(${settings.background.blurPx}px)`,
+                      }}
+                    />
+                    <div className="set-bg-preview-dim" style={{ opacity: settings.background.dimPct / 100 }} />
+                  </div>
                 ) : null}
                 <SliderRow
                   label={t('Dim')}
@@ -1501,7 +1524,16 @@ export default function SettingsPage() {
                 />
               </Card>
 
-              <Card title={t('Player')} desc={t('Playback visuals.')}>
+              <Card title={t('Player')}>
+                <div
+                  className={`set-player-preview ${settings.player.barStyle === 'modern' ? 'is-modern' : ''} ${settings.player.waveform ? 'has-waveform' : ''}`}
+                  aria-hidden="true"
+                >
+                  <span className="set-player-preview-art"><Music2 size={17} /></span>
+                  <span className="set-player-preview-track"><i /><i /></span>
+                  <span className="set-player-preview-play"><Play size={14} fill="currentColor" /></span>
+                  <span className="set-player-preview-progress"><i /></span>
+                </div>
                 <div className="set-row">
                   <span className="set-row-label">{t('Waveform progress bar')}</span>
                   <button
@@ -1523,9 +1555,6 @@ export default function SettingsPage() {
                     onChange={(barStyle) => update({ player: { barStyle } })}
                   />
                 </div>
-                <div className="set-note">
-                  {t('Classic keeps the progress bar between the transport and the volume controls. Modern centres the transport and runs the progress line along the top edge of the bar.')}
-                </div>
                 <CommitSlider
                   label={t('Crossfade')}
                   min={0}
@@ -1535,12 +1564,9 @@ export default function SettingsPage() {
                   format={(v) => (v === 0 ? t('Off') : `${v}s`)}
                   onCommit={(v) => update({ audio: { crossfadeSec: v } })}
                 />
-                <div className="set-note">
-                  {t('Fades the end of a track into the start of the next one, so they overlap instead of stopping and starting.')}
-                </div>
               </Card>
 
-              <Card title={t('Visualizer')} desc={t('Live spectrum above the player bar.')}>
+              <Card title={t('Visualizer')}>
                 <Segmented<VisualizerStyle>
                   value={settings.visualizer.style}
                   options={[
@@ -1551,68 +1577,78 @@ export default function SettingsPage() {
                   ]}
                   onChange={(style) => update({ visualizer: { style } })}
                 />
+                <VisualizerPreview
+                  visualizer={previewVisualizer}
+                  theme={settings.theme}
+                  offLabel={t('Off')}
+                />
                 <div className={settings.visualizer.style === 'off' ? 'set-block is-dim' : 'set-block'}>
-                  <CommitSlider
-                    label={t('Detail')}
-                    min={VISUALIZER_BARS_MIN}
-                    max={VISUALIZER_BARS_MAX}
-                    step={4}
-                    value={settings.visualizer.bars}
-                    format={(v) => String(v)}
-                    onCommit={(bars) => update({ visualizer: { bars } })}
-                  />
-                  <CommitSlider
-                    label={t('Height')}
-                    min={24}
-                    max={160}
-                    step={4}
-                    value={settings.visualizer.heightPx}
-                    format={(v) => `${v}px`}
-                    onCommit={(heightPx) => update({ visualizer: { heightPx } })}
-                  />
-                  <CommitSlider
-                    label={t('Opacity')}
-                    min={10}
-                    max={100}
-                    step={5}
-                    value={settings.visualizer.opacityPct}
-                    format={(v) => `${v}%`}
-                    onCommit={(opacityPct) => update({ visualizer: { opacityPct } })}
-                  />
-                  <CommitSlider
-                    label={t('Smoothing')}
-                    min={0}
-                    max={100}
-                    step={5}
-                    value={settings.visualizer.smoothing}
-                    format={(v) => `${v}%`}
-                    onCommit={(smoothing) => update({ visualizer: { smoothing } })}
-                  />
-                  <div className="set-row" style={{ marginTop: 6 }}>
-                    <span className="set-row-label">{t('Theme colour')}</span>
-                    <button
-                      className={settings.visualizer.useThemeColor ? 'switch is-on' : 'switch'}
-                      role="switch"
-                      aria-checked={settings.visualizer.useThemeColor}
-                      aria-label={t('Theme colour')}
-                      onClick={() =>
-                        update({ visualizer: { useThemeColor: !settings.visualizer.useThemeColor } })
-                      }
+                  <div className="set-viz-sliders">
+                    <CommitSlider
+                      label={t('Detail')}
+                      min={VISUALIZER_BARS_MIN}
+                      max={VISUALIZER_BARS_MAX}
+                      step={4}
+                      value={settings.visualizer.bars}
+                      format={(v) => String(v)}
+                      onCommit={(bars) => update({ visualizer: { bars } })}
+                      onDraftChange={(value) => previewVisualizerValue('bars', value)}
+                    />
+                    <CommitSlider
+                      label={t('Height')}
+                      min={24}
+                      max={160}
+                      step={4}
+                      value={settings.visualizer.heightPx}
+                      format={(v) => `${v}px`}
+                      onCommit={(heightPx) => update({ visualizer: { heightPx } })}
+                      onDraftChange={(value) => previewVisualizerValue('heightPx', value)}
+                    />
+                    <CommitSlider
+                      label={t('Opacity')}
+                      min={10}
+                      max={100}
+                      step={5}
+                      value={settings.visualizer.opacityPct}
+                      format={(v) => `${v}%`}
+                      onCommit={(opacityPct) => update({ visualizer: { opacityPct } })}
+                      onDraftChange={(value) => previewVisualizerValue('opacityPct', value)}
+                    />
+                    <CommitSlider
+                      label={t('Smoothing')}
+                      min={0}
+                      max={100}
+                      step={5}
+                      value={settings.visualizer.smoothing}
+                      format={(v) => `${v}%`}
+                      onCommit={(smoothing) => update({ visualizer: { smoothing } })}
+                      onDraftChange={(value) => previewVisualizerValue('smoothing', value)}
                     />
                   </div>
-                  <div className="set-row" style={{ marginTop: 6 }}>
-                    <span className="set-row-label">{t('Mirror')}</span>
-                    <button
-                      className={settings.visualizer.mirror ? 'switch is-on' : 'switch'}
-                      role="switch"
-                      aria-checked={settings.visualizer.mirror}
-                      aria-label={t('Mirror')}
-                      onClick={() => update({ visualizer: { mirror: !settings.visualizer.mirror } })}
-                    />
+                  <div className="set-viz-toggles">
+                    <div className="set-row">
+                      <span className="set-row-label">{t('Theme colour')}</span>
+                      <button
+                        className={settings.visualizer.useThemeColor ? 'switch is-on' : 'switch'}
+                        role="switch"
+                        aria-checked={settings.visualizer.useThemeColor}
+                        aria-label={t('Theme colour')}
+                        onClick={() =>
+                          update({ visualizer: { useThemeColor: !settings.visualizer.useThemeColor } })
+                        }
+                      />
+                    </div>
+                    <div className="set-row">
+                      <span className="set-row-label">{t('Mirror')}</span>
+                      <button
+                        className={settings.visualizer.mirror ? 'switch is-on' : 'switch'}
+                        role="switch"
+                        aria-checked={settings.visualizer.mirror}
+                        aria-label={t('Mirror')}
+                        onClick={() => update({ visualizer: { mirror: !settings.visualizer.mirror } })}
+                      />
+                    </div>
                   </div>
-                </div>
-                <div className="set-note">
-                  {t('Draws the spectrum of what is playing on a band above the player bar. Tracks streamed without a cache play outside the audio graph, so the band stays blank on those.')}
                 </div>
               </Card>
             </>

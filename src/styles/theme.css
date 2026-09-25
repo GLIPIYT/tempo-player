@@ -535,15 +535,6 @@ input[type='color'].swatch::-moz-color-swatch {
   color: var(--text-muted);
 }
 
-.bg-thumb {
-  height: 84px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background-size: cover;
-  background-position: center;
-  margin-top: 14px;
-}
-
 .folder-list {
   margin-top: 14px;
 }
@@ -718,8 +709,7 @@ html.has-bg .font-list {
   color: var(--accent-strong);
 }
 
-/* Settings are a small control room: a legible section rail and a calm,
-   descriptive header keep the long preference forms from feeling like one list. */
+/* Settings use a section rail beside the preference cards. */
 .set-layout {
   grid-template-columns: 232px minmax(0, 1fr);
   gap: 30px;
@@ -895,26 +885,12 @@ html.has-bg .font-list {
   gap: 1px;
 }
 
-.set-category-kicker {
-  color: var(--text-muted);
-  font-size: 9px;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
 .set-category-copy h2 {
   margin: 0;
   color: var(--text);
   font-size: 18px;
   font-weight: 650;
   letter-spacing: -0.02em;
-}
-
-.set-category-description {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
 }
 
 .set-auto-apply {
@@ -1015,10 +991,6 @@ html.has-bg .font-list {
     height: 38px;
   }
 
-  .set-category-description {
-    max-width: 38vw;
-  }
-
   .set-auto-apply {
     align-self: flex-end;
     padding: 5px 7px;
@@ -1038,4 +1010,312 @@ html.has-bg .font-list {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Settings: compact controls with previews beside the relevant option. */
+.set-layout {
+  grid-template-columns: 188px minmax(0, 1fr);
+  gap: 20px;
+  max-width: 1220px;
+}
+
+.set-side {
+  align-self: start;
+  gap: 12px;
+  padding: 13px 9px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.set-head {
+  padding: 2px 10px 5px;
+}
+
+.set-head .page-title {
+  font-size: 21px;
+}
+
+.set-nav { gap: 3px; }
+
+.set-nav-item {
+  min-height: 42px;
+  padding: 5px 8px;
+  border-radius: 8px;
+}
+
+.set-nav-icon {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  background: transparent;
+}
+
+.set-nav-copy > span { font-size: 12px; }
+.set-nav-arrow { display: none; }
+
+.set-category-head {
+  min-height: 66px;
+  padding: 10px 15px;
+  margin-bottom: 14px;
+  background: var(--surface);
+}
+
+.set-category-icon {
+  width: 35px;
+  height: 35px;
+  border-radius: 9px;
+}
+
+.set-category-copy h2 { font-size: 17px; }
+
+.set-appearance-content .set-card {
+  padding: 18px 20px;
+  border-radius: 12px;
+}
+
+.set-appearance-content .set-card-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.set-appearance-content .set-row {
+  min-width: 0;
+}
+
+.set-appearance-content .seg {
+  padding: 3px;
+  border-radius: 9px;
+}
+
+.set-appearance-content .seg-btn {
+  min-height: 27px;
+  border-radius: 6px;
+}
+
+.set-appearance-content .switch {
+  width: 42px;
+  height: 24px;
+  border: 1px solid var(--border);
+}
+
+.set-appearance-content .switch::after {
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+}
+
+.set-appearance-content .switch.is-on::after { transform: translateX(18px); }
+
+.set-appearance-content .slider-row {
+  grid-template-columns: minmax(0, 1fr) 50px;
+  width: min(100%, 420px);
+}
+
+.set-appearance-content .slider-row input[type='range'] {
+  width: 100%;
+  background: linear-gradient(to right, var(--accent) 0 var(--fill, 50%), var(--border) var(--fill, 50%) 100%);
+}
+
+.set-appearance-content .slider-row input[type='range']::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+  border: 3px solid var(--accent-strong);
+  background: var(--accent);
+}
+
+.set-appearance-content .slider-row input[type='range']::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 3px solid var(--accent-strong);
+  background: var(--accent);
+}
+
+.set-appearance-content .slider-value {
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--accent-strong);
+  text-align: center;
+}
+
+.set-bg-preview {
+  position: relative;
+  height: 180px;
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+}
+
+.set-bg-preview-image {
+  position: absolute;
+  inset: -42px;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.set-bg-preview-dim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+
+.set-player-preview {
+  position: relative;
+  display: grid;
+  grid-template-columns: 36px minmax(70px, 1fr) 28px minmax(90px, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 65px;
+  margin-top: 14px;
+  padding: 11px 14px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-elevated);
+}
+
+.set-player-preview-art {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.set-player-preview-track i {
+  display: block;
+  width: min(100%, 95px);
+  height: 5px;
+  margin: 5px 0;
+  border-radius: 5px;
+  background: var(--text-muted);
+  opacity: .7;
+}
+
+.set-player-preview-track i + i { width: 55%; opacity: .35; }
+
+.set-player-preview-play {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--play-btn);
+  color: var(--bg);
+}
+
+.set-player-preview-progress {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--border);
+}
+
+.set-player-preview-progress i {
+  display: block;
+  width: 43%;
+  height: 100%;
+  background: var(--accent);
+}
+
+.set-player-preview.has-waveform .set-player-preview-progress {
+  height: 12px;
+  border-radius: 0;
+  background: repeating-linear-gradient(90deg, var(--border) 0 2px, transparent 2px 5px);
+}
+
+.set-player-preview.has-waveform .set-player-preview-progress i {
+  background: repeating-linear-gradient(90deg, var(--accent) 0 2px, transparent 2px 5px);
+}
+
+.set-player-preview.is-modern { padding-top: 17px; }
+.set-player-preview.is-modern .set-player-preview-progress {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+}
+
+.set-viz-preview {
+  position: relative;
+  height: 150px;
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: radial-gradient(ellipse at 50% 110%, var(--accent-soft), var(--bg-elevated) 70%);
+}
+
+.set-viz-preview-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  color: var(--accent);
+}
+
+.set-viz-preview-canvas.is-plain { color: var(--text); }
+
+.set-viz-preview-off {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.set-viz-sliders {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 18px;
+  margin-top: 3px;
+}
+
+.set-viz-sliders .set-row {
+  display: block;
+  margin-top: 15px;
+}
+
+.set-viz-sliders .set-row-label { display: block; margin-bottom: 8px; }
+.set-viz-sliders .slider-row { width: 100%; }
+
+.set-viz-toggles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 16px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border);
+}
+
+.set-viz-toggles .set-row { margin-top: 0 !important; }
+
+@media (max-width: 980px) {
+  .set-layout { grid-template-columns: 170px minmax(0, 1fr); gap: 14px; }
+}
+
+@media (max-width: 760px) {
+  .set-layout { grid-template-columns: minmax(0, 1fr); }
+  .set-side { padding: 9px; }
+  .set-head { display: none; }
+  .set-nav { gap: 4px; }
+}
+
+@media (max-width: 560px) {
+  .set-viz-sliders, .set-viz-toggles { grid-template-columns: minmax(0, 1fr); }
+  .set-player-preview { grid-template-columns: 36px minmax(48px, 1fr) 28px minmax(45px, 1fr); gap: 8px; }
+  .set-appearance-content .set-row { flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .set-page .switch, .set-page .seg-btn, .set-page .theme-card { transition: none; }
 }
