@@ -81,7 +81,6 @@ export const ru: Record<string, string> = {
   'Folders, scanning and collection organization.': 'Папки, сканирование и организация медиатеки.',
   'Downloads, cache and local data.': 'Загрузки, кэш и локальные данные.',
   'Version, updates and Tempo details.': 'Версия, обновления и сведения о Tempo.',
-  'Changes apply immediately.': 'Изменения применяются сразу.',
   Graph: 'График',
   Grid: 'Сетка',
   'Activity view': 'Вид активности',
@@ -214,8 +213,11 @@ export const ru: Record<string, string> = {
   Unmute: 'Включить звук',
   Mute: 'Выключить звук',
   'Unknown artist': 'Неизвестный исполнитель',
-  'A local-first desktop music player. Your library is scanned and stored entirely on this machine; Tempo works fully offline with no account required.':
-    'Локальный десктопный музыкальный плеер. Библиотека сканируется и хранится целиком на этом компьютере; Tempo полностью работает офлайн и не требует аккаунта.',
+  'Music from your files, SoundCloud and YouTube Music in one library and queue.':
+    'Музыка из ваших файлов, SoundCloud и YouTube Music в одной медиатеке и очереди.',
+  Author: 'Автор',
+  'GitHub repository': 'Репозиторий на GitHub',
+  'Could not open repository': 'Не удалось открыть репозиторий',
   Volume: 'Громкость',
   'Waveform progress bar': 'Волновой индикатор прогресса',
   'Where Tempo keeps its data.': 'Где Tempo хранит свои данные.',

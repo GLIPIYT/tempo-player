@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { MarkGithubIcon } from '@primer/octicons-react'
 import {
-  Check,
   ChevronDown,
   EyeOff,
   FolderOpen,
@@ -11,9 +12,7 @@ import {
   HardDrive,
   Info,
   LibraryBig,
-  Music2,
   Palette,
-  Play,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -28,7 +27,6 @@ import {
   VISUALIZER_BARS_MIN,
   clampMiniShowMs,
   useSettings,
-  type AppSettings,
   type StartupPage,
   type VisualizerStyle,
 } from '../state/settings'
@@ -47,7 +45,6 @@ import ScanLine from '../components/common/ScanLine'
 import ConfirmModal from '../components/common/ConfirmModal'
 import { toast } from '../components/common/Toast'
 import type { CustomTheme, ThemeTokens } from '../types/theme'
-import type { YtdlpStatus } from '../types/models'
 import { TOKEN_VARS } from '../types/theme'
 import { CUSTOM_DEFAULT_BASE, PRESETS, getPreset } from '../theme/presets'
 import { parseHex, toHex } from '../theme/engine'
@@ -93,6 +90,7 @@ const FALLBACK_FONTS = [
 ]
 
 const FONT_PREVIEW_TEXT = 'The quick brown fox — Быстрая рыжая лиса'
+const REPOSITORY_URL = 'https://github.com/GLIPIYT/tempo-player'
 
 const GLYPH_PROBES: Record<GlyphScript, string> = {
   latin: 'TheQuickBrownFox0123',
@@ -219,7 +217,6 @@ function CommitSlider(props: {
   value: number
   format: (v: number) => string
   onCommit: (v: number) => void
-  onDraftChange?: (v: number | null) => void
 }) {
   const t = useT()
   const [draft, setDraft] = useState<number | null>(null)
@@ -232,7 +229,6 @@ function CommitSlider(props: {
     draftRef.current = null
     setDraft(null)
     props.onCommit(d)
-    props.onDraftChange?.(null)
   }
 
   // The pointer listeners are installed once per drag, so they would otherwise
@@ -261,12 +257,10 @@ function CommitSlider(props: {
       draftRef.current = null
       setDraft(null)
       props.onCommit(v)
-      props.onDraftChange?.(null)
       return
     }
     draftRef.current = v
     setDraft(v)
-    props.onDraftChange?.(v)
   }
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -530,29 +524,6 @@ function StorageCard() {
   const scInfo = useAsync(() => api.scCacheInfo(), [])
   const [confirmOpen, setConfirmOpen] = useState(false)
 
-  // Checked on mount and whenever the path changes: the binary is an external
-  // thing that can be moved, updated or removed between sessions, so the
-  // answer is never cached beyond the current settings.
-  const [ytStatus, setYtStatus] = useState<YtdlpStatus | null>(null)
-  const [ytBusy, setYtBusy] = useState(false)
-  const ytdlpPathValue = settings.ytdlp.path
-  useEffect(() => {
-    let cancelled = false
-    setYtStatus(null)
-    api
-      .ytdlpStatus(ytdlpPathValue)
-      .then((status) => {
-        if (!cancelled) setYtStatus(status)
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setYtStatus({ found: false, path: '', version: null, managed: true, error: null })
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [ytdlpPathValue])
   const [scConfirmOpen, setScConfirmOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [scBusy, setScBusy] = useState(false)
@@ -656,52 +627,6 @@ function StorageCard() {
         onConfirm={() => void clearCovers()}
         onClose={() => setConfirmOpen(false)}
       />
-      <div className="set-sc-section">
-        <div className="section-label">{t('yt-dlp')}</div>
-        <div className="set-row">
-          <span className="set-row-label">{t('yt-dlp path')}</span>
-          <input
-            className="text-input"
-            value={settings.ytdlp.path}
-            placeholder="yt-dlp"
-            spellCheck={false}
-            onChange={(e) => update({ ytdlp: { path: e.target.value } })}
-          />
-        </div>
-        <div className="set-note" style={{ marginTop: 6 }}>
-          {t('Leave empty to use the one on PATH.')}
-        </div>
-        <div className="muted settings-line" style={{ marginTop: 6 }}>
-          {ytStatus === null
-            ? t('Checking…')
-            : ytStatus.found
-              ? `${t('Found')} · ${ytStatus.version ?? ''}`
-              : t('yt-dlp not found')}
-        </div>
-        <div className="set-row" style={{ marginTop: 10 }}>
-          <span className="set-row-label">
-            {ytStatus?.managed ? t('Managed by Tempo') : t('Path set by hand')}
-          </span>
-          <button
-            className="btn"
-            disabled={ytBusy}
-            onClick={() => {
-              setYtBusy(true)
-              void api
-                .ytdlpEnsure(settings.ytdlp.path)
-                .then(setYtStatus)
-                .catch(() => undefined)
-                .finally(() => setYtBusy(false))
-            }}
-          >
-            {t('Check for updates')}
-          </button>
-        </div>
-        <div className="set-note" style={{ marginTop: 6 }}>
-          {t('Tempo fetches yt-dlp itself and keeps it current, so there is nothing to install. Leave the path empty to let it.')}
-        </div>
-      </div>
-
       <div className="set-sc-section">
         <div className="section-label">{t('SoundCloud cache')}</div>
         {scInfo.error ? <div className="error-line">{scInfo.error}</div> : null}
@@ -890,28 +815,11 @@ export default function SettingsPage() {
   const [sysFonts, setSysFonts] = useState<string[] | null>(null)
   const [fontBusy, setFontBusy] = useState(false)
   const [bgBusy, setBgBusy] = useState(false)
-  const [visualizerDraft, setVisualizerDraft] = useState<Partial<AppSettings['visualizer']>>({})
   const activeCategory = NAV.find((item) => item.id === cat) ?? NAV[0]
   const ActiveCategoryIcon = activeCategory.Icon
 
   const fontMode: FontMode =
     settings.font.importedPath !== null ? 'file' : settings.font.family !== null ? 'system' : 'default'
-
-  const previewVisualizer = useMemo(
-    () => ({ ...settings.visualizer, ...visualizerDraft }),
-    [settings.visualizer, visualizerDraft],
-  )
-  const previewVisualizerValue = (
-    key: 'bars' | 'heightPx' | 'opacityPct' | 'smoothing',
-    value: number | null,
-  ) => {
-    setVisualizerDraft((previous) => {
-      const next = { ...previous }
-      if (value === null) delete next[key]
-      else next[key] = value
-      return next
-    })
-  }
 
   useEffect(() => {
     if (fontMode !== 'system' || sysFonts !== null) return
@@ -1064,10 +972,7 @@ export default function SettingsPage() {
                 key={id}
                 className={cat === id ? 'set-nav-item is-active' : 'set-nav-item'}
                 aria-current={cat === id ? 'page' : undefined}
-                onClick={() => {
-                  setCat(id)
-                  if (id !== 'appearance') setVisualizerDraft({})
-                }}
+                onClick={() => setCat(id)}
               >
                 <span className="set-nav-icon"><Icon size={17} /></span>
                 <span className="set-nav-copy">
@@ -1085,7 +990,6 @@ export default function SettingsPage() {
             <span className="set-category-copy">
               <h2>{t(activeCategory.key)}</h2>
             </span>
-            <span className="set-auto-apply"><Check size={13} />{t('Changes apply immediately.')}</span>
           </header>
 
           {cat === 'general' ? (
@@ -1525,15 +1429,6 @@ export default function SettingsPage() {
               </Card>
 
               <Card title={t('Player')}>
-                <div
-                  className={`set-player-preview ${settings.player.barStyle === 'modern' ? 'is-modern' : ''} ${settings.player.waveform ? 'has-waveform' : ''}`}
-                  aria-hidden="true"
-                >
-                  <span className="set-player-preview-art"><Music2 size={17} /></span>
-                  <span className="set-player-preview-track"><i /><i /></span>
-                  <span className="set-player-preview-play"><Play size={14} fill="currentColor" /></span>
-                  <span className="set-player-preview-progress"><i /></span>
-                </div>
                 <div className="set-row">
                   <span className="set-row-label">{t('Waveform progress bar')}</span>
                   <button
@@ -1578,51 +1473,47 @@ export default function SettingsPage() {
                   onChange={(style) => update({ visualizer: { style } })}
                 />
                 <VisualizerPreview
-                  visualizer={previewVisualizer}
+                  visualizer={settings.visualizer}
                   theme={settings.theme}
                   offLabel={t('Off')}
                 />
                 <div className={settings.visualizer.style === 'off' ? 'set-block is-dim' : 'set-block'}>
                   <div className="set-viz-sliders">
-                    <CommitSlider
+                    <SliderRow
                       label={t('Detail')}
                       min={VISUALIZER_BARS_MIN}
                       max={VISUALIZER_BARS_MAX}
                       step={4}
                       value={settings.visualizer.bars}
-                      format={(v) => String(v)}
-                      onCommit={(bars) => update({ visualizer: { bars } })}
-                      onDraftChange={(value) => previewVisualizerValue('bars', value)}
+                      display={String(settings.visualizer.bars)}
+                      onChange={(bars) => update({ visualizer: { bars } })}
                     />
-                    <CommitSlider
+                    <SliderRow
                       label={t('Height')}
                       min={24}
                       max={160}
                       step={4}
                       value={settings.visualizer.heightPx}
-                      format={(v) => `${v}px`}
-                      onCommit={(heightPx) => update({ visualizer: { heightPx } })}
-                      onDraftChange={(value) => previewVisualizerValue('heightPx', value)}
+                      display={`${settings.visualizer.heightPx}px`}
+                      onChange={(heightPx) => update({ visualizer: { heightPx } })}
                     />
-                    <CommitSlider
+                    <SliderRow
                       label={t('Opacity')}
                       min={10}
                       max={100}
                       step={5}
                       value={settings.visualizer.opacityPct}
-                      format={(v) => `${v}%`}
-                      onCommit={(opacityPct) => update({ visualizer: { opacityPct } })}
-                      onDraftChange={(value) => previewVisualizerValue('opacityPct', value)}
+                      display={`${settings.visualizer.opacityPct}%`}
+                      onChange={(opacityPct) => update({ visualizer: { opacityPct } })}
                     />
-                    <CommitSlider
+                    <SliderRow
                       label={t('Smoothing')}
                       min={0}
                       max={100}
                       step={5}
                       value={settings.visualizer.smoothing}
-                      format={(v) => `${v}%`}
-                      onCommit={(smoothing) => update({ visualizer: { smoothing } })}
-                      onDraftChange={(value) => previewVisualizerValue('smoothing', value)}
+                      display={`${settings.visualizer.smoothing}%`}
+                      onChange={(smoothing) => update({ visualizer: { smoothing } })}
                     />
                   </div>
                   <div className="set-viz-toggles">
@@ -1727,9 +1618,20 @@ export default function SettingsPage() {
               <Card title={t('About')}>
                 <div className="about-name">Tempo</div>
                 <div className="muted settings-line">
-                  {t('A local-first desktop music player. Your library is scanned and stored entirely on this machine; Tempo works fully offline with no account required.')}
+                  {t('Music from your files, SoundCloud and YouTube Music in one library and queue.')}
                 </div>
-                <div className="muted settings-line" style={{ marginTop: 8 }}>Tauri 2 · React 18 · TypeScript · SQLite</div>
+                <div className="muted settings-line" style={{ marginTop: 8 }}>
+                  {t('Author')}: gl1pi (@GLIPIYT)
+                </div>
+                <div className="set-actions">
+                  <button
+                    className="btn"
+                    onClick={() => void openUrl(REPOSITORY_URL).catch(() => toast.show(t('Could not open repository'), 'error'))}
+                  >
+                    <MarkGithubIcon size={16} />
+                    {t('GitHub repository')}
+                  </button>
+                </div>
               </Card>
               <UpdateCard />
             </>

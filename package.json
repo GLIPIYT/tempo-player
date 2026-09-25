@@ -16,9 +16,11 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@primer/octicons-react": "^19.38.0",
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-autostart": "^2.5.1",
     "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/plugin-opener": "^2.5.5",
     "hls.js": "^1.7.1",
     "lucide-react": "^1.33.0",
     "react": "^18.3.1",

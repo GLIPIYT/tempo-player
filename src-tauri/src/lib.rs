@@ -34,6 +34,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         // autostart is opt-in from Settings; registering the plugin only makes
         // the capability available
         .plugin(tauri_plugin_autostart::init(

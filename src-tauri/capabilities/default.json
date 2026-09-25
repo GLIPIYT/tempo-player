@@ -25,6 +25,10 @@
     "core:window:allow-scale-factor",
     "autostart:allow-enable",
     "autostart:allow-disable",
-    "autostart:allow-is-enabled"
+    "autostart:allow-is-enabled",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://github.com/GLIPIYT/tempo-player" }]
+    }
   ]
 }
