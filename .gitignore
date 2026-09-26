@@ -6,6 +6,7 @@ src-tauri/gen/schemas/
 .DS_Store
 graphify-out/
 .playwright-mcp/
+.task-plans/
 
 # actionlint is fetched on demand by CI, never vendored
 actionlint.zip

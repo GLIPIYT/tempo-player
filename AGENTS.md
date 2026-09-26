@@ -6,6 +6,13 @@
 - Avoid decorative or generic descriptions, repeated information, and placeholder marketing phrases. Prefer the control and its value when they explain themselves.
 - In previews and finished screens alike, use real product labels and minimal sample content. Review new text and remove anything that does not improve clarity.
 
+## Task planning
+
+- Before starting any task, including a microtask, bug fix, or documentation change, add it to `.task-plans/DD.MM.YY plan.md` using the local date and filename format (for example, `26.09.26 plan.md`).
+- Keep one plan file per local calendar date and append every new task below the previous entries in that file. Do not replace or delete earlier task entries.
+- Give each task its own clearly named topic and local start time (`Asia/Yekaterinburg`). Record its goal, relevant files or actions, verification approach, and final result including commit/push status.
+- Keep `.task-plans/` ignored by Git; daily plans are local working notes and must not be committed.
+
 ## Development preview
 
 - After code changes, keep the Tauri development player running so the user can review the result. Reuse the current `npm run tauri dev` session and its hot reload when it is already active; start it from the project root if it is not. Confirm that both the Vite dev server and the `target/debug/tempo.exe` process are running. Leave them open unless the user asks to stop them.

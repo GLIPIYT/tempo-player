@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { ListMusic, Play, Plus, Search, Star, Upload } from 'lucide-react'
+import { useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { ListMusic, Play, Plus, Search, Star, StarOff, Trash2, Upload } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
@@ -13,6 +13,7 @@ import { playlistDisplayName } from '../utils/playlists'
 import { usePlayer } from '../player'
 import { trackToUnified } from '../utils/unified'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
+import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
@@ -54,6 +55,56 @@ export default function PlaylistsPage() {
     } catch (cause: unknown) {
       toast.show(cause instanceof Error ? cause.message : String(cause), 'error')
     }
+  }
+
+  const deletePlaylist = async (playlist: Playlist, displayName: string) => {
+    if (playlist.isLikes) return
+    const confirmed = window.confirm(`${t('Delete playlist')} "${displayName}"? ${t('This cannot be undone.')}`)
+    if (!confirmed) return
+    try {
+      await api.deletePlaylist(playlist.id)
+      bumpLibraryVersion()
+    } catch (cause: unknown) {
+      toast.show(cause instanceof Error ? cause.message : String(cause), 'error')
+    }
+  }
+
+  const playlistMenu = (
+    event: ReactMouseEvent<HTMLDivElement>,
+    playlist: Playlist,
+    displayName: string,
+  ) => {
+    event.preventDefault()
+    const items: ContextMenuItem[] = [
+      {
+        id: 'play',
+        label: t('Play all'),
+        icon: <Play size={13} />,
+        disabled: (playlist.trackCount ?? 0) === 0,
+        onSelect: () => void playPlaylist(playlist),
+      },
+      {
+        id: 'favorite',
+        label: playlist.pinned ? t('Remove from favorites') : t('Add to favorites'),
+        icon: playlist.pinned ? <StarOff size={13} /> : <Star size={13} />,
+        onSelect: () => {
+          void api
+            .setPlaylistPinned(playlist.id, !playlist.pinned)
+            .then(() => bumpLibraryVersion())
+            .catch((cause: unknown) => toast.show(cause instanceof Error ? cause.message : String(cause), 'error'))
+        },
+      },
+    ]
+    if (!playlist.isLikes) {
+      items.push({
+        id: 'delete',
+        label: t('Delete playlist'),
+        icon: <Trash2 size={13} />,
+        danger: true,
+        onSelect: () => void deletePlaylist(playlist, displayName),
+      })
+    }
+    openContextMenu({ x: event.clientX, y: event.clientY, title: displayName, items })
   }
 
   const importM3u8 = async () => {
@@ -134,7 +185,7 @@ export default function PlaylistsPage() {
               const displayName = playlistDisplayName(playlist, playlist.name, t)
               const covers = previews.data?.[playlist.id] ?? (playlist.coverPath ? [playlist.coverPath] : [])
               return (
-                <div key={playlist.id} className="playlist-list-row">
+                <div key={playlist.id} className="playlist-list-row" onContextMenu={(event) => playlistMenu(event, playlist, displayName)}>
                   <button type="button" className="playlist-list-open" onClick={() => navigate({ name: 'playlist', id: playlist.id })} title={displayName}>
                     <span className="playlist-list-cover"><CacheBadge kind="playlist" scId={null} localId={playlist.id}>
                       {playlist.coverPath ? <Cover path={playlist.coverPath} label={displayName} size={56} /> : <span className="playlist-list-fallback"><ListMusic size={24} /></span>}
