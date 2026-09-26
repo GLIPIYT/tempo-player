@@ -453,6 +453,9 @@ export class AudioEngine {
 
   private applyPlaybackOptions(el: HTMLAudioElement | null): void {
     if (!el) return
+    // load() resets playbackRate to defaultPlaybackRate. Keep both in sync so
+    // a newly loaded track retains the user's selected speed.
+    el.defaultPlaybackRate = this.playbackRate
     el.playbackRate = this.playbackRate
     const pitchElement = el as HTMLAudioElement & {
       preservesPitch?: boolean

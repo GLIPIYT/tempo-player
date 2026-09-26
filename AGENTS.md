@@ -6,6 +6,10 @@
 - Avoid decorative or generic descriptions, repeated information, and placeholder marketing phrases. Prefer the control and its value when they explain themselves.
 - In previews and finished screens alike, use real product labels and minimal sample content. Review new text and remove anything that does not improve clarity.
 
+## Development preview
+
+- After code changes, keep the Tauri development player running so the user can review the result. Reuse the current `npm run tauri dev` session and its hot reload when it is already active; start it from the project root if it is not. Confirm that both the Vite dev server and the `target/debug/tempo.exe` process are running. Leave them open unless the user asks to stop them.
+
 ## Release notes
 
 - Keep the release notes in English first and Russian second. Finish the complete English section before starting the Russian one.
