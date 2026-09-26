@@ -69,6 +69,111 @@ pub struct Track {
     pub peak_db: Option<f64>,
 }
 
+/// Library item whose artwork can be used for a local track's embedded cover.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LibraryElementKind {
+    Track,
+    Album,
+    Artist,
+    Playlist,
+}
+
+/// Explicit cover action. `Keep` is distinct from `Remove`, so ordinary edits
+/// never erase artwork accidentally.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "camelCase")]
+pub enum TrackArtworkEdit {
+    Keep,
+    Remove,
+    FromLocalPath { path: String },
+    CopyFromLibrary { kind: LibraryElementKind, id: i64 },
+}
+
+/// The editable tag fields and entity links selected in the track editor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackMetadataEditRequest {
+    pub track_id: i64,
+    /// File stamps shown when the editor opened. Nanoseconds are text at the
+    /// frontend boundary to avoid JavaScript's lossy integer conversion.
+    pub expected_file_size: i64,
+    pub expected_file_mtime_ns: String,
+    pub title: String,
+    pub artist_id: Option<i64>,
+    pub album_id: Option<i64>,
+    pub track_number: Option<i64>,
+    pub disc_number: Option<i64>,
+    pub year: Option<i64>,
+    pub genre: Option<String>,
+    pub artwork: TrackArtworkEdit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackMetadataEditorState {
+    pub file_size: i64,
+    pub modified_at_ns: String,
+    pub original: Option<TrackMetadataOriginal>,
+}
+
+/// Original values exposed to the UI. The embedded bytes remain in SQLite and
+/// are only read by the restore command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackMetadataOriginal {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub album_artist: Option<String>,
+    pub track_number: Option<String>,
+    pub disc_number: Option<String>,
+    pub year: Option<String>,
+    pub genre: Option<String>,
+    pub artist_id: Option<i64>,
+    pub album_id: Option<i64>,
+    pub has_embedded_artwork: bool,
+}
+
+/// SQLite snapshot used to restore the original writable fields and every
+/// embedded picture without keeping a second copy of the audio stream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OriginalTrackMetadataSnapshot {
+    pub fields: TrackMetadataOriginal,
+    pub tags: Vec<OriginalTagSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OriginalTagSnapshot {
+    pub tag_type: String,
+    pub items: Vec<OriginalTagItemSnapshot>,
+    pub pictures: Vec<OriginalPictureSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OriginalTagItemSnapshot {
+    pub key: String,
+    pub value_kind: String,
+    pub text: Option<String>,
+    pub binary: Option<Vec<u8>>,
+    pub lang: [u8; 3],
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OriginalPictureSnapshot {
+    pub tag_type: String,
+    pub position: i64,
+    pub picture_type: u8,
+    pub mime_type: Option<String>,
+    pub description: Option<String>,
+    pub data: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Playlist {
@@ -162,7 +267,7 @@ pub struct ScanSummary {
 #[derive(Debug, Clone)]
 pub struct FileStamp {
     pub size: i64,
-    pub mtime: i64,
+    pub mtime_ns: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -181,6 +286,7 @@ pub struct TrackInput {
     pub cover_path: Option<String>,
     pub file_size: i64,
     pub modified_at: i64,
+    pub modified_at_ns: i64,
     pub lyrics: Option<String>,
     /// Read from ReplayGain tags when present; the analyser covers the rest.
     pub gain_db: Option<f64>,
@@ -286,4 +392,28 @@ pub struct LyricsOverride {
     pub lrc: String,
     pub offset_ms: i64,
     pub updated_at: i64,
+    pub editor_document: Option<LyricsEditorDocument>,
+}
+
+/// Full lyrics-editor document. Playback uses the LRC projection in
+/// `LyricsOverride::lrc`; this copy preserves per-line end times.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "lowercase")]
+pub enum LyricsEditorDocument {
+    Plain { lines: Vec<PlainLyricsLine> },
+    Synced { lines: Vec<SyncedLyricsLine> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlainLyricsLine {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncedLyricsLine {
+    pub text: String,
+    pub start_ms: i64,
+    pub end_ms: Option<i64>,
 }

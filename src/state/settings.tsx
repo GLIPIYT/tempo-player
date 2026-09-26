@@ -25,6 +25,8 @@ export interface AppSettings {
   discord: {
     enabled: boolean
     clientId: string
+    /** Pair lyric lines in Discord when their start times are closer than this. 0 disables pairing. */
+    lyricStitchGapSec: number
   }
   lyrics: {
     cacheOnline: boolean
@@ -117,7 +119,7 @@ export const defaultSettings: AppSettings = {
   theme: { kind: 'preset', presetId: 'tempo' },
   startupPage: 'home',
   profile: { nickname: null, avatarPath: null, onboarded: false },
-  discord: { enabled: false, clientId: '1543766505295183904' },
+  discord: { enabled: false, clientId: '1543766505295183904', lyricStitchGapSec: 2 },
   lyrics: { cacheOnline: true },
   font: { family: null, importedPath: null, sizePx: 13, uiScalePct: 100 },
   background: { path: null, dimPct: 45, blurPx: 0 },
@@ -159,6 +161,12 @@ const MINI_SHOW_MS_MAX = 15000
 export function clampMiniShowMs(value: number): number {
   if (!Number.isFinite(value)) return defaultSettings.miniPlayer.autoShowDurationMs
   return Math.max(MINI_SHOW_MS_MIN, Math.min(MINI_SHOW_MS_MAX, Math.round(value)))
+}
+
+export function clampDiscordStitchGap(value: unknown): number {
+  const fallback = defaultSettings.discord.lyricStitchGapSec
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.round(Math.max(0, Math.min(5, value)) / 0.25) * 0.25
 }
 
 export const VISUALIZER_BARS_MIN = 8
@@ -225,6 +233,7 @@ function load(): AppSettings {  try {
       discord: {
         ...defaultSettings.discord,
         ...parsed.discord,
+        lyricStitchGapSec: clampDiscordStitchGap(parsed.discord?.lyricStitchGapSec),
         clientId:
           parsed.discord?.clientId && parsed.discord.clientId.trim()
             ? parsed.discord.clientId
@@ -284,7 +293,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       ...prev,
       ...patch,
       profile: { ...prev.profile, ...patch.profile },
-      discord: { ...prev.discord, ...patch.discord },
+      discord: {
+        ...prev.discord,
+        ...patch.discord,
+        lyricStitchGapSec: clampDiscordStitchGap(
+          patch.discord?.lyricStitchGapSec ?? prev.discord.lyricStitchGapSec,
+        ),
+      },
       lyrics: { ...prev.lyrics, ...patch.lyrics },
       font: { ...prev.font, ...patch.font },
       background: { ...prev.background, ...patch.background },

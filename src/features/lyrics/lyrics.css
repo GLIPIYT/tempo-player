@@ -643,6 +643,27 @@
   color: var(--text-muted);
 }
 
+.lyr-edit-content-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  min-height: 28px;
+  padding: 4px 7px;
+  border: 0;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.lyr-edit-content-btn:hover,
+.lyr-edit-content-btn:focus-visible {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
 .lyr-edit-hint {
   max-width: 190px;
   margin: 0;

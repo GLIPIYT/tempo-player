@@ -1,3 +1,5 @@
+import type { LyricsEditorDocument } from '../features/lyrics/editorDocument'
+
 export type SourceId = 'local' | 'soundcloud' | 'youtube'
 
 export interface ScTrack {
@@ -165,6 +167,49 @@ export interface Track {
   peakDb: number | null
 }
 
+export type LibraryElementKind = 'track' | 'album' | 'artist' | 'playlist'
+
+export type TrackArtworkEdit =
+  | { action: 'keep' }
+  | { action: 'remove' }
+  | { action: 'fromLocalPath'; path: string }
+  | { action: 'copyFromLibrary'; kind: LibraryElementKind; id: number }
+
+export interface TrackMetadataEditorState {
+  fileSize: number
+  /** Nanosecond mtime serialized as decimal text to preserve its precision in JavaScript. */
+  modifiedAtNs: string
+  original: TrackMetadataOriginal | null
+}
+
+export interface TrackMetadataEditRequest {
+  trackId: number
+  expectedFileSize: number
+  expectedFileMtimeNs: string
+  title: string
+  artistId: number | null
+  albumId: number | null
+  trackNumber: number | null
+  discNumber: number | null
+  year: number | null
+  genre: string | null
+  artwork: TrackArtworkEdit
+}
+
+export interface TrackMetadataOriginal {
+  title: string | null
+  artist: string | null
+  album: string | null
+  albumArtist: string | null
+  trackNumber: string | null
+  discNumber: string | null
+  year: string | null
+  genre: string | null
+  artistId: number | null
+  albumId: number | null
+  hasEmbeddedArtwork: boolean
+}
+
 export interface Playlist {
   id: number
   name: string
@@ -320,6 +365,17 @@ export interface LyricsOverride {
   lrc: string
   offsetMs: number
   updatedAt: number
+  editorDocument?: LyricsEditorDocument | null
+}
+
+export interface LrclibPublishRequest {
+  trackName: string
+  artistName: string
+  albumName: string
+  duration: number
+  plainLyrics?: string
+  syncedLyrics?: string
+  lyricsfile?: string
 }
 
 export interface PlaylistPlayStat {

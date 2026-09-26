@@ -28,7 +28,15 @@
     "autostart:allow-is-enabled",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://github.com/GLIPIYT/tempo-player" }]
+      "allow": [
+        { "url": "https://github.com/GLIPIYT/tempo-player" },
+        { "url": "https://commons.wikimedia.org/" },
+        { "url": "https://commons.wikimedia.org/wiki/**" },
+        { "url": "https://www.artic.edu/artworks/**" },
+        { "url": "https://www.artic.edu/open-access/open-access-images" },
+        { "url": "https://creativecommons.org/licenses/**" },
+        { "url": "https://creativecommons.org/publicdomain/**" }
+      ]
     }
   ]
 }

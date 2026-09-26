@@ -25,6 +25,28 @@ export class QueueController {
     return this.index
   }
 
+  replaceLocalTrack(updated: UnifiedTrack): boolean {
+    if (updated.source !== 'local' || updated.dbId == null) return false
+    const replacements = new Map<UnifiedTrack, UnifiedTrack>()
+    let changed = false
+    const replace = (track: UnifiedTrack): UnifiedTrack => {
+      if (track.source !== 'local' || track.dbId !== updated.dbId) return track
+      const cached = replacements.get(track)
+      if (cached) return cached
+      const replacement: UnifiedTrack = {
+        ...updated,
+        auto: track.auto,
+        resolving: track.resolving,
+      }
+      replacements.set(track, replacement)
+      changed = true
+      return replacement
+    }
+    this.base = this.base.map(replace)
+    this.items = this.items.map(replace)
+    return changed
+  }
+
   setQueue(items: UnifiedTrack[], startIndex = 0): void {
     this.base = items.slice()
     if (items.length === 0) {

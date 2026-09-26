@@ -1,8 +1,10 @@
 mod child;
 mod commands;
 mod database;
+mod background_search;
 mod discord;
 mod lyrics;
+mod lrclib_publish;
 mod metadata;
 mod models;
 mod scanner;
@@ -81,6 +83,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_library_folders,
+            commands::get_track_metadata_original,
+            commands::get_track_metadata_editor_state,
+            commands::get_library_cover,
+            commands::update_local_track_metadata,
+            commands::restore_track_metadata,
             commands::add_library_folder,
             commands::remove_library_folder,
             commands::rescan_folder,
@@ -107,6 +114,8 @@ pub fn run() {
             commands::record_history,
             commands::import_font,
             commands::import_background,
+            background_search::search_backgrounds,
+            background_search::save_selected_background,
             commands::import_avatar,
             commands::set_playlist_pinned,
             commands::move_pinned_playlist,
@@ -170,6 +179,8 @@ pub fn run() {
             commands::set_track_lyrics,
             commands::get_lyrics_override,
             commands::set_lyrics_override,
+            commands::save_lyrics_editor_document,
+            commands::publish_lyrics_to_lrclib,
             commands::set_lyrics_override_offset,
             commands::clear_lyrics_override,
             commands::toggle_favorite_artist,

@@ -31,18 +31,11 @@ const SEND_MIN_SPACING_MS = 1000
 const SEND_COALESCE_MS = 250
 /** a position jump bigger than this (seek / buffering) re-syncs the timeline */
 const SEEK_DRIFT_SEC = 2
-/**
- * Two lines closer together than this cannot each have their own update - the
- * window would eat one - so they are sent together, the current line as `state`
- * and the next as the third row. Above it each line gets its own update and the
- * second slot stays empty.
- */
-const LYRIC_PAIR_MAX_GAP_SEC = 2
-
 interface DriverSettings {
   clientId: string
   lang: 'ru' | 'en' | 'system'
   lyricsCache: boolean
+  lyricStitchGapSec: number
 }
 
 function readSettings(): DriverSettings | null {
@@ -50,7 +43,7 @@ function readSettings(): DriverSettings | null {
     const raw = localStorage.getItem(SETTINGS_KEY)
     if (!raw) return null
     const s = JSON.parse(raw) as {
-      discord?: { enabled?: boolean; clientId?: string }
+      discord?: { enabled?: boolean; clientId?: string; lyricStitchGapSec?: number }
       lang?: 'ru' | 'en' | 'system'
       lyrics?: { cacheOnline?: boolean }
     }
@@ -59,6 +52,9 @@ function readSettings(): DriverSettings | null {
       clientId: s.discord.clientId.trim(),
       lang: s.lang ?? 'system',
       lyricsCache: s.lyrics?.cacheOnline ?? true,
+      lyricStitchGapSec: typeof s.discord.lyricStitchGapSec === 'number' && Number.isFinite(s.discord.lyricStitchGapSec)
+        ? Math.round(Math.max(0, Math.min(5, s.discord.lyricStitchGapSec)) / 0.25) * 0.25
+        : 2,
     }
   } catch {
     return null
@@ -139,9 +135,10 @@ function lineKey(line: string | null): string {
 function pairFor(
   slice: LyricSlice,
   hasCover: boolean,
+  maxGapSec: number,
 ): { line: string | null; nextLine: string | null; paired: string | null } {
   const { text, nextText } = slice
-  if (!text || !nextText || !hasCover || slice.gapSec >= LYRIC_PAIR_MAX_GAP_SEC) {
+  if (maxGapSec <= 0 || !text || !nextText || !hasCover || slice.gapSec >= maxGapSec) {
     return { line: text, nextLine: null, paired: null }
   }
   const key = lineKey(nextText)
@@ -238,7 +235,7 @@ function doSend(snap: ReturnType<typeof playerController.getSnapshot>, reason: s
   const end = playing && dur > 0 && start !== null ? start + Math.round(dur * 1000) : null
   const cover = coverImage(track)
   const pair = playing
-    ? pairFor(activeSlice(track.sourceId, snap.position), cover !== null)
+    ? pairFor(activeSlice(track.sourceId, snap.position), cover !== null, settings.lyricStitchGapSec)
     : { line: null, nextLine: null, paired: null }
   if (playing) {
     lastLine = lineKey(pair.line)

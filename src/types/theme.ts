@@ -27,6 +27,11 @@ export interface CustomTheme {
     playButton?: string
   }
   overrides: Partial<ThemeTokens>
+  /** Two palette anchors selected in the gradient-theme editor. */
+  gradientAnchors?: {
+    first: string
+    second: string
+  }
 }
 
 export type ActiveTheme = { kind: 'preset'; presetId: string } | { kind: 'custom'; custom: CustomTheme }

@@ -8,13 +8,16 @@ import { useSettings } from '../../state/settings'
 import Cover from '../../components/common/Cover'
 import { fmtTime } from '../../utils/format'
 import { api } from '../../api/client'
-import type { LyricsOverride } from '../../types/models'
+import type { LyricsOverride, LrclibPublishRequest } from '../../types/models'
 import { EmbeddedTagsLyricsProvider } from './embeddedProvider'
 import { fetchOnlineLyricsCandidates, toLyricsCandidates } from './onlineProvider'
 import type { LyricsCandidate } from './onlineProvider'
 import type { LyricsLine, LyricsResult } from './types'
 import { formatLrc, parseLrc } from './lrc'
 import { lyricsService } from './lyricsService'
+import LyricsEditorPanel from './LyricsEditorPanel'
+import { fromLrc, fromPlainLyrics, toLrclibLyricsfile, toPlainText, toPlaybackLrc } from './editorDocument'
+import type { LyricsEditorDocument } from './editorDocument'
 import './lyrics.css'
 
 interface LyricsOverlayProps {
@@ -52,6 +55,19 @@ function candidateLrc(c: LyricsCandidate): string {
   return c.result.kind === 'plain' ? c.result.text : ''
 }
 
+function candidateDocument(
+  candidate: LyricsCandidate,
+  durationMs: number | null | undefined,
+  mode: 'plain' | 'synced' = candidate.result.kind,
+): LyricsEditorDocument {
+  if (mode === 'synced') {
+    const lrc = candidate.syncedLrc?.trim() || formatLrc(candidate.result.kind === 'synced' ? candidate.result.lines : [])
+    if (lrc) return fromLrc(lrc, durationMs)
+  }
+  const plain = candidate.plain ?? (candidate.result.kind === 'plain' ? candidate.result.text : '')
+  return fromPlainLyrics(plain)
+}
+
 /**
  * Re-times an already-parsed candidate by `offsetMs`. The pinned row keeps the
  * unshifted body plus an offset, so the offset has to be re-applied whenever the
@@ -87,7 +103,11 @@ function samePin(c: LyricsCandidate, pinned: LyricsOverride | null): boolean {
   if (c.provider !== pinned.provider) return false
   const a = candidateLrc(c).trim().slice(0, 200)
   const b = pinned.lrc.trim().slice(0, 200)
-  return a === b
+  // An edited document must render its exact saved body. The prefix heuristic is
+  // only for matching a freshly fetched copy of an unedited provider result.
+  return pinned.editorDocument
+    ? candidateLrc(c).trim() === pinned.lrc.trim()
+    : a === b
 }
 
 function providerLabel(provider: string, t: (k: string) => string): string {
@@ -714,9 +734,11 @@ function PinnedBadge() {
 function LyricsEditMenu({
   offsetMs,
   onNudge,
+  onEdit,
 }: {
   offsetMs: number
   onNudge: (deltaMs: number) => void
+  onEdit: () => void
 }) {
   const t = useT()
   const [open, setOpen] = useState(false)
@@ -748,6 +770,16 @@ function LyricsEditMenu({
       {open && (
         <div className="lyr-edit-menu" role="dialog" aria-label={t('Lyrics timing')}>
           <div className="lyr-edit-title">{t('Lyrics timing')}</div>
+          <button
+            className="lyr-edit-content-btn"
+            onClick={() => {
+              setOpen(false)
+              onEdit()
+            }}
+          >
+            <Pencil size={13} />
+            {t('Edit lyrics')}
+          </button>
           <div className="lyr-offset">
             <button
               className="lyr-offset-btn"
@@ -773,8 +805,8 @@ function LyricsEditMenu({
       <button
         className={'lyr-edit-btn' + (open || offsetMs !== 0 ? ' is-active' : '')}
         onClick={() => setOpen((v) => !v)}
-        aria-label={t('Edit lyrics')}
-        title={t('Edit lyrics')}
+        aria-label={t('Lyrics timing')}
+        title={t('Lyrics timing')}
         aria-expanded={open}
       >
         <Pencil size={15} />
@@ -797,6 +829,10 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   const [manualTitle, setManualTitle] = useState(track?.title ?? '')
   const [searching, setSearching] = useState(false)
   const [pinned, setPinned] = useState<LyricsOverride | null>(null)
+  const [pinnedLoaded, setPinnedLoaded] = useState(false)
+  const [editingLyrics, setEditingLyrics] = useState(false)
+  const [savingLyrics, setSavingLyrics] = useState(false)
+  const [publishingLyrics, setPublishingLyrics] = useState(false)
   /** the terms the last manual search actually used, for the pinned row's provenance */
   const [searchedAs, setSearchedAs] = useState<{ artist: string; title: string } | null>(null)
   const { settings } = useSettings()
@@ -809,21 +845,34 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
     const id = p.currentTrack?.dbId ?? null
     if (id == null) {
       setPinned(null)
+      setPinnedLoaded(true)
       return
     }
+    setPinned(null)
+    setPinnedLoaded(false)
     api
       .getLyricsOverride(id)
       .then((row) => {
-        if (!cancelled) setPinned(row)
+        if (!cancelled) {
+          setPinned(row)
+          setPinnedLoaded(true)
+        }
       })
       .catch(() => {
-        if (!cancelled) setPinned(null)
+        if (!cancelled) {
+          setPinned(null)
+          setPinnedLoaded(true)
+        }
       })
     return () => {
       cancelled = true
     }
     // the track identity is the trigger; dbId is a function of it
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackKey])
+
+  useEffect(() => {
+    setEditingLyrics(false)
   }, [trackKey])
 
   useEffect(() => {
@@ -991,6 +1040,36 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   const selected = viewCandidates[viewSelectedIndex] ?? null
   const mode: OverlayMode =
     loading && viewCandidates.length === 0 ? 'loading' : selected ? selected.result.kind : 'empty'
+  const durationMs = track?.durationSec != null ? track.durationSec * 1000 : null
+  const editorSourceOptions = useMemo(
+    () => baseCandidates.flatMap((candidate, index) => {
+      const modes: Array<'plain' | 'synced'> = []
+      if (candidate.result.kind === 'synced') modes.push('synced')
+      if (candidate.plain?.trim() || candidate.result.kind === 'plain') modes.push('plain')
+      const details = [
+        candidate.trackName?.trim(),
+        candidate.artistName?.trim(),
+        candidate.albumName?.trim(),
+        candidate.duration != null ? `${Math.round(candidate.duration)}s` : null,
+      ].filter((part): part is string => Boolean(part))
+      return modes.map((mode) => ({
+        id: `${index}:${mode}`,
+      label: `${providerLabel(candidate.provider, t)} · ${mode === 'synced' ? t('SYNCED') : t('TEXT')}${details.length > 0 ? ` · ${details.join(' / ')}` : ''}`,
+        document: candidateDocument(candidate, durationMs, mode),
+      }))
+    }),
+    [baseCandidates, durationMs, t],
+  )
+  const editorInitialSourceId =
+    viewSelectedIndex >= 0 && baseCandidates[viewSelectedIndex]
+      ? `${viewSelectedIndex}:${selected?.result.kind ?? 'plain'}`
+      : null
+  const editorInitialDocument = useMemo(() => {
+    if (pinned?.editorDocument) return pinned.editorDocument
+    if (pinned) return fromLrc(pinned.lrc, durationMs)
+    if (selected) return candidateDocument(selected, durationMs, selected.result.kind)
+    return fromPlainLyrics('')
+  }, [pinned, selected, durationMs])
 
   /**
    * Writes the pin and tells the lyrics service to forget what it cached, so the
@@ -1129,6 +1208,102 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
     [candidates, p.currentTrack],
   )
 
+  const selectedEditorSource = (sourceId: string | null): LyricsCandidate | null => {
+    if (sourceId !== null) {
+      const index = Number.parseInt(sourceId.split(':', 1)[0], 10)
+      if (Number.isInteger(index) && index >= 0) return baseCandidates[index] ?? null
+    }
+    return viewSelectedIndex >= 0 ? baseCandidates[viewSelectedIndex] ?? null : null
+  }
+
+  const sourceMetadata = (sourceId: string | null) => {
+    const source = selectedEditorSource(sourceId)
+    const isSamePinnedSource = sourceId === editorInitialSourceId || sourceId === null
+    return {
+      source,
+      provider: source?.provider ?? pinned?.provider ?? 'manual',
+      artist: source?.artistName?.trim()
+        || (source?.provider === pinned?.provider ? pinned?.sourceArtist : null)
+        || searchedAs?.artist
+        || track?.artists[0]
+        || '',
+      title: source?.trackName?.trim()
+        || (source?.provider === pinned?.provider ? pinned?.sourceTitle : null)
+        || searchedAs?.title
+        || track?.title
+        || '',
+      offsetMs: isSamePinnedSource ? pinned?.offsetMs ?? 0 : 0,
+    }
+  }
+
+  const saveEditedLyrics = async (document: LyricsEditorDocument, sourceId: string | null): Promise<void> => {
+    const tr = p.currentTrack
+    if (!tr || tr.dbId == null) throw new Error('Track cannot store lyrics')
+    const source = sourceMetadata(sourceId)
+    const lrc = toPlaybackLrc(document)
+    setSavingLyrics(true)
+    try {
+      await api.saveLyricsEditorDocument({
+        trackId: tr.dbId,
+        provider: source.provider,
+        sourceArtist: source.artist || null,
+        sourceTitle: source.title || null,
+        lrc,
+        offsetMs: source.offsetMs,
+        editorDocument: document,
+      })
+      setPinned({
+        provider: source.provider,
+        sourceArtist: source.artist || null,
+        sourceTitle: source.title || null,
+        lrc,
+        offsetMs: source.offsetMs,
+        updatedAt: Math.floor(Date.now() / 1000),
+        editorDocument: document,
+      })
+      setEditingLyrics(false)
+      lyricsService.invalidate(tr.sourceId)
+      lyricsService.ensure(tr, settings.lyrics.cacheOnline)
+    } finally {
+      setSavingLyrics(false)
+    }
+  }
+
+  const publishEditedLyrics = async (document: LyricsEditorDocument, sourceId: string | null): Promise<void> => {
+    const tr = p.currentTrack
+    if (!tr) throw new Error('No track is selected')
+    const source = sourceMetadata(sourceId)
+    const title = source.title || tr.title
+    const artist = source.artist || tr.artists[0] || ''
+    const album = source.source?.albumName?.trim() || tr.album || ''
+    const duration = source.source?.duration ?? tr.durationSec ?? Number.NaN
+    if (!title.trim() || !artist.trim()) throw new Error('LRCLIB_METADATA_INVALID')
+    if (!Number.isFinite(duration) || duration < 1 || duration > 3600) {
+      throw new Error('LRCLIB_DURATION_INVALID')
+    }
+    const plainLyrics = toPlainText(document)
+    const request: LrclibPublishRequest = {
+      trackName: title,
+      artistName: artist,
+      albumName: album,
+      duration,
+      plainLyrics,
+      ...(document.mode === 'synced' ? { syncedLyrics: toPlaybackLrc(document) } : {}),
+      lyricsfile: toLrclibLyricsfile(document, {
+        title,
+        artist,
+        album,
+        durationMs: tr.durationSec == null ? null : tr.durationSec * 1000,
+      }),
+    }
+    setPublishingLyrics(true)
+    try {
+      await api.publishLyricsToLrclib(request)
+    } finally {
+      setPublishingLyrics(false)
+    }
+  }
+
   const manualForm = (
     <div className="lyr-manual">
       <div className="lyr-manual-row">
@@ -1186,42 +1361,59 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           <LyricsVolumeRow />
         </aside>
         <section className="lyr-stage-col">
-          {viewCandidates.length > 0 && (
-            <div className="lyr-head">
-              {canPin && pinned !== null && <PinnedBadge />}
-              <ProviderDropdown
-                candidates={viewCandidates}
-                selectedIndex={viewSelectedIndex}
-                onSelect={handleSelect}
-                onReset={handleResetPin}
-                pinnedIndex={viewPinnedIndex}
-                canPin={canPin}
-              />
-              <button className="lyr-manual-toggle" onClick={() => setShowManual((v) => !v)}>
-                {showManual ? t('Hide') : t('Search manually')}
-              </button>
-              {showManual && manualForm}
-            </div>
-          )}
-          {selected?.copyright?.trim() && (
-            <div className="lyr-copyright">{selected.copyright}</div>
-          )}
-          {searching && viewCandidates.length > 0 && <LoadingMark />}
-          {mode === 'synced' && selected?.result.kind === 'synced' && (
-            <SyncedView key={`${trackKey}-${viewSelectedIndex}-${offsetMs}`} lines={selected.result.lines} />
-          )}
-          {mode === 'plain' && selected?.result.kind === 'plain' && <PlainView text={selected.result.text} />}
-          {mode === 'loading' && !searching && <LoadingMark />}
-          {mode === 'empty' && (
+          {editingLyrics ? (
+            <LyricsEditorPanel
+              key={`${trackKey}-${pinned?.updatedAt ?? 'unpinned'}`}
+              initialDocument={editorInitialDocument}
+              initialSourceId={editorInitialSourceId}
+              sourceOptions={editorSourceOptions}
+              durationMs={durationMs}
+              onSave={saveEditedLyrics}
+              onPublish={publishEditedLyrics}
+              onCancel={() => setEditingLyrics(false)}
+              saving={savingLyrics}
+              publishing={publishingLyrics}
+            />
+          ) : (
             <>
-              <EmptyLyrics unavailable={unavailableHint} />
-              {searching ? <LoadingMark /> : manualForm}
+              {viewCandidates.length > 0 && (!canPin || pinnedLoaded) && (
+                <div className="lyr-head">
+                  {canPin && pinned !== null && <PinnedBadge />}
+                  <ProviderDropdown
+                    candidates={viewCandidates}
+                    selectedIndex={viewSelectedIndex}
+                    onSelect={handleSelect}
+                    onReset={handleResetPin}
+                    pinnedIndex={viewPinnedIndex}
+                    canPin={canPin}
+                  />
+                  <button className="lyr-manual-toggle" onClick={() => setShowManual((v) => !v)}>
+                    {showManual ? t('Hide') : t('Search manually')}
+                  </button>
+                  {showManual && manualForm}
+                </div>
+              )}
+              {selected?.copyright?.trim() && (
+                <div className="lyr-copyright">{selected.copyright}</div>
+              )}
+              {searching && viewCandidates.length > 0 && <LoadingMark />}
+              {mode === 'synced' && selected?.result.kind === 'synced' && (
+                <SyncedView key={`${trackKey}-${viewSelectedIndex}-${offsetMs}`} lines={selected.result.lines} />
+              )}
+              {mode === 'plain' && selected?.result.kind === 'plain' && <PlainView text={selected.result.text} />}
+              {mode === 'loading' && !searching && <LoadingMark />}
+              {mode === 'empty' && (
+                <>
+                  <EmptyLyrics unavailable={unavailableHint} />
+                  {searching ? <LoadingMark /> : manualForm}
+                </>
+              )}
             </>
           )}
         </section>
       </div>
-      {canPin && viewCandidates.length > 0 && (
-        <LyricsEditMenu offsetMs={offsetMs} onNudge={handleNudgeOffset} />
+      {canPin && pinnedLoaded && !editingLyrics && (
+        <LyricsEditMenu offsetMs={offsetMs} onNudge={handleNudgeOffset} onEdit={() => setEditingLyrics(true)} />
       )}
     </div>
   )

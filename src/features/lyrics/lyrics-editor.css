@@ -1,0 +1,382 @@
+.lyr-editor-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 18%, transparent);
+  border-radius: var(--radius, 12px);
+  background: color-mix(in srgb, var(--surface) 82%, var(--bg));
+  color: var(--text);
+}
+
+.lyr-editor-toolbar,
+.lyr-editor-source,
+.lyr-editor-mode,
+.lyr-editor-footer,
+.lyr-editor-actions {
+  display: flex;
+  align-items: center;
+}
+
+.lyr-editor-toolbar {
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lyr-editor-source {
+  min-width: 0;
+  gap: 7px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.lyr-editor-source select {
+  width: min(220px, 38vw);
+  min-width: 92px;
+  min-height: 29px;
+  padding: 4px 25px 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 24%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-elevated) 82%, var(--surface));
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.lyr-editor-mode {
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 18%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 42%, transparent);
+}
+
+.lyr-editor-mode button,
+.lyr-editor-cancel,
+.lyr-editor-save,
+.lyr-editor-add,
+.lyr-editor-remove,
+.lyr-editor-menu-popover button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.lyr-editor-mode button {
+  min-height: 25px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.lyr-editor-mode button:hover,
+.lyr-editor-cancel:hover,
+.lyr-editor-remove:hover,
+.lyr-editor-add:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-hover) 62%, transparent);
+}
+
+.lyr-editor-mode button.is-active {
+  background: color-mix(in srgb, var(--accent) 20%, var(--surface));
+  color: var(--text);
+}
+
+.lyr-editor-plain {
+  width: 100%;
+  flex: 1;
+  min-height: 130px;
+  max-height: 38vh;
+  padding: 10px 11px;
+  resize: vertical;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 18%, transparent);
+  border-radius: 8px;
+  outline: none;
+  background: color-mix(in srgb, var(--bg) 50%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 36%, transparent) transparent;
+}
+
+.lyr-editor-plain:focus,
+.lyr-editor-line input:focus,
+.lyr-editor-source select:focus {
+  border-color: color-mix(in srgb, var(--accent) 72%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  outline-offset: 1px;
+}
+
+.lyr-editor-synced-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lyr-editor-column-labels,
+.lyr-editor-line {
+  display: grid;
+  grid-template-columns: minmax(72px, 1fr) minmax(73px, 86px) minmax(73px, 86px) 25px;
+  align-items: center;
+  gap: 6px;
+}
+
+.lyr-editor-column-labels {
+  padding: 0 5px 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.lyr-editor-column-labels span:not(:first-child) {
+  text-align: center;
+}
+
+.lyr-editor-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  max-height: min(36vh, 350px);
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 36%, transparent) transparent;
+}
+
+.lyr-editor-lines::-webkit-scrollbar,
+.lyr-editor-plain::-webkit-scrollbar {
+  width: 7px;
+}
+
+.lyr-editor-lines::-webkit-scrollbar-thumb,
+.lyr-editor-plain::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-muted) 36%, transparent);
+  background-clip: padding-box;
+}
+
+.lyr-editor-line {
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+}
+
+.lyr-editor-line[data-invalid='true'] {
+  border-color: color-mix(in srgb, var(--danger, #df5f67) 34%, transparent);
+  background: color-mix(in srgb, var(--danger, #df5f67) 6%, transparent);
+}
+
+.lyr-editor-line input {
+  min-width: 0;
+  width: 100%;
+  min-height: 29px;
+  padding: 5px 7px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 16%, transparent);
+  border-radius: 6px;
+  outline: none;
+  background: color-mix(in srgb, var(--bg) 45%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+}
+
+.lyr-editor-line input[aria-invalid='true'] {
+  border-color: color-mix(in srgb, var(--danger, #df5f67) 68%, transparent);
+}
+
+.lyr-editor-line .lyr-editor-time {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.lyr-editor-line-text {
+  text-overflow: ellipsis;
+}
+
+.lyr-editor-remove {
+  width: 25px;
+  height: 27px;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.lyr-editor-add {
+  align-self: flex-start;
+  min-height: 28px;
+  margin-top: 5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11px;
+}
+
+.lyr-editor-validation,
+.lyr-editor-action-error,
+.lyr-editor-action-notice {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.lyr-editor-validation {
+  color: var(--text-muted);
+}
+
+.lyr-editor-action-error {
+  color: var(--danger, #df5f67);
+}
+
+.lyr-editor-action-notice {
+  color: var(--accent);
+}
+
+.lyr-editor-footer {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lyr-editor-actions {
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.lyr-editor-cancel,
+.lyr-editor-save {
+  min-height: 30px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.lyr-editor-cancel {
+  background: transparent;
+}
+
+.lyr-editor-save {
+  background: var(--play-btn, var(--accent));
+  color: var(--bg);
+}
+
+.lyr-editor-save:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.lyr-editor-menu {
+  position: relative;
+}
+
+.lyr-editor-menu summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  color: var(--text-muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.lyr-editor-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.lyr-editor-menu summary:hover,
+.lyr-editor-menu[open] summary {
+  background: color-mix(in srgb, var(--surface-hover) 62%, transparent);
+  color: var(--text);
+}
+
+.lyr-editor-menu-popover {
+  position: absolute;
+  z-index: 5;
+  inset-inline-start: 0;
+  bottom: calc(100% + 5px);
+  min-width: 150px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 18%, transparent);
+  border-radius: 8px;
+  background: var(--surface, var(--bg-elevated));
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--bg) 45%, transparent);
+}
+
+.lyr-editor-menu-popover button {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.lyr-editor-menu-popover button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
+  color: var(--text);
+}
+
+.lyr-editor-panel button:disabled,
+.lyr-editor-panel select:disabled,
+.lyr-editor-panel input:disabled,
+.lyr-editor-panel textarea:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+@media (max-width: 560px) {
+  .lyr-editor-panel {
+    padding: 9px;
+  }
+
+  .lyr-editor-toolbar {
+    align-items: stretch;
+  }
+
+  .lyr-editor-source {
+    flex: 1 1 100%;
+  }
+
+  .lyr-editor-source select {
+    flex: 1;
+    width: auto;
+  }
+
+  .lyr-editor-mode {
+    align-self: flex-start;
+  }
+
+  .lyr-editor-column-labels,
+  .lyr-editor-line {
+    grid-template-columns: minmax(48px, 1fr) minmax(61px, 72px) minmax(61px, 72px) 23px;
+    gap: 4px;
+  }
+
+  .lyr-editor-line input {
+    padding-inline: 5px;
+    font-size: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lyr-editor-panel button {
+    transition: none;
+  }
+}

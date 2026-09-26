@@ -1,4 +1,4 @@
-import type { RepeatMode, UnifiedTrack } from '../types/models'
+import type { RepeatMode, Track, UnifiedTrack } from '../types/models'
 import type { EqualizerSettings } from '../audio/equalizer'
 
 export interface PlayerApi {
@@ -17,6 +17,7 @@ export interface PlayerApi {
   /** True while a track is still being fetched and cannot start yet. */
   preparing: boolean
   playTracks(tracks: UnifiedTrack[], startIndex?: number): void
+  updateTrackMetadata(track: Track): void
   toggle(): void
   next(): void
   previous(): void

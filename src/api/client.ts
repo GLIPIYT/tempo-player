@@ -13,11 +13,16 @@ import type {
   HiddenTrack,
   HistoryEntry,
   LibraryFolder,
+  LrclibPublishRequest,
   LyricsOverride,
   OnlineLyricsCandidateData,
   Playlist,
   PlaylistPlayStat,
   PlaylistTrack,
+  LibraryElementKind,
+  TrackMetadataEditorState,
+  TrackMetadataEditRequest,
+  TrackMetadataOriginal,
   ScanSummary,
   ScArtist,
   ScPlaylist,
@@ -32,6 +37,12 @@ import type {
   TopTrackItem,
   Track,
 } from '../types/models'
+import type { LyricsEditorDocument } from '../features/lyrics/editorDocument'
+import type {
+  BackgroundImageProvider,
+  BackgroundImageResult,
+  BackgroundSearchFilters,
+} from '../types/backgrounds'
 
 function periodSinceSecs(period: AnalyticsPeriod): number | null {
   if (period === 'all') return null
@@ -108,6 +119,18 @@ export const api = {
   getTrackLyrics: (trackId: number) => invoke<string | null>('get_track_lyrics', { trackId }),
   setTrackLyrics: (trackId: number, lyrics: string) => invoke<void>('set_track_lyrics', { trackId, lyrics }),
 
+  getTrackMetadataOriginal: (trackId: number) =>
+    invoke<TrackMetadataOriginal | null>('get_track_metadata_original', { trackId }),
+  getTrackMetadataEditorState: (trackId: number) =>
+    invoke<TrackMetadataEditorState>('get_track_metadata_editor_state', { trackId }),
+  /** Returns the selected library element's local path or remote image URL without downloading it. */
+  getLibraryCover: (kind: LibraryElementKind, id: number) =>
+    invoke<string | null>('get_library_cover', { kind, id }),
+  updateLocalTrackMetadata: (request: TrackMetadataEditRequest) =>
+    invoke<Track>('update_local_track_metadata', { request }),
+  restoreTrackMetadata: (trackId: number) =>
+    invoke<Track>('restore_track_metadata', { trackId }),
+
   getLyricsOverride: (trackId: number) =>
     invoke<LyricsOverride | null>('get_lyrics_override', { trackId }),
   setLyricsOverride: (payload: {
@@ -118,6 +141,17 @@ export const api = {
     lrc: string
     offsetMs: number
   }) => invoke<void>('set_lyrics_override', payload),
+  saveLyricsEditorDocument: (payload: {
+    trackId: number
+    provider: string
+    sourceArtist: string | null
+    sourceTitle: string | null
+    lrc: string
+    offsetMs: number
+    editorDocument: LyricsEditorDocument
+  }) => invoke<void>('save_lyrics_editor_document', payload),
+  publishLyricsToLrclib: (request: LrclibPublishRequest) =>
+    invoke<number>('publish_lyrics_to_lrclib', { request }),
   /** False when nothing is pinned yet - pin first, then the offset has a home. */
   setLyricsOverrideOffset: (trackId: number, offsetMs: number) =>
     invoke<boolean>('set_lyrics_override_offset', { trackId, offsetMs }),
@@ -164,6 +198,13 @@ export const api = {
 
   importFont: (path: string) => invoke<string>('import_font', { path }),
   importBackground: (path: string) => invoke<string>('import_background', { path }),
+  searchBackgrounds: (
+    provider: BackgroundImageProvider,
+    query: string,
+    filters: BackgroundSearchFilters,
+  ) => invoke<BackgroundImageResult[]>('search_backgrounds', { provider, query, filters }),
+  saveSelectedBackground: (provider: BackgroundImageProvider, imageUrl: string) =>
+    invoke<string>('save_selected_background', { provider, imageUrl }),
   importAvatar: (path: string) => invoke<string>('import_avatar', { path }),
 
   getDailyMinutes: (days: number) => invoke<DailyMinutes[]>('get_daily_minutes', { days }),

@@ -74,10 +74,10 @@ pub fn scan_incremental(
         });
         seen.insert(path_string.clone());
 
-        let (file_size, modified_at) = read_stamp(&path);
+        let (file_size, modified_at, modified_at_ns) = read_stamp(&path);
         if known_stamps
             .get(&path_string)
-            .is_some_and(|stamp| stamp.size == file_size && stamp.mtime == modified_at)
+            .is_some_and(|stamp| stamp.size == file_size && stamp.mtime_ns == modified_at_ns)
         {
             outcome.unchanged += 1;
             continue;
@@ -86,11 +86,11 @@ pub fn scan_incremental(
         let was_known = known_stamps.contains_key(&path_string);
         let input = match metadata::read_metadata(&path, covers_dir) {
             Ok(meta) => {
-                build_track_input(path_string, folder_id, meta, title_fallback, file_size, modified_at)
+                build_track_input(path_string, folder_id, meta, title_fallback, file_size, modified_at, modified_at_ns)
             }
             Err(_) => {
                 outcome.errors += 1;
-                build_fallback_input(path_string, folder_id, title_fallback, file_size, modified_at)
+                build_fallback_input(path_string, folder_id, title_fallback, file_size, modified_at, modified_at_ns)
             }
         };
         if was_known {
@@ -120,19 +120,23 @@ fn has_audio_extension(path: &Path) -> bool {
         })
 }
 
-fn read_stamp(path: &Path) -> (i64, i64) {
+fn read_stamp(path: &Path) -> (i64, i64, i64) {
     match fs::metadata(path) {
         Ok(meta) => {
             let size = meta.len() as i64;
-            let mtime = meta
+            let modified = meta
                 .modified()
                 .ok()
-                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok());
+            let mtime = modified
                 .map(|delta| delta.as_secs() as i64)
                 .unwrap_or(0);
-            (size, mtime)
+            let modified_at_ns = modified
+                .and_then(|delta| i64::try_from(delta.as_nanos()).ok())
+                .unwrap_or(0);
+            (size, mtime, modified_at_ns)
         }
-        Err(_) => (0, 0),
+        Err(_) => (0, 0, 0),
     }
 }
 
@@ -149,6 +153,7 @@ fn build_track_input(
     title_fallback: String,
     file_size: i64,
     modified_at: i64,
+    modified_at_ns: i64,
 ) -> TrackInput {
     TrackInput {
         path,
@@ -165,6 +170,7 @@ fn build_track_input(
         cover_path: meta.cover_path,
         file_size,
         modified_at,
+        modified_at_ns,
         lyrics: meta.lyrics,
         gain_db: meta.gain_db,
         peak_db: meta.peak_db,
@@ -177,6 +183,7 @@ fn build_fallback_input(
     title: String,
     file_size: i64,
     modified_at: i64,
+    modified_at_ns: i64,
 ) -> TrackInput {
     TrackInput {
         path,
@@ -193,6 +200,7 @@ fn build_fallback_input(
         cover_path: None,
         file_size,
         modified_at,
+        modified_at_ns,
         lyrics: None,
         gain_db: None,
         peak_db: None,
@@ -225,12 +233,14 @@ mod tests {
         let meta = fs::metadata(path).unwrap();
         FileStamp {
             size: meta.len() as i64,
-            mtime: meta
-                .modified()
-                .unwrap()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
+            mtime_ns: i64::try_from(
+                meta.modified()
+                    .unwrap()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+            )
+            .unwrap(),
         }
     }
 

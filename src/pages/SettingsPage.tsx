@@ -50,6 +50,7 @@ import { CUSTOM_DEFAULT_BASE, PRESETS, getPreset } from '../theme/presets'
 import { parseHex, toHex } from '../theme/engine'
 import UpdateDialog from '../updater/UpdateDialog'
 import VisualizerPreview from '../components/settings/VisualizerPreview'
+import BackgroundSearchPanel from '../components/settings/BackgroundSearchPanel'
 import {
   appVersion,
   forgetSkippedVersions,
@@ -867,7 +868,13 @@ export default function SettingsPage() {
 
   const custom: CustomTheme =
     settings.theme.kind === 'custom'
-      ? { base: { ...settings.theme.custom.base }, overrides: { ...settings.theme.custom.overrides } }
+      ? {
+          base: { ...settings.theme.custom.base },
+          overrides: { ...settings.theme.custom.overrides },
+          ...(settings.theme.custom.gradientAnchors
+            ? { gradientAnchors: { ...settings.theme.custom.gradientAnchors } }
+            : {}),
+        }
       : { base: { ...CUSTOM_DEFAULT_BASE }, overrides: {} }
 
   const setPreset = (id: string) => update({ theme: { kind: 'preset', presetId: id } })
@@ -892,6 +899,22 @@ export default function SettingsPage() {
   }
 
   const updateCustom = (next: CustomTheme) => update({ theme: { kind: 'custom', custom: next } })
+
+  const setGradientMode = (enabled: boolean) => {
+    const anchors = custom.gradientAnchors ?? {
+      first: custom.base.accent,
+      second: custom.base.playButton ?? custom.base.surface,
+    }
+    updateCustom({ ...custom, gradientAnchors: enabled ? anchors : undefined })
+  }
+
+  const updateGradientAnchor = (key: 'first' | 'second', value: string) => {
+    const anchors = custom.gradientAnchors ?? {
+      first: custom.base.accent,
+      second: custom.base.playButton ?? custom.base.surface,
+    }
+    updateCustom({ ...custom, gradientAnchors: { ...anchors, [key]: value } })
+  }
 
   const setFontMode = (mode: FontMode) => {
     if (mode === 'default') update({ font: { family: null, importedPath: null } })
@@ -1064,6 +1087,17 @@ export default function SettingsPage() {
                     <div className="set-note">
                       {t('Application ID is already built in. Replace it only if you want your own app: create one at discord.com/developers and paste its ID. The synced lyrics line shows up in your status while it plays.')}
                     </div>
+                    <SliderRow
+                      label={t('Discord lyric merge gap')}
+                      min={0}
+                      max={5}
+                      step={0.25}
+                      value={settings.discord.lyricStitchGapSec}
+                      display={settings.discord.lyricStitchGapSec === 0
+                        ? t('Off')
+                        : `${settings.discord.lyricStitchGapSec.toFixed(2)}s`}
+                      onChange={(lyricStitchGapSec) => update({ discord: { lyricStitchGapSec } })}
+                    />
                   </>
                 ) : null}
                 <div className="set-row" style={{ marginTop: 6 }}>
@@ -1219,68 +1253,105 @@ export default function SettingsPage() {
               {settings.theme.kind === 'custom' ? (
                 <Card title={t('Custom theme')}>
                   <div className="set-row">
-                    <span className="set-row-label">{t('Accent')}</span>
-                    <ColorField value={custom.base.accent} onChange={(accent) => updateCustom({ ...custom, base: { ...custom.base, accent } })} />
-                  </div>
-                  <div className="set-row">
-                    <span className="set-row-label">{t('Background')}</span>
-                    <ColorField value={custom.base.background} onChange={(background) => updateCustom({ ...custom, base: { ...custom.base, background } })} />
-                  </div>
-                  <div className="set-row">
-                    <span className="set-row-label">{t('Surface')}</span>
-                    <ColorField value={custom.base.surface} onChange={(surface) => updateCustom({ ...custom, base: { ...custom.base, surface } })} />
-                  </div>
-                  <div className="set-row">
-                    <span className="set-row-label">{t('Play button')}</span>
-                    <ColorField
-                      value={custom.base.playButton}
-                      onChange={(playButton) => updateCustom({ ...custom, base: { ...custom.base, playButton } })}
+                    <span className="set-row-label">{t('Palette')}</span>
+                    <Segmented<'solid' | 'gradient'>
+                      value={custom.gradientAnchors ? 'gradient' : 'solid'}
+                      options={[
+                        { value: 'solid', label: t('Solid colors') },
+                        { value: 'gradient', label: t('Gradient palette') },
+                      ]}
+                      onChange={(mode) => setGradientMode(mode === 'gradient')}
                     />
                   </div>
 
-                  <button
-                    className={advOpen ? 'adv-toggle is-open' : 'adv-toggle'}
-                    onClick={() => setAdvOpen(!advOpen)}
-                  >
-                    <ChevronDown size={14} />
-                    {t('Advanced')}
-                  </button>
-
-                  {advancedOpen ? (
-                    <div className="tok-list">
-                      {resolved === null
-                        ? null
-                        : TOKEN_KEYS.map((k) => {
-                            const override = custom.overrides[k]
-                            return (
-                              <div key={k} className="tok-row">
-                                <span className="tok-name">{t(TOKEN_LABELS[k])}</span>
-                                <span className="tok-value">{override ?? (resolved[k] || '—')}</span>
-                                <input
-                                  type="color"
-                                  className="swatch"
-                                  value={asColorInput(override)}
-                                  onChange={(e) =>
-                                    updateCustom({
-                                      ...custom,
-                                      overrides: { ...custom.overrides, [k]: e.target.value },
-                                    })
-                                  }
-                                />
-                              </div>
-                            )
-                          })}
-                      <div className="set-actions">
-                        <button
-                          className="btn"
-                          disabled={Object.keys(custom.overrides).length === 0}
-                          onClick={() => updateCustom({ ...custom, overrides: {} })}
-                        >
-                          <RotateCcw size={14} />
-                          {t('Reset overrides')}
-                        </button>
+                  {custom.gradientAnchors ? (
+                    <>
+                      <div className="set-row">
+                        <span className="set-row-label">{t('First color')}</span>
+                        <ColorField
+                          value={custom.gradientAnchors.first}
+                          onChange={(value) => updateGradientAnchor('first', value)}
+                        />
                       </div>
-                    </div>
+                      <div className="set-row">
+                        <span className="set-row-label">{t('Second color')}</span>
+                        <ColorField
+                          value={custom.gradientAnchors.second}
+                          onChange={(value) => updateGradientAnchor('second', value)}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="set-row">
+                        <span className="set-row-label">{t('Accent')}</span>
+                        <ColorField value={custom.base.accent} onChange={(accent) => updateCustom({ ...custom, base: { ...custom.base, accent } })} />
+                      </div>
+                      <div className="set-row">
+                        <span className="set-row-label">{t('Background')}</span>
+                        <ColorField value={custom.base.background} onChange={(background) => updateCustom({ ...custom, base: { ...custom.base, background } })} />
+                      </div>
+                      <div className="set-row">
+                        <span className="set-row-label">{t('Surface')}</span>
+                        <ColorField value={custom.base.surface} onChange={(surface) => updateCustom({ ...custom, base: { ...custom.base, surface } })} />
+                      </div>
+                      <div className="set-row">
+                        <span className="set-row-label">{t('Play button')}</span>
+                        <ColorField
+                          value={custom.base.playButton}
+                          onChange={(playButton) => updateCustom({ ...custom, base: { ...custom.base, playButton } })}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {!custom.gradientAnchors ? (
+                    <>
+                      <button
+                        className={advOpen ? 'adv-toggle is-open' : 'adv-toggle'}
+                        onClick={() => setAdvOpen(!advOpen)}
+                      >
+                        <ChevronDown size={14} />
+                        {t('Advanced')}
+                      </button>
+
+                      {advancedOpen ? (
+                        <div className="tok-list">
+                          {resolved === null
+                            ? null
+                            : TOKEN_KEYS.map((k) => {
+                                const override = custom.overrides[k]
+                                return (
+                                  <div key={k} className="tok-row">
+                                    <span className="tok-name">{t(TOKEN_LABELS[k])}</span>
+                                    <span className="tok-value">{override ?? (resolved[k] || '—')}</span>
+                                    <input
+                                      type="color"
+                                      className="swatch"
+                                      value={asColorInput(override)}
+                                      onChange={(e) =>
+                                        updateCustom({
+                                          ...custom,
+                                          overrides: { ...custom.overrides, [k]: e.target.value },
+                                        })
+                                      }
+                                    />
+                                  </div>
+                                )
+                              })}
+                          <div className="set-actions">
+                            <button
+                              className="btn"
+                              disabled={Object.keys(custom.overrides).length === 0}
+                              onClick={() => updateCustom({ ...custom, overrides: {} })}
+                            >
+                              <RotateCcw size={14} />
+                              {t('Reset overrides')}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
                   ) : null}
 
                   <div className="set-actions">
@@ -1408,6 +1479,13 @@ export default function SettingsPage() {
                     <div className="set-bg-preview-dim" style={{ opacity: settings.background.dimPct / 100 }} />
                   </div>
                 ) : null}
+                <BackgroundSearchPanel
+                  search={api.searchBackgrounds}
+                  onSelect={async (result) => {
+                    const storedPath = await api.saveSelectedBackground(result.provider, result.imageUrl)
+                    update({ background: { path: storedPath } })
+                  }}
+                />
                 <SliderRow
                   label={t('Dim')}
                   min={0}

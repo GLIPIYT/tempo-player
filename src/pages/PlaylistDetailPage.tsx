@@ -19,6 +19,7 @@ import { toast } from '../components/common/Toast'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
 import TrackMenu, { type TrackMenuHandle } from '../components/common/TrackMenu'
+import { beginTrackDrag } from '../dnd/trackDrag'
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
@@ -38,6 +39,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const [dragFromPos, setDragFromPos] = useState<number | null>(null)
   const [dropEdge, setDropEdge] = useState<{ pos: number; after: boolean } | null>(null)
   const [orderOverride, setOrderOverride] = useState<PlaylistTrack[] | null>(null)
+  const lastDetailData = useRef(detail.data)
   const [exportBusy, setExportBusy] = useState(false)
   const [downloadBusy, setDownloadBusy] = useState(false)
   // One handle per row, so right-clicking a row opens that row's own menu.
@@ -79,8 +81,10 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   }
 
   useEffect(() => {
-    if (orderOverride !== null && !detail.loading) setOrderOverride(null)
-  }, [detail.loading, orderOverride])
+    const refreshed = detail.data !== lastDetailData.current
+    lastDetailData.current = detail.data
+    if (refreshed && !detail.loading) setOrderOverride(null)
+  }, [detail.data, detail.loading])
 
   if (detail.loading && detail.data === null && orderOverride === null) {
     return (
@@ -297,21 +301,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
           hint={t('Add tracks from your library to fill it.')}
         />
       ) : (
-        <div
-          className="tl tl-withactions tl-has-header"
-          onDragOver={(e) => {
-            if (dragFromPos === null || items.length === 0) return
-            e.preventDefault()
-            e.dataTransfer.dropEffect = 'move'
-            const last = items[items.length - 1]
-            setDropEdge({ pos: last.position, after: true })
-          }}
-          onDrop={(e) => {
-            if (dragFromPos === null) return
-            e.preventDefault()
-            dropAtInsertion(dragFromPos, items.length)
-          }}
-        >
+        <div className="tl tl-withactions tl-has-header">
           <div className="tl-head playlist-track-head" aria-hidden="true">
             <span className="tl-head-index">#</span>
             <span>{t('Title')}</span>
@@ -336,34 +326,28 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                   (before ? ' drop-before' : '') +
                   (after ? ' drop-after' : '')
                 }
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.effectAllowed = 'move'
-                  e.dataTransfer.setData('text/plain', String(p.position))
-                  e.dataTransfer.setData('application/x-tempo-track', String(t.id))
-                  setDragFromPos(p.position)
-                }}
-                onDragOver={(e) => {
-                  if (dragFromPos === null || dragFromPos === p.position) return
-                  e.preventDefault()
-                  e.stopPropagation()
-                  e.dataTransfer.dropEffect = 'move'
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  setDropEdge({ pos: p.position, after: e.clientY > rect.top + rect.height / 2 })
-                }}
-                onDragLeave={() => {
-                  setDropEdge((cur) => (cur !== null && cur.pos === p.position ? null : cur))
-                }}
-                onDrop={(e) => {
-                  if (dragFromPos === null) return
-                  e.preventDefault()
-                  e.stopPropagation()
-                  const insIndex = dropEdge !== null && dropEdge.after ? i + 1 : i
-                  dropAtInsertion(dragFromPos, insIndex)
-                }}
-                onDragEnd={() => {
-                  setDragFromPos(null)
-                  setDropEdge(null)
+                data-dnd-sort-group={`playlist-${playlistId}`}
+                data-dnd-sort-position={p.position}
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return
+                  beginTrackDrag({
+                    e,
+                    title: t.title,
+                    coverPath: t.coverPath,
+                    trackId: t.id,
+                    sort: {
+                      group: `playlist-${playlistId}`,
+                      position: p.position,
+                      onDrop: (fromPosition, insertionIndex) => dropAtInsertion(fromPosition, insertionIndex),
+                      onTargetChange: (target) =>
+                        setDropEdge(target ? { pos: target.position, after: target.after } : null),
+                      onActivate: () => setDragFromPos(p.position),
+                      onFinish: () => {
+                        setDragFromPos(null)
+                        setDropEdge(null)
+                      },
+                    },
+                  })
                 }}
                 onDoubleClick={() => player.playTracks(tracks.map((x) => trackToUnified(x)), i)}
                 onContextMenu={(e) => {

@@ -3,8 +3,8 @@ import Cover from '../components/common/Cover'
 import type { FavoriteKind } from '../types/models'
 
 /**
- * Pointer-based drag & drop for tracks (into sidebar playlists) and for
- * reordering sidebar favorites - playlists, artists and albums share one order,
+ * Pointer-based drag & drop for tracks (into sidebar playlists or within a
+ * playlist) and for reordering sidebar favorites - playlists, artists and albums share one order,
  * so one drag kind covers all three. Implemented with pointer events instead of
  * HTML5 drag events because Tauri's native drag-drop hook on Windows swallows
  * the latter. Also powers the floating cover ghost that follows the cursor
@@ -60,6 +60,13 @@ interface DragSession {
   trackId?: number
   onFavoriteDrop?: (from: number, to: number) => void
   onTrackDrop?: (playlistId: number, trackId: number) => void
+  sortGroup?: string
+  sortPosition?: number
+  onSortDrop?: (fromPosition: number, insertionIndex: number) => void
+  onSortTargetChange?: (target: { position: number; after: boolean } | null) => void
+  onSortActivate?: () => void
+  onSortFinish?: () => void
+  sortTarget?: { position: number; after: boolean } | null
 }
 
 let session: DragSession | null = null
@@ -193,6 +200,20 @@ function hitPlaylist(x: number, y: number): { id: number; el: HTMLElement } | nu
   return { id, el: target }
 }
 
+function hitTrackSortTarget(
+  x: number,
+  y: number,
+  group: string,
+): { position: number; after: boolean; el: HTMLElement } | null {
+  const element = document.elementFromPoint(x, y)
+  const target = element?.closest<HTMLElement>('[data-dnd-sort-group][data-dnd-sort-position]')
+  if (!target || target.dataset.dndSortGroup !== group) return null
+  const position = Number(target.dataset.dndSortPosition)
+  if (!Number.isInteger(position) || position < 0) return null
+  const rect = target.getBoundingClientRect()
+  return { position, after: y > rect.top + rect.height / 2, el: target }
+}
+
 /**
  * Resolves the favorites row under the cursor. `restrictKind` is what keeps the
  * grouped sidebar honest: indices stay global (they address the one flat order),
@@ -229,6 +250,15 @@ export function beginTrackDrag(opts: {
   trackId: number
   /** allow starting the drag from inside a <button> (home page cards are buttons) */
   allowButtons?: boolean
+  /** Optional in-place sort targets; playlist drops remain copy operations. */
+  sort?: {
+    group: string
+    position: number
+    onDrop: (fromPosition: number, insertionIndex: number) => void
+    onTargetChange?: (target: { position: number; after: boolean } | null) => void
+    onActivate?: () => void
+    onFinish?: () => void
+  }
 }): void {
   const { e, title, coverPath, trackId } = opts
   if (!Number.isInteger(trackId) || trackId <= 0) return
@@ -259,6 +289,13 @@ export function beginTrackDrag(opts: {
     targetId: null,
     trackId,
     onTrackDrop: (playlistId, tid) => playlistDropper?.(playlistId, tid),
+    sortGroup: opts.sort?.group,
+    sortPosition: opts.sort?.position,
+    onSortDrop: opts.sort?.onDrop,
+    onSortTargetChange: opts.sort?.onTargetChange,
+    onSortActivate: opts.sort?.onActivate,
+    onSortFinish: opts.sort?.onFinish,
+    sortTarget: null,
   }
   const THRESHOLD = 5
   const onMove = (ev: PointerEvent) => {
@@ -269,28 +306,41 @@ export function beginTrackDrag(opts: {
       if (Math.abs(dx) < THRESHOLD && Math.abs(dy) < THRESHOLD) return
       s.active = true
       s.activated = true
+      s.onSortActivate?.()
     }
     s.tx = ev.clientX
     s.ty = ev.clientY
     const hit = hitPlaylist(ev.clientX, ev.clientY)
     const changed = (hit?.id ?? null) !== s.targetId
     s.targetId = hit?.id ?? null
+    const sortTarget = !hit && s.sortGroup
+      ? hitTrackSortTarget(ev.clientX, ev.clientY, s.sortGroup)
+      : null
+    const nextSortTarget = sortTarget ? { position: sortTarget.position, after: sortTarget.after } : null
+    const prevSortTarget = s.sortTarget ?? null
+    const sortChanged =
+      prevSortTarget?.position !== nextSortTarget?.position ||
+      prevSortTarget?.after !== nextSortTarget?.after
+    s.sortTarget = nextSortTarget
+    if (sortChanged) s.onSortTargetChange?.(nextSortTarget)
     if (changed) notifyTargets()
   }
   const onUp = (ev: PointerEvent) => {
     if (ev.pointerId !== s.pointerId) return
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
-    window.removeEventListener('pointercancel', onUp)
+    window.removeEventListener('pointercancel', onCancel)
     if (!s.active) {
       session = null
       notify()
       notifyTargets()
+      s.onSortFinish?.()
       return
     }
     lastDragEnd = Date.now()
     const hit = hitPlaylist(ev.clientX, ev.clientY)
     if (hit) {
+      s.onSortTargetChange?.(null)
       // suction: fly into the target row and shrink away
       const r = hit.el.getBoundingClientRect()
       s.tx = r.left + r.width / 2
@@ -298,15 +348,47 @@ export function beginTrackDrag(opts: {
       s.active = false
       s.onTrackDrop?.(hit.id, s.trackId ?? 0)
     } else {
+      const sortTarget = s.sortGroup
+        ? hitTrackSortTarget(ev.clientX, ev.clientY, s.sortGroup)
+        : null
+      if (sortTarget && s.sortPosition !== undefined && s.onSortDrop) {
+        const targetRect = sortTarget.el.getBoundingClientRect()
+        s.tx = targetRect.left + targetRect.width / 2
+        s.ty = targetRect.top + targetRect.height / 2
+        s.active = false
+        s.onSortDrop(s.sortPosition, sortTarget.position + (sortTarget.after ? 1 : 0))
+      } else {
+        s.tx = s.ox
+        s.ty = s.oy
+        s.active = false
+      }
+      s.onSortTargetChange?.(null)
+    }
+    s.onSortFinish?.()
+    notifyTargets()
+  }
+  const onCancel = (ev: PointerEvent) => {
+    if (ev.pointerId !== s.pointerId) return
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onCancel)
+    if (s.active) {
+      lastDragEnd = Date.now()
+      s.active = false
+      s.targetId = null
       s.tx = s.ox
       s.ty = s.oy
-      s.active = false
+    } else {
+      session = null
+      notify()
     }
+    s.onSortTargetChange?.(null)
+    s.onSortFinish?.()
     notifyTargets()
   }
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
-  window.addEventListener('pointercancel', onUp)
+  window.addEventListener('pointercancel', onCancel)
   startWatch(s)
 }
 

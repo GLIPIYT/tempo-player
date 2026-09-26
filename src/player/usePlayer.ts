@@ -6,6 +6,7 @@ import type { PlayerApi } from './types'
 type PlayerActions = Pick<
   PlayerApi,
   | 'playTracks'
+  | 'updateTrackMetadata'
   | 'toggle'
   | 'next'
   | 'previous'
@@ -24,6 +25,7 @@ type PlayerActions = Pick<
 
 const actions: PlayerActions = {
   playTracks: (tracks, startIndex) => playerController.playTracks(tracks, startIndex),
+  updateTrackMetadata: track => playerController.updateTrackMetadata(track),
   toggle: () => playerController.toggle(),
   next: () => playerController.next(),
   previous: () => playerController.previous(),

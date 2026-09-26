@@ -6,6 +6,7 @@ import type { AppSettings } from '../state/settings'
 import { useSettings } from '../state/settings'
 import { CUSTOM_DEFAULT_BASE, getPreset } from './presets'
 import BackgroundLayer from '../components/layout/BackgroundLayer'
+import { deriveGradientPalette } from './gradientPalette'
 import '../styles/theme.css'
 
 const DEFAULT_STACK =
@@ -77,6 +78,11 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
     return
   }
   const base = active.custom.base
+  if (active.custom.gradientAnchors) {
+    const tokens = deriveGradientPalette(active.custom.gradientAnchors)
+    for (const k of TOKEN_KEYS) root.style.setProperty(TOKEN_VARS[k], tokens[k])
+    return
+  }
   const accent = safeColor(base.accent, CUSTOM_DEFAULT_BASE.accent)
   const bg = safeColor(base.background, CUSTOM_DEFAULT_BASE.background)
   const surface = safeColor(base.surface, CUSTOM_DEFAULT_BASE.surface)

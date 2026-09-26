@@ -1,16 +1,20 @@
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use futures_util::StreamExt;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::database::Db;
+use crate::database::{Db, MetadataDbUpdate};
+use crate::metadata::{self, ArtworkChange, EditableMetadata, StagedTagWrite};
 use crate::models::{
     Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, CoversCacheInfo, FavoriteOrderEntry,
-    HiddenTrack, HistoryEntryDto, LibraryFolder, LoudnessJob, LyricsOverride, Playlist,
-    PlaylistTrack, ScanPhase, ScanProgress, ScanSummary, SearchResults, Track,
+    HiddenTrack, HistoryEntryDto, LibraryFolder, LoudnessJob, LyricsEditorDocument, LyricsOverride, Playlist,
+    LibraryElementKind, PlaylistTrack, ScanPhase, ScanProgress, ScanSummary, SearchResults, Track,
+    TrackArtworkEdit, TrackMetadataEditRequest, TrackMetadataEditorState, TrackMetadataOriginal,
 };
 use crate::scanner;
 
@@ -203,9 +207,629 @@ fn get_folder_path(state: &AppState, folder_id: i64) -> Result<String, String> {
         .ok_or_else(|| "folder not found".to_string())
 }
 
+const MAX_EMBEDDED_ARTWORK_BYTES: usize = 16 * 1024 * 1024;
+
+fn current_file_stamp_seconds(path: &Path) -> Result<(i64, i64), String> {
+    let metadata = std::fs::metadata(path).map_err(|error| format!("cannot access audio file: {error}"))?;
+    let size = i64::try_from(metadata.len()).map_err(|_| "audio file is too large to edit".to_string())?;
+    let modified_at = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| i64::try_from(duration.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
+    Ok((size, modified_at))
+}
+
+fn precise_stamp_matches(stamp: (u64, u128), size: i64, modified_at_ns: i64) -> bool {
+    i64::try_from(stamp.0).ok() == Some(size)
+        && i64::try_from(stamp.1).ok() == Some(modified_at_ns)
+}
+
+fn checked_local_track_path(
+    target: &crate::database::MetadataEditTarget,
+) -> Result<(PathBuf, PathBuf), String> {
+    let path = std::fs::canonicalize(&target.path)
+        .map_err(|error| format!("the local audio file is unavailable: {error}"))?;
+    let root = std::fs::canonicalize(&target.library_folder_path)
+        .map_err(|error| format!("the library folder is unavailable: {error}"))?;
+    if path == root || !path.starts_with(&root) {
+        return Err("The audio file is no longer inside its library folder".into());
+    }
+    if !path.is_file() {
+        return Err("The selected track is not a file on disk".into());
+    }
+    Ok((path, root))
+}
+
+fn is_public_artwork_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            let [a, b, c, _] = ip.octets();
+            !ip.is_unspecified()
+                && !ip.is_loopback()
+                && !ip.is_private()
+                && !ip.is_link_local()
+                && !ip.is_broadcast()
+                && !ip.is_multicast()
+                && a != 0
+                && !(a == 100 && (64..=127).contains(&b)) // shared address space
+                && !(a == 192 && b == 0 && c == 0) // protocol assignments
+                && !(a == 192 && b == 0 && c == 2) // documentation
+                && !(a == 192 && b == 88 && c == 99) // deprecated 6to4 relay anycast
+                && !(a == 198 && (b == 18 || b == 19)) // benchmarking
+                && !(a == 198 && b == 51 && c == 100) // documentation
+                && !(a == 203 && b == 0 && c == 113) // documentation
+                && a < 224
+        }
+        IpAddr::V6(ip) => {
+            if let Some(mapped) = ip.to_ipv4_mapped() {
+                return is_public_artwork_ip(IpAddr::V4(mapped));
+            }
+            let segments = ip.segments();
+            let global_unicast = segments[0] & 0xe000 == 0x2000;
+            global_unicast
+                && !ip.is_unspecified()
+                && !ip.is_loopback()
+                && !ip.is_multicast()
+                && !(segments[0] == 0x2001 && segments[1] <= 0x01ff) // IETF special-purpose block
+                && !(segments[0] == 0x2002) // 6to4 embeds an IPv4 destination
+                && !(segments[0] == 0x3fff && segments[1] & 0xfff0 == 0) // documentation
+        }
+    }
+}
+
+fn allowed_artwork_url(url: &reqwest::Url) -> bool {
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || match url.scheme() {
+            "http" => url.port().is_some_and(|port| port != 80),
+            "https" => url.port().is_some_and(|port| port != 443),
+            _ => true,
+        }
+    {
+        return false;
+    }
+    let Some(host) = url.host_str() else { return false };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") {
+        return false;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(ip) => is_public_artwork_ip(ip),
+        Err(_) => true,
+    }
+}
+
+async fn resolve_public_artwork_addrs(
+    url: &reqwest::Url,
+) -> Result<Option<Vec<SocketAddr>>, String> {
+    let host = url.host_str().ok_or("The artwork URL has no host")?;
+    if host.parse::<IpAddr>().is_ok() {
+        return Ok(None);
+    }
+    let port = url.port_or_known_default().ok_or("The artwork URL has no port")?;
+    let resolved = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::net::lookup_host((host, port)),
+    )
+    .await
+    .map_err(|_| "Artwork host lookup timed out".to_string())?
+    .map_err(|error| format!("Could not resolve artwork host: {error}"))?;
+    let addrs: Vec<SocketAddr> = resolved
+        .filter(|address| is_public_artwork_ip(address.ip()))
+        .map(|address| SocketAddr::new(address.ip(), 0))
+        .collect();
+    if addrs.is_empty() {
+        return Err("Artwork host does not resolve to a public address".into());
+    }
+    Ok(Some(addrs))
+}
+
+async fn artwork_client(url: &reqwest::Url) -> Result<reqwest::Client, String> {
+    let resolved = resolve_public_artwork_addrs(url).await?;
+    let mut builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some(addrs) = resolved {
+        let host = url.host_str().ok_or("The artwork URL has no host")?;
+        builder = builder.resolve_to_addrs(host, &addrs);
+        let without_dot = host.trim_end_matches('.');
+        if without_dot != host {
+            builder = builder.resolve_to_addrs(without_dot, &addrs);
+        }
+    }
+    builder
+        // A configured proxy would resolve the URL on our behalf and bypass
+        // the validated, pinned DNS results above.
+        .no_proxy()
+        .build()
+        .map_err(|error| format!("cannot prepare the artwork download: {error}"))
+}
+
+async fn read_selected_artwork(path: &str) -> Result<(Vec<u8>, String), String> {
+    let data = if path.starts_with("https://") || path.starts_with("http://") {
+        let mut url = reqwest::Url::parse(path)
+            .map_err(|error| format!("invalid artwork URL: {error}"))?;
+        if !allowed_artwork_url(&url) {
+            return Err("This artwork URL is not allowed".into());
+        }
+        let mut response = None;
+        for redirect_count in 0..=5 {
+            let client = artwork_client(&url).await?;
+            let current = client
+                .get(url.clone())
+                .send()
+                .await
+                .map_err(|error| format!("cannot download the selected artwork: {error}"))?;
+            if current.status().is_redirection() {
+                if redirect_count == 5 {
+                    return Err("The artwork server redirected too many times".into());
+                }
+                let location = current
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                    .ok_or("The artwork redirect did not contain a valid location")?;
+                url = url
+                    .join(location)
+                    .map_err(|error| format!("invalid artwork redirect: {error}"))?;
+                if !allowed_artwork_url(&url) {
+                    return Err("The artwork redirect points to a disallowed address".into());
+                }
+                continue;
+            }
+            response = Some(current);
+            break;
+        }
+        let response = response.ok_or("The artwork download did not complete")?;
+        if !response.status().is_success() {
+            return Err(format!("the artwork server returned HTTP {}", response.status()));
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_EMBEDDED_ARTWORK_BYTES as u64)
+        {
+            return Err("Artwork files must be 16 MB or smaller".into());
+        }
+        let mut data = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| format!("artwork download failed: {error}"))?;
+            if data.len().saturating_add(chunk.len()) > MAX_EMBEDDED_ARTWORK_BYTES {
+                return Err("Artwork files must be 16 MB or smaller".into());
+            }
+            data.extend_from_slice(&chunk);
+        }
+        data
+    } else {
+        let file_path = Path::new(path);
+        let file_size = std::fs::metadata(file_path)
+            .map_err(|error| format!("the selected artwork is unavailable: {error}"))?
+            .len();
+        if file_size > MAX_EMBEDDED_ARTWORK_BYTES as u64 {
+            return Err("Artwork files must be 16 MB or smaller".into());
+        }
+        tokio::fs::read(file_path)
+            .await
+            .map_err(|error| format!("cannot read the selected artwork: {error}"))?
+    };
+
+    decode_artwork(data)
+}
+
+async fn read_local_artwork(path: &str) -> Result<(Vec<u8>, String), String> {
+    if path.starts_with("http://") || path.starts_with("https://") {
+        return Err("Choose an image file from this computer".into());
+    }
+    let file_path = Path::new(path);
+    if !file_path.is_absolute() {
+        return Err("Choose an image file using the file picker".into());
+    }
+    let extension = file_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "jpg" | "jpeg" | "png") {
+        return Err("Choose a JPEG or PNG image".into());
+    }
+    let file_size = std::fs::metadata(file_path)
+        .map_err(|error| format!("the selected artwork is unavailable: {error}"))?
+        .len();
+    if file_size > MAX_EMBEDDED_ARTWORK_BYTES as u64 {
+        return Err("Artwork files must be 16 MB or smaller".into());
+    }
+    let data = tokio::fs::read(file_path)
+        .await
+        .map_err(|error| format!("cannot read the selected artwork: {error}"))?;
+    decode_artwork(data)
+}
+
+fn decode_artwork(data: Vec<u8>) -> Result<(Vec<u8>, String), String> {
+    if data.is_empty() {
+        return Err("The selected artwork is empty".into());
+    }
+    if data.len() > MAX_EMBEDDED_ARTWORK_BYTES {
+        return Err("Artwork files must be 16 MB or smaller".into());
+    }
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(&data))
+        .with_guessed_format()
+        .map_err(|_| "Only valid JPEG and PNG artwork can be embedded".to_string())?;
+    let format = reader
+        .format()
+        .ok_or_else(|| "Only valid JPEG and PNG artwork can be embedded".to_string())?;
+    let mime_type = match format {
+        image::ImageFormat::Jpeg => "image/jpeg",
+        image::ImageFormat::Png => "image/png",
+        _ => return Err("Only JPEG and PNG artwork can be embedded".into()),
+    };
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+    reader
+        .decode()
+        .map_err(|_| "The image could not be decoded safely".to_string())?;
+    Ok((data, mime_type.to_string()))
+}
+
+fn cleanup_uncommitted_metadata_edit(
+    db: &Db,
+    track_id: i64,
+    file_path: &Path,
+    staged: &StagedTagWrite,
+) -> Result<(), String> {
+    metadata::recover_file_edit(
+        file_path,
+        &staged.stage_path,
+        &staged.backup_path,
+        staged.source_stamp,
+        staged.stage_stamp,
+    )?;
+    db.abort_track_metadata_file_edit(track_id)
+}
+
+async fn commit_staged_track_edit(
+    db: Arc<Db>,
+    covers_dir: PathBuf,
+    track_id: i64,
+    database_path: String,
+    file_path: PathBuf,
+    staged: StagedTagWrite,
+    selected_ids: (Option<i64>, Option<i64>),
+    preserve_entity_assignment: bool,
+    resolve_entities: bool,
+) -> Result<Track, String> {
+    if let Err(error) = db.begin_track_metadata_file_edit(
+        track_id,
+        &database_path,
+        &staged.stage_path.to_string_lossy(),
+        &staged.backup_path.to_string_lossy(),
+        &staged.snapshot,
+        staged.source_stamp,
+        staged.stage_stamp,
+    ) {
+        metadata::remove_staging_file(&staged.stage_path);
+        return Err(error);
+    }
+
+    let install_path = file_path.clone();
+    let install_stage = staged.clone();
+    let install_result = tauri::async_runtime::spawn_blocking(move || {
+        metadata::install_staged_write(&install_path, &install_stage)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    if let Err(error) = install_result {
+        return match cleanup_uncommitted_metadata_edit(&db, track_id, &file_path, &staged) {
+            Ok(()) => Err(error),
+            Err(recovery_error) => Err(format!(
+                "{error}; the edit remains journaled for recovery: {recovery_error}"
+            )),
+        };
+    }
+
+    match metadata::precise_file_stamp(&file_path) {
+        Ok(stamp) if stamp == staged.stage_stamp => {}
+        Ok(_) => {
+            return match cleanup_uncommitted_metadata_edit(&db, track_id, &file_path, &staged) {
+                Ok(()) => Err("The audio file changed while the edited tags were being installed; the original was restored".into()),
+                Err(recovery_error) => Err(format!("The audio file changed during installation; recovery is pending: {recovery_error}")),
+            };
+        }
+        Err(error) => {
+            return match cleanup_uncommitted_metadata_edit(&db, track_id, &file_path, &staged) {
+                Ok(()) => Err(error),
+                Err(recovery_error) => Err(format!("{error}; recovery is pending: {recovery_error}")),
+            };
+        }
+    }
+
+    let update_path = file_path.clone();
+    let update_covers = covers_dir.clone();
+    let update = match tauri::async_runtime::spawn_blocking(move || {
+        metadata_update_from_file(
+            &update_path,
+            &update_covers,
+            selected_ids,
+            preserve_entity_assignment,
+            resolve_entities,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    {
+        Ok(update) => update,
+        Err(error) => {
+            return match cleanup_uncommitted_metadata_edit(&db, track_id, &file_path, &staged) {
+                Ok(()) => Err(error),
+                Err(recovery_error) => Err(format!("{error}; recovery is pending: {recovery_error}")),
+            };
+        }
+    };
+
+    if metadata::precise_file_stamp(&file_path).ok() != Some(staged.stage_stamp) {
+        return match cleanup_uncommitted_metadata_edit(&db, track_id, &file_path, &staged) {
+            Ok(()) => Err("The audio file changed while its saved tags were being checked; the original was restored".into()),
+            Err(recovery_error) => Err(format!("The audio file changed during verification; recovery is pending: {recovery_error}")),
+        };
+    }
+
+    let updated_track = match db.finish_track_metadata_file_edit(track_id, &update) {
+        Ok(track) => track,
+        Err(error) => {
+            return match cleanup_uncommitted_metadata_edit(&db, track_id, &file_path, &staged) {
+                Ok(()) => Err(error),
+                Err(recovery_error) => Err(format!("{error}; recovery is pending: {recovery_error}")),
+            };
+        }
+    };
+
+    let installed_stamp = metadata::precise_file_stamp(&file_path).ok();
+    let backup_stamp_is_original = !staged.backup_path.exists()
+        || metadata::precise_file_stamp(&staged.backup_path).ok() == Some(staged.source_stamp);
+    let backup_cleaned = if installed_stamp == Some(staged.stage_stamp) && backup_stamp_is_original {
+        match std::fs::remove_file(&staged.backup_path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(error) => {
+                eprintln!("committed metadata backup {} will be cleaned on next launch: {error}", staged.backup_path.display());
+                false
+            }
+        }
+    } else {
+        eprintln!(
+            "committed metadata backup {} was preserved because the installed file or backup no longer matches its journal stamp",
+            staged.backup_path.display()
+        );
+        false
+    };
+    if backup_cleaned {
+        let _ = db.clear_committed_track_metadata_journal(track_id);
+    }
+    Ok(updated_track)
+}
+
+fn metadata_update_from_file(
+    path: &Path,
+    covers_dir: &Path,
+    selected_ids: (Option<i64>, Option<i64>),
+    preserve_entity_assignment: bool,
+    resolve_entities: bool,
+) -> Result<MetadataDbUpdate, String> {
+    let parsed = metadata::read_metadata(path, covers_dir)
+        .map_err(|error| format!("cannot read the saved metadata back from disk: {error}"))?;
+    let title = parsed
+        .title
+        .filter(|title| !title.trim().is_empty())
+        .or_else(|| path.file_stem().map(|stem| stem.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let (file_size, modified_at) = current_file_stamp_seconds(path)?;
+    let (_, modified_at_ns) = metadata::precise_file_stamp(path)?;
+    let modified_at_ns = i64::try_from(modified_at_ns)
+        .map_err(|_| "audio file timestamp is outside the supported range")?;
+    Ok(MetadataDbUpdate {
+        title,
+        artist_id: selected_ids.0,
+        album_id: selected_ids.1,
+        artist_name: parsed.artist,
+        album_title: parsed.album,
+        album_artist_name: parsed.album_artist,
+        track_number: parsed.track_number,
+        disc_number: parsed.disc_number,
+        year: parsed.year,
+        genre: parsed.genre,
+        cover_path: parsed.cover_path,
+        file_size,
+        modified_at,
+        modified_at_ns,
+        preserve_entity_assignment,
+        resolve_entities,
+    })
+}
+
 #[tauri::command]
 pub fn get_library_folders(state: State<'_, AppState>) -> Result<Vec<LibraryFolder>, String> {
     state.db.list_library_folders()
+}
+
+#[tauri::command]
+pub fn get_track_metadata_original(
+    state: State<'_, AppState>,
+    track_id: i64,
+) -> Result<Option<TrackMetadataOriginal>, String> {
+    state.db.get_track_metadata_original(track_id)
+}
+
+#[tauri::command]
+pub fn get_track_metadata_editor_state(
+    state: State<'_, AppState>,
+    track_id: i64,
+) -> Result<TrackMetadataEditorState, String> {
+    let target = state.db.metadata_edit_target(track_id, None, None)?;
+    let (file_path, _) = checked_local_track_path(&target)?;
+    let live_stamp = metadata::precise_file_stamp(&file_path)?;
+    if !precise_stamp_matches(
+        live_stamp,
+        target.track.file_size,
+        target.file_mtime_ns,
+    ) {
+        return Err("The audio file changed outside Tempo. Rescan the library before editing it".into());
+    }
+    Ok(TrackMetadataEditorState {
+        file_size: target.track.file_size,
+        modified_at_ns: target.file_mtime_ns.to_string(),
+        original: state.db.get_track_metadata_original(track_id)?,
+    })
+}
+
+#[tauri::command]
+pub fn get_library_cover(
+    state: State<'_, AppState>,
+    kind: LibraryElementKind,
+    id: i64,
+) -> Result<Option<String>, String> {
+    state.db.library_cover_path(kind, id)
+}
+
+#[tauri::command]
+pub async fn update_local_track_metadata(
+    state: State<'_, AppState>,
+    request: TrackMetadataEditRequest,
+) -> Result<Track, String> {
+    let track_id = request.track_id;
+    let artist_id = request.artist_id;
+    let album_id = request.album_id;
+    let target = state.db.metadata_edit_target(track_id, artist_id, album_id)?;
+    let expected_mtime_ns = request
+        .expected_file_mtime_ns
+        .parse::<i64>()
+        .map_err(|_| "The editor file stamp is invalid".to_string())?;
+    if target.track.file_size != request.expected_file_size
+        || target.file_mtime_ns != expected_mtime_ns
+    {
+        return Err("This track changed after the editor opened. Reopen it before saving".into());
+    }
+    let (file_path, _library_root) = checked_local_track_path(&target)?;
+    let live_stamp = metadata::precise_file_stamp(&file_path)?;
+    if !precise_stamp_matches(live_stamp, request.expected_file_size, expected_mtime_ns) {
+        return Err("The audio file changed outside Tempo. Rescan the library and reopen the editor".into());
+    }
+
+    let artwork = match request.artwork {
+        TrackArtworkEdit::Keep => ArtworkChange::Keep,
+        TrackArtworkEdit::Remove => ArtworkChange::Remove,
+        TrackArtworkEdit::FromLocalPath { path } => {
+            let (data, mime_type) = read_local_artwork(&path).await?;
+            ArtworkChange::Replace { data, mime_type }
+        }
+        TrackArtworkEdit::CopyFromLibrary { kind, id } => {
+            let cover_path = state
+                .db
+                .library_cover_path(kind, id)?
+                .ok_or_else(|| "The selected library item has no artwork".to_string())?;
+            let (data, mime_type) = read_selected_artwork(&cover_path).await?;
+            ArtworkChange::Replace { data, mime_type }
+        }
+    };
+    let fields = EditableMetadata {
+        title: request.title,
+        artist: target.artist_name.clone(),
+        album: target.album_title.clone(),
+        album_artist: target.album_artist_name.clone(),
+        track_number: request.track_number,
+        disc_number: request.disc_number,
+        year: request.year,
+        genre: request.genre,
+    };
+    let stage_path = file_path.clone();
+    let stage_covers = state.covers_dir.clone();
+    let stage_track_id = track_id;
+    let original_artist_id = target.track.artist_id;
+    let original_album_id = target.track.album_id;
+    let staged = tauri::async_runtime::spawn_blocking(move || {
+        metadata::stage_metadata_edit(
+            &stage_path,
+            stage_track_id,
+            &fields,
+            &artwork,
+            &stage_covers,
+            original_artist_id,
+            original_album_id,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+
+    if !precise_stamp_matches(
+        staged.source_stamp,
+        request.expected_file_size,
+        expected_mtime_ns,
+    ) {
+        metadata::remove_staging_file(&staged.stage_path);
+        return Err("The audio file changed while its tags were being prepared. Reopen the editor and try again".into());
+    }
+
+    commit_staged_track_edit(
+        state.db.clone(),
+        state.covers_dir.clone(),
+        track_id,
+        target.path,
+        file_path,
+        staged,
+        (artist_id, album_id),
+        true,
+        false,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn restore_track_metadata(
+    state: State<'_, AppState>,
+    track_id: i64,
+) -> Result<Track, String> {
+    let target = state.db.metadata_edit_target(track_id, None, None)?;
+    let original = state
+        .db
+        .load_original_track_metadata_snapshot(track_id)?
+        .ok_or_else(|| "This track has no saved original metadata".to_string())?;
+    let (file_path, _library_root) = checked_local_track_path(&target)?;
+    let expected_stamp = (target.track.file_size as u64, target.file_mtime_ns as u128);
+    if metadata::precise_file_stamp(&file_path)? != expected_stamp {
+        return Err("The audio file changed outside Tempo. Rescan the library before restoring its original tags".into());
+    }
+    let stage_path = file_path.clone();
+    let stage_snapshot = original.clone();
+    let staged = tauri::async_runtime::spawn_blocking(move || {
+        metadata::stage_original_restore(&stage_path, track_id, &stage_snapshot)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if !precise_stamp_matches(
+        staged.source_stamp,
+        target.track.file_size,
+        target.file_mtime_ns,
+    ) {
+        metadata::remove_staging_file(&staged.stage_path);
+        return Err("The audio file changed while its original tags were being prepared. Rescan and retry".into());
+    }
+    let selected_ids = (original.fields.artist_id, original.fields.album_id);
+    commit_staged_track_edit(
+        state.db.clone(),
+        state.covers_dir.clone(),
+        track_id,
+        target.path,
+        file_path,
+        staged,
+        selected_ids,
+        false,
+        true,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -267,7 +891,66 @@ pub async fn rescan_library(
 
 pub fn startup_rescan(app: AppHandle) {
     let state = app.state::<AppState>();
+    if let Err(error) = recover_pending_metadata_edits(&state.db) {
+        eprintln!("Tempo skipped startup library scan because a metadata edit needs recovery: {error}");
+        return;
+    }
     let _ = scan_folders_sequential(&state.db, &state.covers_dir, &app, false);
+}
+
+fn recover_pending_metadata_edits(db: &Db) -> Result<(), String> {
+    for edit in db.pending_track_metadata_file_edits()? {
+        let path = PathBuf::from(&edit.path);
+        let stage_path = PathBuf::from(&edit.stage_path);
+        let backup_path = PathBuf::from(&edit.backup_path);
+        if edit.committed {
+            if !path.exists() {
+                return Err(format!(
+                    "the committed track {} is missing; its backup was preserved at {}",
+                    edit.path, edit.backup_path
+                ));
+            }
+            if metadata::precise_file_stamp(&path)? != edit.stage_stamp {
+                return Err(format!(
+                    "the committed track {} changed after its metadata edit; its recovery backup was preserved at {}",
+                    edit.path, edit.backup_path
+                ));
+            }
+            if stage_path.exists() {
+                if metadata::precise_file_stamp(&stage_path)? != edit.stage_stamp {
+                    return Err(format!(
+                        "the committed staging file changed unexpectedly and was left at {}",
+                        stage_path.display()
+                    ));
+                }
+                std::fs::remove_file(&stage_path).map_err(|error| {
+                    format!("cannot clean the committed staging file {}: {error}", stage_path.display())
+                })?;
+            }
+            if backup_path.exists() {
+                if metadata::precise_file_stamp(&backup_path)? != edit.source_stamp {
+                    return Err(format!(
+                        "the committed recovery backup changed unexpectedly and was left at {}",
+                        backup_path.display()
+                    ));
+                }
+                std::fs::remove_file(&backup_path).map_err(|error| {
+                    format!("cannot clean the committed recovery backup {}: {error}", backup_path.display())
+                })?;
+            }
+            db.clear_committed_track_metadata_journal(edit.track_id)?;
+        } else {
+            metadata::recover_file_edit(
+                &path,
+                &stage_path,
+                &backup_path,
+                edit.source_stamp,
+                edit.stage_stamp,
+            )?;
+            db.abort_track_metadata_file_edit(edit.track_id)?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1522,17 +2205,19 @@ pub fn unhide_track(state: State<'_, AppState>, path: String) -> Result<bool, St
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.clone());
-    let (file_size, modified_at) = std::fs::metadata(file)
+    let (file_size, modified_at, modified_at_ns) = std::fs::metadata(file)
         .map(|meta| {
-            let mtime = meta
+            let modified = meta
                 .modified()
                 .ok()
-                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                .map(|delta| delta.as_secs() as i64)
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok());
+            let mtime = modified.map(|delta| delta.as_secs() as i64).unwrap_or(0);
+            let modified_ns = modified
+                .and_then(|delta| i64::try_from(delta.as_nanos()).ok())
                 .unwrap_or(0);
-            (meta.len() as i64, mtime)
+            (meta.len() as i64, mtime, modified_ns)
         })
-        .unwrap_or((0, 0));
+        .unwrap_or((0, 0, 0));
     let meta = crate::metadata::read_metadata(file, &state.covers_dir).ok();
     let input = crate::models::TrackInput {
         path: path.clone(),
@@ -1552,6 +2237,7 @@ pub fn unhide_track(state: State<'_, AppState>, path: String) -> Result<bool, St
         cover_path: meta.as_ref().and_then(|m| m.cover_path.clone()),
         file_size,
         modified_at,
+        modified_at_ns,
         lyrics: meta.as_ref().and_then(|m| m.lyrics.clone()),
         gain_db: meta.as_ref().and_then(|m| m.gain_db),
         peak_db: meta.as_ref().and_then(|m| m.peak_db),
@@ -1594,6 +2280,40 @@ pub fn export_playlist_m3u8(
     let rows = state.db.get_playlist_tracks(playlist_id)?;
     let cache_dir = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
     write_tracks_m3u8(rows.into_iter().map(|row| row.track), &path, &cache_dir)
+}
+
+/// Saves the editable document together with its start-only playback projection.
+#[tauri::command]
+pub fn save_lyrics_editor_document(
+    state: State<'_, AppState>,
+    track_id: i64,
+    provider: String,
+    source_artist: Option<String>,
+    source_title: Option<String>,
+    lrc: String,
+    offset_ms: i64,
+    editor_document: LyricsEditorDocument,
+) -> Result<(), String> {
+    state.db.save_lyrics_editor_document(
+        track_id,
+        &provider,
+        source_artist.as_deref(),
+        source_title.as_deref(),
+        &lrc,
+        offset_ms,
+        &editor_document,
+    )
+}
+
+/// Submits a user-edited lyric document to LRCLIB using its challenge flow.
+#[tauri::command]
+pub async fn publish_lyrics_to_lrclib(
+    request: crate::lrclib_publish::LrclibPublishRequest,
+) -> Result<u16, String> {
+    crate::lrclib_publish::publish_lyrics(request)
+        .await
+        .map(|response| response.status)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

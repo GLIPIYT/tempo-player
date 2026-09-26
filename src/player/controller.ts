@@ -3,7 +3,8 @@ import { api } from '../api/client'
 import { getSettings } from '../state/settings'
 import { toast } from '../components/common/Toast'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
-import type { RepeatMode, UnifiedTrack } from '../types/models'
+import { lyricsService } from '../features/lyrics/lyricsService'
+import type { RepeatMode, Track, UnifiedTrack } from '../types/models'
 import { trackToUnified } from '../utils/unified'
 import { AudioEngine, type AudioChannel } from './engine'
 import { dbToLinear } from '../audio/loudness'
@@ -396,6 +397,22 @@ export class PlayerController {
 
   addToQueue(t: UnifiedTrack): void {
     this.queueCtl.append(t)
+    this.emit()
+  }
+
+  updateTrackMetadata(track: Track): void {
+    if (track.source !== 'local') return
+    const updated = trackToUnified(track)
+    const current = this.queueCtl.current()
+    const isCurrentTrack = current?.source === 'local' && current.dbId === track.id
+    if (!this.queueCtl.replaceLocalTrack(updated)) return
+    if (isCurrentTrack) {
+      lyricsService.invalidate(updated.sourceId)
+      lyricsService.ensure(updated, getSettings().lyrics.cacheOnline)
+    }
+    // The source id stays stable for a local track, so invalidate MediaSession's
+    // short-circuit to refresh the title, artist, album and artwork immediately.
+    this.metadataSourceId = undefined
     this.emit()
   }
 

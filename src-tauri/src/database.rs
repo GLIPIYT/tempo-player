@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,9 +17,56 @@ pub struct KnownYtTrack {
 
 use crate::models::{
     Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, FavoriteOrderEntry, FileStamp,
-    HiddenTrack, HistoryEntryDto, LibraryFolder, LyricsOverride, Playlist, PlaylistPlayStat, PlaylistTrack,
-    SearchResults, StatsSummary, TopArtistItem, TopTrackItem, Track, TrackInput,
+    HiddenTrack, HistoryEntryDto, LibraryElementKind, LibraryFolder, LyricsEditorDocument, LyricsOverride,
+    OriginalPictureSnapshot, OriginalTrackMetadataSnapshot, Playlist, PlaylistPlayStat,
+    PlaylistTrack, SearchResults, StatsSummary, TopArtistItem, TopTrackItem, Track, TrackInput,
+    TrackMetadataOriginal,
 };
+
+#[derive(Debug, Clone)]
+pub struct MetadataEditTarget {
+    pub path: String,
+    pub library_folder_path: String,
+    pub track: Track,
+    pub artist_name: Option<String>,
+    pub album_title: Option<String>,
+    pub album_artist_name: Option<String>,
+    pub file_mtime_ns: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct MetadataDbUpdate {
+    pub title: String,
+    pub artist_id: Option<i64>,
+    pub album_id: Option<i64>,
+    pub artist_name: Option<String>,
+    pub album_title: Option<String>,
+    pub album_artist_name: Option<String>,
+    pub track_number: Option<i64>,
+    pub disc_number: Option<i64>,
+    pub year: Option<i64>,
+    pub genre: Option<String>,
+    pub cover_path: Option<String>,
+    pub file_size: i64,
+    pub modified_at: i64,
+    pub modified_at_ns: i64,
+    /// Explicit entity assignment survives rescans even when audio tags cannot
+    /// express an artistless album relationship.
+    pub preserve_entity_assignment: bool,
+    /// Recreate artist/album rows from the original tag names during restore.
+    pub resolve_entities: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingMetadataFileEdit {
+    pub track_id: i64,
+    pub path: String,
+    pub stage_path: String,
+    pub backup_path: String,
+    pub committed: bool,
+    pub source_stamp: (u64, u128),
+    pub stage_stamp: (u64, u128),
+}
 
 const TRACK_COLUMNS: &str =
     "t.id, t.path, t.title, t.artist_id, COALESCE(a.name, t.artist_name), t.album_id, al.title, t.track_number, \
@@ -299,10 +347,76 @@ CREATE TABLE IF NOT EXISTS playlist_play_stats (
 );
 "#;
 
+const MIGRATION_15: &str = r#"
+-- Immutable first-edit snapshot for local audio tags. Embedded picture bytes
+-- live as BLOBs here instead of in the disposable artwork cache.
+CREATE TABLE IF NOT EXISTS track_metadata_original (
+    track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+    snapshot_json TEXT NOT NULL,
+    captured_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS track_metadata_original_pictures (
+    track_id INTEGER NOT NULL REFERENCES track_metadata_original(track_id) ON DELETE CASCADE,
+    tag_type TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    picture_type INTEGER NOT NULL,
+    mime_type TEXT,
+    description TEXT,
+    data BLOB NOT NULL,
+    PRIMARY KEY(track_id, tag_type, position)
+);
+-- A pending row makes the two filesystem renames recoverable after a crash.
+-- The DB metadata update and removal of this row commit together.
+CREATE TABLE IF NOT EXISTS track_metadata_edit_journal (
+    track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    stage_path TEXT NOT NULL,
+    backup_path TEXT NOT NULL,
+    source_file_size INTEGER NOT NULL,
+    source_mtime_ns INTEGER NOT NULL,
+    stage_file_size INTEGER NOT NULL,
+    stage_mtime_ns INTEGER NOT NULL,
+    committed INTEGER NOT NULL DEFAULT 0,
+    snapshot_created INTEGER NOT NULL DEFAULT 0,
+    started_at INTEGER NOT NULL
+);
+-- Distinguishes an intentional empty artist/album link from "not overridden".
+-- File tags still hold their normal text values; this local relation preserves
+-- the chosen library entities when tags cannot represent that exact relation.
+CREATE TABLE IF NOT EXISTS track_metadata_entity_override (
+    track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+    artist_id INTEGER REFERENCES artists(id) ON DELETE SET NULL,
+    album_id INTEGER REFERENCES albums(id) ON DELETE SET NULL
+);
+"#;
+
+const MIGRATION_16: &str = r#"
+-- Store editor-only line end times separately from the playback LRC projection.
+CREATE TABLE IF NOT EXISTS track_lyrics_editor_documents (
+    track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+    document_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+"#;
+
+const MIGRATION_17: &str = r#"
+-- Nanosecond stamps prevent same-second changes from being skipped by the scanner.
+ALTER TABLE tracks ADD COLUMN file_mtime_ns INTEGER NOT NULL DEFAULT 0;
+-- Keep the original first-edit tags bound to the file currently managed by Tempo.
+-- Each successful in-app edit advances this stamp; scans clear the snapshot if
+-- another program replaces or edits the file.
+CREATE TABLE IF NOT EXISTS track_metadata_original_state (
+    track_id INTEGER PRIMARY KEY REFERENCES track_metadata_original(track_id) ON DELETE CASCADE,
+    source_path TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    file_mtime_ns INTEGER NOT NULL
+);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
     MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_13,
-    MIGRATION_14,
+    MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_17,
 ];
 
 pub struct Db {
@@ -376,14 +490,17 @@ impl Db {
         self.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT path, file_size, modified_at FROM tracks WHERE folder_id IS NOT NULL",
+                    "SELECT path, file_size, file_mtime_ns FROM tracks WHERE folder_id IS NOT NULL",
                 )
                 .map_err(db_err)?;
             let mapped = stmt
                 .query_map([], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
-                        FileStamp { size: row.get(1)?, mtime: row.get(2)? },
+                        FileStamp {
+                            size: row.get(1)?,
+                            mtime_ns: row.get(2)?,
+                        },
                     ))
                 })
                 .map_err(db_err)?;
@@ -421,17 +538,30 @@ impl Db {
         if paths.is_empty() {
             return Ok(0);
         }
+        // A scan may have observed the brief source-missing interval between
+        // the two atomic renames. Recheck before deleting the library row.
+        let missing_paths: Vec<&str> = paths
+            .iter()
+            .map(String::as_str)
+            .filter(|path| !Path::new(path).exists())
+            .collect();
+        if missing_paths.is_empty() {
+            return Ok(0);
+        }
         let conn = self.lock_conn()?;
         let tx = conn.unchecked_transaction().map_err(db_err)?;
         let mut placeholders = String::new();
-        for i in 0..paths.len() {
+        for i in 0..missing_paths.len() {
             if i > 0 {
                 placeholders.push_str(", ");
             }
             placeholders.push('?');
         }
-        let sql = format!("DELETE FROM tracks WHERE path IN ({})", placeholders);
-        let deleted = tx.execute(&sql, params_from_iter(paths)).map_err(db_err)? as u32;
+        let sql = format!(
+            "DELETE FROM tracks WHERE path IN ({}) AND NOT EXISTS (SELECT 1 FROM track_metadata_edit_journal j WHERE j.track_id = tracks.id)",
+            placeholders
+        );
+        let deleted = tx.execute(&sql, params_from_iter(missing_paths)).map_err(db_err)? as u32;
         prune_orphans(&tx)?;
         tx.commit().map_err(db_err)?;
         Ok(deleted)
@@ -442,6 +572,16 @@ impl Db {
     /// Returns the path so the caller can offer an undo.
     pub fn hide_track(&self, track_id: i64) -> Result<String, String> {
         let conn = self.lock_conn()?;
+        let pending_edit: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM track_metadata_edit_journal WHERE track_id = ?1)",
+                params![track_id],
+                |row| row.get(0),
+            )
+            .map_err(db_err)?;
+        if pending_edit {
+            return Err("This track is being edited; hide it after the metadata edit finishes".into());
+        }
         let (path, title) = conn
             .query_row(
                 "SELECT path, title FROM tracks WHERE id = ?1 AND folder_id IS NOT NULL",
@@ -547,6 +687,16 @@ impl Db {
 
     pub fn remove_library_folder(&self, id: i64) -> Result<(), String> {
         self.with_conn(|conn| {
+            let pending_edit: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM track_metadata_edit_journal j JOIN tracks t ON t.id = j.track_id WHERE t.folder_id = ?1)",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .map_err(db_err)?;
+            if pending_edit {
+                return Err("A track in this folder is still being edited".into());
+            }
             conn.execute("DELETE FROM library_folders WHERE id = ?1", params![id])
                 .map_err(db_err)?;
             Ok(())
@@ -564,6 +714,7 @@ impl Db {
         })
     }
 
+    #[cfg(test)]
     pub fn list_tracks(&self, query: &str, limit: i64, offset: i64) -> Result<Vec<Track>, String> {
         self.list_tracks_sorted(query, "added", limit, offset)
     }
@@ -885,6 +1036,461 @@ impl Db {
             }
             Ok(playlists)
         })
+    }
+
+    /// Resolves selected library entities and confirms that the target is a
+    /// local library file before any filesystem operation begins.
+    pub fn metadata_edit_target(
+        &self,
+        track_id: i64,
+        artist_id: Option<i64>,
+        album_id: Option<i64>,
+    ) -> Result<MetadataEditTarget, String> {
+        self.with_conn(|conn| {
+            let track = fetch_tracks(
+                conn,
+                TRACK_FROM,
+                "t.id = ?1 AND t.folder_id IS NOT NULL AND t.source = 'local'",
+                Some(Value::Integer(track_id)),
+                "t.id",
+                1,
+                0,
+            )?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "Only local library files can have their tags edited; remote or uncached tracks are read-only".to_string())?;
+
+            let file_mtime_ns: i64 = conn
+                .query_row(
+                    "SELECT file_mtime_ns FROM tracks WHERE id = ?1",
+                    params![track_id],
+                    |row| row.get(0),
+                )
+                .map_err(db_err)?;
+
+            let (folder_path,): (String,) = conn
+                .query_row(
+                    "SELECT f.path FROM tracks t JOIN library_folders f ON f.id = t.folder_id WHERE t.id = ?1",
+                    params![track_id],
+                    |row| Ok((row.get(0)?,)),
+                )
+                .map_err(db_err)?;
+
+            let artist_name = match artist_id {
+                Some(id) => Some(
+                    conn.query_row("SELECT name FROM artists WHERE id = ?1", params![id], |row| row.get(0))
+                        .optional()
+                        .map_err(db_err)?
+                        .ok_or_else(|| "Selected artist no longer exists in the library".to_string())?,
+                ),
+                None => None,
+            };
+
+            let (album_title, album_artist_name) = match album_id {
+                Some(id) => conn
+                    .query_row(
+                        "SELECT al.title, ar.name FROM albums al LEFT JOIN artists ar ON ar.id = al.artist_id WHERE al.id = ?1",
+                        params![id],
+                        |row| Ok((Some(row.get::<_, String>(0)?), row.get::<_, Option<String>>(1)?)),
+                    )
+                    .optional()
+                    .map_err(db_err)?
+                    .ok_or_else(|| "Selected album no longer exists in the library".to_string())?,
+                None => (None, None),
+            };
+
+            // The selected relation is stored on this track; do not mutate an
+            // album row shared by other files to represent this assignment.
+            Ok(MetadataEditTarget {
+                path: track.path.clone(),
+                library_folder_path: folder_path,
+                track,
+                artist_name,
+                album_title,
+                album_artist_name,
+                file_mtime_ns,
+            })
+        })
+    }
+
+    /// Returns a cover path or URL for preview. It never downloads remote art.
+    pub fn library_cover_path(
+        &self,
+        kind: LibraryElementKind,
+        id: i64,
+    ) -> Result<Option<String>, String> {
+        self.with_conn(|conn| {
+            let sql = match kind {
+                LibraryElementKind::Track => "SELECT cover_path FROM tracks WHERE id = ?1",
+                LibraryElementKind::Album => "SELECT cover_path FROM albums WHERE id = ?1",
+                LibraryElementKind::Artist => "SELECT image_path FROM artists WHERE id = ?1",
+                LibraryElementKind::Playlist => {
+                    "SELECT (SELECT t.cover_path FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id WHERE pt.playlist_id = p.id AND t.cover_path IS NOT NULL ORDER BY pt.added_at DESC, pt.id DESC LIMIT 1) FROM playlists p WHERE p.id = ?1"
+                }
+            };
+            conn.query_row(sql, params![id], |row| row.get::<_, Option<String>>(0))
+                .optional()
+                .map_err(db_err)?
+                .ok_or_else(|| "Library item not found".to_string())
+        })
+    }
+
+    /// Persist the first editable-tag snapshot and file-replacement journal in
+    /// one transaction, before the source file is moved into its backup slot.
+    pub fn begin_track_metadata_file_edit(
+        &self,
+        track_id: i64,
+        path: &str,
+        stage_path: &str,
+        backup_path: &str,
+        snapshot: &OriginalTrackMetadataSnapshot,
+        source_stamp: (u64, u128),
+        stage_stamp: (u64, u128),
+    ) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        let current_file: Option<(String, i64, i64)> = tx
+            .query_row(
+                "SELECT path, file_size, file_mtime_ns FROM tracks WHERE id = ?1 AND folder_id IS NOT NULL AND source = 'local'",
+                params![track_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(db_err)?;
+        if current_file.as_ref().map(|file| file.0.as_str()) != Some(path) {
+            return Err("The selected track is no longer a local library file".into());
+        }
+        let expected_source_size = i64::try_from(source_stamp.0)
+            .map_err(|_| "source file is too large to journal")?;
+        let expected_source_mtime_ns = i64::try_from(source_stamp.1)
+            .map_err(|_| "source file timestamp is outside the supported range")?;
+        if current_file.as_ref().is_some_and(|file| {
+            file.1 != expected_source_size || file.2 != expected_source_mtime_ns
+        }) {
+            return Err("The library file changed while its metadata edit was being prepared".into());
+        }
+        let pending: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM track_metadata_edit_journal WHERE track_id = ?1)",
+                params![track_id],
+                |row| row.get(0),
+            )
+            .map_err(db_err)?;
+        if pending {
+            return Err("A previous metadata edit for this track still needs recovery".into());
+        }
+
+        let mut metadata_only = snapshot.clone();
+        for tag in &mut metadata_only.tags {
+            tag.pictures.clear();
+        }
+        let snapshot_json = serde_json::to_string(&metadata_only)
+            .map_err(|error| format!("cannot encode the original metadata snapshot: {error}"))?;
+        tx.execute(
+            "INSERT OR IGNORE INTO track_metadata_original(track_id, snapshot_json, captured_at) VALUES(?1, ?2, ?3)",
+            params![track_id, snapshot_json, now()],
+        )
+        .map_err(db_err)?;
+        let snapshot_created = tx.changes() == 1;
+        if snapshot_created {
+            tx.execute(
+                "INSERT INTO track_metadata_original_state(track_id, source_path, file_size, file_mtime_ns) VALUES(?1, ?2, ?3, ?4)",
+                params![track_id, path, expected_source_size, expected_source_mtime_ns],
+            )
+            .map_err(db_err)?;
+            for tag in &snapshot.tags {
+                for picture in &tag.pictures {
+                    tx.execute(
+                        "INSERT INTO track_metadata_original_pictures(track_id, tag_type, position, picture_type, mime_type, description, data) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        params![
+                            track_id,
+                            picture.tag_type,
+                            picture.position,
+                            i64::from(picture.picture_type),
+                            picture.mime_type,
+                            picture.description,
+                            picture.data,
+                        ],
+                    )
+                    .map_err(db_err)?;
+                }
+            }
+        }
+
+        tx.execute(
+            "INSERT INTO track_metadata_edit_journal(track_id, path, stage_path, backup_path, source_file_size, source_mtime_ns, stage_file_size, stage_mtime_ns, snapshot_created, started_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                track_id,
+                path,
+                stage_path,
+                backup_path,
+                i64::try_from(source_stamp.0).map_err(|_| "source file is too large to journal")?,
+                i64::try_from(source_stamp.1).map_err(|_| "source file timestamp is outside the supported range")?,
+                i64::try_from(stage_stamp.0).map_err(|_| "staged file is too large to journal")?,
+                i64::try_from(stage_stamp.1).map_err(|_| "staged file timestamp is outside the supported range")?,
+                if snapshot_created { 1i64 } else { 0i64 },
+                now(),
+            ],
+        )
+        .map_err(db_err)?;
+        tx.commit().map_err(db_err)
+    }
+
+    pub fn get_track_metadata_original(
+        &self,
+        track_id: i64,
+    ) -> Result<Option<TrackMetadataOriginal>, String> {
+        self.with_conn(|conn| {
+            let snapshot_json: Option<String> = conn
+                .query_row(
+                    "SELECT o.snapshot_json FROM track_metadata_original o JOIN track_metadata_original_state s ON s.track_id = o.track_id JOIN tracks t ON t.id = o.track_id WHERE o.track_id = ?1 AND s.source_path = t.path AND s.file_size = t.file_size AND s.file_mtime_ns = t.file_mtime_ns",
+                    params![track_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(db_err)?;
+            snapshot_json
+                .map(|json| {
+                    serde_json::from_str::<OriginalTrackMetadataSnapshot>(&json)
+                        .map(|snapshot| snapshot.fields)
+                        .map_err(|error| format!("cannot read the original metadata snapshot: {error}"))
+                })
+                .transpose()
+        })
+    }
+
+    pub fn load_original_track_metadata_snapshot(
+        &self,
+        track_id: i64,
+    ) -> Result<Option<OriginalTrackMetadataSnapshot>, String> {
+        self.with_conn(|conn| {
+            let snapshot_json: Option<String> = conn
+                .query_row(
+                    "SELECT o.snapshot_json FROM track_metadata_original o JOIN track_metadata_original_state s ON s.track_id = o.track_id JOIN tracks t ON t.id = o.track_id WHERE o.track_id = ?1 AND s.source_path = t.path AND s.file_size = t.file_size AND s.file_mtime_ns = t.file_mtime_ns",
+                    params![track_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(db_err)?;
+            let Some(json) = snapshot_json else { return Ok(None) };
+            let mut snapshot: OriginalTrackMetadataSnapshot = serde_json::from_str(&json)
+                .map_err(|error| format!("cannot read the original metadata snapshot: {error}"))?;
+            let mut stmt = conn
+                .prepare("SELECT tag_type, position, picture_type, mime_type, description, data FROM track_metadata_original_pictures WHERE track_id = ?1 ORDER BY tag_type, position")
+                .map_err(db_err)?;
+            let rows = stmt
+                .query_map(params![track_id], |row| {
+                    Ok(OriginalPictureSnapshot {
+                        tag_type: row.get(0)?,
+                        position: row.get(1)?,
+                        picture_type: row.get::<_, i64>(2)? as u8,
+                        mime_type: row.get(3)?,
+                        description: row.get(4)?,
+                        data: row.get(5)?,
+                    })
+                })
+                .map_err(db_err)?;
+            let pictures = rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)?;
+            for picture in pictures {
+                let tag = snapshot
+                    .tags
+                    .iter_mut()
+                    .find(|tag| tag.tag_type == picture.tag_type)
+                    .ok_or_else(|| "the original cover refers to a missing tag snapshot".to_string())?;
+                tag.pictures.push(picture);
+            }
+            Ok(Some(snapshot))
+        })
+    }
+
+    pub fn pending_track_metadata_file_edits(&self) -> Result<Vec<PendingMetadataFileEdit>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT track_id, path, stage_path, backup_path, committed, source_file_size, source_mtime_ns, stage_file_size, stage_mtime_ns FROM track_metadata_edit_journal ORDER BY started_at, track_id",
+            ).map_err(db_err)?;
+            let rows = stmt.query_map([], |row| {
+                let source_size: i64 = row.get(5)?;
+                let source_mtime: i64 = row.get(6)?;
+                let stage_size: i64 = row.get(7)?;
+                let stage_mtime: i64 = row.get(8)?;
+                Ok(PendingMetadataFileEdit {
+                    track_id: row.get(0)?,
+                    path: row.get(1)?,
+                    stage_path: row.get(2)?,
+                    backup_path: row.get(3)?,
+                    committed: row.get::<_, i64>(4)? != 0,
+                    source_stamp: (source_size as u64, source_mtime as u128),
+                    stage_stamp: (stage_size as u64, stage_mtime as u128),
+                })
+            }).map_err(db_err)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)
+        })
+    }
+
+    /// Applies the edited file's parsed metadata, search index, and current
+    /// file stamps while marking the journal committed in the same transaction.
+    pub fn finish_track_metadata_file_edit(
+        &self,
+        track_id: i64,
+        update: &MetadataDbUpdate,
+    ) -> Result<Track, String> {
+        let conn = self.lock_conn()?;
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        let journal: Option<(String, i64, i64, i64)> = tx
+            .query_row(
+                "SELECT path, committed, stage_file_size, stage_mtime_ns FROM track_metadata_edit_journal WHERE track_id = ?1",
+                params![track_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .map_err(db_err)?;
+        let Some((path, committed, staged_size, staged_mtime_ns)) = journal else {
+            return Err("The metadata edit journal was not found; the library entry was not changed".into());
+        };
+        if committed != 0 {
+            return Err("This metadata edit was already committed".into());
+        }
+        if update.file_size != staged_size || update.modified_at_ns != staged_mtime_ns {
+            return Err("The database update does not match the staged audio file".into());
+        }
+        let is_local: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM tracks WHERE id = ?1 AND path = ?2 AND folder_id IS NOT NULL AND source = 'local')",
+                params![track_id, path],
+                |row| row.get(0),
+            )
+            .map_err(db_err)?;
+        if !is_local {
+            return Err("The track stopped being a local library file during the edit".into());
+        }
+
+        let (artist_id, album_id) = if update.resolve_entities {
+            let artist_id = match update.artist_id {
+                Some(id) if tx.query_row("SELECT EXISTS(SELECT 1 FROM artists WHERE id = ?1)", params![id], |row| row.get::<_, bool>(0)).map_err(db_err)? => Some(id),
+                _ => update
+                    .artist_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(|name| get_or_create_artist(&tx, name))
+                    .transpose()?,
+            };
+            let album_id = match update.album_id {
+                Some(id) if tx.query_row("SELECT EXISTS(SELECT 1 FROM albums WHERE id = ?1)", params![id], |row| row.get::<_, bool>(0)).map_err(db_err)? => Some(id),
+                _ => match update.album_title.as_deref().map(str::trim).filter(|title| !title.is_empty()) {
+                    Some(title) => {
+                    let album_artist_name = update
+                        .album_artist_name
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .or_else(|| update.artist_name.as_deref().map(str::trim).filter(|name| !name.is_empty()));
+                    let album_artist_id = album_artist_name
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .map(|name| get_or_create_artist(&tx, name))
+                        .transpose()?;
+                    Some(get_or_create_album(&tx, title, album_artist_id)?)
+                    }
+                    None => None,
+                },
+            };
+            (artist_id, album_id)
+        } else {
+            if let Some(id) = update.artist_id {
+                let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM artists WHERE id = ?1)", params![id], |row| row.get(0)).map_err(db_err)?;
+                if !exists { return Err("Selected artist no longer exists in the library".into()); }
+            }
+            if let Some(id) = update.album_id {
+                let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM albums WHERE id = ?1)", params![id], |row| row.get(0)).map_err(db_err)?;
+                if !exists { return Err("Selected album no longer exists in the library".into()); }
+            }
+            (update.artist_id, update.album_id)
+        };
+
+        let artist_name = match artist_id {
+            Some(id) => tx.query_row("SELECT name FROM artists WHERE id = ?1", params![id], |row| row.get::<_, String>(0)).optional().map_err(db_err)?,
+            None => None,
+        };
+        let album_title = match album_id {
+            Some(id) => tx.query_row("SELECT title FROM albums WHERE id = ?1", params![id], |row| row.get::<_, String>(0)).optional().map_err(db_err)?,
+            None => None,
+        };
+        let search_text = build_search_text(
+            &update.title,
+            artist_name.as_deref().unwrap_or(""),
+            album_title.as_deref().unwrap_or(""),
+            update.genre.as_deref().unwrap_or(""),
+        );
+        let changed = tx.execute(
+            "UPDATE tracks SET title = ?1, artist_id = ?2, album_id = ?3, track_number = ?4, disc_number = ?5, year = ?6, genre = ?7, cover_path = ?8, file_size = ?9, modified_at = ?10, search_text = ?11, file_mtime_ns = ?12 WHERE id = ?13 AND path = ?14 AND folder_id IS NOT NULL AND source = 'local'",
+            params![update.title, artist_id, album_id, update.track_number, update.disc_number, update.year, update.genre, update.cover_path, update.file_size, update.modified_at, search_text, update.modified_at_ns, track_id, path],
+        ).map_err(db_err)?;
+        if changed != 1 {
+            return Err("The local track disappeared before its metadata could be saved".into());
+        }
+        if update.preserve_entity_assignment {
+            tx.execute(
+                "INSERT INTO track_metadata_entity_override(track_id, artist_id, album_id) VALUES(?1, ?2, ?3) ON CONFLICT(track_id) DO UPDATE SET artist_id = excluded.artist_id, album_id = excluded.album_id",
+                params![track_id, artist_id, album_id],
+            ).map_err(db_err)?;
+        } else {
+            tx.execute("DELETE FROM track_metadata_entity_override WHERE track_id = ?1", params![track_id]).map_err(db_err)?;
+        }
+        if update.resolve_entities {
+            tx.execute(
+                "DELETE FROM track_metadata_original WHERE track_id = ?1",
+                params![track_id],
+            )
+            .map_err(db_err)?;
+        } else {
+            tx.execute(
+                "UPDATE track_metadata_original_state SET source_path = ?1, file_size = ?2, file_mtime_ns = ?3 WHERE track_id = ?4",
+                params![path, update.file_size, update.modified_at_ns, track_id],
+            )
+            .map_err(db_err)?;
+        }
+        tx.execute("UPDATE track_metadata_edit_journal SET committed = 1 WHERE track_id = ?1", params![track_id]).map_err(db_err)?;
+        let updated_track = fetch_tracks(
+            &tx,
+            TRACK_FROM,
+            "t.id = ?1",
+            Some(Value::Integer(track_id)),
+            "t.id",
+            1,
+            0,
+        )?.into_iter().next().ok_or_else(|| "The updated track could not be loaded".to_string())?;
+        tx.commit().map_err(db_err)?;
+        Ok(updated_track)
+    }
+
+    pub fn clear_committed_track_metadata_journal(&self, track_id: i64) -> Result<(), String> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM track_metadata_edit_journal WHERE track_id = ?1 AND committed = 1",
+                params![track_id],
+            )
+            .map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    pub fn abort_track_metadata_file_edit(&self, track_id: i64) -> Result<(), String> {
+        let conn = self.lock_conn()?;
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        let snapshot_created: Option<i64> = tx
+            .query_row(
+                "SELECT snapshot_created FROM track_metadata_edit_journal WHERE track_id = ?1 AND committed = 0",
+                params![track_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_err)?;
+        tx.execute("DELETE FROM track_metadata_edit_journal WHERE track_id = ?1 AND committed = 0", params![track_id]).map_err(db_err)?;
+        if snapshot_created == Some(1) {
+            tx.execute("DELETE FROM track_metadata_original WHERE track_id = ?1", params![track_id]).map_err(db_err)?;
+        }
+        tx.commit().map_err(db_err)
     }
 
     pub fn list_playlist_play_stats(&self) -> Result<Vec<PlaylistPlayStat>, String> {
@@ -1876,10 +2482,13 @@ impl Db {
     pub fn get_lyrics_override(&self, track_id: i64) -> Result<Option<LyricsOverride>, String> {
         self.with_conn(|conn| {
             conn.query_row(
-                "SELECT provider, source_artist, source_title, lrc, offset_ms, updated_at \
-                 FROM track_lyrics_override WHERE track_id = ?1",
+                "SELECT o.provider, o.source_artist, o.source_title, o.lrc, o.offset_ms, o.updated_at, d.document_json \
+                 FROM track_lyrics_override o \
+                 LEFT JOIN track_lyrics_editor_documents d ON d.track_id = o.track_id \
+                 WHERE o.track_id = ?1",
                 params![track_id],
                 |row| {
+                    let document_json: Option<String> = row.get(6)?;
                     Ok(LyricsOverride {
                         provider: row.get(0)?,
                         source_artist: row.get(1)?,
@@ -1887,6 +2496,15 @@ impl Db {
                         lrc: row.get(3)?,
                         offset_ms: row.get(4)?,
                         updated_at: row.get(5)?,
+                        editor_document: document_json
+                            .map(|json| serde_json::from_str(&json).map_err(|error| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    6,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(error),
+                                )
+                            }))
+                            .transpose()?,
                     })
                 },
             )
@@ -1906,8 +2524,9 @@ impl Db {
         offset_ms: i64,
     ) -> Result<(), String> {
         let now = now();
-        self.with_conn(|conn| {
-            conn.execute(
+        let conn = self.lock_conn()?;
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        tx.execute(
                 "INSERT INTO track_lyrics_override \
                      (track_id, provider, source_artist, source_title, lrc, offset_ms, updated_at) \
                  VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7) \
@@ -1929,8 +2548,70 @@ impl Db {
                 ],
             )
             .map_err(db_err)?;
-            Ok(())
-        })
+        // Selecting a different provider replaces any editor document from the
+        // previous pin. The editor save command writes both rows atomically.
+        tx.execute(
+            "DELETE FROM track_lyrics_editor_documents WHERE track_id = ?1",
+            params![track_id],
+        )
+        .map_err(db_err)?;
+        tx.commit().map_err(db_err)
+    }
+
+    /// Saves the playback projection and full editor document as one transaction.
+    /// End times stay in the JSON side table; `lrc` remains the existing playback
+    /// contract and therefore contains only start timestamps.
+    pub fn save_lyrics_editor_document(
+        &self,
+        track_id: i64,
+        provider: &str,
+        source_artist: Option<&str>,
+        source_title: Option<&str>,
+        lrc: &str,
+        offset_ms: i64,
+        document: &LyricsEditorDocument,
+    ) -> Result<(), String> {
+        validate_lyrics_editor_document(document, None)?;
+        if provider.trim().is_empty() || lrc.trim().is_empty() {
+            return Err("A lyrics source and non-empty playback lyrics are required".into());
+        }
+        let document_json = serde_json::to_string(document)
+            .map_err(|error| format!("failed to encode lyrics editor document: {error}"))?;
+        let now = now();
+        let conn = self.lock_conn()?;
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        let duration_sec: Option<f64> = tx
+            .query_row(
+                "SELECT duration_sec FROM tracks WHERE id = ?1",
+                params![track_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_err)?;
+        let Some(_duration_sec) = duration_sec else {
+            return Err("Track not found".into());
+        };
+        validate_lyrics_editor_document(document, duration_sec)?;
+        tx.execute(
+            "INSERT INTO track_lyrics_override \
+                 (track_id, provider, source_artist, source_title, lrc, offset_ms, updated_at) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT(track_id) DO UPDATE SET \
+                 provider = excluded.provider, source_artist = excluded.source_artist, \
+                 source_title = excluded.source_title, lrc = excluded.lrc, \
+                 offset_ms = excluded.offset_ms, updated_at = excluded.updated_at",
+            params![track_id, provider, source_artist, source_title, lrc, offset_ms, now],
+        )
+        .map_err(db_err)?;
+        tx.execute(
+            "INSERT INTO track_lyrics_editor_documents(track_id, document_json, updated_at) \
+             VALUES(?1, ?2, ?3) \
+             ON CONFLICT(track_id) DO UPDATE SET \
+                 document_json = excluded.document_json, updated_at = excluded.updated_at",
+            params![track_id, document_json, now],
+        )
+        .map_err(db_err)?;
+        tx.commit().map_err(db_err)
     }
 
     /// Moves the pinned lyrics in time without touching the pinned text. Returns
@@ -1952,14 +2633,19 @@ impl Db {
 
     /// Back to automatic lyrics. Idempotent.
     pub fn clear_lyrics_override(&self, track_id: i64) -> Result<(), String> {
-        self.with_conn(|conn| {
-            conn.execute(
+        let conn = self.lock_conn()?;
+        let tx = conn.unchecked_transaction().map_err(db_err)?;
+        tx.execute(
                 "DELETE FROM track_lyrics_override WHERE track_id = ?1",
                 params![track_id],
             )
             .map_err(db_err)?;
-            Ok(())
-        })
+        tx.execute(
+            "DELETE FROM track_lyrics_editor_documents WHERE track_id = ?1",
+            params![track_id],
+        )
+        .map_err(db_err)?;
+        tx.commit().map_err(db_err)
     }
 
     /// Cached public URL for a local cover previously uploaded to the image
@@ -2263,8 +2949,64 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
+fn file_stamp_precise(path: &Path) -> Option<(i64, i64)> {
+    let metadata = fs::metadata(path).ok()?;
+    let size = i64::try_from(metadata.len()).ok()?;
+    let modified_at_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
+    Some((size, modified_at_ns))
+}
+
 fn db_err(e: rusqlite::Error) -> String {
     format!("database error: {}", e)
+}
+
+fn validate_lyrics_editor_document(
+    document: &LyricsEditorDocument,
+    duration_sec: Option<f64>,
+) -> Result<(), String> {
+    let duration_ms = duration_sec
+        .filter(|duration| duration.is_finite() && *duration > 0.0)
+        .map(|duration| duration * 1000.0);
+    let has_text = match document {
+        LyricsEditorDocument::Plain { lines } => {
+            !lines.is_empty() && lines.iter().any(|line| !line.text.trim().is_empty())
+        }
+        LyricsEditorDocument::Synced { lines } => {
+            if lines.is_empty() {
+                return Err("At least one synced lyric line is required".into());
+            }
+            let mut previous_start_ms = -1_i64;
+            let mut has_text = false;
+            for line in lines {
+                if line.start_ms < 0 || line.start_ms < previous_start_ms {
+                    return Err("Synced lyric start times must be nonnegative and sorted".into());
+                }
+                if duration_ms.is_some_and(|duration| line.start_ms as f64 > duration) {
+                    return Err("A lyric line starts after the track ends".into());
+                }
+                if let Some(end_ms) = line.end_ms {
+                    if end_ms <= line.start_ms {
+                        return Err("A lyric line end must be after its start".into());
+                    }
+                    if duration_ms.is_some_and(|duration| end_ms as f64 > duration) {
+                        return Err("A lyric line ends after the track ends".into());
+                    }
+                }
+                previous_start_ms = line.start_ms;
+                has_text |= !line.text.trim().is_empty();
+            }
+            has_text
+        }
+    };
+    if !has_text {
+        return Err("At least one non-empty lyric line is required".into());
+    }
+    Ok(())
 }
 
 fn like_pattern(query: &str) -> String {
@@ -3016,45 +3758,108 @@ fn prune_orphans(conn: &Connection) -> Result<(), String> {
 }
 
 fn upsert_track_input(conn: &Connection, input: &TrackInput) -> Result<(), String> {
-    let artist_id = match &input.artist {
-        Some(name) => Some(get_or_create_artist(conn, name)?),
-        None => None,
+    // A scan can finish after a tag edit. Ignore inputs read from an earlier
+    // file version so they cannot replace the just-committed metadata.
+    let Some((live_size, live_mtime_ns)) = file_stamp_precise(Path::new(&input.path)) else {
+        return Ok(());
     };
-    let album_id = match &input.album {
-        Some(title) => {
-            let album_artist_name = input.album_artist.as_deref().or(input.artist.as_deref());
-            let album_artist_id = match album_artist_name {
-                Some(name) => Some(get_or_create_artist(conn, name)?),
-                None => None,
-            };
-            let album_id = get_or_create_album(conn, title, album_artist_id)?;
-            if let Some(cover_path) = &input.cover_path {
-                conn.execute(
-                    "UPDATE albums SET cover_path = ?1 WHERE id = ?2 AND cover_path IS NULL",
-                    params![cover_path, album_id],
-                )
-                .map_err(db_err)?;
-            }
-            Some(album_id)
+    if live_size != input.file_size || live_mtime_ns != input.modified_at_ns {
+        return Ok(());
+    }
+    let pending_edit: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM track_metadata_edit_journal j JOIN tracks t ON t.id = j.track_id WHERE t.path = ?1)",
+            params![input.path],
+            |row| row.get(0),
+        )
+        .map_err(db_err)?;
+    if pending_edit {
+        return Ok(());
+    }
+
+    let prior_stamp: Option<(i64, i64)> = conn
+        .query_row(
+            "SELECT file_size, file_mtime_ns FROM tracks WHERE path = ?1",
+            params![input.path],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(db_err)?;
+    if let Some((prior_size, prior_mtime_ns)) = prior_stamp {
+        if prior_size != input.file_size || prior_mtime_ns != input.modified_at_ns {
+            conn.execute(
+                "DELETE FROM track_metadata_entity_override WHERE track_id = (SELECT id FROM tracks WHERE path = ?1)",
+                params![input.path],
+            )
+            .map_err(db_err)?;
+            conn.execute(
+                "DELETE FROM track_metadata_original WHERE track_id = (SELECT id FROM tracks WHERE path = ?1)",
+                params![input.path],
+            )
+            .map_err(db_err)?;
         }
-        None => None,
+    }
+
+    let entity_override: Option<(Option<i64>, Option<i64>)> = conn
+        .query_row(
+            "SELECT artist_id, album_id FROM track_metadata_entity_override WHERE track_id = (SELECT id FROM tracks WHERE path = ?1)",
+            params![input.path],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(db_err)?;
+
+    let (artist_id, album_id) = if let Some((artist_id, album_id)) = entity_override {
+        (artist_id, album_id)
+    } else {
+        let artist_id = match &input.artist {
+            Some(name) => Some(get_or_create_artist(conn, name)?),
+            None => None,
+        };
+        let album_id = match &input.album {
+            Some(title) => {
+                let album_artist_name = input.album_artist.as_deref().or(input.artist.as_deref());
+                let album_artist_id = match album_artist_name {
+                    Some(name) => Some(get_or_create_artist(conn, name)?),
+                    None => None,
+                };
+                Some(get_or_create_album(conn, title, album_artist_id)?)
+            }
+            None => None,
+        };
+        (artist_id, album_id)
+    };
+    if let (Some(cover_path), Some(album_id)) = (&input.cover_path, album_id) {
+        conn.execute(
+            "UPDATE albums SET cover_path = ?1 WHERE id = ?2 AND cover_path IS NULL",
+            params![cover_path, album_id],
+        )
+        .map_err(db_err)?;
+    }
+    let artist_name = match artist_id {
+        Some(id) => conn.query_row("SELECT name FROM artists WHERE id = ?1", params![id], |row| row.get::<_, String>(0)).optional().map_err(db_err)?.unwrap_or_default(),
+        None => String::new(),
+    };
+    let album_title = match album_id {
+        Some(id) => conn.query_row("SELECT title FROM albums WHERE id = ?1", params![id], |row| row.get::<_, String>(0)).optional().map_err(db_err)?.unwrap_or_default(),
+        None => String::new(),
     };
     let search_text = build_search_text(
         &input.title,
-        input.artist.as_deref().unwrap_or(""),
-        input.album.as_deref().unwrap_or(""),
+        &artist_name,
+        &album_title,
         input.genre.as_deref().unwrap_or(""),
     );
     conn.execute(
         "INSERT INTO tracks(path, folder_id, title, artist_id, album_id, track_number, disc_number, \
-         duration_sec, year, genre, cover_path, file_size, modified_at, added_at, lyrics, search_text) \
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16) \
+         duration_sec, year, genre, cover_path, file_size, modified_at, added_at, lyrics, search_text, file_mtime_ns) \
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17) \
          ON CONFLICT(path) DO UPDATE SET \
          title = excluded.title, artist_id = excluded.artist_id, album_id = excluded.album_id, \
          track_number = excluded.track_number, disc_number = excluded.disc_number, \
          duration_sec = excluded.duration_sec, year = excluded.year, genre = excluded.genre, \
          cover_path = excluded.cover_path, file_size = excluded.file_size, \
-         modified_at = excluded.modified_at, folder_id = excluded.folder_id, \
+         modified_at = excluded.modified_at, file_mtime_ns = excluded.file_mtime_ns, folder_id = excluded.folder_id, \
          lyrics = excluded.lyrics, search_text = excluded.search_text",
         params![
             input.path,
@@ -3072,7 +3877,8 @@ fn upsert_track_input(conn: &Connection, input: &TrackInput) -> Result<(), Strin
             input.modified_at,
             now(),
             input.lyrics,
-            search_text
+            search_text,
+            input.modified_at_ns
         ],
     )
     .map_err(db_err)?;
@@ -3270,6 +4076,7 @@ mod tests {
             cover_path: None,
             file_size: 1024,
             modified_at: 111,
+            modified_at_ns: 111_000_000_000,
             lyrics: None,
             gain_db: None,
             peak_db: None,
@@ -3394,7 +4201,7 @@ mod tests {
         let stamps = db.list_file_stamps().unwrap();
         assert!(stamps.contains_key(r"C:\music\a.mp3"));
         assert_eq!(stamps[r"C:\music\a.mp3"].size, 1024);
-        assert_eq!(stamps[r"C:\music\a.mp3"].mtime, 111);
+        assert_eq!(stamps[r"C:\music\a.mp3"].mtime_ns, 111_000_000_000);
         let mut changed =
             track_input(r"C:\music\a.mp3", folder.id, "Song A Remastered", Some("Artist X"), Some("Album Y"));
         changed.cover_path = Some(r"C:\covers\y.jpg".to_string());

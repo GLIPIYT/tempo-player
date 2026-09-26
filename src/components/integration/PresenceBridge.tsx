@@ -27,7 +27,7 @@ export default function PresenceBridge() {
   // push enable/disable and language changes into the driver
   useEffect(() => {
     discordSettingsChanged()
-  }, [settings.discord.enabled, settings.discord.clientId, settings.lang])
+  }, [settings.discord.enabled, settings.discord.clientId, settings.discord.lyricStitchGapSec, settings.lang])
 
   return null
 }

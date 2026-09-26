@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { ArrowDown, ArrowUp, Check, Disc3, FolderOpen, Heart, MoreHorizontal, Plus, Trash2, User } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Disc3, FolderOpen, Heart, MoreHorizontal, PencilLine, Plus, Trash2, User } from 'lucide-react'
 import { api } from '../../api/client'
 import type { Playlist, Track } from '../../types/models'
 import { usePlayer } from '../../player'
@@ -18,6 +18,7 @@ import { trackToUnified } from '../../utils/unified'
 import { playlistDisplayName } from '../../utils/playlists'
 import { bumpLibraryVersion } from '../../utils/libraryVersion'
 import { toast } from './Toast'
+import TrackMetadataEditor from './TrackMetadataEditor'
 
 interface TrackMenuProps {
   track: Track
@@ -64,6 +65,7 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
   const { navigate } = useNav()
   const t = useT()
   const [open, setOpen] = useState(false)
+  const [editingMetadata, setEditingMetadata] = useState(false)
   /** Null means anchored to the trigger button; a point means opened at the cursor. */
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const [sub, setSub] = useState(false)
@@ -262,6 +264,11 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
     navigate({ name: 'album', id: track.albumId })
   }
 
+  const editMetadata = () => {
+    close()
+    setEditingMetadata(true)
+  }
+
   const revealInExplorer = async () => {
     close()
     try {
@@ -283,6 +290,12 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
           <button className="menu-item" role="menuitem" onClick={goToArtist}>
             <User size={13} />
             {t('Go to artist')}
+          </button>
+        ) : null}
+        {track.source === 'local' ? (
+          <button className="menu-item" role="menuitem" onClick={editMetadata}>
+            <PencilLine size={13} />
+            {t('Edit track')}
           </button>
         ) : null}
         {track.albumId != null ? (
@@ -474,6 +487,18 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
             </>
           )}
         </div>
+      ) : null}
+      {editingMetadata && track.source === 'local' ? (
+        <TrackMetadataEditor
+          key={track.id}
+          track={track}
+          onClose={() => setEditingMetadata(false)}
+          onSaved={(savedTrack) => {
+            player.updateTrackMetadata(savedTrack)
+            setEditingMetadata(false)
+            onChanged?.()
+          }}
+        />
       ) : null}
     </div>
   )
