@@ -75,14 +75,17 @@ export default function PlayerVisualizer() {
   const lyrics = useLyrics()
   const viz = settings.visualizer
 
-  const [colors, setColors] = useState({ accent: FALLBACK_ACCENT, plain: FALLBACK_PLAIN })
+  const [colors, setColors] = useState({ accent: FALLBACK_ACCENT, accentEnd: FALLBACK_ACCENT, plain: FALLBACK_PLAIN })
 
   // Safe to read the variables in an effect rather than in the render: the
   // theme bridge sits above the shell in the tree, so its effect writes them
   // before this one runs.
   useEffect(() => {
+    const isGradient = document.documentElement.classList.contains('theme-gradient')
+    const accent = resolveVar('--accent', FALLBACK_ACCENT)
     setColors({
-      accent: resolveVar('--accent', FALLBACK_ACCENT),
+      accent,
+      accentEnd: isGradient ? resolveVar('--t-gradient-second', accent) : accent,
       plain: resolveVar('--text', FALLBACK_PLAIN),
     })
   }, [settings.theme])
@@ -100,6 +103,7 @@ export default function PlayerVisualizer() {
         maxAmplitudePx={viz.heightPx}
         mirror={viz.mirror}
         rgb={viz.useThemeColor ? colors.accent : colors.plain}
+        rgbEnd={viz.useThemeColor ? colors.accentEnd : colors.plain}
       />
     </div>
   )

@@ -838,7 +838,16 @@ function UpdateCard() {
   )
 }
 
-function ThemePreview({ tokens }: { tokens: ThemeTokens }) {
+function ThemePreview({
+  tokens,
+  gradientAnchors,
+}: {
+  tokens: ThemeTokens
+  gradientAnchors?: { first: string; second: string }
+}) {
+  const accent = gradientAnchors
+    ? `linear-gradient(110deg, ${gradientAnchors.first}, ${gradientAnchors.second})`
+    : tokens.accent
   return (
     <div
       className="theme-preview"
@@ -850,8 +859,8 @@ function ThemePreview({ tokens }: { tokens: ThemeTokens }) {
         <span className="theme-preview-line" />
       </div>
       <div className="theme-preview-main">
-        <span className="theme-preview-dot" style={{ background: tokens.playButton }} />
-        <span className="theme-preview-pill" style={{ background: tokens.accent }} />
+        <span className="theme-preview-dot" style={{ background: accent }} />
+        <span className="theme-preview-pill" style={{ background: accent }} />
         <span className="theme-preview-pill" style={{ background: tokens.border }} />
       </div>
     </div>
@@ -934,8 +943,8 @@ export default function SettingsPage() {
 
   const activateCustom = () => {
     if (settings.theme.kind !== 'custom') {
-      const seed =
-        settings.theme.kind === 'preset' ? getPreset(settings.theme.presetId)?.tokens : undefined
+      const seedPreset = settings.theme.kind === 'preset' ? getPreset(settings.theme.presetId) : undefined
+      const seed = seedPreset?.tokens
       update({
         theme: {
           kind: 'custom',
@@ -944,6 +953,7 @@ export default function SettingsPage() {
               ? { accent: seed.accent, background: seed.bg, surface: seed.surface, playButton: seed.playButton }
               : { ...CUSTOM_DEFAULT_BASE },
             overrides: {},
+            ...(seedPreset?.gradientAnchors ? { gradientAnchors: { ...seedPreset.gradientAnchors } } : {}),
           },
         },
       })
@@ -1296,7 +1306,7 @@ export default function SettingsPage() {
                       className={activeId === p.id ? 'theme-card is-active' : 'theme-card'}
                       onClick={() => setPreset(p.id)}
                     >
-                      <ThemePreview tokens={p.tokens} />
+                      <ThemePreview tokens={p.tokens} gradientAnchors={p.gradientAnchors} />
                       <span className="theme-card-name">{p.name}</span>
                     </button>
                   ))}

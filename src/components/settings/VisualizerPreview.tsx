@@ -7,6 +7,23 @@ type Props = {
   offLabel: string
 }
 
+function parseCanvasColor(value: string): { r: number; g: number; b: number } | null {
+  const color = value.trim()
+  const hex = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
+  if (hex) {
+    const digits = hex[1]
+    const full = digits.length === 3 ? digits.split('').map((part) => part + part).join('') : digits
+    return {
+      r: parseInt(full.slice(0, 2), 16),
+      g: parseInt(full.slice(2, 4), 16),
+      b: parseInt(full.slice(4, 6), 16),
+    }
+  }
+  const parts = color.match(/-?\d*\.?\d+/g)
+  if (!parts || parts.length < 3) return null
+  return { r: Number(parts[0]), g: Number(parts[1]), b: Number(parts[2]) }
+}
+
 /** A local sample: it stays animated even when no track is playing. */
 export default function VisualizerPreview({ visualizer, theme, offLabel }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -42,7 +59,19 @@ export default function VisualizerPreview({ visualizer, theme, offLabel }: Props
       const amplitude = Math.min(visualizer.heightPx, height - 18)
       const phase = motion.matches ? 1.1 : time / 680
       const response = motion.matches ? 1 : Math.max(0.05, (100 - visualizer.smoothing) / 100)
-      const color = getComputedStyle(canvas).color
+      const rootStyle = getComputedStyle(document.documentElement)
+      const fallbackColor = parseCanvasColor(getComputedStyle(canvas).color) ?? { r: 108, g: 140, b: 255 }
+      const gradientActive =
+        visualizer.useThemeColor && document.documentElement.classList.contains('theme-gradient')
+      const firstColor = gradientActive
+        ? parseCanvasColor(rootStyle.getPropertyValue('--t-gradient-first')) ?? fallbackColor
+        : fallbackColor
+      const secondColor = gradientActive
+        ? parseCanvasColor(rootStyle.getPropertyValue('--t-gradient-second')) ?? firstColor
+        : firstColor
+      const accentGradient = context.createLinearGradient(0, 0, width, 0)
+      accentGradient.addColorStop(0, `rgb(${firstColor.r}, ${firstColor.g}, ${firstColor.b})`)
+      accentGradient.addColorStop(1, `rgb(${secondColor.r}, ${secondColor.g}, ${secondColor.b})`)
 
       for (let i = 0; i < count; i += 1) {
         const position = i / Math.max(1, count - 1)
@@ -55,8 +84,8 @@ export default function VisualizerPreview({ visualizer, theme, offLabel }: Props
 
       context.save()
       context.globalAlpha = visualizer.opacityPct / 100
-      context.fillStyle = color
-      context.strokeStyle = color
+      context.fillStyle = accentGradient
+      context.strokeStyle = accentGradient
       if (visualizer.mirror) {
         context.translate(width, 0)
         context.scale(-1, 1)
@@ -67,6 +96,7 @@ export default function VisualizerPreview({ visualizer, theme, offLabel }: Props
         const gap = Math.max(1, slot * 0.16)
         for (let i = 0; i < count; i += 1) {
           const barHeight = Math.max(2, levels[i] * amplitude)
+          context.globalAlpha = Math.max(0.14, levels[i] * (visualizer.opacityPct / 100))
           context.fillRect(i * slot, height - barHeight, Math.max(1, slot - gap), barHeight)
         }
       } else {
@@ -82,10 +112,8 @@ export default function VisualizerPreview({ visualizer, theme, offLabel }: Props
           context.lineTo(width, height)
           context.lineTo(0, height)
           context.closePath()
-          const gradient = context.createLinearGradient(0, 0, 0, height)
-          gradient.addColorStop(0, color)
-          gradient.addColorStop(1, 'transparent')
-          context.fillStyle = gradient
+          context.globalAlpha = visualizer.opacityPct / 100
+          context.fillStyle = accentGradient
           context.fill()
         } else {
           context.lineWidth = 2

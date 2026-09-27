@@ -65,7 +65,8 @@ function safeColor(value: string | undefined, fallback: string): string {
 export function applyTheme(active: ActiveTheme | null | undefined): void {
   const root = document.documentElement
   const custom = active?.kind === 'custom' ? active.custom : undefined
-  const anchors = custom?.gradientAnchors
+  const preset = active?.kind === 'preset' ? getPreset(active.presetId) : undefined
+  const anchors = custom?.gradientAnchors ?? preset?.gradientAnchors
   const isGradient = anchors !== undefined
   const wasGradient = root.classList.contains('theme-gradient')
 
@@ -78,18 +79,32 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
   }
 
   if (isGradient) {
-    root.classList.add('theme-custom', 'theme-gradient')
+    const gradientSource = custom ? 'custom' : 'preset'
+    const sourceChanged = root.dataset.themeGradientSource !== gradientSource
+    if (!wasGradient || sourceChanged) clearInlineTheme()
+    root.classList.toggle('theme-custom', custom !== undefined)
+    root.classList.add('theme-gradient')
     // Drop the previous theme's inline tokens once. During color picking the
     // app then changes only two CSS variables instead of rebuilding all tokens.
-    if (!wasGradient) clearInlineTheme()
     const normalized = normalizeGradientAnchors(anchors)
     root.style.setProperty('--t-gradient-first', normalized.first)
     root.style.setProperty('--t-gradient-second', normalized.second)
+    root.dataset.themeGradientSource = gradientSource
+
+    // Presets keep their own background and surface palette; gradient colors
+    // are supplied by the shared accent variables in theme.css.
+    if (preset) {
+      for (const k of TOKEN_KEYS) {
+        if (k === 'accent' || k === 'accentStrong' || k === 'accentSoft' || k === 'playButton') continue
+        root.style.setProperty(TOKEN_VARS[k], preset.tokens[k])
+      }
+    }
     return
   }
 
   root.classList.toggle('theme-custom', custom !== undefined)
   root.classList.remove('theme-gradient')
+  delete root.dataset.themeGradientSource
   clearInlineTheme()
   if (!custom) {
     const presetId = active && active.kind === 'preset' ? active.presetId : 'tempo'
@@ -185,5 +200,17 @@ export function useThemeEffect(): void {
 
 export function ThemeApply(): ReactElement {
   useThemeEffect()
-  return <BackgroundLayer />
+  return (
+    <>
+      <svg className="theme-svg-definitions" aria-hidden="true" focusable="false">
+        <defs>
+          <linearGradient id="tempo-accent-gradient" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="var(--t-gradient-first, var(--accent))" />
+            <stop offset="100%" stopColor="var(--t-gradient-second, var(--accent-strong))" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <BackgroundLayer />
+    </>
+  )
 }

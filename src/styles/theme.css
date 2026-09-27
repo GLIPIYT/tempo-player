@@ -16,6 +16,22 @@ html.theme-custom {
   --play-btn: var(--t-base-play-btn, var(--t-base-accent, #6c8cff));
 }
 
+html.theme-gradient {
+  --accent: var(--t-gradient-first, #6c8cff);
+  --accent-strong: color-mix(in srgb, var(--t-gradient-second, #4fd6be) 84%, white);
+  --accent-soft: color-mix(in srgb, var(--t-gradient-first, #6c8cff) 16%, transparent);
+  --play-btn: var(--t-gradient-second, #4fd6be);
+  --range-start: var(--t-gradient-first, #6c8cff);
+  --range-end: var(--t-gradient-second, #4fd6be);
+  --tempo-gradient: linear-gradient(110deg, var(--t-gradient-first, #6c8cff), var(--t-gradient-second, #4fd6be));
+  --tempo-gradient-text: linear-gradient(100deg, var(--t-gradient-first, #6c8cff), var(--t-gradient-second, #4fd6be));
+  --tempo-gradient-soft: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--t-gradient-first, #6c8cff) 16%, transparent),
+    color-mix(in srgb, var(--t-gradient-second, #4fd6be) 16%, transparent)
+  );
+}
+
 html.theme-custom.theme-gradient {
   --bg: #0b0f16;
   --bg-elevated: #111722;
@@ -24,26 +40,17 @@ html.theme-custom.theme-gradient {
   --border: #2a3546;
   --text: #edf1f7;
   --text-muted: #9ba8bb;
-  --accent: var(--t-gradient-first, #6c8cff);
-  --accent-strong: color-mix(in srgb, var(--t-gradient-second, #4fd6be) 84%, white);
-  --accent-soft: color-mix(in srgb, var(--t-gradient-first, #6c8cff) 16%, transparent);
-  --play-btn: var(--t-gradient-second, #4fd6be);
   --danger: #ff7184;
-  --range-start: var(--t-gradient-first, #6c8cff);
-  --range-end: var(--t-gradient-second, #4fd6be);
-  --tempo-gradient: linear-gradient(110deg, var(--t-gradient-first, #6c8cff), var(--t-gradient-second, #4fd6be));
-  --tempo-gradient-soft: linear-gradient(
-    110deg,
-    color-mix(in srgb, var(--t-gradient-first, #6c8cff) 16%, transparent),
-    color-mix(in srgb, var(--t-gradient-second, #4fd6be) 16%, transparent)
-  );
 }
 
 html.theme-gradient .btn-primary,
 html.theme-gradient .pb-toggle,
 html.theme-gradient .lyr-play,
 html.theme-gradient .lyr-editor-save,
-html.theme-gradient .background-search-use {
+html.theme-gradient .background-search-use,
+html.theme-gradient .home-mix-play,
+html.theme-gradient .album-wall-play,
+html.theme-gradient .playlist-list-play {
   background: var(--tempo-gradient);
 }
 
@@ -107,6 +114,212 @@ html.theme-gradient input[type='range']::-webkit-slider-thumb {
 
 html.theme-gradient input[type='range']::-moz-range-thumb {
   background: var(--tempo-gradient);
+}
+
+.theme-svg-definitions {
+  position: fixed;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+html.theme-gradient .playerbar .icon-btn,
+html.theme-gradient .playerbar .pb-speed-trigger {
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+html.theme-gradient .playerbar .icon-btn:hover:not(:disabled),
+html.theme-gradient .playerbar .icon-btn.is-active,
+html.theme-gradient .playerbar .icon-btn.has-queue {
+  background: var(--tempo-gradient-soft);
+}
+
+html.theme-gradient .playerbar .pb-eq-preset-trigger:hover,
+html.theme-gradient .playerbar .pb-eq-preset-trigger.is-open,
+html.theme-gradient .playerbar .pb-eq-preset-option:hover,
+html.theme-gradient .playerbar .pb-eq-preset-option.is-selected,
+html.theme-gradient .playerbar .pb-speed-pitch:hover {
+  background: var(--tempo-gradient-soft);
+  border-color: color-mix(in srgb, var(--t-gradient-second) 44%, var(--border));
+}
+
+html.theme-gradient .playerbar .pb-speed-trigger span,
+html.theme-gradient .playerbar .pb-time-cur,
+html.theme-gradient .playerbar .pb-speed-readout,
+html.theme-gradient .playerbar .pb-speed-reset,
+html.theme-gradient .playerbar .pb-eq-value,
+html.theme-gradient .playerbar .pb-eq-frequency {
+  background-image: var(--tempo-gradient-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+html.theme-gradient .playerbar .icon-btn svg :is(path, line, polyline, rect, circle),
+html.theme-gradient .playerbar .pb-toggle svg :is(path, line, polyline, rect, circle),
+html.theme-gradient .playerbar .pb-eq-curve :is(line, polyline) {
+  stroke: url(#tempo-accent-gradient);
+}
+
+html.theme-gradient .playerbar .pb-like-btn.is-active svg path {
+  fill: url(#tempo-accent-gradient);
+}
+
+html.theme-gradient .wave-accent .wave-bar {
+  background: linear-gradient(to top, var(--t-gradient-first), var(--t-gradient-second));
+}
+
+html.theme-gradient .home-mix-kicker {
+  border-color: color-mix(in srgb, var(--t-gradient-second) 48%, var(--border));
+  background: var(--tempo-gradient-soft);
+  color: var(--t-gradient-second);
+}
+
+html.theme-gradient .home-mix-copy h2,
+html.theme-gradient .home-mix-count,
+html.theme-gradient .home-section-open,
+html.theme-gradient .home-section-title,
+html.theme-gradient .home-mix-picker-heading strong,
+html.theme-gradient .section-label,
+html.theme-gradient .detail-title,
+html.theme-gradient .hero-title,
+html.theme-gradient .link-btn,
+html.theme-gradient .editorial-detail-kind,
+html.theme-gradient .editorial-detail-title,
+html.theme-gradient .lyr-title,
+html.theme-gradient .lyr-time-cur,
+html.theme-gradient .lyr-line.is-active .lyr-line-text {
+  background-image: var(--tempo-gradient-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+html.theme-gradient .home-mix-copy h2,
+html.theme-gradient .editorial-detail-title,
+html.theme-gradient .lyr-title {
+  width: fit-content;
+  max-width: 100%;
+}
+
+html.theme-gradient .home-mix-play {
+  background: var(--tempo-gradient);
+  color: #0d1017;
+}
+
+html.theme-gradient .home-mix-view:hover,
+html.theme-gradient .home-mix-view[aria-expanded='true'],
+html.theme-gradient .home-mix-picker-button,
+html.theme-gradient .home-mix-navigation > button:hover,
+html.theme-gradient .home-mix-choice:hover,
+html.theme-gradient .home-mix-choice[aria-current='true'] {
+  border-color: color-mix(in srgb, var(--t-gradient-second) 54%, var(--border));
+  background: var(--tempo-gradient-soft);
+}
+
+html.theme-gradient .home-mix-picker-button { color: var(--text); }
+
+html.theme-gradient .home-mix-count {
+  background-color: var(--bg-elevated);
+  background-image: var(--tempo-gradient-text), var(--tempo-gradient-soft);
+  -webkit-background-clip: text, padding-box;
+  background-clip: text, padding-box;
+}
+
+html.theme-gradient .home-mix-picker-button > svg,
+html.theme-gradient .home-mix-navigation > button svg,
+html.theme-gradient .home-section-open svg,
+html.theme-gradient .editorial-detail-kind svg,
+html.theme-gradient .home-playlist-play svg,
+html.theme-gradient .artist-gallery-inline-play svg,
+html.theme-gradient .playlist-list-play svg,
+html.theme-gradient .album-wall-play svg {
+  color: var(--t-gradient-second);
+}
+
+html.theme-gradient .home-mix-picker-button > svg :is(path, line, polyline, rect, circle),
+html.theme-gradient .home-mix-navigation > button svg :is(path, line, polyline, rect, circle),
+html.theme-gradient .home-section-open svg :is(path, line, polyline, rect, circle),
+html.theme-gradient .editorial-detail-kind svg :is(path, line, polyline, rect, circle),
+html.theme-gradient .home-playlist-play svg :is(path, line, polyline, rect, circle),
+html.theme-gradient .artist-gallery-inline-play svg :is(path, line, polyline, rect, circle),
+html.theme-gradient .playlist-list-play svg :is(path, line, polyline, rect, circle),
+html.theme-gradient .album-wall-play svg :is(path, line, polyline, rect, circle) {
+  stroke: url(#tempo-accent-gradient);
+}
+
+html.theme-gradient .home-playlist-play,
+html.theme-gradient .artist-gallery-inline-play,
+html.theme-gradient .playlist-list-play {
+  background: var(--tempo-gradient-soft);
+}
+
+html.theme-gradient .home-playlist-play:hover,
+html.theme-gradient .album-wall-play {
+  background: var(--tempo-gradient);
+}
+
+html.theme-gradient .home-mix-dots button[aria-pressed='true']::before,
+html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
+  background: var(--tempo-gradient);
+}
+
+html.theme-gradient .hour-mix-page .editorial-detail-art,
+html.theme-gradient .hour-mix-page .editorial-detail-hero {
+  border-color: color-mix(in srgb, var(--t-gradient-second) 32%, var(--border));
+}
+
+html.theme-gradient .lyr-overlay .lyr-line.is-active .lyr-line-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--t-gradient-first) 0%,
+    var(--t-gradient-second) var(--lyr-fill, 0%),
+    color-mix(in srgb, var(--t-gradient-second) 42%, transparent) var(--lyr-fill, 0%),
+    color-mix(in srgb, var(--t-gradient-second) 42%, transparent) 100%
+  );
+}
+
+html.theme-gradient .lyr-seek-range {
+  background: linear-gradient(
+    to right,
+    var(--t-gradient-first) 0%,
+    var(--t-gradient-second) var(--fill, 0%),
+    var(--border) var(--fill, 0%)
+  );
+}
+
+html.theme-gradient .lyr-overlay .lyr-skip:hover,
+html.theme-gradient .lyr-overlay .lyr-edit-btn:hover,
+html.theme-gradient .lyr-overlay .lyr-edit-btn.is-active,
+html.theme-gradient .lyr-overlay .lyr-prov-item.is-selected,
+html.theme-gradient .lyr-overlay .lyr-notes.is-active,
+html.theme-gradient .lyr-editor-mode button.is-active,
+html.theme-gradient .lyr-editor-source-options button.is-selected {
+  background: var(--tempo-gradient-soft);
+}
+
+html.theme-gradient .lyr-overlay button svg :is(path, line, polyline, rect, circle),
+html.theme-gradient .lyr-editor-panel :is(svg path, svg line, svg polyline, svg rect, svg circle) {
+  stroke: url(#tempo-accent-gradient);
+}
+
+html.theme-gradient .lyr-line.is-active .lyr-underline {
+  background: var(--tempo-gradient);
+}
+
+html.theme-gradient .lyr-note {
+  color: var(--t-gradient-second);
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--t-gradient-first) 50%, transparent));
+}
+
+html.theme-gradient .btn-primary,
+html.theme-gradient .lyr-editor-save,
+html.theme-gradient .lyr-editor-capture-time:hover:not(:disabled) {
+  border-color: transparent;
+  color: #0d1017;
 }
 
 html.has-bg .sidebar {

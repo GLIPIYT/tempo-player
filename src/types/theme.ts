@@ -17,6 +17,11 @@ export interface ThemePreset {
   id: string
   name: string
   tokens: ThemeTokens
+  /** Optional two-stop palette used by the gradient theme engine. */
+  gradientAnchors?: {
+    first: string
+    second: string
+  }
 }
 
 export interface CustomTheme {

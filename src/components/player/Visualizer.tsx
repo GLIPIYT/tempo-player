@@ -18,6 +18,7 @@ export interface VisualizerProps {
   maxAmplitudePx: number
   mirror: boolean
   rgb: { r: number; g: number; b: number }
+  rgbEnd: { r: number; g: number; b: number }
 }
 
 /**
@@ -92,6 +93,10 @@ export default function Visualizer(props: VisualizerProps) {
       // 100 means "very smooth" to the user, so it has to map to a small step
       const lerp = Math.max(0.05, (100 - o.smoothing) / 100)
       const { r, g, b } = o.rgb
+      const { r: endR, g: endG, b: endB } = o.rgbEnd
+      const accentGradient = ctx.createLinearGradient(0, 0, width, 0)
+      accentGradient.addColorStop(0, `rgb(${r}, ${g}, ${b})`)
+      accentGradient.addColorStop(1, `rgb(${endR}, ${endG}, ${endB})`)
 
       for (let i = 0; i < count; i += 1) {
         const source = (i / Math.max(1, count - 1)) * (SPECTRUM_BINS - 1)
@@ -123,7 +128,8 @@ export default function Visualizer(props: VisualizerProps) {
           const barHeight = Math.max(2, value * ampLimit)
           // quiet bars are paler, so the picture has depth without a filter
           const alpha = Math.max(0.14, value * opacity)
-          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`
+          ctx.fillStyle = accentGradient
+          ctx.globalAlpha = alpha
           const y = height - barHeight
           const x = i * slot
           if (!dense && canRound && barWidth >= 5) {
@@ -160,15 +166,12 @@ export default function Visualizer(props: VisualizerProps) {
           ctx.lineTo(width, height)
           ctx.lineTo(0, height)
           ctx.closePath()
-          const gradient = ctx.createLinearGradient(0, 0, 0, height)
-          const top = Math.max(0.16, opacity * 0.85)
-          gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${top})`)
-          gradient.addColorStop(0.55, `rgba(${r}, ${g}, ${b}, ${top * 0.35})`)
-          gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`)
-          ctx.fillStyle = gradient
+          ctx.globalAlpha = Math.max(0.16, opacity * 0.85)
+          ctx.fillStyle = accentGradient
           ctx.fill()
         } else {
-          ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${opacity})`
+          ctx.globalAlpha = opacity
+          ctx.strokeStyle = accentGradient
           ctx.lineWidth = 2
           ctx.lineJoin = 'round'
           ctx.lineCap = 'round'
