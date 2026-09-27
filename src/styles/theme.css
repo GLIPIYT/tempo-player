@@ -121,10 +121,13 @@ html.theme-gradient .playerbar .pb-speed-trigger {
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-html.theme-gradient .playerbar .icon-btn:hover:not(:disabled),
+html.theme-gradient .playerbar .icon-btn:hover:not(:disabled):not(.is-active):not(.has-queue) {
+  background: var(--tempo-gradient-soft);
+}
+
 html.theme-gradient .playerbar .icon-btn.is-active,
 html.theme-gradient .playerbar .icon-btn.has-queue {
-  background: var(--tempo-gradient-soft);
+  background: transparent;
 }
 
 html.theme-gradient .playerbar .pb-eq-preset-trigger:hover,
