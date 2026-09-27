@@ -170,9 +170,7 @@ html.theme-gradient .detail-title,
 html.theme-gradient .hero-title,
 html.theme-gradient .link-btn,
 html.theme-gradient .editorial-detail-kind,
-html.theme-gradient .lyr-title,
-html.theme-gradient .lyr-time-cur,
-html.theme-gradient .lyr-line.is-active .lyr-line-text {
+html.theme-gradient .lyr-time-cur {
   background-image: var(--tempo-gradient-text);
   -webkit-background-clip: text;
   background-clip: text;
@@ -239,16 +237,6 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
 html.theme-gradient .hour-mix-page .editorial-detail-art,
 html.theme-gradient .hour-mix-page .editorial-detail-hero {
   border-color: color-mix(in srgb, var(--t-gradient-second) 32%, var(--border));
-}
-
-html.theme-gradient .lyr-overlay .lyr-line.is-active .lyr-line-text {
-  background-image: linear-gradient(
-    90deg,
-    var(--t-gradient-first) 0%,
-    var(--t-gradient-second) var(--lyr-fill, 0%),
-    color-mix(in srgb, var(--t-gradient-second) 42%, transparent) var(--lyr-fill, 0%),
-    color-mix(in srgb, var(--t-gradient-second) 42%, transparent) 100%
-  );
 }
 
 html.theme-gradient .lyr-seek-range {

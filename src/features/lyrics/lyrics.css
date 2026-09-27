@@ -139,6 +139,7 @@
 .lyr-title {
   margin-top: 26px;
   width: min(320px, 100%);
+  color: #fff;
   font-size: 21px;
   font-weight: 650;
   letter-spacing: -0.01em;
@@ -890,7 +891,7 @@
   font-size: 21px;
   font-weight: 480;
   line-height: 1.4;
-  color: var(--text-muted);
+  color: #fff;
   opacity: 0.3;
   filter: blur(1.6px);
   cursor: pointer;
@@ -916,7 +917,7 @@
 }
 
 .lyr-line.is-active {
-  color: var(--text);
+  color: #fff;
   font-size: 28px;
   font-weight: 700;
   opacity: 1;
@@ -927,8 +928,8 @@
 .lyr-line.is-active .lyr-line-text {
   background-image: linear-gradient(
     90deg,
-    var(--text) var(--lyr-fill, 0%),
-    color-mix(in srgb, var(--text) 38%, transparent) var(--lyr-fill, 0%)
+    #fff var(--lyr-fill, 0%),
+    color-mix(in srgb, #fff 38%, transparent) var(--lyr-fill, 0%)
   );
   -webkit-background-clip: text;
   background-clip: text;
@@ -1066,7 +1067,7 @@
   padding: 11vh 12px 20vh;
   font-size: 17px;
   line-height: 2;
-  color: var(--text);
+  color: #fff;
   white-space: pre-wrap;
   word-break: break-word;
 }
