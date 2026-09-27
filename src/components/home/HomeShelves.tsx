@@ -94,19 +94,7 @@ export default function HomeShelves({ topTracks, recentAdded, recentPlays, dorma
   return (
     <>
       {playedVisible ? (
-        <section className="home-section">
-          <div className="home-section-head" onContextMenu={(event) => onSectionMenu(event, { title: t('Recently played'), id: 'home.played', tracks: recentPlays })}>
-            <span className="home-section-title">{t('Listened recently')}</span>
-          </div>
-          <div className="home-return-grid" tabIndex={0} aria-label={t('Listened recently')}>
-            {recentPlays.map((track, index) => (
-              <button key={track.id} type="button" className="home-return-card" onClick={() => { if (!consumeDragClick()) onPlay(recentPlays, index) }} onPointerDown={(event) => startDrag(event, track)} onContextMenu={(event) => onTrackMenu(event, track, recentPlays, index)}>
-                <Cover path={track.coverPath} label={track.title} size={160} />
-                <span><strong>{track.title}</strong><small>{track.artistName ?? unknownArtist}</small></span>
-              </button>
-            ))}
-          </div>
-        </section>
+        <TrackRail title={t('Listened recently')} id="home.played" tracks={recentPlays} unknownArtist={unknownArtist} onPlay={onPlay} onTrackMenu={onTrackMenu} onSectionMenu={onSectionMenu} />
       ) : null}
 
       <div className="home-content-grid">

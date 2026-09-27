@@ -108,6 +108,7 @@
 .home-mix-copy h2 {
   max-width: 480px;
   margin-top: 17px;
+  color: #fff;
   overflow: hidden;
   overflow-wrap: anywhere;
   font-family: Bahnschrift, 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
@@ -429,39 +430,9 @@
   font-size: 17px;
   font-weight: 700;
   letter-spacing: -.025em;
+  color: #fff;
 }
-.home-return-grid {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: max(112px, calc(12.5% - 7px));
-  gap: 8px;
-  max-width: 100%;
-  padding-bottom: 8px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--accent) 70%, transparent) transparent;
-}
-.home-return-grid::-webkit-scrollbar { height: 5px; }
-.home-return-grid::-webkit-scrollbar-thumb { border-radius: 5px; background: color-mix(in srgb, var(--accent) 70%, transparent); }
-.home-return-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--surface);
-  text-align: left;
-}
-.home-return-card:hover { border-color: var(--accent); background: var(--surface-hover); }
-.home-return-card .cover { width: 100% !important; height: auto !important; aspect-ratio: 1; object-fit: cover; }
-.home-return-card > span { min-width: 0; width: 100%; }
-.home-return-card strong,
-.home-return-card small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.home-return-card strong { font-size: 11px; }
-.home-return-card small { margin-top: 2px; color: var(--text-muted); font-size: 10px; }
+.hour-mix-page .editorial-detail-title { color: #fff; }
 
 .home-content-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr); align-items: start; gap: 30px; }
 .home-content-main, .home-content-side { min-width: 0; }

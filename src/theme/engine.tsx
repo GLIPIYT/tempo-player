@@ -202,14 +202,6 @@ export function ThemeApply(): ReactElement {
   useThemeEffect()
   return (
     <>
-      <svg className="theme-svg-definitions" aria-hidden="true" focusable="false">
-        <defs>
-          <linearGradient id="tempo-accent-gradient" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="var(--t-gradient-first, var(--accent))" />
-            <stop offset="100%" stopColor="var(--t-gradient-second, var(--accent-strong))" />
-          </linearGradient>
-        </defs>
-      </svg>
       <BackgroundLayer />
     </>
   )

@@ -27,8 +27,8 @@ html.theme-gradient {
   --tempo-gradient-text: linear-gradient(100deg, var(--t-gradient-first, #6c8cff), var(--t-gradient-second, #4fd6be));
   --tempo-gradient-soft: linear-gradient(
     110deg,
-    color-mix(in srgb, var(--t-gradient-first, #6c8cff) 16%, transparent),
-    color-mix(in srgb, var(--t-gradient-second, #4fd6be) 16%, transparent)
+    color-mix(in srgb, var(--t-gradient-first, #6c8cff) 22%, var(--surface)),
+    color-mix(in srgb, var(--t-gradient-second, #4fd6be) 22%, var(--surface))
   );
 }
 
@@ -116,14 +116,6 @@ html.theme-gradient input[type='range']::-moz-range-thumb {
   background: var(--tempo-gradient);
 }
 
-.theme-svg-definitions {
-  position: fixed;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
 html.theme-gradient .playerbar .icon-btn,
 html.theme-gradient .playerbar .pb-speed-trigger {
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
@@ -157,16 +149,6 @@ html.theme-gradient .playerbar .pb-eq-frequency {
   color: transparent;
 }
 
-html.theme-gradient .playerbar .icon-btn svg :is(path, line, polyline, rect, circle),
-html.theme-gradient .playerbar .pb-toggle svg :is(path, line, polyline, rect, circle),
-html.theme-gradient .playerbar .pb-eq-curve :is(line, polyline) {
-  stroke: url(#tempo-accent-gradient);
-}
-
-html.theme-gradient .playerbar .pb-like-btn.is-active svg path {
-  fill: url(#tempo-accent-gradient);
-}
-
 html.theme-gradient .wave-accent .wave-bar {
   background: linear-gradient(to top, var(--t-gradient-first), var(--t-gradient-second));
 }
@@ -177,17 +159,14 @@ html.theme-gradient .home-mix-kicker {
   color: var(--t-gradient-second);
 }
 
-html.theme-gradient .home-mix-copy h2,
 html.theme-gradient .home-mix-count,
 html.theme-gradient .home-section-open,
-html.theme-gradient .home-section-title,
 html.theme-gradient .home-mix-picker-heading strong,
 html.theme-gradient .section-label,
 html.theme-gradient .detail-title,
 html.theme-gradient .hero-title,
 html.theme-gradient .link-btn,
 html.theme-gradient .editorial-detail-kind,
-html.theme-gradient .editorial-detail-title,
 html.theme-gradient .lyr-title,
 html.theme-gradient .lyr-time-cur,
 html.theme-gradient .lyr-line.is-active .lyr-line-text {
@@ -198,8 +177,6 @@ html.theme-gradient .lyr-line.is-active .lyr-line-text {
   color: transparent;
 }
 
-html.theme-gradient .home-mix-copy h2,
-html.theme-gradient .editorial-detail-title,
 html.theme-gradient .lyr-title {
   width: fit-content;
   max-width: 100%;
@@ -238,17 +215,6 @@ html.theme-gradient .artist-gallery-inline-play svg,
 html.theme-gradient .playlist-list-play svg,
 html.theme-gradient .album-wall-play svg {
   color: var(--t-gradient-second);
-}
-
-html.theme-gradient .home-mix-picker-button > svg :is(path, line, polyline, rect, circle),
-html.theme-gradient .home-mix-navigation > button svg :is(path, line, polyline, rect, circle),
-html.theme-gradient .home-section-open svg :is(path, line, polyline, rect, circle),
-html.theme-gradient .editorial-detail-kind svg :is(path, line, polyline, rect, circle),
-html.theme-gradient .home-playlist-play svg :is(path, line, polyline, rect, circle),
-html.theme-gradient .artist-gallery-inline-play svg :is(path, line, polyline, rect, circle),
-html.theme-gradient .playlist-list-play svg :is(path, line, polyline, rect, circle),
-html.theme-gradient .album-wall-play svg :is(path, line, polyline, rect, circle) {
-  stroke: url(#tempo-accent-gradient);
 }
 
 html.theme-gradient .home-playlist-play,
@@ -299,11 +265,6 @@ html.theme-gradient .lyr-overlay .lyr-notes.is-active,
 html.theme-gradient .lyr-editor-mode button.is-active,
 html.theme-gradient .lyr-editor-source-options button.is-selected {
   background: var(--tempo-gradient-soft);
-}
-
-html.theme-gradient .lyr-overlay button svg :is(path, line, polyline, rect, circle),
-html.theme-gradient .lyr-editor-panel :is(svg path, svg line, svg polyline, svg rect, svg circle) {
-  stroke: url(#tempo-accent-gradient);
 }
 
 html.theme-gradient .lyr-line.is-active .lyr-underline {
