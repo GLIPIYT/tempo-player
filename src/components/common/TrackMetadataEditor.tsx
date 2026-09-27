@@ -17,7 +17,7 @@ import { bumpLibraryVersion } from '../../utils/libraryVersion'
 import Cover from './Cover'
 import './track-metadata-editor.css'
 
-type CoverSource = { id: number; kind: LibraryElementKind; label: string }
+type CoverSource = { id: number; kind: LibraryElementKind; label: string; previewPath: string | null }
 
 interface TrackMetadataEditorProps {
   track: Track
@@ -101,6 +101,7 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
               id: item.id,
               kind: 'track',
               label: `${item.title}${item.artistName ? ` — ${item.artistName}` : ''}`,
+              previewPath: item.coverPath,
             }))
             if (!cancelled) setCoverHasMore(list.length === 40)
           } else if (libraryKind === 'album') {
@@ -109,16 +110,27 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
               id: item.id,
               kind: 'album',
               label: `${item.title}${item.artistName ? ` — ${item.artistName}` : ''}`,
+              previewPath: item.coverPath,
             }))
           } else if (libraryKind === 'artist') {
             const list = await api.listArtists(libraryQuery.trim())
-            results = list.map((item) => ({ id: item.id, kind: 'artist', label: item.name }))
+            results = list.map((item) => ({
+              id: item.id,
+              kind: 'artist',
+              label: item.name,
+              previewPath: item.imagePath ?? null,
+            }))
           } else {
             const list: Playlist[] = await api.listPlaylists()
             const query = libraryQuery.trim().toLocaleLowerCase()
             results = list
               .filter((item) => item.name.toLocaleLowerCase().includes(query))
-              .map((item) => ({ id: item.id, kind: 'playlist', label: item.name }))
+              .map((item) => ({
+                id: item.id,
+                kind: 'playlist',
+                label: item.name,
+                previewPath: item.coverPath ?? null,
+              }))
           }
           if (!cancelled) {
             setCoverSources((current) => libraryKind === 'track' && coverOffset > 0
@@ -142,8 +154,10 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
 
   const close = useCallback(() => {
     if (saving || restoring) return
+    setArtwork({ action: 'keep' })
+    setArtworkPreview(track.coverPath)
     onClose()
-  }, [onClose, restoring, saving])
+  }, [onClose, restoring, saving, track.coverPath])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -186,6 +200,7 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
   const chooseLibraryCover = async (source: CoverSource) => {
     setError(null)
     setArtwork({ action: 'copyFromLibrary', kind: source.kind, id: source.id })
+    if (source.previewPath) setArtworkPreview(source.previewPath)
     setCoverChoicesOpen(false)
     setLibraryOpen(false)
     setCoverSources([])
@@ -193,9 +208,16 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
     setCoverHasMore(false)
     try {
       const path = await api.getLibraryCover(source.kind, source.id)
-      setArtworkPreview(path)
-      if (!path) setError(t('No artwork found'))
+      if (path) {
+        setArtworkPreview(path)
+      } else {
+        setArtwork({ action: 'keep' })
+        setArtworkPreview(track.coverPath)
+        setError(t('No artwork found'))
+      }
     } catch (reason: unknown) {
+      setArtwork({ action: 'keep' })
+      setArtworkPreview(track.coverPath)
       setError(errorMessage(reason))
     }
   }
@@ -276,9 +298,13 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
   }
 
   return (
-    <div className="modal-overlay metadata-editor-overlay" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) close()
-    }}>
+    <div
+      className="modal-overlay metadata-editor-overlay"
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) close()
+      }}
+    >
       <section className="metadata-editor-modal" role="dialog" aria-modal="true" aria-labelledby="metadata-editor-title">
         <header className="metadata-editor-head">
           <h2 id="metadata-editor-title">{t('Edit track')}</h2>
@@ -372,6 +398,7 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
                           className="metadata-editor-source-row"
                           onClick={() => void chooseLibraryCover(source)}
                         >
+                          <Cover path={source.previewPath} label={source.label} size={26} loading="eager" />
                           {kindIcon(source.kind)}<span>{source.label}</span>
                         </button>
                       )) : (

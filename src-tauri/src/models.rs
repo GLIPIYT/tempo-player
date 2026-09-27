@@ -393,6 +393,21 @@ pub struct LyricsOverride {
     pub offset_ms: i64,
     pub updated_at: i64,
     pub editor_document: Option<LyricsEditorDocument>,
+    /// Whether the playback row currently overrides automatic lyrics.
+    pub is_active: bool,
+    /// The saved editor version, retained independently from the active provider.
+    pub edited_version: Option<LyricsEditedVersion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LyricsEditedVersion {
+    pub provider: String,
+    pub source_artist: Option<String>,
+    pub source_title: Option<String>,
+    pub lrc: String,
+    pub offset_ms: i64,
+    pub updated_at: i64,
 }
 
 /// Full lyrics-editor document. Playback uses the LRC projection in

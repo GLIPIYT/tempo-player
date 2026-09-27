@@ -47,7 +47,7 @@ import { toast } from '../components/common/Toast'
 import type { CustomTheme, ThemeTokens } from '../types/theme'
 import { TOKEN_VARS } from '../types/theme'
 import { CUSTOM_DEFAULT_BASE, PRESETS, getPreset } from '../theme/presets'
-import { parseHex, toHex } from '../theme/engine'
+import { applyTheme, parseHex, toHex } from '../theme/engine'
 import UpdateDialog from '../updater/UpdateDialog'
 import VisualizerPreview from '../components/settings/VisualizerPreview'
 import BackgroundSearchPanel from '../components/settings/BackgroundSearchPanel'
@@ -400,17 +400,70 @@ function FontListBox(props: { fonts: string[]; value: string; onSelect: (f: stri
   )
 }
 
-function ColorField(props: { value: string | undefined; onChange: (v: string) => void }) {
+function ColorField(props: {
+  value: string | undefined
+  onChange: (value: string) => void
+  onPreview?: (value: string) => void
+}) {
   const t = useT()
+  const initialValue = asColorInput(props.value)
+  const [draft, setDraft] = useState(initialValue)
+  const draftRef = useRef(initialValue)
+  const currentValueRef = useRef(props.value)
+  const onChangeRef = useRef(props.onChange)
+  const commitTimer = useRef<number | null>(null)
+
+  useEffect(() => {
+    currentValueRef.current = props.value
+    const next = asColorInput(props.value)
+    draftRef.current = next
+    setDraft(next)
+  }, [props.value])
+
+  useEffect(() => {
+    onChangeRef.current = props.onChange
+  }, [props.onChange])
+
+  useEffect(
+    () => () => {
+      if (commitTimer.current !== null) window.clearTimeout(commitTimer.current)
+    },
+    [],
+  )
+
+  const commit = () => {
+    if (commitTimer.current !== null) {
+      window.clearTimeout(commitTimer.current)
+      commitTimer.current = null
+    }
+    if (draftRef.current !== asColorInput(currentValueRef.current)) {
+      onChangeRef.current(draftRef.current)
+    }
+  }
+
+  const preview = (value: string) => {
+    draftRef.current = value
+    setDraft(value)
+    props.onPreview?.(value)
+    if (commitTimer.current !== null) window.clearTimeout(commitTimer.current)
+    commitTimer.current = window.setTimeout(() => {
+      commitTimer.current = null
+      if (draftRef.current !== asColorInput(currentValueRef.current)) {
+        onChangeRef.current(draftRef.current)
+      }
+    }, 700)
+  }
+
   return (
     <div className="color-field">
       <input
         type="color"
         className="swatch"
-        value={asColorInput(props.value)}
-        onChange={(e) => props.onChange(e.target.value)}
+        value={draft}
+        onChange={(e) => preview(e.target.value)}
+        onBlur={commit}
       />
-      <span className="color-hex">{props.value ? props.value : t('auto')}</span>
+      <span className="color-hex">{draft || t('auto')}</span>
     </div>
   )
 }
@@ -900,6 +953,9 @@ export default function SettingsPage() {
 
   const updateCustom = (next: CustomTheme) => update({ theme: { kind: 'custom', custom: next } })
 
+  const previewCustomTheme = (next: CustomTheme) =>
+    applyTheme({ kind: 'custom', custom: next })
+
   const setGradientMode = (enabled: boolean) => {
     const anchors = custom.gradientAnchors ?? {
       first: custom.base.accent,
@@ -914,6 +970,15 @@ export default function SettingsPage() {
       second: custom.base.playButton ?? custom.base.surface,
     }
     updateCustom({ ...custom, gradientAnchors: { ...anchors, [key]: value } })
+  }
+
+  const previewGradientAnchor = (key: 'first' | 'second', value: string) => {
+    const source = settings.theme.kind === 'custom' ? settings.theme.custom : custom
+    const anchors = source.gradientAnchors ?? {
+      first: source.base.accent,
+      second: source.base.playButton ?? source.base.surface,
+    }
+    previewCustomTheme({ ...source, gradientAnchors: { ...anchors, [key]: value } })
   }
 
   const setFontMode = (mode: FontMode) => {
@@ -1271,6 +1336,7 @@ export default function SettingsPage() {
                         <ColorField
                           value={custom.gradientAnchors.first}
                           onChange={(value) => updateGradientAnchor('first', value)}
+                          onPreview={(value) => previewGradientAnchor('first', value)}
                         />
                       </div>
                       <div className="set-row">
@@ -1278,6 +1344,7 @@ export default function SettingsPage() {
                         <ColorField
                           value={custom.gradientAnchors.second}
                           onChange={(value) => updateGradientAnchor('second', value)}
+                          onPreview={(value) => previewGradientAnchor('second', value)}
                         />
                       </div>
                     </>
@@ -1285,21 +1352,34 @@ export default function SettingsPage() {
                     <>
                       <div className="set-row">
                         <span className="set-row-label">{t('Accent')}</span>
-                        <ColorField value={custom.base.accent} onChange={(accent) => updateCustom({ ...custom, base: { ...custom.base, accent } })} />
+                        <ColorField
+                          value={custom.base.accent}
+                          onChange={(accent) => updateCustom({ ...custom, base: { ...custom.base, accent } })}
+                          onPreview={(accent) => previewCustomTheme({ ...custom, base: { ...custom.base, accent } })}
+                        />
                       </div>
                       <div className="set-row">
                         <span className="set-row-label">{t('Background')}</span>
-                        <ColorField value={custom.base.background} onChange={(background) => updateCustom({ ...custom, base: { ...custom.base, background } })} />
+                        <ColorField
+                          value={custom.base.background}
+                          onChange={(background) => updateCustom({ ...custom, base: { ...custom.base, background } })}
+                          onPreview={(background) => previewCustomTheme({ ...custom, base: { ...custom.base, background } })}
+                        />
                       </div>
                       <div className="set-row">
                         <span className="set-row-label">{t('Surface')}</span>
-                        <ColorField value={custom.base.surface} onChange={(surface) => updateCustom({ ...custom, base: { ...custom.base, surface } })} />
+                        <ColorField
+                          value={custom.base.surface}
+                          onChange={(surface) => updateCustom({ ...custom, base: { ...custom.base, surface } })}
+                          onPreview={(surface) => previewCustomTheme({ ...custom, base: { ...custom.base, surface } })}
+                        />
                       </div>
                       <div className="set-row">
                         <span className="set-row-label">{t('Play button')}</span>
                         <ColorField
                           value={custom.base.playButton}
                           onChange={(playButton) => updateCustom({ ...custom, base: { ...custom.base, playButton } })}
+                          onPreview={(playButton) => previewCustomTheme({ ...custom, base: { ...custom.base, playButton } })}
                         />
                       </div>
                     </>

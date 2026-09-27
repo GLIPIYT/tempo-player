@@ -61,13 +61,16 @@ function isSafeAttributionUrl(value: string): boolean {
 function isProviderImageUrl(result: BackgroundImageResult): boolean {
   try {
     const url = new URL(result.previewUrl)
-    const hostAllowed = result.provider === 'commons'
-      ? url.hostname === 'upload.wikimedia.org'
-      : url.hostname === 'www.artic.edu'
-    const pathAllowed = result.provider === 'commons'
-      ? url.pathname.startsWith('/wikipedia/commons/')
-      : url.pathname.startsWith('/iiif/2/')
-    return url.protocol === 'https:' && hostAllowed && pathAllowed
+    if (url.protocol !== 'https:' || url.username || url.password || url.port) return false
+    if (result.provider === 'commons') {
+      // Commons now serves generated thumbnails from thumb.wikimedia.org;
+      // older results may still use upload.wikimedia.org.
+      return (url.hostname === 'thumb.wikimedia.org'
+        && url.pathname.startsWith('/wikipedia/commons/thumb/')
+        || url.hostname === 'upload.wikimedia.org'
+        && url.pathname.startsWith('/wikipedia/commons/'))
+    }
+    return url.hostname === 'www.artic.edu' && url.pathname.startsWith('/iiif/2/')
   } catch {
     return false
   }
@@ -145,43 +148,42 @@ export default function BackgroundSearchPanel({ search, onSelect }: Props) {
 
   return (
     <section className="background-search-panel" aria-label={t('Search for background images')}>
-      <form className="background-search-controls" onSubmit={(event) => void runSearch(event)}>
-        <label className="background-search-field background-search-provider">
-          <span className="background-search-label">{t('Source')}</span>
-          <select
-            value={provider}
-            onChange={(event) => {
-              setProvider(event.target.value as BackgroundImageProvider)
+      <div className="background-search-providers" role="group" aria-label={t('Source')}>
+        {(Object.keys(PROVIDER_NAMES) as BackgroundImageProvider[]).map((source) => (
+          <button
+            key={source}
+            className="background-search-provider-tab"
+            type="button"
+            aria-pressed={provider === source}
+            onClick={() => {
+              if (provider === source) return
+              setProvider(source)
               clearSearch()
             }}
           >
-            <option value="commons">Wikimedia Commons</option>
-            <option value="artic">Art Institute of Chicago</option>
-          </select>
+            {PROVIDER_NAMES[source]}
+          </button>
+        ))}
+      </div>
+
+      <form className="background-search-controls" onSubmit={(event) => void runSearch(event)}>
+        <label className="background-search-query">
+          <Search size={15} aria-hidden="true" />
+          <span className="sr-only">{t('Search')}</span>
+          <input
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value)
+              clearSearch()
+            }}
+            placeholder={t('Search backgrounds')}
+            maxLength={120}
+          />
         </label>
 
-        <label className="background-search-field background-search-query">
-          <span className="background-search-label">{t('Search')}</span>
-          <span className="background-search-input-wrap">
-            <Search size={14} aria-hidden="true" />
-            <input
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value)
-                clearSearch()
-              }}
-              placeholder={t('Search backgrounds')}
-              maxLength={120}
-            />
-          </span>
-        </label>
-
-        <div className="background-search-field">
-          <label className="background-search-label" htmlFor="background-search-resolution">
-            {t('Minimum resolution')}
-          </label>
+        <label className="background-search-filter">
+          <span className="sr-only">{t('Minimum resolution')}</span>
           <select
-            id="background-search-resolution"
             value={resolution}
             onChange={(event) => {
               setResolution(event.target.value as Resolution)
@@ -189,18 +191,15 @@ export default function BackgroundSearchPanel({ search, onSelect }: Props) {
             }}
           >
             <option value="any">{t('Any resolution')}</option>
-            <option value="hd">1280 × 720</option>
-            <option value="full-hd">1920 × 1080</option>
-            <option value="qhd">2560 × 1440</option>
+            <option value="hd">1280 × 720+</option>
+            <option value="full-hd">1920 × 1080+</option>
+            <option value="qhd">2560 × 1440+</option>
           </select>
-        </div>
+        </label>
 
-        <div className="background-search-field">
-          <label className="background-search-label" htmlFor="background-search-orientation">
-            {t('Orientation')}
-          </label>
+        <label className="background-search-filter">
+          <span className="sr-only">{t('Orientation')}</span>
           <select
-            id="background-search-orientation"
             value={orientation}
             onChange={(event) => {
               setOrientation(event.target.value as BackgroundImageOrientation)
@@ -212,85 +211,113 @@ export default function BackgroundSearchPanel({ search, onSelect }: Props) {
             <option value="square">{t('Square')}</option>
             <option value="any">{t('Any orientation')}</option>
           </select>
-        </div>
+        </label>
 
-        <button className="btn btn-primary background-search-submit" type="submit" disabled={!query.trim() || loading}>
-          {loading ? <Loader2 size={14} className="background-search-spinner" /> : <Search size={14} />}
-          {t('Search images')}
+        <button
+          className="background-search-submit"
+          type="submit"
+          aria-label={t('Search images')}
+          title={t('Search images')}
+          disabled={!query.trim() || loading}
+        >
+          {loading
+            ? <Loader2 size={16} className="background-search-spinner" aria-hidden="true" />
+            : <Search size={16} aria-hidden="true" />}
         </button>
       </form>
 
       {error ? <div className="background-search-error" role="alert">{error}</div> : null}
 
-      <div className="background-search-status" aria-live="polite">
-        {loading ? (
-          <span><Loader2 size={14} className="background-search-spinner" />{t('Searching…')}</span>
-        ) : hasSearched && results.length === 0 && !error ? (
-          <span>{t('No background images found')}</span>
-        ) : !hasSearched ? (
-          <span>{t('Search for a background')}</span>
-        ) : null}
-      </div>
+      {loading || hasSearched && results.length === 0 && !error ? (
+        <div className="background-search-status" aria-live="polite">
+          {loading ? (
+            <span><Loader2 size={13} className="background-search-spinner" aria-hidden="true" />{t('Searching…')}</span>
+          ) : (
+            <span>{t('No background images found')}</span>
+          )}
+        </div>
+      ) : null}
 
       {results.length > 0 ? (
         <ul className="background-search-results">
           {results.map((result) => {
             const id = `${result.provider}:${result.id}`
             const isSelecting = selectingId === id
+            const safePreviewUrl = isProviderImageUrl(result) ? result.previewUrl : undefined
+            const safeSourceUrl = isSafeAttributionUrl(result.sourceUrl)
+              ? result.sourceUrl
+              : null
+            const safeLicenseUrl = result.licenseUrl && isSafeAttributionUrl(result.licenseUrl)
+              ? result.licenseUrl
+              : null
+
             return (
               <li className="background-search-result" key={id}>
                 <div className="background-search-thumb">
-                  <ImageIcon size={20} aria-hidden="true" />
-                  <img
-                    src={isProviderImageUrl(result) ? result.previewUrl : undefined}
-                    alt=""
-                    loading="lazy"
-                    onError={(event) => { event.currentTarget.hidden = true }}
-                  />
-                </div>
-                <div className="background-search-result-content">
-                  <div className="background-search-result-title" title={result.title}>{result.title}</div>
-                  {result.author ? (
-                    <div className="background-search-result-author" title={result.author}>{result.author}</div>
+                  <ImageIcon className="background-search-placeholder" size={24} aria-hidden="true" />
+                  {safePreviewUrl ? (
+                    <img
+                      src={safePreviewUrl}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      onError={(event) => { event.currentTarget.hidden = true }}
+                    />
                   ) : null}
-                  <div className="background-search-result-meta">
-                    {result.license ? (
-                      result.licenseUrl && isSafeAttributionUrl(result.licenseUrl) ? (
+
+                  <div className="background-search-caption">
+                    <div className="background-search-result-title" title={result.title}>{result.title}</div>
+                    <div className="background-search-credit">
+                      {result.author ? (
+                        <span title={result.author}>{result.author}</span>
+                      ) : null}
+                      {result.license ? (
+                        safeLicenseUrl ? (
+                          <a
+                            href={safeLicenseUrl}
+                            title={result.license}
+                            onClick={(event) => {
+                              event.preventDefault()
+                              void openAttribution(safeLicenseUrl)
+                            }}
+                          >
+                            {result.license}
+                          </a>
+                        ) : (
+                          <span title={result.license}>{result.license}</span>
+                        )
+                      ) : null}
+                      {safeSourceUrl ? (
                         <a
-                          href={result.licenseUrl}
-                          title={result.license}
+                          href={safeSourceUrl}
+                          aria-label={`${t('Open source page')}: ${PROVIDER_NAMES[result.provider]}`}
+                          title={t('Open source page')}
                           onClick={(event) => {
                             event.preventDefault()
-                            void openAttribution(result.licenseUrl!)
+                            void openAttribution(safeSourceUrl)
                           }}
                         >
-                          {result.license}
+                          <ArrowUpRight size={13} aria-hidden="true" />
                         </a>
-                      ) : (
-                        <span title={result.license}>{result.license}</span>
-                      )
-                    ) : null}
-                    {isSafeAttributionUrl(result.sourceUrl) ? (
-                      <a
-                        href={result.sourceUrl}
-                        aria-label={`${t('Open source page')}: ${PROVIDER_NAMES[result.provider]}`}
-                        title={t('Open source page')}
-                        onClick={(event) => {
-                          event.preventDefault()
-                          void openAttribution(result.sourceUrl)
-                        }}
-                      >
-                        {PROVIDER_NAMES[result.provider]} <ArrowUpRight size={11} aria-hidden="true" />
-                      </a>
-                    ) : <span>{PROVIDER_NAMES[result.provider]}</span>}
+                      ) : null}
+                    </div>
                   </div>
+
+                  <span className="background-search-dimensions" title={`${result.width} × ${result.height}`}>
+                    {result.width} × {result.height}
+                  </span>
+
                   <button
-                    className="btn background-search-use"
+                    className="background-search-use"
                     type="button"
                     disabled={selectingId !== null}
+                    aria-label={`${t('Use image')}: ${result.title}`}
+                    title={result.title}
                     onClick={() => void chooseImage(result)}
                   >
-                    {isSelecting ? <Loader2 size={12} className="background-search-spinner" /> : null}
+                    {isSelecting ? (
+                      <Loader2 size={13} className="background-search-spinner" aria-hidden="true" />
+                    ) : null}
                     {isSelecting ? t('Saving image…') : t('Use image')}
                   </button>
                 </div>

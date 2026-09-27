@@ -76,7 +76,7 @@ async function fetchLyrics(
   if (track.dbId != null) {
     try {
       const pinned = await api.getLyricsOverride(track.dbId)
-      if (pinned && pinned.lrc.trim()) {
+      if (pinned?.isActive !== false && pinned?.lrc.trim()) {
         const lines = parseLrc(pinned.lrc, pinned.offsetMs)
         if (lines && lines.length > 0) return { kind: 'synced', lines }
         return { kind: 'plain', text: pinned.lrc.trim() }

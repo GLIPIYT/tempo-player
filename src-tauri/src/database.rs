@@ -17,7 +17,8 @@ pub struct KnownYtTrack {
 
 use crate::models::{
     Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, FavoriteOrderEntry, FileStamp,
-    HiddenTrack, HistoryEntryDto, LibraryElementKind, LibraryFolder, LyricsEditorDocument, LyricsOverride,
+    HiddenTrack, HistoryEntryDto, LibraryElementKind, LibraryFolder, LyricsEditedVersion,
+    LyricsEditorDocument, LyricsOverride,
     OriginalPictureSnapshot, OriginalTrackMetadataSnapshot, Playlist, PlaylistPlayStat,
     PlaylistTrack, SearchResults, StatsSummary, TopArtistItem, TopTrackItem, Track, TrackInput,
     TrackMetadataOriginal,
@@ -413,10 +414,25 @@ CREATE TABLE IF NOT EXISTS track_metadata_original_state (
 );
 "#;
 
+const MIGRATION_18: &str = r#"
+-- Keep the last saved editor version independent from the active lyrics source.
+ALTER TABLE track_lyrics_editor_documents ADD COLUMN provider TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE track_lyrics_editor_documents ADD COLUMN source_artist TEXT;
+ALTER TABLE track_lyrics_editor_documents ADD COLUMN source_title TEXT;
+ALTER TABLE track_lyrics_editor_documents ADD COLUMN lrc TEXT NOT NULL DEFAULT '';
+ALTER TABLE track_lyrics_editor_documents ADD COLUMN offset_ms INTEGER NOT NULL DEFAULT 0;
+UPDATE track_lyrics_editor_documents
+SET provider = COALESCE((SELECT provider FROM track_lyrics_override WHERE track_id = track_lyrics_editor_documents.track_id), provider),
+    source_artist = (SELECT source_artist FROM track_lyrics_override WHERE track_id = track_lyrics_editor_documents.track_id),
+    source_title = (SELECT source_title FROM track_lyrics_override WHERE track_id = track_lyrics_editor_documents.track_id),
+    lrc = COALESCE((SELECT lrc FROM track_lyrics_override WHERE track_id = track_lyrics_editor_documents.track_id), lrc),
+    offset_ms = COALESCE((SELECT offset_ms FROM track_lyrics_override WHERE track_id = track_lyrics_editor_documents.track_id), offset_ms);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
     MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_13,
-    MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_17,
+    MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_17, MIGRATION_18,
 ];
 
 pub struct Db {
@@ -2482,29 +2498,58 @@ impl Db {
     pub fn get_lyrics_override(&self, track_id: i64) -> Result<Option<LyricsOverride>, String> {
         self.with_conn(|conn| {
             conn.query_row(
-                "SELECT o.provider, o.source_artist, o.source_title, o.lrc, o.offset_ms, o.updated_at, d.document_json \
-                 FROM track_lyrics_override o \
-                 LEFT JOIN track_lyrics_editor_documents d ON d.track_id = o.track_id \
-                 WHERE o.track_id = ?1",
+                "SELECT o.provider, o.source_artist, o.source_title, o.lrc, o.offset_ms, o.updated_at, \
+                        d.document_json, d.provider, d.source_artist, d.source_title, d.lrc, d.offset_ms, d.updated_at \
+                 FROM tracks t \
+                 LEFT JOIN track_lyrics_override o ON o.track_id = t.id \
+                 LEFT JOIN track_lyrics_editor_documents d ON d.track_id = t.id \
+                 WHERE t.id = ?1 AND (o.track_id IS NOT NULL OR d.track_id IS NOT NULL)",
                 params![track_id],
                 |row| {
                     let document_json: Option<String> = row.get(6)?;
+                    let editor_document = document_json
+                        .map(|json| serde_json::from_str(&json).map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                6,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        }))
+                        .transpose()?;
+                    let active_provider: Option<String> = row.get(0)?;
+                    let active_source_artist: Option<String> = row.get(1)?;
+                    let active_source_title: Option<String> = row.get(2)?;
+                    let active_lrc: Option<String> = row.get(3)?;
+                    let active_offset_ms: Option<i64> = row.get(4)?;
+                    let active_updated_at: Option<i64> = row.get(5)?;
+                    let edited_provider: Option<String> = row.get(7)?;
+                    let edited_source_artist: Option<String> = row.get(8)?;
+                    let edited_source_title: Option<String> = row.get(9)?;
+                    let edited_lrc: Option<String> = row.get(10)?;
+                    let edited_offset_ms: Option<i64> = row.get(11)?;
+                    let edited_updated_at: Option<i64> = row.get(12)?;
+                    let is_active = active_provider.is_some();
+                    let edited_version = edited_provider.map(|provider| LyricsEditedVersion {
+                        provider,
+                        source_artist: edited_source_artist.clone(),
+                        source_title: edited_source_title.clone(),
+                        lrc: edited_lrc.clone().unwrap_or_default(),
+                        offset_ms: edited_offset_ms.unwrap_or(0),
+                        updated_at: edited_updated_at.unwrap_or(0),
+                    });
                     Ok(LyricsOverride {
-                        provider: row.get(0)?,
-                        source_artist: row.get(1)?,
-                        source_title: row.get(2)?,
-                        lrc: row.get(3)?,
-                        offset_ms: row.get(4)?,
-                        updated_at: row.get(5)?,
-                        editor_document: document_json
-                            .map(|json| serde_json::from_str(&json).map_err(|error| {
-                                rusqlite::Error::FromSqlConversionFailure(
-                                    6,
-                                    rusqlite::types::Type::Text,
-                                    Box::new(error),
-                                )
-                            }))
-                            .transpose()?,
+                        provider: active_provider
+                            .clone()
+                            .or_else(|| edited_version.as_ref().map(|version| version.provider.clone()))
+                            .unwrap_or_else(|| "manual".to_string()),
+                        source_artist: active_source_artist.or(edited_source_artist),
+                        source_title: active_source_title.or(edited_source_title),
+                        lrc: active_lrc.or(edited_lrc).unwrap_or_default(),
+                        offset_ms: active_offset_ms.or(edited_offset_ms).unwrap_or(0),
+                        updated_at: active_updated_at.or(edited_updated_at).unwrap_or(0),
+                        editor_document,
+                        is_active,
+                        edited_version,
                     })
                 },
             )
@@ -2548,13 +2593,8 @@ impl Db {
                 ],
             )
             .map_err(db_err)?;
-        // Selecting a different provider replaces any editor document from the
-        // previous pin. The editor save command writes both rows atomically.
-        tx.execute(
-            "DELETE FROM track_lyrics_editor_documents WHERE track_id = ?1",
-            params![track_id],
-        )
-        .map_err(db_err)?;
+        // The editor snapshot is a separate candidate and must survive provider
+        // selection. Only save_lyrics_editor_document replaces that snapshot.
         tx.commit().map_err(db_err)
     }
 
@@ -2604,11 +2644,14 @@ impl Db {
         )
         .map_err(db_err)?;
         tx.execute(
-            "INSERT INTO track_lyrics_editor_documents(track_id, document_json, updated_at) \
-             VALUES(?1, ?2, ?3) \
+            "INSERT INTO track_lyrics_editor_documents \
+                 (track_id, document_json, updated_at, provider, source_artist, source_title, lrc, offset_ms) \
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
              ON CONFLICT(track_id) DO UPDATE SET \
-                 document_json = excluded.document_json, updated_at = excluded.updated_at",
-            params![track_id, document_json, now],
+                 document_json = excluded.document_json, updated_at = excluded.updated_at, \
+                 provider = excluded.provider, source_artist = excluded.source_artist, \
+                 source_title = excluded.source_title, lrc = excluded.lrc, offset_ms = excluded.offset_ms",
+            params![track_id, document_json, now, provider, source_artist, source_title, lrc, offset_ms],
         )
         .map_err(db_err)?;
         tx.commit().map_err(db_err)
@@ -2640,11 +2683,6 @@ impl Db {
                 params![track_id],
             )
             .map_err(db_err)?;
-        tx.execute(
-            "DELETE FROM track_lyrics_editor_documents WHERE track_id = ?1",
-            params![track_id],
-        )
-        .map_err(db_err)?;
         tx.commit().map_err(db_err)
     }
 

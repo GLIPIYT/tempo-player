@@ -6,7 +6,7 @@ import type { AppSettings } from '../state/settings'
 import { useSettings } from '../state/settings'
 import { CUSTOM_DEFAULT_BASE, getPreset } from './presets'
 import BackgroundLayer from '../components/layout/BackgroundLayer'
-import { deriveGradientPalette } from './gradientPalette'
+import { normalizeGradientAnchors } from './gradientPalette'
 import '../styles/theme.css'
 
 const DEFAULT_STACK =
@@ -64,12 +64,34 @@ function safeColor(value: string | undefined, fallback: string): string {
 
 export function applyTheme(active: ActiveTheme | null | undefined): void {
   const root = document.documentElement
-  const isCustom = active !== null && active !== undefined && active.kind === 'custom'
-  root.classList.toggle('theme-custom', isCustom)
-  for (const k of TOKEN_KEYS) root.style.removeProperty(TOKEN_VARS[k])
-  for (const v of BASE_VARS) root.style.removeProperty(v)
-  root.style.removeProperty('--t-text')
-  if (!active || active.kind !== 'custom') {
+  const custom = active?.kind === 'custom' ? active.custom : undefined
+  const anchors = custom?.gradientAnchors
+  const isGradient = anchors !== undefined
+  const wasGradient = root.classList.contains('theme-gradient')
+
+  const clearInlineTheme = () => {
+    for (const k of TOKEN_KEYS) root.style.removeProperty(TOKEN_VARS[k])
+    for (const v of BASE_VARS) root.style.removeProperty(v)
+    root.style.removeProperty('--t-text')
+    root.style.removeProperty('--t-gradient-first')
+    root.style.removeProperty('--t-gradient-second')
+  }
+
+  if (isGradient) {
+    root.classList.add('theme-custom', 'theme-gradient')
+    // Drop the previous theme's inline tokens once. During color picking the
+    // app then changes only two CSS variables instead of rebuilding all tokens.
+    if (!wasGradient) clearInlineTheme()
+    const normalized = normalizeGradientAnchors(anchors)
+    root.style.setProperty('--t-gradient-first', normalized.first)
+    root.style.setProperty('--t-gradient-second', normalized.second)
+    return
+  }
+
+  root.classList.toggle('theme-custom', custom !== undefined)
+  root.classList.remove('theme-gradient')
+  clearInlineTheme()
+  if (!custom) {
     const presetId = active && active.kind === 'preset' ? active.presetId : 'tempo'
     const preset = getPreset(presetId) ?? getPreset('tempo')
     if (preset) {
@@ -77,12 +99,7 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
     }
     return
   }
-  const base = active.custom.base
-  if (active.custom.gradientAnchors) {
-    const tokens = deriveGradientPalette(active.custom.gradientAnchors)
-    for (const k of TOKEN_KEYS) root.style.setProperty(TOKEN_VARS[k], tokens[k])
-    return
-  }
+  const base = custom.base
   const accent = safeColor(base.accent, CUSTOM_DEFAULT_BASE.accent)
   const bg = safeColor(base.background, CUSTOM_DEFAULT_BASE.background)
   const surface = safeColor(base.surface, CUSTOM_DEFAULT_BASE.surface)
@@ -93,7 +110,7 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
   if (playBtn !== '') root.style.setProperty('--t-base-play-btn', playBtn)
   const bgRgb = parseHex(bg)
   root.style.setProperty('--t-text', bgRgb ? deriveText(bgRgb) : '#e8ebf2')
-  const overrides = active.custom.overrides
+  const overrides = custom.overrides
   for (const k of TOKEN_KEYS) {
     const v = overrides[k]
     if (v) root.style.setProperty(TOKEN_VARS[k], v)

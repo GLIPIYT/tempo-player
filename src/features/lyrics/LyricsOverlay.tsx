@@ -1,14 +1,14 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { Check, ChevronDown, ChevronLeft, MicVocal, Music2, Pause, Pencil, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
-import type { TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from 'react'
+import type { CSSProperties, TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from 'react'
 import { usePlayer } from '../../player'
 import { useT } from '../../i18n'
 import { useSettings } from '../../state/settings'
 import Cover from '../../components/common/Cover'
 import { fmtTime } from '../../utils/format'
 import { api } from '../../api/client'
-import type { LyricsOverride, LrclibPublishRequest } from '../../types/models'
+import type { LyricsEditedVersion, LyricsOverride, LrclibPublishRequest } from '../../types/models'
 import { EmbeddedTagsLyricsProvider } from './embeddedProvider'
 import { fetchOnlineLyricsCandidates, toLyricsCandidates } from './onlineProvider'
 import type { LyricsCandidate } from './onlineProvider'
@@ -61,8 +61,25 @@ function candidateDocument(
   mode: 'plain' | 'synced' = candidate.result.kind,
 ): LyricsEditorDocument {
   if (mode === 'synced') {
-    const lrc = candidate.syncedLrc?.trim() || formatLrc(candidate.result.kind === 'synced' ? candidate.result.lines : [])
+    const lrc = candidate.syncedLrc?.trim()
     if (lrc) return fromLrc(lrc, durationMs)
+    if (candidate.result.kind === 'synced') {
+      // Embedded lyrics are already parsed numeric timestamps, with the source
+      // offset normalized. Keep those values directly instead of round-tripping
+      // through serialized LRC, which can lose timestamp precision.
+      const knownDuration = Number.isFinite(durationMs) && (durationMs ?? 0) > 0 ? Math.round(durationMs!) : null
+      let nextDistinctStart: number | null = null
+      const lines = new Array<{ text: string; startMs: number; endMs: number | null }>(candidate.result.lines.length)
+      for (let index = candidate.result.lines.length - 1; index >= 0; index -= 1) {
+        const sourceLine = candidate.result.lines[index]
+        const startMs = Math.max(0, Math.round(sourceLine.timeSec * 1000))
+        lines[index] = { text: sourceLine.text, startMs, endMs: nextDistinctStart ?? knownDuration }
+        if (index === 0 || Math.round(candidate.result.lines[index - 1].timeSec * 1000) < startMs) {
+          nextDistinctStart = startMs
+        }
+      }
+      return { mode: 'synced', lines }
+    }
   }
   const plain = candidate.plain ?? (candidate.result.kind === 'plain' ? candidate.result.text : '')
   return fromPlainLyrics(plain)
@@ -82,15 +99,56 @@ function shiftCandidate(c: LyricsCandidate, offsetMs: number): LyricsCandidate {
   return { ...c, result: { kind: 'synced', lines } }
 }
 
+type OverlayCandidate = LyricsCandidate & {
+  displayLabel?: string
+  isEditedVersion?: boolean
+  savedSourceArtist?: string | null
+  savedSourceTitle?: string | null
+  savedOffsetMs?: number
+}
+
+type PersistedEditedVersion = LyricsEditedVersion & {
+  editorDocument: LyricsEditorDocument
+}
+
 /** A pinned row rendered as a candidate, so the dropdown can show what it is. */
-function overrideCandidate(pinned: LyricsOverride): LyricsCandidate | null {
+function overrideCandidate(
+  pinned: LyricsOverride,
+  metadata: {
+    displayLabel?: string
+    isEditedVersion?: boolean
+    sourceArtist?: string | null
+    sourceTitle?: string | null
+    offsetMs?: number
+  } = {},
+): LyricsCandidate | null {
+  const overlayMetadata: Partial<OverlayCandidate> = {
+    ...(metadata.displayLabel ? { displayLabel: metadata.displayLabel } : {}),
+    ...(metadata.isEditedVersion ? { isEditedVersion: true } : {}),
+    ...(metadata.sourceArtist !== undefined ? { savedSourceArtist: metadata.sourceArtist } : {}),
+    ...(metadata.sourceTitle !== undefined ? { savedSourceTitle: metadata.sourceTitle } : {}),
+    ...(metadata.offsetMs !== undefined ? { savedOffsetMs: metadata.offsetMs } : {}),
+    ...(metadata.sourceArtist ? { artistName: metadata.sourceArtist } : {}),
+  }
   const lines = parseLrc(pinned.lrc)
   if (lines && lines.length > 0) {
-    return { provider: pinned.provider, result: { kind: 'synced', lines }, plain: null, syncedLrc: pinned.lrc }
+    return {
+      provider: pinned.provider,
+      result: { kind: 'synced', lines },
+      plain: null,
+      syncedLrc: pinned.lrc,
+      ...overlayMetadata,
+    }
   }
   const text = pinned.lrc.trim()
   if (!text) return null
-  return { provider: pinned.provider, result: { kind: 'plain', text }, plain: pinned.lrc, syncedLrc: null }
+  return {
+    provider: pinned.provider,
+    result: { kind: 'plain', text },
+    plain: pinned.lrc,
+    syncedLrc: null,
+    ...overlayMetadata,
+  }
 }
 
 /**
@@ -108,6 +166,10 @@ function samePin(c: LyricsCandidate, pinned: LyricsOverride | null): boolean {
   return pinned.editorDocument
     ? candidateLrc(c).trim() === pinned.lrc.trim()
     : a === b
+}
+
+function sameExactPin(c: LyricsCandidate | null, pinned: LyricsOverride | null): boolean {
+  return Boolean(c && pinned && c.provider === pinned.provider && candidateLrc(c).trim() === pinned.lrc.trim())
 }
 
 function providerLabel(provider: string, t: (k: string) => string): string {
@@ -211,14 +273,24 @@ const Backdrop = memo(function Backdrop({ coverPath }: { coverPath: string | nul
 
 function SideTimeline() {
   const p = usePlayer()
+  const t = useT()
   const dur = p.duration > 0 ? p.duration : (p.currentTrack?.durationSec ?? 0)
   const pct = dur > 0 ? clamp((p.position / dur) * 100, 0, 100) : 0
   return (
     <div className="lyr-time-row">
       <span className="lyr-time lyr-time-cur">{fmtTime(p.position)}</span>
-      <div className="lyr-mini-bar">
-        <div className="lyr-mini-fill" style={{ width: `${pct}%` }} />
-      </div>
+      <input
+        className="lyr-seek-range"
+        type="range"
+        min={0}
+        max={dur}
+        step={0.1}
+        value={clamp(p.position, 0, dur)}
+        onChange={(event) => p.seek(Number(event.target.value))}
+        disabled={dur <= 0}
+        aria-label={t('Seek')}
+        style={{ '--lyr-seek-progress': `${pct}%` } as CSSProperties}
+      />
       <span className="lyr-time lyr-time-total">{fmtTime(dur)}</span>
     </div>
   )
@@ -536,23 +608,38 @@ function ProviderDropdown({
   const t = useT()
   const [open, setOpen] = useState(false)
   const [activeProvider, setActiveProvider] = useState<string | null>(null)
+  const [versionQuery, setVersionQuery] = useState('')
   const wrapRef = useRef<HTMLDivElement | null>(null)
-  const selected = candidates[selectedIndex] ?? candidates[0]
+  const selected = candidates[selectedIndex] ?? (selectedIndex >= 0 ? candidates[0] : null)
   const isSyncedSelected = selected ? Boolean(selected.syncedLrc) || selected.result.kind === 'synced' : false
   const providerGroups = useMemo(() => {
-    const groups = new Map<string, { provider: string; indices: number[] }>()
+    const groups = new Map<string, { key: string; provider: string; displayLabel?: string; indices: number[] }>()
     candidates.forEach((candidate, index) => {
-      const group = groups.get(candidate.provider) ?? { provider: candidate.provider, indices: [] }
+      const displayLabel = (candidate as OverlayCandidate).displayLabel
+      const key = displayLabel ? `display:${index}` : candidate.provider
+      const group = groups.get(key) ?? { key, provider: candidate.provider, displayLabel, indices: [] }
       group.indices.push(index)
-      groups.set(candidate.provider, group)
+      groups.set(key, group)
     })
     return Array.from(groups.values())
   }, [candidates])
-  const activeGroup = providerGroups.find((group) => group.provider === activeProvider && group.indices.length > 1)
+  const activeGroup = providerGroups.find((group) => group.key === activeProvider && group.indices.length > 1)
+  const matchingVersionIndices = useMemo(() => {
+    if (!activeGroup) return []
+    const query = versionQuery.trim().toLocaleLowerCase()
+    if (!query) return activeGroup.indices
+    return activeGroup.indices.filter((index) => {
+      const candidate = candidates[index]
+      if (!candidate) return false
+      return [candidate.trackName, candidate.artistName, candidate.albumName, candidate.duration, candidate.id]
+        .some((value) => String(value ?? '').toLocaleLowerCase().includes(query))
+    })
+  }, [activeGroup, candidates, versionQuery])
 
   const closeDropdown = useCallback(() => {
     setOpen(false)
     setActiveProvider(null)
+    setVersionQuery('')
   }, [])
 
   useEffect(() => {
@@ -561,7 +648,10 @@ function ProviderDropdown({
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) closeDropdown()
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeDropdown()
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        closeDropdown()
+      }
     }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
@@ -571,11 +661,12 @@ function ProviderDropdown({
     }
   }, [open, closeDropdown])
 
-  if (!selected) return null
+  if (!selected && candidates.length === 0) return null
 
   const renderCandidate = (index: number) => {
     const candidate = candidates[index]
     if (!candidate) return null
+    const displayLabel = (candidate as OverlayCandidate).displayLabel
     const isSelected = index === selectedIndex
     const isSynced = Boolean(candidate.syncedLrc) || candidate.result.kind === 'synced'
     const metadata = [
@@ -599,8 +690,8 @@ function ProviderDropdown({
       >
         <span className="lyr-prov-item-main">
           <span className="lyr-prov-item-heading">
-            <span className="lyr-prov-item-name" title={candidate.trackName?.trim()}>
-              {candidate.trackName?.trim() || providerLabel(candidate.provider, t)}
+            <span className="lyr-prov-item-name" title={displayLabel ?? candidate.trackName?.trim()}>
+              {(displayLabel ?? candidate.trackName?.trim()) || providerLabel(candidate.provider, t)}
             </span>
             <span className={'lyr-prov-badge' + (isSynced ? ' is-synced' : ' is-plain')}>
               {isSynced ? t('SYNCED') : t('TEXT')}
@@ -625,10 +716,16 @@ function ProviderDropdown({
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <span className="lyr-prov-trigger-name">{providerLabel(selected.provider, t)}</span>
-        <span className={'lyr-prov-badge' + (isSyncedSelected ? ' is-synced' : ' is-plain')}>
-          {isSyncedSelected ? t('SYNCED') : t('TEXT')}
+        <span className="lyr-prov-trigger-name">
+          {selected
+            ? (selected as OverlayCandidate).displayLabel ?? providerLabel(selected.provider, t)
+            : t('Auto (reset)')}
         </span>
+        {selected && (
+          <span className={'lyr-prov-badge' + (isSyncedSelected ? ' is-synced' : ' is-plain')}>
+            {isSyncedSelected ? t('SYNCED') : t('TEXT')}
+          </span>
+        )}
         <ChevronDown size={14} className={'lyr-prov-chevron' + (open ? ' is-open' : '')} />
       </button>
       {open && (
@@ -656,21 +753,24 @@ function ProviderDropdown({
             {providerGroups.map((group) => {
               const hasVariants = group.indices.length > 1
               const isSelected = group.indices.includes(selectedIndex)
-              const isActive = activeProvider === group.provider
+              const isActive = activeProvider === group.key
               const onlyCandidate = candidates[group.indices[0]]
               const isSynced = onlyCandidate
                 ? Boolean(onlyCandidate.syncedLrc) || onlyCandidate.result.kind === 'synced'
                 : false
               return (
                 <button
-                  key={group.provider}
+                  key={group.key}
                   role={hasVariants ? 'menuitem' : 'menuitemradio'}
                   aria-checked={hasVariants ? undefined : isSelected}
                   aria-haspopup={hasVariants ? 'menu' : undefined}
                   aria-expanded={hasVariants ? isActive : undefined}
                   className={'lyr-prov-item lyr-prov-provider-row' + (isSelected ? ' is-selected' : '') + (isActive ? ' is-active' : '')}
                   onClick={() => {
-                    if (hasVariants) setActiveProvider((current) => current === group.provider ? null : group.provider)
+                    if (hasVariants) {
+                      setVersionQuery('')
+                      setActiveProvider((current) => current === group.key ? null : group.key)
+                    }
                     else {
                       onSelect(group.indices[0])
                       closeDropdown()
@@ -679,7 +779,9 @@ function ProviderDropdown({
                 >
                   <span className="lyr-prov-item-main">
                     <span className="lyr-prov-item-heading">
-                      <span className="lyr-prov-item-name">{providerLabel(group.provider, t)}</span>
+                      <span className="lyr-prov-item-name">
+                        {group.displayLabel ?? providerLabel(group.provider, t)}
+                      </span>
                       {!hasVariants && (
                         <span className={'lyr-prov-badge' + (isSynced ? ' is-synced' : ' is-plain')}>
                           {isSynced ? t('SYNCED') : t('TEXT')}
@@ -698,9 +800,25 @@ function ProviderDropdown({
             })}
           </div>
           {activeGroup && (
-            <div className="lyr-prov-versions" role="menu" aria-label={providerLabel(activeGroup.provider, t)}>
-              <div className="lyr-prov-versions-heading">{providerLabel(activeGroup.provider, t)}</div>
-              {activeGroup.indices.map(renderCandidate)}
+            <div className="lyr-prov-versions" role="menu" aria-label={activeGroup.displayLabel ?? providerLabel(activeGroup.provider, t)}>
+              <div className="lyr-prov-versions-heading">
+                {activeGroup.displayLabel ?? providerLabel(activeGroup.provider, t)}
+              </div>
+              {activeGroup.indices.length > 5 ? (
+                <label className="lyr-prov-version-search">
+                  <Search size={13} aria-hidden="true" />
+                  <input
+                    autoFocus
+                    value={versionQuery}
+                    onChange={(event) => setVersionQuery(event.target.value)}
+                    placeholder={t('Search')}
+                    aria-label={t('Search')}
+                  />
+                </label>
+              ) : null}
+              {matchingVersionIndices.length > 0
+                ? matchingVersionIndices.map(renderCandidate)
+                : <span className="lyr-prov-empty">{t('No matches')}</span>}
             </div>
           )}
         </div>
@@ -829,6 +947,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   const [manualTitle, setManualTitle] = useState(track?.title ?? '')
   const [searching, setSearching] = useState(false)
   const [pinned, setPinned] = useState<LyricsOverride | null>(null)
+  const [editedVersion, setEditedVersion] = useState<PersistedEditedVersion | null>(null)
   const [pinnedLoaded, setPinnedLoaded] = useState(false)
   const [editingLyrics, setEditingLyrics] = useState(false)
   const [savingLyrics, setSavingLyrics] = useState(false)
@@ -845,22 +964,40 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
     const id = p.currentTrack?.dbId ?? null
     if (id == null) {
       setPinned(null)
+      setEditedVersion(null)
       setPinnedLoaded(true)
       return
     }
     setPinned(null)
+    setEditedVersion(null)
     setPinnedLoaded(false)
     api
       .getLyricsOverride(id)
       .then((row) => {
         if (!cancelled) {
-          setPinned(row)
+          const response = row
+          const document = response?.editorDocument ?? null
+          const version = response?.editedVersion
+          const savedDocument = document && response
+            ? {
+                provider: version?.provider ?? response.provider,
+                sourceArtist: version?.sourceArtist ?? response.sourceArtist,
+                sourceTitle: version?.sourceTitle ?? response.sourceTitle,
+                lrc: version?.lrc ?? response.lrc,
+                offsetMs: version?.offsetMs ?? response.offsetMs,
+                updatedAt: version?.updatedAt ?? response.updatedAt,
+                editorDocument: document,
+              }
+            : null
+          setPinned(response && response.isActive !== false ? response : null)
+          setEditedVersion(savedDocument)
           setPinnedLoaded(true)
         }
       })
       .catch(() => {
         if (!cancelled) {
           setPinned(null)
+          setEditedVersion(null)
           setPinnedLoaded(true)
         }
       })
@@ -1014,62 +1151,103 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   )
   const offsetMs = pinned?.offsetMs ?? 0
 
-  /**
-   * A pin whose source is not in the fetched list - pinned from another song's
-   * search, or fetched from a provider that has since stopped answering. It gets
-   * prepended so the dropdown can still show and render it.
-   */
+  const editedCandidate = useMemo(() => {
+    if (!editedVersion) return null
+    const editedPin: LyricsOverride = {
+      provider: editedVersion.provider,
+      sourceArtist: editedVersion.sourceArtist,
+      sourceTitle: editedVersion.sourceTitle,
+      lrc: editedVersion.lrc,
+      offsetMs: editedVersion.offsetMs,
+      updatedAt: editedVersion.updatedAt,
+      editorDocument: editedVersion.editorDocument,
+    }
+    return overrideCandidate(editedPin, {
+      displayLabel: t('Current version'),
+      isEditedVersion: true,
+      sourceArtist: editedVersion.sourceArtist,
+      sourceTitle: editedVersion.sourceTitle,
+      offsetMs: editedVersion.offsetMs,
+    })
+  }, [editedVersion, t])
+
+  /** An active pin that no provider returned is kept as its own selectable row. */
   const pinnedExtra = useMemo(
-    () => (pinned && pinnedIndex < 0 ? overrideCandidate(pinned) : null),
-    [pinned, pinnedIndex],
+    () => pinned && pinnedIndex < 0 && !sameExactPin(editedCandidate, pinned)
+      ? overrideCandidate(pinned, {
+          sourceArtist: pinned.sourceArtist,
+          sourceTitle: pinned.sourceTitle,
+          offsetMs: pinned.offsetMs,
+        })
+      : null,
+    [editedCandidate, pinned, pinnedIndex],
   )
-  const viewPinnedIndex = pinnedExtra ? 0 : pinnedIndex
-  /** The dropdown's list: fetched candidates, with the stray pin in front if any. */
   const baseCandidates = useMemo(
     () => (pinnedExtra ? [pinnedExtra, ...candidates] : candidates),
     [pinnedExtra, candidates],
   )
+  const rawViewCandidates = useMemo(
+    () => editedCandidate ? [...baseCandidates, editedCandidate] : baseCandidates,
+    [baseCandidates, editedCandidate],
+  )
+  const viewPinnedIndex = pinned
+    ? editedCandidate && sameExactPin(editedCandidate, pinned)
+      ? rawViewCandidates.length - 1
+      : baseCandidates.findIndex((candidate) => samePin(candidate, pinned))
+    : -1
   const viewCandidates = useMemo(() => {
-    if (offsetMs === 0 || viewPinnedIndex < 0) return baseCandidates
+    if (offsetMs === 0 || viewPinnedIndex < 0) return rawViewCandidates
     // Only the pinned row carries the offset; the others are still their own timing.
-    return baseCandidates.map((c, i) => (i === viewPinnedIndex ? shiftCandidate(c, offsetMs) : c))
-  }, [baseCandidates, offsetMs, viewPinnedIndex])
-  // A pin is the selection, by definition - selecting is what pinning is.
+    return rawViewCandidates.map((c, i) => (i === viewPinnedIndex ? shiftCandidate(c, offsetMs) : c))
+  }, [rawViewCandidates, offsetMs, viewPinnedIndex])
   const viewSelectedIndex =
-    viewPinnedIndex >= 0 ? viewPinnedIndex : selectedIndex + (pinnedExtra ? 1 : 0)
+    viewPinnedIndex >= 0
+      ? viewPinnedIndex
+      : baseCandidates.length > 0 ? selectedIndex + (pinnedExtra ? 1 : 0) : -1
   const selected = viewCandidates[viewSelectedIndex] ?? null
   const mode: OverlayMode =
     loading && viewCandidates.length === 0 ? 'loading' : selected ? selected.result.kind : 'empty'
   const durationMs = track?.durationSec != null ? track.durationSec * 1000 : null
   const editorSourceOptions = useMemo(
-    () => baseCandidates.flatMap((candidate, index) => {
-      const modes: Array<'plain' | 'synced'> = []
-      if (candidate.result.kind === 'synced') modes.push('synced')
-      if (candidate.plain?.trim() || candidate.result.kind === 'plain') modes.push('plain')
-      const details = [
-        candidate.trackName?.trim(),
-        candidate.artistName?.trim(),
-        candidate.albumName?.trim(),
-        candidate.duration != null ? `${Math.round(candidate.duration)}s` : null,
-      ].filter((part): part is string => Boolean(part))
-      return modes.map((mode) => ({
-        id: `${index}:${mode}`,
-      label: `${providerLabel(candidate.provider, t)} · ${mode === 'synced' ? t('SYNCED') : t('TEXT')}${details.length > 0 ? ` · ${details.join(' / ')}` : ''}`,
-        document: candidateDocument(candidate, durationMs, mode),
-      }))
-    }),
-    [baseCandidates, durationMs, t],
+    () => {
+      const options = baseCandidates.flatMap((candidate, index) => {
+        const modes: Array<'plain' | 'synced'> = []
+        if (candidate.result.kind === 'synced') modes.push('synced')
+        if (candidate.plain?.trim() || candidate.result.kind === 'plain') modes.push('plain')
+        const details = [
+          candidate.trackName?.trim(),
+          candidate.artistName?.trim(),
+          candidate.albumName?.trim(),
+          candidate.duration != null ? `${Math.round(candidate.duration)}s` : null,
+        ].filter((part): part is string => Boolean(part))
+        return modes.map((mode) => ({
+          id: `candidate:${index}:${mode}`,
+          label: `${providerLabel(candidate.provider, t)} · ${mode === 'synced' ? t('SYNCED') : t('TEXT')}${details.length > 0 ? ` · ${details.join(' / ')}` : ''}`,
+          document: candidateDocument(candidate, durationMs, mode),
+        }))
+      })
+      if (editedVersion) {
+        options.unshift({
+          id: 'edited',
+          label: `${providerLabel(editedVersion.provider, t)} · ${t('Current version')}`,
+          document: editedVersion.editorDocument,
+        })
+      }
+      return options
+    },
+    [baseCandidates, durationMs, editedVersion, t],
   )
-  const editorInitialSourceId =
-    viewSelectedIndex >= 0 && baseCandidates[viewSelectedIndex]
-      ? `${viewSelectedIndex}:${selected?.result.kind ?? 'plain'}`
+  const editorInitialSourceId = editedVersion
+    ? 'edited'
+    : viewSelectedIndex >= 0 && baseCandidates[viewSelectedIndex]
+      ? `candidate:${viewSelectedIndex}:${selected?.result.kind ?? 'plain'}`
       : null
   const editorInitialDocument = useMemo(() => {
-    if (pinned?.editorDocument) return pinned.editorDocument
+    if (editedVersion) return editedVersion.editorDocument
     if (pinned) return fromLrc(pinned.lrc, durationMs)
     if (selected) return candidateDocument(selected, durationMs, selected.result.kind)
     return fromPlainLyrics('')
-  }, [pinned, selected, durationMs])
+  }, [pinned, selected, durationMs, editedVersion])
 
   /**
    * Writes the pin and tells the lyrics service to forget what it cached, so the
@@ -1081,19 +1259,26 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       if (!tr || tr.dbId == null) return
       const lrc = candidateLrc(candidate)
       if (!lrc.trim()) return
+      const overlayCandidate = candidate as OverlayCandidate
+      const sourceArtist = overlayCandidate.isEditedVersion
+        ? overlayCandidate.savedSourceArtist || tr.artists[0] || null
+        : overlayCandidate.savedSourceArtist ?? searchedAs?.artist ?? tr.artists[0] ?? null
+      const sourceTitle = overlayCandidate.isEditedVersion
+        ? overlayCandidate.savedSourceTitle || tr.title
+        : overlayCandidate.savedSourceTitle ?? searchedAs?.title ?? tr.title
       try {
         await api.setLyricsOverride({
           trackId: tr.dbId,
           provider: candidate.provider,
-          sourceArtist: searchedAs?.artist ?? tr.artists[0] ?? null,
-          sourceTitle: searchedAs?.title ?? tr.title,
+          sourceArtist,
+          sourceTitle,
           lrc,
           offsetMs: nextOffsetMs,
         })
         setPinned({
           provider: candidate.provider,
-          sourceArtist: searchedAs?.artist ?? tr.artists[0] ?? null,
-          sourceTitle: searchedAs?.title ?? tr.title,
+          sourceArtist,
+          sourceTitle,
           lrc,
           offsetMs: nextOffsetMs,
           updatedAt: Math.floor(Date.now() / 1000),
@@ -1111,20 +1296,22 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
    */
   const handleSelect = useCallback(
     (viewIdx: number) => {
-      const idx = pinnedExtra ? viewIdx - 1 : viewIdx
-      if (idx < 0) return
-      setSelectedIndex(idx)
-      const tr = p.currentTrack
-      const key = tr ? `${tr.source}|${tr.sourceId}|${tr.title}|${tr.artists.join(',')}` : ''
-      if (key && candidates.length > 0) {
-        overlayCache.set(key, { candidates, selectedIndex: idx })
+      const candidate = viewCandidates[viewIdx]
+      if (!candidate) return
+      const idx = viewIdx - (pinnedExtra ? 1 : 0)
+      if (idx >= 0 && idx < candidates.length) {
+        setSelectedIndex(idx)
+        const tr = p.currentTrack
+        const key = tr ? `${tr.source}|${tr.sourceId}|${tr.title}|${tr.artists.join(',')}` : ''
+        if (key && candidates.length > 0) {
+          overlayCache.set(key, { candidates, selectedIndex: idx })
+        }
       }
       // Choosing a provider is the pin gesture - there is no separate confirm.
       // The offset is dropped, since it was tuned against the previous lines.
-      const candidate = candidates[idx]
-      if (candidate) void persistPin(candidate, 0)
+      void persistPin(candidate, (candidate as OverlayCandidate).savedOffsetMs ?? 0)
     },
-    [p.currentTrack, candidates, persistPin, pinnedExtra],
+    [p.currentTrack, candidates, persistPin, pinnedExtra, viewCandidates],
   )
 
   /** Back to automatic: drops the row and lets the normal chain resolve again. */
@@ -1209,15 +1396,27 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   )
 
   const selectedEditorSource = (sourceId: string | null): LyricsCandidate | null => {
+    if (sourceId === 'edited') return editedCandidate
     if (sourceId !== null) {
-      const index = Number.parseInt(sourceId.split(':', 1)[0], 10)
+      const match = sourceId.match(/^candidate:(\d+):/)
+      const index = match ? Number.parseInt(match[1], 10) : -1
       if (Number.isInteger(index) && index >= 0) return baseCandidates[index] ?? null
     }
+    if (viewSelectedIndex >= baseCandidates.length && editedCandidate) return editedCandidate
     return viewSelectedIndex >= 0 ? baseCandidates[viewSelectedIndex] ?? null : null
   }
 
   const sourceMetadata = (sourceId: string | null) => {
     const source = selectedEditorSource(sourceId)
+    if (sourceId === 'edited' && editedVersion) {
+      return {
+        source,
+        provider: editedVersion.provider,
+        artist: editedVersion.sourceArtist || track?.artists[0] || '',
+        title: editedVersion.sourceTitle || track?.title || '',
+        offsetMs: editedVersion.offsetMs,
+      }
+    }
     const isSamePinnedSource = sourceId === editorInitialSourceId || sourceId === null
     return {
       source,
@@ -1252,13 +1451,23 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
         offsetMs: source.offsetMs,
         editorDocument: document,
       })
+      const updatedAt = Math.floor(Date.now() / 1000)
+      setEditedVersion({
+        provider: source.provider,
+        sourceArtist: source.artist || null,
+        sourceTitle: source.title || null,
+        lrc,
+        offsetMs: source.offsetMs,
+        updatedAt,
+        editorDocument: document,
+      })
       setPinned({
         provider: source.provider,
         sourceArtist: source.artist || null,
         sourceTitle: source.title || null,
         lrc,
         offsetMs: source.offsetMs,
-        updatedAt: Math.floor(Date.now() / 1000),
+        updatedAt,
         editorDocument: document,
       })
       setEditingLyrics(false)
@@ -1360,7 +1569,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           </div>
           <LyricsVolumeRow />
         </aside>
-        <section className="lyr-stage-col">
+        <section className={'lyr-stage-col' + (editingLyrics ? ' lyr-stage-col-editing' : '')}>
           {editingLyrics ? (
             <LyricsEditorPanel
               key={`${trackKey}-${pinned?.updatedAt ?? 'unpinned'}`}
@@ -1368,6 +1577,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
               initialSourceId={editorInitialSourceId}
               sourceOptions={editorSourceOptions}
               durationMs={durationMs}
+              currentTimeSec={p.position}
               onSave={saveEditedLyrics}
               onPublish={publishEditedLyrics}
               onCancel={() => setEditingLyrics(false)}

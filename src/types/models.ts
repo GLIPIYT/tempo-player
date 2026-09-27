@@ -365,7 +365,19 @@ export interface LyricsOverride {
   lrc: string
   offsetMs: number
   updatedAt: number
+  /** False means only the saved editor version exists; automatic lyrics remain active. */
+  isActive?: boolean
+  editedVersion?: LyricsEditedVersion | null
   editorDocument?: LyricsEditorDocument | null
+}
+
+export interface LyricsEditedVersion {
+  provider: string
+  sourceArtist: string | null
+  sourceTitle: string | null
+  lrc: string
+  offsetMs: number
+  updatedAt: number
 }
 
 export interface LrclibPublishRequest {

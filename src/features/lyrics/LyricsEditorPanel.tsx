@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { MoreHorizontal, Plus, Save, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, Clock3, MoreHorizontal, Plus, Save, Search, Trash2 } from 'lucide-react'
 import { useT } from '../../i18n'
 import {
   fromPlainLyrics,
@@ -24,6 +24,7 @@ export interface LyricsEditorPanelProps {
   initialSourceId?: string | null
   sourceOptions: LyricsEditorSourceOption[]
   durationMs?: number | null
+  currentTimeSec: number
   onSave: (document: LyricsEditorDocument, sourceId: string | null) => void | Promise<void>
   onPublish?: (document: LyricsEditorDocument, sourceId: string | null) => void | Promise<void>
   onCancel: () => void
@@ -120,6 +121,7 @@ export default function LyricsEditorPanel({
   initialSourceId,
   sourceOptions,
   durationMs,
+  currentTimeSec,
   onSave,
   onPublish,
   onCancel,
@@ -129,6 +131,7 @@ export default function LyricsEditorPanel({
   const t = useT()
   const id = useId()
   const publishMenuRef = useRef<HTMLDetailsElement>(null)
+  const sourcePickerRef = useRef<HTMLDivElement>(null)
   const initialDocumentJson = JSON.stringify(initialDocument)
   const [document, setDocument] = useState<LyricsEditorDocument>(() => cloneDocument(initialDocument))
   const [timeDrafts, setTimeDrafts] = useState<TimeDraft[]>(() => makeTimeDrafts(initialDocument))
@@ -136,15 +139,40 @@ export default function LyricsEditorPanel({
   const [actionError, setActionError] = useState('')
   const [actionNotice, setActionNotice] = useState('')
   const [localAction, setLocalAction] = useState<LocalAction>(null)
+  const [sourceOpen, setSourceOpen] = useState(false)
+  const [sourceQuery, setSourceQuery] = useState('')
 
   useEffect(() => {
     const next = JSON.parse(initialDocumentJson) as LyricsEditorDocument
     setDocument(next)
     setTimeDrafts(makeTimeDrafts(next))
     setSelectedSourceId(initialSourceId ?? '')
+    setSourceOpen(false)
+    setSourceQuery('')
     setActionError('')
     setActionNotice('')
   }, [initialDocumentJson, initialSourceId])
+
+  useEffect(() => {
+    if (!sourceOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (sourcePickerRef.current && !sourcePickerRef.current.contains(event.target as Node)) {
+        setSourceOpen(false)
+      }
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        setSourceOpen(false)
+      }
+    }
+    window.document.addEventListener('pointerdown', onPointerDown)
+    window.document.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.document.removeEventListener('pointerdown', onPointerDown)
+      window.document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [sourceOpen])
 
   const issues = useMemo(() => validateLyricsDocument(document, durationMs), [document, durationMs])
   const firstIssue = issues[0]
@@ -153,6 +181,8 @@ export default function LyricsEditorPanel({
   const publishBusy = publishing || localAction === 'publish'
   const busy = saveBusy || publishBusy
   const invalidLineIndexes = new Set(issues.flatMap((issue) => issue.lineIndex === undefined ? [] : [issue.lineIndex]))
+  const selectedSource = sourceOptions.find((source) => source.id === selectedSourceId)
+  const filteredSources = sourceOptions.filter((source) => source.label.toLocaleLowerCase().includes(sourceQuery.trim().toLocaleLowerCase()))
 
   const replaceDocument = (next: LyricsEditorDocument): void => {
     setDocument(next)
@@ -174,10 +204,33 @@ export default function LyricsEditorPanel({
 
   const selectSource = (sourceId: string): void => {
     setSelectedSourceId(sourceId)
+    setSourceOpen(false)
+    setSourceQuery('')
     setActionError('')
     setActionNotice('')
     const source = sourceOptions.find((option) => option.id === sourceId)
     if (source) replaceDocument(cloneDocument(source.document))
+  }
+
+  const setStartToCurrentTime = (lineIndex: number): void => {
+    if (document.mode !== 'synced') return
+    const startMs = Math.max(0, Math.round(currentTimeSec * 1000))
+    const currentLine = document.lines[lineIndex]
+    const clearEnd = currentLine?.endMs != null && currentLine.endMs <= startMs
+    setDocument((current) => {
+      if (current.mode !== 'synced') return current
+      return {
+        mode: 'synced',
+        lines: current.lines.map((line, index) => index === lineIndex
+          ? { ...line, startMs, endMs: clearEnd ? null : line.endMs }
+          : line),
+      }
+    })
+    setTimeDrafts((current) => current.map((draft, index) => index === lineIndex
+      ? { ...draft, start: formatTimecode(startMs), ...(clearEnd ? { end: '' } : {}) }
+      : draft))
+    setActionError('')
+    setActionNotice('')
   }
 
   const editSyncedText = (lineIndex: number, text: string): void => {
@@ -257,19 +310,51 @@ export default function LyricsEditorPanel({
     <section className="lyr-editor-panel" aria-label={t('Lyrics editor')}>
       <div className="lyr-editor-toolbar">
         {sourceOptions.length > 0 ? (
-          <div className="lyr-editor-source">
-            <label htmlFor={`${id}-source`}>{t('Source')}</label>
-            <select
-              id={`${id}-source`}
-              value={selectedSourceId}
-              onChange={(event) => selectSource(event.target.value)}
+          <div className="lyr-editor-source" ref={sourcePickerRef}>
+            <span className="lyr-editor-source-label">{t('Source')}</span>
+            <button
+              type="button"
+              className="lyr-editor-source-trigger"
+              aria-haspopup="listbox"
+              aria-expanded={sourceOpen}
+              aria-label={`${t('Source')}: ${selectedSource?.label ?? t('Choose a source')}`}
+              onClick={() => setSourceOpen((open) => !open)}
               disabled={busy}
             >
-              <option value="">{t('Choose a source')}</option>
-              {sourceOptions.map((source) => (
-                <option key={source.id} value={source.id}>{source.label}</option>
-              ))}
-            </select>
+              <span>{selectedSource?.label ?? t('Choose a source')}</span>
+              <ChevronDown size={14} className={sourceOpen ? 'is-open' : ''} />
+            </button>
+            {sourceOpen ? (
+              <div className="lyr-editor-source-menu">
+                {sourceOptions.length > 5 ? (
+                  <label className="lyr-editor-source-search">
+                    <Search size={13} aria-hidden="true" />
+                    <input
+                      autoFocus
+                      value={sourceQuery}
+                      onChange={(event) => setSourceQuery(event.target.value)}
+                      placeholder={t('Search')}
+                      aria-label={t('Search')}
+                    />
+                  </label>
+                ) : null}
+                <div className="lyr-editor-source-options" role="listbox" aria-label={t('Lyrics sources')}>
+                  {filteredSources.length > 0 ? filteredSources.map((source) => (
+                    <button
+                      key={source.id}
+                      type="button"
+                      role="option"
+                      aria-selected={source.id === selectedSourceId}
+                      className={source.id === selectedSourceId ? 'is-selected' : ''}
+                      onClick={() => selectSource(source.id)}
+                    >
+                      <span>{source.label}</span>
+                      {source.id === selectedSourceId ? <Check size={13} /> : null}
+                    </button>
+                  )) : <span className="lyr-editor-source-empty">{t('No matches')}</span>}
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -331,17 +416,29 @@ export default function LyricsEditorPanel({
                   onChange={(event) => editSyncedText(lineIndex, event.target.value)}
                   disabled={busy}
                 />
-                <input
-                  className="lyr-editor-time"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="00:00.00"
-                  aria-label={`${t('Start time')}, ${lineIndex + 1}`}
-                  aria-invalid={!Number.isSafeInteger(line.startMs) || line.startMs < 0 || undefined}
-                  value={timeDrafts[lineIndex]?.start ?? formatTimecode(line.startMs)}
-                  onChange={(event) => editTime(lineIndex, 'startMs', event.target.value)}
-                  disabled={busy}
-                />
+                <div className="lyr-editor-start-wrap">
+                  <input
+                    className="lyr-editor-time"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="00:00.00"
+                    aria-label={`${t('Start time')}, ${lineIndex + 1}`}
+                    aria-invalid={!Number.isSafeInteger(line.startMs) || line.startMs < 0 || undefined}
+                    value={timeDrafts[lineIndex]?.start ?? formatTimecode(line.startMs)}
+                    onChange={(event) => editTime(lineIndex, 'startMs', event.target.value)}
+                    disabled={busy}
+                  />
+                  <button
+                    type="button"
+                    className="lyr-editor-capture-time"
+                    title={`${t('Start time')}: ${formatTimecode(Math.max(0, Math.round(currentTimeSec * 1000)))}`}
+                    aria-label={`${t('Start time')}: ${formatTimecode(Math.max(0, Math.round(currentTimeSec * 1000)))}`}
+                    onClick={() => setStartToCurrentTime(lineIndex)}
+                    disabled={busy}
+                  >
+                    <Clock3 size={13} />
+                  </button>
+                </div>
                 <input
                   className="lyr-editor-time"
                   type="text"

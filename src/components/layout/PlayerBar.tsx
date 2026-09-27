@@ -348,7 +348,7 @@ function PlayerBarContent() {
           </button>
           <button
             className="pb-toggle"
-            style={{ background: 'var(--play-btn, var(--accent))' }}
+            style={{ background: 'var(--tempo-gradient, var(--play-btn, var(--accent)))' }}
             onClick={() => p.toggle()}
             aria-label={p.isPlaying ? t('Pause') : t('Play')}
           >

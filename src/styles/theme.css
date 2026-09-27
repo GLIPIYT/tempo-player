@@ -16,6 +16,71 @@ html.theme-custom {
   --play-btn: var(--t-base-play-btn, var(--t-base-accent, #6c8cff));
 }
 
+html.theme-custom.theme-gradient {
+  --bg: #0b0f16;
+  --bg-elevated: #111722;
+  --surface: #171e2a;
+  --surface-hover: #202a39;
+  --border: #2a3546;
+  --text: #edf1f7;
+  --text-muted: #9ba8bb;
+  --accent: var(--t-gradient-first, #6c8cff);
+  --accent-strong: color-mix(in srgb, var(--t-gradient-first, #6c8cff) 76%, white);
+  --accent-soft: color-mix(in srgb, var(--t-gradient-first, #6c8cff) 16%, transparent);
+  --play-btn: var(--t-gradient-second, #4fd6be);
+  --danger: #ff7184;
+  --tempo-gradient: linear-gradient(110deg, var(--t-gradient-first, #6c8cff), var(--t-gradient-second, #4fd6be));
+  --tempo-gradient-soft: linear-gradient(
+    110deg,
+    color-mix(in srgb, var(--t-gradient-first, #6c8cff) 16%, transparent),
+    color-mix(in srgb, var(--t-gradient-second, #4fd6be) 16%, transparent)
+  );
+}
+
+html.theme-gradient .btn-primary,
+html.theme-gradient .pb-toggle,
+html.theme-gradient .lyr-play,
+html.theme-gradient .lyr-editor-save,
+html.theme-gradient .background-search-use {
+  background: var(--tempo-gradient);
+}
+
+html.theme-gradient .btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+html.theme-gradient .side-item.is-active,
+html.theme-gradient .fav-item.is-active,
+html.theme-gradient .set-nav-item.is-active,
+html.theme-gradient .seg-btn.is-active,
+html.theme-gradient .theme-card.is-active,
+html.theme-gradient .lyr-prov-item.is-selected,
+html.theme-gradient .lyr-editor-mode button.is-active,
+html.theme-gradient .background-search-provider-tab[aria-pressed='true'] {
+  background: var(--tempo-gradient-soft);
+}
+
+html.theme-gradient .side-item.is-active::before {
+  background: linear-gradient(180deg, var(--t-gradient-first), var(--t-gradient-second));
+}
+
+html.theme-gradient input[type='range'] {
+  background: linear-gradient(
+    to right,
+    var(--t-gradient-first) 0%,
+    var(--t-gradient-second) var(--fill, 0%),
+    var(--border) var(--fill, 0%)
+  );
+}
+
+html.theme-gradient input[type='range']::-webkit-slider-thumb {
+  background: var(--t-gradient-second);
+}
+
+html.theme-gradient input[type='range']::-moz-range-thumb {
+  background: var(--t-gradient-second);
+}
+
 html.has-bg .sidebar {
   background: color-mix(in srgb, var(--bg-elevated) 62%, transparent);
 }
@@ -1104,6 +1169,23 @@ html.has-bg .font-list {
   height: 12px;
   border: 3px solid var(--accent-strong);
   background: var(--accent);
+}
+
+html.theme-gradient .set-appearance-content .slider-row input[type='range'] {
+  background: linear-gradient(
+    to right,
+    var(--t-gradient-first) 0%,
+    var(--t-gradient-second) var(--fill, 50%),
+    var(--border) var(--fill, 50%)
+  );
+}
+
+html.theme-gradient .set-appearance-content .slider-row input[type='range']::-webkit-slider-thumb {
+  background: var(--t-gradient-second);
+}
+
+html.theme-gradient .set-appearance-content .slider-row input[type='range']::-moz-range-thumb {
+  background: var(--t-gradient-second);
 }
 
 .set-appearance-content .slider-value {

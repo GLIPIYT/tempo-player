@@ -179,18 +179,11 @@
   text-align: right;
 }
 
-.lyr-mini-bar {
+.lyr-seek-range {
   flex: 1;
-  height: 3px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--text-muted) 30%, transparent);
-  overflow: hidden;
-}
-
-.lyr-mini-fill {
-  height: 100%;
-  border-radius: 2px;
-  background: var(--accent);
+  min-width: 0;
+  height: 4px;
+  --fill: var(--lyr-seek-progress, 0%);
 }
 
 .lyr-controls {
@@ -273,6 +266,11 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
+}
+
+.lyr-stage-col-editing {
+  justify-content: center;
+  padding-block: 12px;
 }
 
 .lyr-head {
@@ -400,6 +398,10 @@
   flex: 0 1 320px;
 }
 
+.lyr-prov-versions {
+  max-height: min(54vh, 360px);
+}
+
 .lyr-prov-versions-heading {
   padding: 7px 9px 8px;
   margin: 0 2px 2px;
@@ -410,6 +412,39 @@
   letter-spacing: 0.08em;
   line-height: 1.2;
   text-transform: uppercase;
+}
+
+.lyr-prov-version-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  margin: 0 2px 3px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.lyr-prov-version-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+}
+
+.lyr-prov-empty {
+  padding: 10px 9px;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 .lyr-prov-item {

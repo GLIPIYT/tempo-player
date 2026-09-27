@@ -232,7 +232,7 @@
 
 .metadata-editor-source-row {
   width: 100%;
-  min-height: 31px;
+  min-height: 38px;
   flex: 0 0 auto;
   padding: 5px 8px;
   color: var(--text);
@@ -270,6 +270,12 @@
 .metadata-editor-source-row svg {
   flex: 0 0 auto;
   color: var(--text-muted);
+}
+
+.metadata-editor-source-row > .cover {
+  flex: 0 0 26px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
 }
 
 .metadata-editor-source-row span {
