@@ -46,6 +46,15 @@
   background: color-mix(in srgb, var(--bg-elevated) 80%, var(--accent) 20%);
 }
 
+html.theme-gradient .home-mix-stage {
+  border-color: color-mix(in srgb, var(--t-gradient-second) 42%, var(--border));
+  background: linear-gradient(
+    112deg,
+    color-mix(in srgb, var(--t-gradient-first) 30%, var(--bg-elevated)),
+    color-mix(in srgb, var(--t-gradient-second) 30%, var(--bg-elevated))
+  );
+}
+
 .home-mix-stage::before {
   position: absolute;
   top: -140px;
@@ -157,6 +166,11 @@
   color: #0d1017;
 }
 
+html.theme-gradient .home-mix-play {
+  border: 0;
+  padding-inline: 15px;
+}
+
 .home-mix-play:hover { filter: brightness(1.12); }
 
 .home-mix-view {
@@ -185,6 +199,14 @@
   background: color-mix(in srgb, var(--bg-elevated) 84%, var(--accent));
 }
 
+html.theme-gradient .home-mix-art {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--t-gradient-first) 42%, var(--bg-elevated)),
+    color-mix(in srgb, var(--t-gradient-second) 42%, var(--bg-elevated))
+  );
+}
+
 .home-mix-art-back {
   position: absolute;
   inset: -25px;
@@ -206,6 +228,14 @@
   background: linear-gradient(90deg, color-mix(in srgb, var(--bg-elevated) 70%, var(--accent) 30%), transparent 46%);
   content: '';
   pointer-events: none;
+}
+
+html.theme-gradient .home-mix-art::after {
+  background: linear-gradient(
+    105deg,
+    color-mix(in srgb, var(--t-gradient-first) 34%, var(--bg-elevated)) 0%,
+    color-mix(in srgb, var(--t-gradient-second) 28%, transparent) 100%
+  );
 }
 
 .home-mix-art-card {
@@ -461,6 +491,22 @@
 }
 .home-track-rail::-webkit-scrollbar { height: 5px; }
 .home-track-rail::-webkit-scrollbar-thumb { border-radius: 5px; background: color-mix(in srgb, var(--accent) 70%, transparent); }
+html.theme-gradient .home-track-rail,
+html.theme-gradient .home-mix-picker-rail {
+  scrollbar-color: auto;
+}
+@supports (scrollbar-color: auto) and (not selector(::-webkit-scrollbar-thumb)) {
+  html.theme-gradient .home-track-rail,
+  html.theme-gradient .home-mix-picker-rail {
+    scrollbar-color: var(--t-gradient-second) transparent;
+  }
+}
+html.theme-gradient .home-track-rail::-webkit-scrollbar-thumb,
+html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
+  border: 0;
+  border-radius: 5px;
+  background: var(--tempo-gradient);
+}
 .home-rail-track { flex: 0 0 118px; min-width: 0; padding: 0; scroll-snap-align: start; text-align: left; }
 .home-rail-track .cover { width: 118px !important; height: 118px !important; object-fit: cover; border-radius: 9px !important; }
 .home-rail-track strong, .home-rail-track small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

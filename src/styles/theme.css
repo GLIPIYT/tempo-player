@@ -104,7 +104,7 @@ html.theme-gradient .background-search-provider-tab[aria-pressed='true'] {
   background: var(--tempo-gradient-soft);
 }
 
-html.theme-gradient .side-item.is-active::before {
+html.theme-gradient .sidebar-active-marker {
   background: linear-gradient(180deg, var(--t-gradient-first), var(--t-gradient-second));
 }
 

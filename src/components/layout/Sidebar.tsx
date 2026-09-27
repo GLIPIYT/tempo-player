@@ -185,6 +185,64 @@ export default function Sidebar() {
   widthRef.current = width
   const resizeStart = useRef<{ x: number; w: number } | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const sidebarRef = useRef<HTMLElement | null>(null)
+  const activeMarkerRef = useRef<HTMLSpanElement | null>(null)
+  const activeMarkerKey =
+    view.name === 'profile' || view.name === 'settings' ? view.name : active
+
+  useLayoutEffect(() => {
+    const sidebar = sidebarRef.current
+    const marker = activeMarkerRef.current
+    if (!sidebar || !marker) return
+
+    let frame = 0
+    const updatePosition = () => {
+      const target = sidebar.querySelector<HTMLElement>('.side-item.is-active')
+      if (!target) {
+        marker.dataset.visible = 'false'
+        return
+      }
+
+      const sidebarRect = sidebar.getBoundingClientRect()
+      const targetRect = target.getBoundingClientRect()
+      const x = targetRect.left - sidebarRect.left
+      const y = targetRect.top - sidebarRect.top + 6
+      marker.style.transform = `translate3d(${x}px, ${y}px, 0)`
+      marker.style.height = `${Math.max(0, targetRect.height - 12)}px`
+      marker.dataset.visible = 'true'
+
+      if (!marker.classList.contains('is-ready')) {
+        marker.classList.add('is-positioned')
+        if (!frame) {
+          frame = window.requestAnimationFrame(() => {
+            marker.classList.add('is-ready')
+            frame = 0
+          })
+        }
+      }
+    }
+
+    updatePosition()
+    const resizeObserver = new ResizeObserver(updatePosition)
+    resizeObserver.observe(sidebar)
+    const brand = sidebar.querySelector('.sidebar-brand')
+    const nav = sidebar.querySelector('.sidebar-nav')
+    const favorites = sidebar.querySelector('.sidebar-favs')
+    const bottom = sidebar.querySelector('.sidebar-bottom')
+    const target = sidebar.querySelector('.side-item.is-active')
+    if (brand) resizeObserver.observe(brand)
+    if (nav) resizeObserver.observe(nav)
+    if (favorites) resizeObserver.observe(favorites)
+    if (bottom) resizeObserver.observe(bottom)
+    if (target) resizeObserver.observe(target)
+    window.addEventListener('resize', updatePosition)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      resizeObserver.disconnect()
+      window.removeEventListener('resize', updatePosition)
+    }
+  }, [activeMarkerKey, collapsed, width])
 
   useEffect(() => {
     let cancelled = false
@@ -576,6 +634,7 @@ export default function Sidebar() {
   return (
     <>
       <aside
+        ref={sidebarRef}
         className={
           'sidebar' +
           (collapsed ? ' is-collapsed' : '') +
@@ -583,6 +642,7 @@ export default function Sidebar() {
         }
         style={{ width: collapsed ? COLLAPSED_W : width }}
       >
+        <span ref={activeMarkerRef} className="sidebar-active-marker" aria-hidden="true" />
         <div className="sidebar-brand">
           <Disc3 size={18} className="sidebar-brand-icon" />
           <span>Tempo</span>

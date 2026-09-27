@@ -81,17 +81,6 @@
   color: var(--text);
 }
 
-.side-item.is-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--accent);
-}
-
 .sidebar-bottom {
   margin-top: auto;
   border-top: 1px solid var(--border);
@@ -2850,12 +2839,36 @@ html.has-bg .app-content {
     0 0 18px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-.side-item.is-active::before {
-  top: 6px;
-  bottom: 6px;
+.sidebar-active-marker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
   width: 3px;
+  height: 0;
   border-radius: 999px;
   background: var(--accent-strong);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(0, -9999px, 0);
+  transition: none;
+}
+
+.sidebar-active-marker[data-visible='true'] {
+  opacity: 1;
+}
+
+.sidebar-active-marker.is-ready {
+  transition:
+    transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 120ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-active-marker.is-ready {
+    transition: none;
+  }
 }
 
 /* favorites list mirrors nav treatment */
