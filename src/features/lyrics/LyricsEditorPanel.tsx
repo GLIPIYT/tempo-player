@@ -3,6 +3,7 @@ import { Check, ChevronDown, Clock3, MoreHorizontal, Plus, Save, Search, Trash2 
 import { useT } from '../../i18n'
 import {
   fromPlainLyrics,
+  setSyncedLineTimeAtPlaybackPosition,
   toPlainText,
   validateLyricsDocument,
 } from './editorDocument'
@@ -212,22 +213,22 @@ export default function LyricsEditorPanel({
     if (source) replaceDocument(cloneDocument(source.document))
   }
 
-  const setStartToCurrentTime = (lineIndex: number): void => {
+  const setLineTimeToCurrentPosition = (lineIndex: number, field: TimeField): void => {
     if (document.mode !== 'synced') return
-    const startMs = Math.max(0, Math.round(currentTimeSec * 1000))
+    const timeMs = currentPositionMs
+    if (timeMs === null) return
     const currentLine = document.lines[lineIndex]
-    const clearEnd = currentLine?.endMs != null && currentLine.endMs <= startMs
-    setDocument((current) => {
-      if (current.mode !== 'synced') return current
-      return {
-        mode: 'synced',
-        lines: current.lines.map((line, index) => index === lineIndex
-          ? { ...line, startMs, endMs: clearEnd ? null : line.endMs }
-          : line),
-      }
-    })
+    if (!currentLine || (field === 'endMs' && timeMs <= currentLine.startMs)) return
+    const clearEnd = field === 'startMs' && currentLine.endMs !== null && currentLine.endMs <= timeMs
+    setDocument((current) => current.mode === 'synced'
+      ? setSyncedLineTimeAtPlaybackPosition(current, lineIndex, field, timeMs)
+      : current)
     setTimeDrafts((current) => current.map((draft, index) => index === lineIndex
-      ? { ...draft, start: formatTimecode(startMs), ...(clearEnd ? { end: '' } : {}) }
+      ? {
+          ...draft,
+          [field === 'startMs' ? 'start' : 'end']: formatTimecode(timeMs),
+          ...(clearEnd ? { end: '' } : {}),
+        }
       : draft))
     setActionError('')
     setActionNotice('')
@@ -305,6 +306,7 @@ export default function LyricsEditorPanel({
 
   const validationId = `${id}-validation`
   const errorId = `${id}-action-error`
+  const currentPositionMs = Number.isFinite(currentTimeSec) ? Math.max(0, Math.round(currentTimeSec * 1000)) : null
 
   return (
     <section className="lyr-editor-panel" aria-label={t('Lyrics editor')}>
@@ -416,7 +418,7 @@ export default function LyricsEditorPanel({
                   onChange={(event) => editSyncedText(lineIndex, event.target.value)}
                   disabled={busy}
                 />
-                <div className="lyr-editor-start-wrap">
+                <div className="lyr-editor-time-wrap">
                   <input
                     className="lyr-editor-time"
                     type="text"
@@ -431,25 +433,37 @@ export default function LyricsEditorPanel({
                   <button
                     type="button"
                     className="lyr-editor-capture-time"
-                    title={`${t('Start time')}: ${formatTimecode(Math.max(0, Math.round(currentTimeSec * 1000)))}`}
-                    aria-label={`${t('Start time')}: ${formatTimecode(Math.max(0, Math.round(currentTimeSec * 1000)))}`}
-                    onClick={() => setStartToCurrentTime(lineIndex)}
-                    disabled={busy}
+                    title={`${t('Start time')}: ${formatTimecode(currentPositionMs)}`}
+                    aria-label={`${t('Start time')}: ${formatTimecode(currentPositionMs)}`}
+                    onClick={() => setLineTimeToCurrentPosition(lineIndex, 'startMs')}
+                    disabled={busy || currentPositionMs === null}
                   >
                     <Clock3 size={13} />
                   </button>
                 </div>
-                <input
-                  className="lyr-editor-time"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="00:00.00"
-                  aria-label={`${t('End time')}, ${lineIndex + 1}`}
-                  aria-invalid={line.endMs !== null && (!Number.isSafeInteger(line.endMs) || line.endMs <= line.startMs) || undefined}
-                  value={timeDrafts[lineIndex]?.end ?? formatTimecode(line.endMs)}
-                  onChange={(event) => editTime(lineIndex, 'endMs', event.target.value)}
-                  disabled={busy}
-                />
+                <div className="lyr-editor-time-wrap">
+                  <input
+                    className="lyr-editor-time"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="00:00.00"
+                    aria-label={`${t('End time')}, ${lineIndex + 1}`}
+                    aria-invalid={line.endMs !== null && (!Number.isSafeInteger(line.endMs) || line.endMs <= line.startMs) || undefined}
+                    value={timeDrafts[lineIndex]?.end ?? formatTimecode(line.endMs)}
+                    onChange={(event) => editTime(lineIndex, 'endMs', event.target.value)}
+                    disabled={busy}
+                  />
+                  <button
+                    type="button"
+                    className="lyr-editor-capture-time"
+                    title={`${t('End time')}: ${formatTimecode(currentPositionMs)}`}
+                    aria-label={`${t('End time')}: ${formatTimecode(currentPositionMs)}`}
+                    onClick={() => setLineTimeToCurrentPosition(lineIndex, 'endMs')}
+                    disabled={busy || currentPositionMs === null || currentPositionMs <= line.startMs}
+                  >
+                    <Clock3 size={13} />
+                  </button>
+                </div>
                 <button
                   type="button"
                   className="lyr-editor-remove"

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import {
   Check,
   ChevronDown,
@@ -412,7 +413,7 @@ function PlayerBarContent() {
               onKeyUp={() => {
                 if (scrubbing) commitScrub()
               }}
-              style={{ background: `linear-gradient(to right, var(--accent) ${pct}%, var(--border) ${pct}%)` }}
+              style={{ '--fill': `${pct}%` } as CSSProperties}
               aria-label={t('Seek')}
             />
           )}
@@ -469,7 +470,7 @@ function PlayerBarContent() {
                   list="pb-playback-rate-ticks"
                   value={p.playbackRate}
                   onChange={(e) => p.setPlaybackRate(e.target.valueAsNumber)}
-                  style={{ background: `linear-gradient(to right, var(--accent) ${speedPct}%, var(--border) ${speedPct}%)` }}
+                  style={{ '--fill': `${speedPct}%` } as CSSProperties}
                   aria-label={t('Playback speed')}
                 />
                 <datalist id="pb-playback-rate-ticks">
@@ -570,8 +571,8 @@ function PlayerBarContent() {
                     const value = equalizer.bands[index]
                     const percent = ((value - EQUALIZER_MIN_DB) / (EQUALIZER_MAX_DB - EQUALIZER_MIN_DB)) * 100
                     const fill = value >= 0
-                      ? `linear-gradient(to right, var(--border) 0%, var(--border) 50%, var(--accent) 50%, var(--accent) ${percent}%, var(--border) ${percent}%, var(--border) 100%)`
-                      : `linear-gradient(to right, var(--border) 0%, var(--border) ${percent}%, var(--accent) ${percent}%, var(--accent) 50%, var(--border) 50%, var(--border) 100%)`
+                      ? `linear-gradient(to right, var(--border) 0%, var(--border) 50%, var(--range-start, var(--accent)) 50%, var(--range-end, var(--accent)) ${percent}%, var(--border) ${percent}%, var(--border) 100%)`
+                      : `linear-gradient(to right, var(--border) 0%, var(--border) ${percent}%, var(--range-start, var(--accent)) ${percent}%, var(--range-end, var(--accent)) 50%, var(--border) 50%, var(--border) 100%)`
                     const shortFrequency = band.frequency >= 1000 ? `${band.frequency / 1000}k` : String(band.frequency)
                     return (
                       <div className="pb-eq-band" key={band.frequency}>
@@ -634,9 +635,7 @@ function PlayerBarContent() {
               step={0.01}
               value={p.volume}
               onChange={(e) => p.setVolume(e.target.valueAsNumber)}
-              style={{
-                background: `linear-gradient(to right, var(--text) ${volPct}%, var(--border) ${volPct}%)`,
-              }}
+              style={{ '--fill': `${volPct}%` } as CSSProperties}
               aria-label={t('Volume')}
             />
             {/* second copy for the narrow layout; CSS decides which one shows,
@@ -650,9 +649,7 @@ function PlayerBarContent() {
                 step={0.01}
                 value={p.volume}
                 onChange={(e) => p.setVolume(e.target.valueAsNumber)}
-                style={{
-                  background: `linear-gradient(to right, var(--text) ${volPct}%, var(--border) ${volPct}%)`,
-                }}
+                style={{ '--fill': `${volPct}%` } as CSSProperties}
                 aria-label={t('Volume')}
               />
             </div>

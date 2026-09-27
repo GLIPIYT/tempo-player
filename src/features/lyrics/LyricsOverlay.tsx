@@ -312,7 +312,7 @@ function LyricsVolumeRow() {
         step={0.01}
         value={p.volume}
         onChange={(e) => p.setVolume(parseFloat(e.target.value))}
-        style={{ background: `linear-gradient(to right, var(--accent) ${pct}%, var(--border) ${pct}%)` }}
+        style={{ '--fill': `${pct}%` } as CSSProperties}
         aria-label={t('Volume')}
       />
       <span className="lyr-volume-pct">{pct}%</span>

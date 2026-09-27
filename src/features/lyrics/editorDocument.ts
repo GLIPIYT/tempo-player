@@ -28,6 +28,34 @@ export interface SyncedLyricsLine {
   endMs: number | null
 }
 
+export type SyncedLyricsTimeField = 'startMs' | 'endMs'
+
+/** Capture a playback position into one synced line, keeping timing valid. */
+export function setSyncedLineTimeAtPlaybackPosition(
+  document: SyncedLyricsDocument,
+  lineIndex: number,
+  field: SyncedLyricsTimeField,
+  timeMs: number,
+): SyncedLyricsDocument {
+  if (!Number.isSafeInteger(lineIndex) || lineIndex < 0 || !Number.isSafeInteger(timeMs) || timeMs < 0) {
+    return document
+  }
+
+  const target = document.lines[lineIndex]
+  if (!target || (field === 'endMs' && timeMs <= target.startMs)) return document
+
+  return {
+    mode: 'synced',
+    lines: document.lines.map((line, index) => {
+      if (index !== lineIndex) return line
+      if (field === 'startMs') {
+        return { ...line, startMs: timeMs, endMs: line.endMs !== null && line.endMs <= timeMs ? null : line.endMs }
+      }
+      return { ...line, endMs: timeMs }
+    }),
+  }
+}
+
 export type LyricsEditorIssueCode =
   | 'empty_document'
   | 'invalid_line'

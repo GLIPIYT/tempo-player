@@ -211,7 +211,12 @@ input[type='range']:active::-moz-range-thumb {
 }
 
 input[type='range'] {
-  background: linear-gradient(to right, var(--accent) var(--fill, 0%), var(--border) var(--fill, 0%));
+  background: linear-gradient(
+    to right,
+    var(--range-start, var(--accent)) 0%,
+    var(--range-end, var(--accent)) var(--fill, 0%),
+    var(--border) var(--fill, 0%)
+  );
 }
 
 .cover {

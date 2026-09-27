@@ -260,7 +260,7 @@
 .lyr-editor-column-labels,
 .lyr-editor-line {
   display: grid;
-  grid-template-columns: minmax(72px, 1fr) minmax(104px, 122px) minmax(73px, 86px) 25px;
+  grid-template-columns: minmax(72px, 1fr) minmax(104px, 122px) minmax(104px, 122px) 25px;
   align-items: center;
   gap: 6px;
 }
@@ -333,14 +333,14 @@
   font-variant-numeric: tabular-nums;
 }
 
-.lyr-editor-start-wrap {
+.lyr-editor-time-wrap {
   display: flex;
   align-items: center;
   gap: 3px;
   min-width: 0;
 }
 
-.lyr-editor-start-wrap .lyr-editor-time {
+.lyr-editor-time-wrap .lyr-editor-time {
   flex: 1;
   min-width: 0;
 }
@@ -520,7 +520,7 @@
 
   .lyr-editor-column-labels,
   .lyr-editor-line {
-    grid-template-columns: minmax(40px, 1fr) minmax(91px, 112px) minmax(60px, 72px) 23px;
+    grid-template-columns: minmax(40px, 1fr) minmax(88px, 108px) minmax(88px, 108px) 23px;
     gap: 3px;
   }
 
