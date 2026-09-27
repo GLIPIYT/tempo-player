@@ -493,12 +493,21 @@ html.theme-gradient .home-mix-art::after {
 .home-track-rail::-webkit-scrollbar-thumb { border-radius: 5px; background: color-mix(in srgb, var(--accent) 70%, transparent); }
 html.theme-gradient .home-track-rail,
 html.theme-gradient .home-mix-picker-rail {
-  scrollbar-color: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--t-gradient-first) color-mix(in srgb, var(--t-gradient-second) 18%, transparent);
 }
-@supports (scrollbar-color: auto) and (not selector(::-webkit-scrollbar-thumb)) {
+@supports selector(::-webkit-scrollbar-thumb) {
   html.theme-gradient .home-track-rail,
   html.theme-gradient .home-mix-picker-rail {
-    scrollbar-color: var(--t-gradient-second) transparent;
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+
+  html.theme-gradient .home-track-rail::-webkit-scrollbar-button,
+  html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
   }
 }
 html.theme-gradient .home-track-rail::-webkit-scrollbar-thumb,
