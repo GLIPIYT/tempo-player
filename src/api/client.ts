@@ -40,8 +40,9 @@ import type {
 import type { LyricsEditorDocument } from '../features/lyrics/editorDocument'
 import type {
   BackgroundImageProvider,
-  BackgroundImageResult,
+  BackgroundProviderStatus,
   BackgroundSearchFilters,
+  BackgroundSearchPage,
 } from '../types/backgrounds'
 
 function periodSinceSecs(period: AnalyticsPeriod): number | null {
@@ -202,7 +203,11 @@ export const api = {
     provider: BackgroundImageProvider,
     query: string,
     filters: BackgroundSearchFilters,
-  ) => invoke<BackgroundImageResult[]>('search_backgrounds', { provider, query, filters }),
+  ) => invoke<BackgroundSearchPage>('search_backgrounds', { provider, query, filters }),
+  getBackgroundProviderStatus: () =>
+    invoke<BackgroundProviderStatus[]>('get_background_provider_status'),
+  getBackgroundPreview: (provider: BackgroundImageProvider, imageUrl: string) =>
+    invoke<string>('get_background_preview', { provider, imageUrl }),
   saveSelectedBackground: (provider: BackgroundImageProvider, imageUrl: string) =>
     invoke<string>('save_selected_background', { provider, imageUrl }),
   importAvatar: (path: string) => invoke<string>('import_avatar', { path }),

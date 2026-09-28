@@ -30,6 +30,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WALLHAVEN_API_KEY: ${{ secrets.WALLHAVEN_API_KEY }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Tempo ${{ github.ref_name }}'

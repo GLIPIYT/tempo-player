@@ -2,6 +2,7 @@ mod child;
 mod commands;
 mod database;
 mod background_search;
+mod pinterest_backgrounds;
 mod discord;
 mod lyrics;
 mod lrclib_publish;
@@ -115,6 +116,8 @@ pub fn run() {
             commands::import_font,
             commands::import_background,
             background_search::search_backgrounds,
+            background_search::get_background_provider_status,
+            background_search::get_background_preview,
             background_search::save_selected_background,
             commands::import_avatar,
             commands::set_playlist_pinned,

@@ -7,6 +7,9 @@ src-tauri/gen/schemas/
 graphify-out/
 .playwright-mcp/
 .task-plans/
+.env
+.env.*
+!.env.example
 
 # actionlint is fetched on demand by CI, never vendored
 actionlint.zip
