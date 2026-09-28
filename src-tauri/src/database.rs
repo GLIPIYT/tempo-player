@@ -2542,8 +2542,8 @@ impl Db {
                             .clone()
                             .or_else(|| edited_version.as_ref().map(|version| version.provider.clone()))
                             .unwrap_or_else(|| "manual".to_string()),
-                        source_artist: active_source_artist.or(edited_source_artist),
-                        source_title: active_source_title.or(edited_source_title),
+                        source_artist: if is_active { active_source_artist } else { edited_source_artist },
+                        source_title: if is_active { active_source_title } else { edited_source_title },
                         lrc: active_lrc.or(edited_lrc).unwrap_or_default(),
                         offset_ms: active_offset_ms.or(edited_offset_ms).unwrap_or(0),
                         updated_at: active_updated_at.or(edited_updated_at).unwrap_or(0),
@@ -4116,6 +4116,32 @@ mod tests {
         assert_eq!(serde_json::to_value(repinned.editor_document.unwrap()).unwrap(), expected);
         assert_eq!(repinned.provider, "lrclib");
         assert_eq!(repinned.edited_version.unwrap().lrc, "[00:01.00]one");
+        // Matching text/provider is insufficient when the active source identity
+        // changed to NULL; the getter must not hide that change with old metadata.
+        db.set_lyrics_override(track_id, "manual", None, None, "[00:01.00]one", 1500).unwrap();
+        let null_source = db.get_lyrics_override(track_id).unwrap().unwrap();
+        assert!(null_source.is_active);
+        assert_eq!(null_source.provider, "manual");
+        assert_eq!(null_source.lrc, "[00:01.00]one");
+        assert_eq!(null_source.source_artist, None);
+        assert_eq!(null_source.source_title, None);
+        let retained = null_source.edited_version.unwrap();
+        assert_eq!(retained.source_artist.as_deref(), Some("Artist"));
+        assert_eq!(retained.source_title.as_deref(), Some("Song"));
+        db.clear_lyrics_override(track_id).unwrap();
+        let inactive = db.get_lyrics_override(track_id).unwrap().unwrap();
+        assert!(!inactive.is_active);
+        assert_eq!(inactive.source_artist.as_deref(), Some("Artist"));
+        assert_eq!(inactive.source_title.as_deref(), Some("Song"));
+        // Normalized crossing-zero metadata is valid at the actual native save
+        // boundary and remains intact on read. No zero-duration word is accepted.
+        let clipped = serde_json::json!({"mode":"synced","lines":[{"text":"one two","startMs":0,"endMs":1000,
+            "endOrigin":"source","words":[{"text":"one ","startMs":0,"endMs":null},
+                {"text":"two","startMs":0,"endMs":1000}]}]});
+        let clipped_document: LyricsEditorDocument = serde_json::from_value(clipped.clone()).unwrap();
+        db.save_lyrics_editor_document(track_id, "manual", None, None, "[00:00.00]one two", 0, &clipped_document).unwrap();
+        let saved_clipped = db.get_lyrics_override(track_id).unwrap().unwrap();
+        assert_eq!(serde_json::to_value(saved_clipped.editor_document.unwrap()).unwrap(), clipped);
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

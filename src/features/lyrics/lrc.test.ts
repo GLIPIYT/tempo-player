@@ -64,6 +64,24 @@ describe('parseLrc', () => {
     expect(lines[1].words?.map((w) => w.timeSec)).toEqual([11.5, 12.5])
   })
 
+  it('retains text but removes exact durations collapsed by crossing the track start', () => {
+    const line = parseLrc('[offset:2000]\n[00:01]<00:01>one <00:02>two<00:03>')![0]
+    expect(line).toEqual({ timeSec: 0, text: 'one two', endTimeSec: 1, endSource: 'source', words: [
+      { text: 'one ', timeSec: 0, endTimeSec: null }, { text: 'two', timeSec: 0, endTimeSec: 1 },
+    ] })
+    const malformed = shiftLyricsLines([{ timeSec: 1, text: 'bad', words: [{ text: 'bad', timeSec: 1, endTimeSec: 1 }] }], 0)
+    expect(malformed[0].words?.[0].endTimeSec).toBe(1)
+  })
+
+  it('keeps the text of a word that elapsed entirely before track zero', () => {
+    const line = parseLrc('[offset:2500]\n[00:01]<00:01>one <00:02>two<00:03>')![0]
+    expect(line.text).toBe('one two')
+    expect(line.endTimeSec).toBe(0.5)
+    expect(line.words).toEqual([
+      { text: 'one ', timeSec: 0, endTimeSec: null }, { text: 'two', timeSec: 0, endTimeSec: 0.5 },
+    ])
+  })
+
   it('shifts both endpoints and words without mutating the source', () => {
     const source = [{ timeSec: 2, text: 'word', endTimeSec: 4, endSource: 'source' as const,
       words: [{ text: 'word', timeSec: 2, endTimeSec: 4 }],

@@ -41,9 +41,16 @@ export function shiftLyricsLines(lines: readonly LyricsLine[], offsetMs: number)
     ...line,
     timeSec: shift(line.timeSec),
     ...(line.endTimeSec === undefined ? {} : { endTimeSec: shift(line.endTimeSec) }),
-    ...(line.words ? { words: line.words.map((word) => ({ ...word, timeSec: shift(word.timeSec),
-      ...(word.endTimeSec == null ? {} : { endTimeSec: shift(word.endTimeSec) }),
-    })) } : {}),
+    ...(line.words ? { words: line.words.map((word) => {
+      const start = shift(word.timeSec)
+      if (word.endTimeSec == null) return { ...word, timeSec: start }
+      const end = shift(word.endTimeSec)
+      // Only normalize a formerly positive valid interval collapsed by clipping.
+      // Genuinely invalid source durations still reach document validation.
+      const clipped = Number.isFinite(word.timeSec) && Number.isFinite(word.endTimeSec)
+        && word.endTimeSec > word.timeSec && end <= start
+      return { ...word, timeSec: start, endTimeSec: clipped ? null : end }
+    }) } : {}),
   }))
 }
 

@@ -141,10 +141,17 @@ export function resolveLyricTiming(
       let endSource: ResolvedLyricsLine['endSource']
       let confidence: number
       const lastWord = line.words?.at(-1)
+      // A known word start is not an exact phrase end, but an automatic estimate
+      // cannot finish before that word has begun. Leave a small inferred tail.
+      const sourceWordStart = line.words?.reduce((floor, word) => {
+        const usable = Number.isFinite(word.timeSec) && word.timeSec >= line.timeSec && word.timeSec < limit
+          && word.text.trim() && (word.endTimeSec == null || validEnd(word.endTimeSec, word.timeSec))
+        return usable ? Math.max(floor, word.timeSec) : floor
+      }, line.timeSec) ?? line.timeSec
       const hasExplicitEnd = validEnd(line.endTimeSec, line.timeSec)
       const explicit = hasExplicitEnd ? line.endTimeSec : lastWord?.endTimeSec
       const recognized = analysis?.matchedEnds.filter((e) => e.lineIndex === lineIndex && Number.isFinite(e.confidence)
-        && e.confidence >= CONFIDENT && validEnd(e.endTimeSec, line.timeSec))
+        && e.confidence >= CONFIDENT && validEnd(e.endTimeSec, sourceWordStart))
         .sort((a, b) => b.confidence - a.confidence)[0]
       if (validEnd(explicit, line.timeSec)) {
         endSource = hasExplicitEnd ? line.endSource ?? 'source' : 'source'
@@ -164,7 +171,7 @@ export function resolveLyricTiming(
           rate *= 1 + Math.max(-0.15, Math.min(0.15, (120 - bpm.value) / 120)) * 0.1
         }
         const estimated = Math.max(1.2, Math.min(30, work.units * rate + 0.45 + work.pause))
-        endTimeSec = Math.min(line.timeSec + estimated, limit)
+        endTimeSec = Math.min(Math.max(line.timeSec + estimated, sourceWordStart + 0.2), limit)
         endSource = 'text'
         confidence = calibration === null ? work.confidence : Math.min(0.7, work.confidence + 0.1)
         const gap = limit - endTimeSec

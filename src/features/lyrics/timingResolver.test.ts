@@ -1,8 +1,34 @@
 import { describe, expect, it } from 'vitest'
 import { lyricTimingAt, resolveLyricTiming } from './timingResolver'
 import type { LyricsLine } from './types'
+import { parseLrc } from './lrc'
 
 describe('resolveLyricTiming', () => {
+  it('keeps a phrase active when its final source word starts late without an exact end', () => {
+    const lines = parseLrc('[00:01]<00:01>Stay <00:09>here\n[00:20]next')!
+    const timing = resolveLyricTiming(lines, 30)
+    expect(lines[0].endTimeSec).toBeUndefined()
+    expect(timing.lines[0].endSource).toBe('text')
+    expect(timing.lines[0].endTimeSec).toBeGreaterThan(9)
+    expect(timing.lines[0].endTimeSec).toBeLessThanOrEqual(20)
+    expect(lyricTimingAt(timing, 9).lineIndices).toEqual([0])
+  })
+
+  it('rejects an ASR ending before a known source word and keeps manual priority and interval bounds', () => {
+    const line: LyricsLine = { timeSec: 1, text: 'Stay here', words: [
+      { text: 'Stay ', timeSec: 1, endTimeSec: 9 }, { text: 'here', timeSec: 9, endTimeSec: null },
+    ] }
+    const analysis = { bpm: null, matchedEnds: [{ lineIndex: 0, endTimeSec: 3, confidence: 0.95 }] }
+    expect(resolveLyricTiming([line, { timeSec: 20, text: 'next' }], 30, analysis).lines[0].endTimeSec).toBeGreaterThan(9)
+    expect(resolveLyricTiming([{ ...line, endTimeSec: 3, endSource: 'manual' }], 30, analysis).lines[0].endTimeSec).toBe(3)
+    expect(resolveLyricTiming([line, { timeSec: 8, text: 'next' }], 30, analysis).lines[0].endTimeSec).toBeLessThanOrEqual(8)
+    expect(resolveLyricTiming([line], 8, analysis).lines[0].endTimeSec).toBeLessThanOrEqual(8)
+    const validShortEnd = { bpm: null, matchedEnds: [{ lineIndex: 0, endTimeSec: 9.1, confidence: 0.95 }] }
+    const recognized = resolveLyricTiming([line], 30, validShortEnd).lines[0]
+    expect(recognized.endSource).toBe('recognized')
+    expect(recognized.endTimeSec).toBe(9.1)
+  })
+
   it('ends a short phrase before a long instrumental break', () => {
     const timing = resolveLyricTiming([{ timeSec: 10, text: 'Stay here' }, { timeSec: 50, text: 'Come home' }], 60)
     expect(timing.lines[0].endTimeSec).toBeLessThan(20)

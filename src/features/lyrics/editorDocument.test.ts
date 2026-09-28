@@ -45,6 +45,18 @@ describe('setSyncedLineTimeAtPlaybackPosition', () => {
 })
 
 describe('timing provenance', () => {
+  it('imports crossing-zero source offsets into a saveable rich document', () => {
+    const document = fromLrc('[offset:2000]\n[00:01]<00:01>one <00:02>two<00:03>', 10_000)
+    expect(validateLyricsDocument(document, 10_000)).toEqual([])
+    expect(toPlaybackLines(document)?.[0].words).toEqual([
+      { text: 'one ', timeSec: 0, endTimeSec: null }, { text: 'two', timeSec: 0, endTimeSec: 1 },
+    ])
+    const original = fromLrc('[00:01]<00:01>one <00:02>two<00:03>', 10_000)
+    expect(toPlaybackLines(original, -2000)?.[0].words?.[0].endTimeSec).toBeNull()
+    if (original.mode !== 'synced') throw new Error('expected synced')
+    expect(original.lines[0].words?.[0].endMs).toBe(2000)
+  })
+
   it('marks manually typed ends and clears their origin when emptied', () => {
     const document: SyncedLyricsDocument = { mode: 'synced', lines: [{ text: 'one', startMs: 1000, endMs: 3000, endOrigin: 'auto' }] }
     const edited = editSyncedLineTime(document, 0, 'endMs', 4000)

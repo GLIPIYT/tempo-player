@@ -14,8 +14,15 @@ describe('activeOverrideDocument', () => {
   })
   it.each([
     { provider: 'lrclib' }, { lrc: '[00:01.00]different' }, { sourceArtist: 'different' }, { sourceTitle: 'different' },
+    { sourceArtist: null }, { sourceTitle: null }, { sourceArtist: null, sourceTitle: null },
   ])('rejects an unrelated active pin: %j', (different) => {
     expect(activeOverrideDocument({ ...pinned, ...different })).toBeNull()
+  })
+  it('rejects retained endpoints when the native active pin has null source metadata', () => {
+    const nativePin: LyricsOverride = { ...pinned, sourceArtist: null, sourceTitle: null }
+    expect(nativePin.editedVersion?.sourceArtist).toBe('artist')
+    expect(activeOverrideDocument(nativePin)).toBeNull()
+    expect(activeOverrideDocument({ ...nativePin, isActive: false })).toBeNull()
   })
   it('rejects inactive documents and supports exact legacy LRC identity', () => {
     expect(activeOverrideDocument({ ...pinned, isActive: false })).toBeNull()
