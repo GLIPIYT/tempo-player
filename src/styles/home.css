@@ -10,6 +10,8 @@
   font-family: Bahnschrift, 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
   font-size: clamp(27px, 3vw, 36px);
   letter-spacing: -.045em;
+  color: #fff;
+  -webkit-text-fill-color: #fff;
 }
 
 .tempo-home .hero-sub {

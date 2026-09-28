@@ -167,7 +167,6 @@ html.theme-gradient .home-section-open,
 html.theme-gradient .home-mix-picker-heading strong,
 html.theme-gradient .section-label,
 html.theme-gradient .detail-title,
-html.theme-gradient .hero-title,
 html.theme-gradient .link-btn,
 html.theme-gradient .editorial-detail-kind,
 html.theme-gradient .lyr-time-cur {
@@ -252,7 +251,6 @@ html.theme-gradient .lyr-overlay .lyr-skip:hover,
 html.theme-gradient .lyr-overlay .lyr-edit-btn:hover,
 html.theme-gradient .lyr-overlay .lyr-edit-btn.is-active,
 html.theme-gradient .lyr-overlay .lyr-prov-item.is-selected,
-html.theme-gradient .lyr-overlay .lyr-notes.is-active,
 html.theme-gradient .lyr-editor-mode button.is-active,
 html.theme-gradient .lyr-editor-source-options button.is-selected {
   background: var(--tempo-gradient-soft);
