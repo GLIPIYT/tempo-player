@@ -8,6 +8,7 @@ export const ru: Record<string, string> = {
   Category: 'Категория',
   'Safe images only': 'Только SFW',
   'Include adult images': 'Включая 18+',
+  'NSFW images only': 'Только NSFW',
   'Set background': 'Поставить',
   'Background provider unavailable': 'Источник сейчас недоступен',
   'Image preview unavailable': 'Превью недоступно',

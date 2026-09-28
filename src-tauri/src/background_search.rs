@@ -546,7 +546,7 @@ fn wallhaven_parameters(
         ("categories", categories.into()),
         (
             "purity",
-            if filters.include_nsfw { "111" } else { "100" }.into(),
+            if filters.include_nsfw { "001" } else { "100" }.into(),
         ),
         ("page", filters.page.to_string()),
         (
@@ -666,7 +666,10 @@ fn wallhaven_page(
         .ok_or("Wallhaven returned invalid pagination")?;
     let mut results = Vec::new();
     for record in records {
-        if !filters.include_nsfw && record.get("purity").and_then(Value::as_str) != Some("sfw") {
+        let purity = record.get("purity").and_then(Value::as_str);
+        if (filters.include_nsfw && purity != Some("nsfw"))
+            || (!filters.include_nsfw && purity != Some("sfw"))
+        {
             continue;
         }
         let (Some(width), Some(height)) = (
@@ -737,7 +740,9 @@ fn konachan_tags(query: &str, include_nsfw: bool) -> Result<String, String> {
         return Err("Use the content filter instead of a rating tag".into());
     }
     if include_nsfw {
-        Ok(query.trim().to_owned())
+        Ok(format!("{} rating:explicit", query.trim())
+            .trim()
+            .to_owned())
     } else {
         Ok(format!("{} rating:safe", query.trim()).trim().to_owned())
     }
@@ -784,8 +789,8 @@ fn konachan_page(records: &[Value], filters: &BackgroundSearchFilters) -> Backgr
     let mut results = Vec::new();
     for record in records {
         let rating = record.get("rating").and_then(Value::as_str);
-        if (!filters.include_nsfw && rating != Some("s"))
-            || (filters.include_nsfw && !matches!(rating, Some("s" | "q" | "e")))
+        if (filters.include_nsfw && rating != Some("e"))
+            || (!filters.include_nsfw && rating != Some("s"))
             || record.get("is_shown_in_index").and_then(Value::as_bool) == Some(false)
         {
             continue;
@@ -930,8 +935,11 @@ mod tests {
             konachan_tags("landscape", false).unwrap(),
             "landscape rating:safe"
         );
-        assert_eq!(konachan_tags("landscape", true).unwrap(), "landscape");
-        assert_eq!(konachan_tags("", true).unwrap(), "");
+        assert_eq!(
+            konachan_tags("landscape", true).unwrap(),
+            "landscape rating:explicit"
+        );
+        assert_eq!(konachan_tags("", true).unwrap(), "rating:explicit");
         assert!(konachan_tags("landscape ~rating:e", true).is_err());
         assert!(konachan_tags("-RATING:s", false).is_err());
     }

@@ -7,6 +7,7 @@ export const en: Record<string, string> = {
   Filters: 'Filters',
   'Safe images only': 'SFW only',
   'Include adult images': 'Including 18+',
+  'NSFW images only': 'NSFW only',
   'Set background': 'Set background',
   'Background provider unavailable': 'Provider unavailable',
   'Image preview unavailable': 'Preview unavailable',

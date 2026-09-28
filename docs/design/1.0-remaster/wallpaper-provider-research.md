@@ -6,15 +6,15 @@ Updated: 28 September 2026.
 
 | Provider | Current implementation | Credentials | Native filters |
 | --- | --- | --- | --- |
-| Wallhaven | Public API v1 | No key for SFW. NSFW requires an API key. | Category, color, minimum dimensions, orientation, page, purity. |
+| Wallhaven | Public API v1 | No key for SFW. NSFW requires an API key. | Category, color, minimum dimensions, orientation, page, exact purity. |
 | Pinterest | Public website guest search with its own anonymous session | No API key or user login for the verified guest route. | Search text, local minimum dimensions and orientation. No exact category, color or adult-content filter. |
-| Konachan | Public `konachan.net/post.json`; SFW by default, optional all-ratings toggle | None for read-only search. | Tags, minimum dimensions, local orientation and page. No dedicated color filter. |
+| Konachan | Public `konachan.net/post.json`; SFW by default, optional explicit-only toggle | None for read-only search. | Tags, minimum dimensions, local orientation and page. No dedicated color filter. |
 
 Safebooru is not included. Commons and Art Institute are removed from the search UI; previously selected backgrounds remain usable.
 
 [Wallhaven API documentation](https://www.whvn.cc/help/api) documents 24 results per page and a limit of 45 API calls per minute. Requests pass the key through `X-API-Key`, not the URL, and explicitly set purity and categories so account defaults do not silently change filters. The documented rate limit does not identify whether its bucket is per IP, account or key.
 
-[Konachan API documentation](https://konachan.net/help/api) describes public GET searches, tags, pagination and a maximum of 100 posts per request. Tempo uses its safe domain, defaults to safe images, and offers an 18+ toggle for all ratings. Search text cannot override the selected rating. Color search is tag-based; there is no dedicated dominant-color filter. Unsupported Wallhaven filters are not shown for this provider.
+[Konachan API documentation](https://konachan.net/help/api) describes public GET searches, tags, pagination and a maximum of 100 posts per request. Tempo uses its safe domain, defaults to safe images, and offers an 18+ toggle for explicit-rated images only. Search text cannot override the selected rating. Color search is tag-based; there is no dedicated dominant-color filter. Unsupported Wallhaven filters are not shown for this provider.
 
 Pinterest's guest endpoint is unofficial and may change or stop accepting anonymous searches. Its official API uses OAuth with an app ID, app secret and endpoint-specific scopes. Official account Pin search is not global catalogue search; the global partner search endpoint has restricted beta access. See the [Pinterest implementation note](../../notes/pinterest-background-search.md), [official OpenAPI specification](https://github.com/pinterest/api-description/blob/main/v5/openapi.yaml) and [OAuth documentation](https://developers.pinterest.com/docs/getting-started/set-up-authentication-and-authorization/).
 

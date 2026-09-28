@@ -142,6 +142,7 @@ export default function BackgroundSearchPanel({ search, onSelect }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [searchRevision, setSearchRevision] = useState(0)
   const requestId = useRef(0)
+  const loadingMoreRef = useRef(false)
   const filtersRef = useRef<HTMLDivElement>(null)
   const status = statuses.find((item) => item.id === provider) ?? DEFAULT_STATUSES[0]
   const searchFailureLabel = t('Background image search failed')
@@ -182,10 +183,18 @@ export default function BackgroundSearchPanel({ search, onSelect }: Props) {
 
   const runSearch = useCallback(async (requestedPage = 1) => {
     if (!statusesReady || !status.available || provider === 'pinterest' && !term) return
-    const currentRequest = ++requestId.current
     const append = requestedPage > 1
-    if (append) setLoadingMore(true)
-    else { setLoading(true); setResults([]); setHasSearched(true) }
+    if (append) {
+      if (loadingMoreRef.current) return
+      loadingMoreRef.current = true
+      setLoadingMore(true)
+    } else {
+      loadingMoreRef.current = false
+      setLoading(true)
+      setResults([])
+      setHasSearched(true)
+    }
+    const currentRequest = ++requestId.current
     setError(null)
     try {
       const found = await search(provider, term, {
@@ -206,13 +215,18 @@ export default function BackgroundSearchPanel({ search, onSelect }: Props) {
     } catch (cause) {
       if (currentRequest === requestId.current) setError(displayError(cause, searchFailureLabel))
     } finally {
-      if (currentRequest === requestId.current) { setLoading(false); setLoadingMore(false) }
+      if (currentRequest === requestId.current) {
+        setLoading(false)
+        setLoadingMore(false)
+        if (append) loadingMoreRef.current = false
+      }
     }
   }, [search, statusesReady, status.available, status.supportsCategories, status.supportsColor, status.supportsNsfw,
     provider, term, resolution, orientation, category, color, includeNsfw, searchFailureLabel])
 
   useEffect(() => {
     requestId.current += 1
+    loadingMoreRef.current = false
     setError(null)
     setResults([])
     setHasMore(false)
@@ -304,7 +318,7 @@ export default function BackgroundSearchPanel({ search, onSelect }: Props) {
         <button className="background-search-adult-toggle" type="button" aria-pressed={includeNsfw}
           aria-label={includeNsfw ? t('Show safe images only') : t('Show adult images')}
           onClick={() => setIncludeNsfw(!includeNsfw)}>18+</button>
-        <span>{includeNsfw ? t('Include adult images') : t('Safe images only')}</span>
+        <span>{includeNsfw ? t('NSFW images only') : t('Safe images only')}</span>
       </div> : null}
 
       {error ? <div className="background-search-error" role="alert">{t(error)}</div> : null}
@@ -319,7 +333,14 @@ export default function BackgroundSearchPanel({ search, onSelect }: Props) {
           : <span>{t('No background images found')}</span>}
       </div> : null}
 
-      {results.length > 0 ? <ul className="background-search-results" aria-label={t('Search for background images')}>
+      {results.length > 0 ? <ul className="background-search-results" aria-label={t('Search for background images')}
+        onScroll={(event) => {
+          const list = event.currentTarget
+          const nearEnd = list.scrollHeight - list.scrollTop - list.clientHeight <= 160
+          if (nearEnd && list.scrollHeight > list.clientHeight && hasMore && !loading && !loadingMoreRef.current) {
+            void runSearch(page + 1)
+          }
+        }}>
         {results.map((result) => {
           const id = `${result.provider}:${result.id}`
           const isSelecting = selectingId === id
