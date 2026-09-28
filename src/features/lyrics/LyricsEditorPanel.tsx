@@ -3,6 +3,9 @@ import { Check, ChevronDown, Clock3, MoreHorizontal, Plus, Save, Search, Trash2 
 import { useT } from '../../i18n'
 import {
   fromPlainLyrics,
+  cloneLyricsDocument,
+  editSyncedLineTime,
+  setSyncedLineText,
   setSyncedLineTimeAtPlaybackPosition,
   toPlainText,
   validateLyricsDocument,
@@ -38,16 +41,7 @@ type TimeDraft = { start: string; end: string }
 type LocalAction = 'save' | 'publish' | null
 
 function cloneDocument(document: LyricsEditorDocument): LyricsEditorDocument {
-  return document.mode === 'plain'
-    ? { mode: 'plain', lines: document.lines.map((line) => ({ text: line.text })) }
-    : {
-        mode: 'synced',
-        lines: document.lines.map((line) => ({
-          text: line.text,
-          startMs: line.startMs,
-          endMs: line.endMs,
-        })),
-      }
+  return cloneLyricsDocument(document)
 }
 
 function formatTimecode(milliseconds: number | null): string {
@@ -91,6 +85,7 @@ function plainToSynced(document: Extract<LyricsEditorDocument, { mode: 'plain' }
         text: line.text,
         startMs,
         endMs: proposedEnd !== null && proposedEnd > startMs ? proposedEnd : null,
+        endOrigin: 'auto',
       }
     }),
   }
@@ -237,10 +232,7 @@ export default function LyricsEditorPanel({
   const editSyncedText = (lineIndex: number, text: string): void => {
     setDocument((current) => {
       if (current.mode !== 'synced') return current
-      return {
-        mode: 'synced',
-        lines: current.lines.map((line, index) => (index === lineIndex ? { ...line, text } : line)),
-      }
+      return setSyncedLineText(current, lineIndex, text)
     })
     setActionError('')
     setActionNotice('')
@@ -248,14 +240,14 @@ export default function LyricsEditorPanel({
 
   const editTime = (lineIndex: number, field: TimeField, value: string): void => {
     const draftField = field === 'startMs' ? 'start' : 'end'
-    setTimeDrafts((current) => current.map((draft, index) => index === lineIndex ? { ...draft, [draftField]: value } : draft))
     const parsed = field === 'endMs' && value.trim() === '' ? null : parseTimecode(value)
+    const line = document.mode === 'synced' ? document.lines[lineIndex] : undefined
+    const clearEnd = field === 'startMs' && parsed !== null && line?.endMs != null && line.endMs <= parsed
+    setTimeDrafts((current) => current.map((draft, index) => index === lineIndex
+      ? { ...draft, [draftField]: value, ...(clearEnd ? { end: '' } : {}) } : draft))
     setDocument((current) => {
       if (current.mode !== 'synced') return current
-      return {
-        mode: 'synced',
-        lines: current.lines.map((line, index) => index === lineIndex ? { ...line, [field]: parsed } : line),
-      }
+      return editSyncedLineTime(current, lineIndex, field, parsed)
     })
     setActionError('')
     setActionNotice('')
@@ -274,7 +266,7 @@ export default function LyricsEditorPanel({
       : Math.min(Math.max(0, proposedStart), Math.max(0, duration - 1000))
     const proposedEnd = duration === null ? null : Math.min(duration, startMs + 3000)
     const endMs = proposedEnd !== null && proposedEnd > startMs ? proposedEnd : null
-    replaceDocument({ mode: 'synced', lines: [...document.lines, { text: '', startMs, endMs }] })
+    replaceDocument({ mode: 'synced', lines: [...document.lines, { text: '', startMs, endMs, endOrigin: 'auto' }] })
   }
 
   const removeLine = (lineIndex: number): void => {

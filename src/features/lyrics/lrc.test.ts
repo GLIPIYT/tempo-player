@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatLrc, normalizeLyricText, parseLrc } from './lrc'
+import { formatLrc, normalizeLyricText, parseLrc, shiftLyricsLines } from './lrc'
 
 describe('parseLrc', () => {
   it('reads a plain line', () => {
@@ -47,6 +47,35 @@ describe('parseLrc', () => {
     expect(parseLrc('[00:01]<00:01.00>la<00:02.00>la')?.[0].text).toBe('lala')
   })
 
+  it('keeps word starts and only treats a trailing timestamp as an exact end', () => {
+    expect(parseLrc('[00:01]<00:01>Stay <00:02>here<00:03>')).toEqual([{
+      timeSec: 1, text: 'Stay here', endTimeSec: 3, endSource: 'source',
+      words: [{ text: 'Stay ', timeSec: 1, endTimeSec: 2 }, { text: 'here', timeSec: 2, endTimeSec: 3 }],
+    }])
+    const unknown = parseLrc('[00:01]<00:01>Stay <00:02>here')![0]
+    expect(unknown.endTimeSec).toBeUndefined()
+    expect(unknown.words?.[1].endTimeSec).toBeNull()
+  })
+
+  it('shifts enhanced timestamps for each repeated line occurrence and offset', () => {
+    const lines = parseLrc('[offset:500]\n[00:01][00:11]<00:01>Stay <00:02>here<00:03>', 1000)!
+    expect(lines.map((l) => l.timeSec)).toEqual([1.5, 11.5])
+    expect(lines.map((l) => l.endTimeSec)).toEqual([3.5, 13.5])
+    expect(lines[1].words?.map((w) => w.timeSec)).toEqual([11.5, 12.5])
+  })
+
+  it('shifts both endpoints and words without mutating the source', () => {
+    const source = [{ timeSec: 2, text: 'word', endTimeSec: 4, endSource: 'source' as const,
+      words: [{ text: 'word', timeSec: 2, endTimeSec: 4 }],
+    }]
+    expect(shiftLyricsLines(source, -1000)[0]).toEqual({
+      timeSec: 1, text: 'word', endTimeSec: 3, endSource: 'source',
+      words: [{ text: 'word', timeSec: 1, endTimeSec: 3 }],
+    })
+    expect(shiftLyricsLines(source, 1000)[0].endTimeSec).toBe(5)
+    expect(source[0].words[0].timeSec).toBe(2)
+  })
+
   it('sorts by time', () => {
     expect(parseLrc('[00:09]c\n[00:01]a\n[00:05]b')?.map((l) => l.text)).toEqual(['a', 'b', 'c'])
   })
@@ -68,6 +97,16 @@ describe('parseLrc', () => {
 })
 
 describe('formatLrc', () => {
+  it('keeps enhanced word timestamps and final endpoints when pinning parsed lyrics', () => {
+    const source = '[00:01.00]<00:01.00>Stay <00:02.00>here<00:03.00>'
+    expect(formatLrc(parseLrc(source)!)).toBe(source)
+  })
+
+  it('keeps word timestamps when a line begins with an untimed prefix', () => {
+    const source = '[00:01.00]Before <00:02.00>timed <00:03.00>words<00:04.00>'
+    expect(formatLrc(parseLrc(source)!)).toBe(source)
+  })
+
   it('pads minutes, seconds and hundredths', () => {
     expect(formatLrc([{ timeSec: 0, text: 'a' }])).toBe('[00:00.00]a')
     expect(formatLrc([{ timeSec: 5.5, text: 'a' }])).toBe('[00:05.50]a')

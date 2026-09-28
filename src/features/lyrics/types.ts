@@ -7,6 +7,16 @@ export type LyricsResult =
 export interface LyricsLine {
   timeSec: number
   text: string
+  endTimeSec?: number
+  endSource?: 'manual' | 'source'
+  words?: LyricsWord[]
+}
+
+export interface LyricsWord {
+  text: string
+  timeSec: number
+  /** A last word start alone does not establish the phrase end. */
+  endTimeSec?: number | null
 }
 
 export interface LyricsProvider {

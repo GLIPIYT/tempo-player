@@ -1,9 +1,12 @@
+import { parseLrcLines, shiftLyricsLines } from './lrc'
+import type { LyricsLine } from './types'
+
 /**
  * Canonical document model for the lyric editor.
  *
- * LRC only carries line start times. `endMs` therefore stays in this editor
- * document and is never discarded by import/sort/save helpers. Playback LRC is a
- * compatibility projection: end times are intentionally omitted there.
+ * Ordinary LRC carries line starts; enhanced LRC may also carry word timing.
+ * The canonical document preserves endpoints, their origin, and source words.
+ * Playback LRC remains a compatibility projection with line starts only.
  */
 export type LyricsEditorDocument = PlainLyricsDocument | SyncedLyricsDocument
 
@@ -26,9 +29,60 @@ export interface SyncedLyricsLine {
   startMs: number
   /** Null means that the source did not provide an end and no duration was known. */
   endMs: number | null
+  /** Missing on saved legacy documents means an authored end. */
+  endOrigin?: 'auto' | 'source' | 'manual'
+  words?: SyncedLyricsWord[]
+}
+
+export interface SyncedLyricsWord {
+  text: string
+  startMs: number
+  endMs: number | null
 }
 
 export type SyncedLyricsTimeField = 'startMs' | 'endMs'
+
+export function cloneLyricsDocument(document: LyricsEditorDocument): LyricsEditorDocument {
+  return document.mode === 'plain'
+    ? { mode: 'plain', lines: document.lines.map((line) => ({ ...line })) }
+    : { mode: 'synced', lines: document.lines.map((line) => ({ ...line,
+      ...(line.words ? { words: line.words.map((word) => ({ ...word })) } : {}),
+    })) }
+}
+
+/** A changed text invalidates source words, while authored ends stay authored. */
+export function setSyncedLineText(document: SyncedLyricsDocument, lineIndex: number, text: string): SyncedLyricsDocument {
+  return { mode: 'synced', lines: document.lines.map((line, index) => {
+    if (index !== lineIndex || line.text === text) return line
+    const updated = { ...line, text }
+    delete updated.words
+    if (updated.endOrigin === 'source') updated.endOrigin = 'auto'
+    return updated
+  }) }
+}
+
+/** Keeps invalid typed drafts for validation; playback capture validates first. */
+export function editSyncedLineTime(
+  document: SyncedLyricsDocument, lineIndex: number, field: SyncedLyricsTimeField, timeMs: number | null,
+): SyncedLyricsDocument {
+  return { mode: 'synced', lines: document.lines.map((line, index) => {
+    if (index !== lineIndex) return line
+    const updated = { ...line }
+    delete updated.words
+    if (field === 'startMs') {
+      updated.startMs = timeMs ?? Number.NaN
+      if (updated.endMs !== null && updated.endMs <= updated.startMs) {
+        updated.endMs = null
+        delete updated.endOrigin
+      }
+    } else {
+      updated.endMs = timeMs
+      if (timeMs === null) delete updated.endOrigin
+      else updated.endOrigin = 'manual'
+    }
+    return updated
+  }) }
+}
 
 /** Capture a playback position into one synced line, keeping timing valid. */
 export function setSyncedLineTimeAtPlaybackPosition(
@@ -44,16 +98,7 @@ export function setSyncedLineTimeAtPlaybackPosition(
   const target = document.lines[lineIndex]
   if (!target || (field === 'endMs' && timeMs <= target.startMs)) return document
 
-  return {
-    mode: 'synced',
-    lines: document.lines.map((line, index) => {
-      if (index !== lineIndex) return line
-      if (field === 'startMs') {
-        return { ...line, startMs: timeMs, endMs: line.endMs !== null && line.endMs <= timeMs ? null : line.endMs }
-      }
-      return { ...line, endMs: timeMs }
-    }),
-  }
+  return editSyncedLineTime(document, lineIndex, field, timeMs)
 }
 
 export type LyricsEditorIssueCode =
@@ -79,10 +124,7 @@ export interface LrclibLyricsfileMetadata {
   durationMs?: number | null
 }
 
-const LRC_TIMESTAMP = /^\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/
-const LRC_OFFSET = /\[offset:\s*([+-]?\d+)\s*\]/i
 const LRC_METADATA = /^\[(?:ar|ti|al|by|re|ve|length|la|au):[^\]]*\]$/i
-const INLINE_WORD_TIMESTAMP = /<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/g
 
 /** Make an editable plain-text document without changing line breaks. */
 export function fromPlainLyrics(text: string): PlainLyricsDocument {
@@ -90,43 +132,12 @@ export function fromPlainLyrics(text: string): PlainLyricsDocument {
 }
 
 /**
- * Import LRC into the editor model. LRC stores starts only, so each end is
- * inferred from the next later start; the last end uses `durationMs` when known.
- * If there are no timed lines, the input is treated as plain text.
+ * Import source words and exact endpoints from enhanced LRC. Other ends are
+ * editor hints inferred from the next later start or known track duration,
+ * marked auto so saving an untouched import does not claim authored endpoints.
  */
 export function fromLrc(lrc: string, durationMs?: number | null): LyricsEditorDocument {
-  const offsetMatch = lrc.match(LRC_OFFSET)
-  const offsetMs = offsetMatch ? Number.parseInt(offsetMatch[1], 10) : 0
-  const parsed: Array<{ line: SyncedLyricsLine; sourceIndex: number }> = []
-
-  for (const [sourceIndex, sourceLine] of lrc.split(/\r\n|\n|\r/).entries()) {
-    let rest = sourceLine.trim()
-    const starts: number[] = []
-    for (;;) {
-      const match = rest.match(LRC_TIMESTAMP)
-      if (!match) break
-      const minutes = Number.parseInt(match[1], 10)
-      const seconds = Number.parseInt(match[2], 10)
-      const fractionText = match[3] ?? ''
-      const fractionMs = fractionText
-        ? Math.round(Number.parseInt(fractionText, 10) * (1000 / 10 ** fractionText.length))
-        : 0
-
-      // Seconds outside the normal 0..59 range are malformed LRC, not a time.
-      if (seconds >= 60) {
-        starts.length = 0
-        break
-      }
-      starts.push(Math.max(0, minutes * 60_000 + seconds * 1000 + fractionMs - offsetMs))
-      rest = rest.slice(match[0].length)
-    }
-    if (starts.length === 0) continue
-
-    const text = rest.replace(INLINE_WORD_TIMESTAMP, '').trim()
-    for (const startMs of starts) {
-      parsed.push({ line: { text, startMs, endMs: null }, sourceIndex })
-    }
-  }
+  const parsed = parseLrcLines(lrc)
 
   if (parsed.length === 0) {
     const plain = lrc
@@ -136,20 +147,41 @@ export function fromLrc(lrc: string, durationMs?: number | null): LyricsEditorDo
     return fromPlainLyrics(plain)
   }
 
-  parsed.sort((a, b) => a.line.startMs - b.line.startMs || a.sourceIndex - b.sourceIndex)
   const knownDuration = Number.isFinite(durationMs) && (durationMs ?? 0) > 0 ? Math.round(durationMs!) : null
   let nextDistinctStart: number | null = null
   const lines = new Array<SyncedLyricsLine>(parsed.length)
   for (let index = parsed.length - 1; index >= 0; index -= 1) {
-    const line = parsed[index].line
+    const source = parsed[index]
+    const line: SyncedLyricsLine = { text: source.text, startMs: Math.round(source.timeSec * 1000),
+      endMs: source.endTimeSec === undefined ? nextDistinctStart ?? knownDuration : Math.round(source.endTimeSec * 1000),
+      endOrigin: source.endTimeSec === undefined ? 'auto' : 'source',
+      ...(source.words ? { words: source.words.map((word) => ({ text: word.text, startMs: Math.round(word.timeSec * 1000),
+        endMs: word.endTimeSec == null ? null : Math.round(word.endTimeSec * 1000),
+      })) } : {}),
+    }
     // Repeated timestamps are valid in LRC. Use the next strictly later start so
     // repeated lines keep a useful interval rather than becoming zero-length.
-    lines[index] = { ...line, endMs: nextDistinctStart ?? knownDuration }
-    if (index === 0 || parsed[index - 1].line.startMs < line.startMs) {
+    lines[index] = line
+    if (index === 0 || Math.round(parsed[index - 1].timeSec * 1000) < line.startMs) {
       nextDistinctStart = line.startMs
     }
   }
   return { mode: 'synced', lines }
+}
+
+/** Rich playback projection; automatic editor hints are never authoritative. */
+export function toPlaybackLines(document: LyricsEditorDocument, extraOffsetMs = 0): LyricsLine[] | null {
+  if (document.mode !== 'synced') return null
+  return shiftLyricsLines(document.lines.map((line) => {
+    const valid = line.endMs !== null && Number.isSafeInteger(line.endMs) && line.endMs > line.startMs
+    const origin = line.endOrigin ?? 'manual'
+    return { timeSec: line.startMs / 1000, text: line.text,
+      ...(valid && origin !== 'auto' ? { endTimeSec: line.endMs! / 1000, endSource: origin } : {}),
+      ...(line.words ? { words: line.words.map((word) => ({ text: word.text, timeSec: word.startMs / 1000,
+        endTimeSec: word.endMs === null ? null : word.endMs / 1000,
+      })) } : {}),
+    }
+  }), extraOffsetMs)
 }
 
 /** Flatten either editor mode to newline-separated lyric text. */
@@ -214,7 +246,7 @@ export function sortSyncedLines(document: SyncedLyricsDocument): SyncedLyricsDoc
     lines: document.lines
       .map((line, index) => ({ line, index }))
       .sort((a, b) => a.line.startMs - b.line.startMs || a.index - b.index)
-      .map(({ line }) => ({ ...line })),
+      .map(({ line }) => ({ ...line, ...(line.words ? { words: line.words.map((word) => ({ ...word })) } : {}) })),
   }
 }
 
@@ -266,6 +298,21 @@ export function validateLyricsDocument(
           issues.push({ code: 'end_after_duration', lineIndex })
         }
       }
+    }
+    if (line.endOrigin !== undefined && !['auto', 'source', 'manual'].includes(line.endOrigin)) {
+      issues.push({ code: 'invalid_line', lineIndex })
+    }
+    if (line.words !== undefined) {
+      let previousWordStart = line.startMs
+      if (!Array.isArray(line.words) || line.words.some((word) => {
+        if (!word || typeof word.text !== 'string' || !word.text.trim() || !Number.isSafeInteger(word.startMs)
+          || word.startMs < previousWordStart || (knownDuration !== null && word.startMs > knownDuration)
+          || (line.endMs !== null && word.startMs > line.endMs)
+          || (word.endMs !== null && (!Number.isSafeInteger(word.endMs) || word.endMs <= word.startMs
+            || (knownDuration !== null && word.endMs > knownDuration) || (line.endMs !== null && word.endMs > line.endMs)))) return true
+        previousWordStart = word.startMs
+        return false
+      })) issues.push({ code: 'invalid_line', lineIndex })
     }
   })
   if (!hasText && document.lines.length > 0) issues.push({ code: 'empty_document' })

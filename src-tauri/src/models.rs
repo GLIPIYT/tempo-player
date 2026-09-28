@@ -431,4 +431,48 @@ pub struct SyncedLyricsLine {
     pub text: String,
     pub start_ms: i64,
     pub end_ms: Option<i64>,
+    /// Missing on legacy saved documents means the end was authored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_origin: Option<LyricsEndOrigin>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<SyncedLyricsWord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LyricsEndOrigin {
+    Auto,
+    Source,
+    Manual,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncedLyricsWord {
+    pub text: String,
+    pub start_ms: i64,
+    pub end_ms: Option<i64>,
+}
+
+#[cfg(test)]
+mod lyrics_timing_tests {
+    use super::LyricsEditorDocument;
+    use serde_json::json;
+
+    #[test]
+    fn lyric_timing_metadata_and_legacy_documents_roundtrip() {
+        let rich = json!({"mode":"synced","lines":[{"text":"one","startMs":1000,"endMs":3000,
+            "endOrigin":"source","words":[{"text":"one","startMs":1000,"endMs":3000}]}]});
+        let document: LyricsEditorDocument = serde_json::from_value(rich.clone()).unwrap();
+        assert_eq!(serde_json::to_value(document).unwrap(), rich);
+        let legacy = json!({"mode":"synced","lines":[{"text":"one","startMs":1000,"endMs":3000}]});
+        let document: LyricsEditorDocument = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(serde_json::to_value(document).unwrap(), legacy);
+    }
+
+    #[test]
+    fn lyric_timing_rejects_unknown_provenance() {
+        let document = json!({"mode":"synced","lines":[{"text":"one","startMs":1000,"endMs":3000,"endOrigin":"invented"}]});
+        assert!(serde_json::from_value::<LyricsEditorDocument>(document).is_err());
+    }
 }

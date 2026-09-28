@@ -3021,19 +3021,41 @@ fn validate_lyrics_editor_document(
             let mut previous_start_ms = -1_i64;
             let mut has_text = false;
             for line in lines {
-                if line.start_ms < 0 || line.start_ms < previous_start_ms {
+                const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+                if line.start_ms < 0 || line.start_ms > MAX_SAFE_INTEGER || line.start_ms < previous_start_ms {
                     return Err("Synced lyric start times must be nonnegative and sorted".into());
                 }
                 if duration_ms.is_some_and(|duration| line.start_ms as f64 > duration) {
                     return Err("A lyric line starts after the track ends".into());
                 }
                 if let Some(end_ms) = line.end_ms {
-                    if end_ms <= line.start_ms {
+                    if end_ms <= line.start_ms || end_ms > MAX_SAFE_INTEGER {
                         return Err("A lyric line end must be after its start".into());
                     }
                     if duration_ms.is_some_and(|duration| end_ms as f64 > duration) {
                         return Err("A lyric line ends after the track ends".into());
                     }
+                }
+                let mut previous_word_start_ms = line.start_ms;
+                for word in &line.words {
+                    if word.text.trim().is_empty()
+                        || word.start_ms < previous_word_start_ms
+                        || word.start_ms > MAX_SAFE_INTEGER
+                        || duration_ms.is_some_and(|duration| word.start_ms as f64 > duration)
+                        || line.end_ms.is_some_and(|end| word.start_ms > end)
+                    {
+                        return Err("Lyric word start times must be valid and sorted within the line".into());
+                    }
+                    if let Some(end_ms) = word.end_ms {
+                        if end_ms <= word.start_ms
+                            || end_ms > MAX_SAFE_INTEGER
+                            || duration_ms.is_some_and(|duration| end_ms as f64 > duration)
+                            || line.end_ms.is_some_and(|end| end_ms > end)
+                        {
+                            return Err("A lyric word end must be after its start and within the line".into());
+                        }
+                    }
+                    previous_word_start_ms = word.start_ms;
                 }
                 previous_start_ms = line.start_ms;
                 has_text |= !line.text.trim().is_empty();
@@ -4068,6 +4090,55 @@ fn resequence_pinned(conn: &Connection) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lyric_timing_metadata_roundtrips_through_saved_editor_version() {
+        let (db, dir) = test_db("lyrictiming");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let path = dir.join("song.mp3");
+        std::fs::write(&path, b"database fixture").unwrap();
+        let mut input = track_input(path.to_str().unwrap(), folder.id, "Song", Some("Artist"), None);
+        let (size, mtime_ns) = file_stamp_precise(&path).unwrap();
+        input.file_size = size;
+        input.modified_at_ns = mtime_ns;
+        input.modified_at = mtime_ns / 1_000_000_000;
+        input.duration_sec = Some(10.0);
+        db.upsert_scanned_tracks(&[input], &[]).unwrap();
+        let track_id: i64 = db.with_conn(|conn| conn.query_row("SELECT id FROM tracks", [], |row| row.get(0)).map_err(db_err)).unwrap();
+        let expected = serde_json::json!({"mode":"synced","lines":[{"text":"one","startMs":1000,"endMs":3000,
+            "endOrigin":"source","words":[{"text":"one","startMs":1000,"endMs":3000}]}]});
+        let document: LyricsEditorDocument = serde_json::from_value(expected.clone()).unwrap();
+        db.save_lyrics_editor_document(track_id, "manual", Some("Artist"), Some("Song"), "[00:01.00]one", 500, &document).unwrap();
+        let saved = db.get_lyrics_override(track_id).unwrap().unwrap();
+        assert_eq!(serde_json::to_value(saved.editor_document.unwrap()).unwrap(), expected);
+        assert_eq!(saved.offset_ms, 500);
+        db.set_lyrics_override(track_id, "lrclib", None, None, "[00:02.00]other", 0).unwrap();
+        let repinned = db.get_lyrics_override(track_id).unwrap().unwrap();
+        assert_eq!(serde_json::to_value(repinned.editor_document.unwrap()).unwrap(), expected);
+        assert_eq!(repinned.provider, "lrclib");
+        assert_eq!(repinned.edited_version.unwrap().lrc, "[00:01.00]one");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lyric_timing_validation_rejects_invalid_words_and_preserves_overlap() {
+        let document: super::LyricsEditorDocument = serde_json::from_value(serde_json::json!({
+            "mode":"synced","lines":[
+                {"text":"one","startMs":1000,"endMs":6000,"endOrigin":"manual",
+                    "words":[{"text":"one","startMs":1000,"endMs":900}]},
+                {"text":"two","startMs":4000,"endMs":7000,"endOrigin":"manual"}
+            ]
+        })).unwrap();
+        assert!(super::validate_lyrics_editor_document(&document, Some(10.0)).is_err());
+        let valid: super::LyricsEditorDocument = serde_json::from_value(serde_json::json!({
+            "mode":"synced","lines":[
+                {"text":"one","startMs":1000,"endMs":6000,"endOrigin":"manual"},
+                {"text":"two","startMs":4000,"endMs":7000,"endOrigin":"manual"}
+            ]
+        })).unwrap();
+        assert!(super::validate_lyrics_editor_document(&valid, Some(10.0)).is_ok());
+    }
+
     use super::*;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
