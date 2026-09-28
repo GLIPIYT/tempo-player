@@ -38,7 +38,7 @@ const PROVIDER_NAMES: Record<BackgroundImageProvider, string> = {
 const DEFAULT_STATUSES: BackgroundProviderStatus[] = [
   { id: 'wallhaven', available: true, supportsCategories: true, supportsColor: true, supportsNsfw: false, notice: null },
   { id: 'pinterest', available: false, supportsCategories: false, supportsColor: false, supportsNsfw: false, notice: null },
-  { id: 'konachan', available: true, supportsCategories: false, supportsColor: false, supportsNsfw: false, notice: null },
+  { id: 'konachan', available: true, supportsCategories: false, supportsColor: false, supportsNsfw: true, notice: null },
 ]
 const COLORS = [
   '660000', '990000', 'cc0000', 'cc3333', 'ea4c88', '993399', '663399', '333399',

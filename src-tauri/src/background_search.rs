@@ -207,7 +207,7 @@ pub fn get_background_provider_status() -> Vec<BackgroundProviderStatus> {
             available: true,
             supports_categories: false,
             supports_color: false,
-            supports_nsfw: false,
+            supports_nsfw: true,
             notice: None,
         },
     ]
@@ -727,8 +727,8 @@ fn wallhaven_page(
     })
 }
 
-fn konachan_tags(query: &str) -> Result<String, String> {
-    // The explicit safe filter cannot be overwritten by user-supplied metatags.
+fn konachan_tags(query: &str, include_nsfw: bool) -> Result<String, String> {
+    // The selected rating cannot be overwritten by user-supplied metatags.
     if query.split_whitespace().any(|tag| {
         tag.trim_start_matches(['-', '~'])
             .to_ascii_lowercase()
@@ -736,7 +736,11 @@ fn konachan_tags(query: &str) -> Result<String, String> {
     }) {
         return Err("Use the content filter instead of a rating tag".into());
     }
-    Ok(format!("{} rating:safe", query.trim()).trim().to_owned())
+    if include_nsfw {
+        Ok(query.trim().to_owned())
+    } else {
+        Ok(format!("{} rating:safe", query.trim()).trim().to_owned())
+    }
 }
 
 async fn search_konachan(
@@ -744,13 +748,10 @@ async fn search_konachan(
     query: &str,
     filters: &BackgroundSearchFilters,
 ) -> Result<BackgroundSearchPage, String> {
-    if filters.include_nsfw {
-        return Err("Konachan: this source only supports safe wallpapers".into());
-    }
     if filters.category != "all" || filters.color.is_some() {
         return Err("Konachan does not support category or color filters".into());
     }
-    let mut tags = konachan_tags(query)?;
+    let mut tags = konachan_tags(query, filters.include_nsfw)?;
     if filters.min_width > 0 {
         tags.push_str(&format!(" width:>={}", filters.min_width));
     }
@@ -782,7 +783,9 @@ fn konachan_page(records: &[Value], filters: &BackgroundSearchFilters) -> Backgr
     let has_more = records.len() >= result_limit(filters);
     let mut results = Vec::new();
     for record in records {
-        if record.get("rating").and_then(Value::as_str) != Some("s")
+        let rating = record.get("rating").and_then(Value::as_str);
+        if (!filters.include_nsfw && rating != Some("s"))
+            || (filters.include_nsfw && !matches!(rating, Some("s" | "q" | "e")))
             || record.get("is_shown_in_index").and_then(Value::as_bool) == Some(false)
         {
             continue;
@@ -922,10 +925,15 @@ mod tests {
     }
 
     #[test]
-    fn safe_konachan_rating_cannot_be_overridden() {
-        assert_eq!(konachan_tags("landscape").unwrap(), "landscape rating:safe");
-        assert!(konachan_tags("landscape ~rating:e").is_err());
-        assert!(konachan_tags("-RATING:s").is_err());
+    fn konachan_rating_filter_follows_the_selected_content_setting() {
+        assert_eq!(
+            konachan_tags("landscape", false).unwrap(),
+            "landscape rating:safe"
+        );
+        assert_eq!(konachan_tags("landscape", true).unwrap(), "landscape");
+        assert_eq!(konachan_tags("", true).unwrap(), "");
+        assert!(konachan_tags("landscape ~rating:e", true).is_err());
+        assert!(konachan_tags("-RATING:s", false).is_err());
     }
 
     #[test]
