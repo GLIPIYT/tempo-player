@@ -11,7 +11,8 @@ use tauri::State;
 use crate::commands::AppState;
 
 const WALLHAVEN_API: &str = "https://wallhaven.cc/api/v1/search";
-const KONACHAN_API: &str = "https://konachan.net/post.json";
+const KONACHAN_SAFE_API: &str = "https://konachan.net/post.json";
+const KONACHAN_EXPLICIT_API: &str = "https://konachan.com/post.json";
 const MAX_RESULTS: usize = 40;
 const MAX_SEARCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PREVIEW_BYTES: usize = 3 * 1024 * 1024;
@@ -417,7 +418,7 @@ fn allowed_image_url(provider: &str, value: &str) -> Result<Url, String> {
                         .any(|prefix| url.path().starts_with(prefix)))
         }
         "konachan" => {
-            host == "konachan.net"
+            matches!(host, "konachan.net" | "konachan.com")
                 && ["/image/", "/jpeg/", "/sample/", "/data/preview/"]
                     .iter()
                     .any(|prefix| url.path().starts_with(prefix))
@@ -439,7 +440,7 @@ fn allowed_image_url(provider: &str, value: &str) -> Result<Url, String> {
 fn download_client(provider: String) -> Result<reqwest::Client, String> {
     let referer = match provider.as_str() {
         "wallhaven" => Some("https://wallhaven.cc/"),
-        "konachan" => Some("https://konachan.net/"),
+        "konachan" => Some("https://konachan.com/"),
         "pinterest" => Some("https://www.pinterest.com/"),
         _ => None,
     };
@@ -765,8 +766,13 @@ async fn search_konachan(
     }
     let limit = result_limit(filters);
     // Fetch a bounded page, then apply source dimensions and orientation locally.
+    let endpoint = if filters.include_nsfw {
+        KONACHAN_EXPLICIT_API
+    } else {
+        KONACHAN_SAFE_API
+    };
     let response = client
-        .get(KONACHAN_API)
+        .get(endpoint)
         .query(&[
             ("tags", tags),
             ("limit", limit.to_string()),
@@ -837,7 +843,10 @@ fn konachan_page(records: &[Value], filters: &BackgroundSearchFilters) -> Backgr
             title,
             preview_url: preview_url.into(),
             image_url: image_url.into(),
-            source_url: format!("https://konachan.net/post/show/{id}"),
+            source_url: format!(
+                "https://konachan.{}/post/show/{id}",
+                if filters.include_nsfw { "com" } else { "net" }
+            ),
             // These sites host works with different rights; no blanket license is invented.
             author: None,
             license: None,
@@ -951,6 +960,10 @@ mod tests {
             (
                 "konachan",
                 "https://konachan.net/data/preview/ab/cd/image.jpg",
+            ),
+            (
+                "konachan",
+                "https://konachan.com/data/preview/ab/cd/explicit.jpg",
             ),
             (
                 "pinterest",
