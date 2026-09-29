@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ActiveTheme } from '../types/theme'
 import { DEFAULT_EQUALIZER_SETTINGS, normalizeEqualizer, type EqualizerSettings } from '../audio/equalizer'
+import { initializeDeepAnalysisDefault } from '../features/lyrics/analysis/hardwareDefault'
 
 export type StartupPage = 'home' | 'library' | 'albums' | 'artists' | 'playlists'
 
@@ -30,6 +31,8 @@ export interface AppSettings {
   }
   lyrics: {
     cacheOnline: boolean
+    /** Null waits for the hardware default; only true permits deep analysis. */
+    deepAnalysisEnabled: boolean | null
   }
   font: {
     family: string | null
@@ -120,7 +123,7 @@ export const defaultSettings: AppSettings = {
   startupPage: 'home',
   profile: { nickname: null, avatarPath: null, onboarded: false },
   discord: { enabled: false, clientId: '1543766505295183904', lyricStitchGapSec: 2 },
-  lyrics: { cacheOnline: true },
+  lyrics: { cacheOnline: true, deepAnalysisEnabled: null },
   font: { family: null, importedPath: null, sizePx: 13, uiScalePct: 100 },
   background: { path: null, dimPct: 45, blurPx: 0 },
   player: { waveform: false, barStyle: 'classic' },
@@ -219,7 +222,8 @@ export function getSettings(): AppSettings {
   return currentSettings
 }
 
-function load(): AppSettings {  try {
+export function loadSettings(): AppSettings {
+  try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return defaultSettings
     const parsed = JSON.parse(raw) as SettingsPatch
@@ -239,7 +243,13 @@ function load(): AppSettings {  try {
             ? parsed.discord.clientId
             : defaultSettings.discord.clientId,
       },
-      lyrics: { ...defaultSettings.lyrics, ...parsed.lyrics },
+      lyrics: {
+        ...defaultSettings.lyrics,
+        ...parsed.lyrics,
+        deepAnalysisEnabled: typeof parsed.lyrics?.deepAnalysisEnabled === 'boolean'
+          ? parsed.lyrics.deepAnalysisEnabled
+          : null,
+      },
       font: { ...defaultSettings.font, ...parsed.font },
       background: { ...defaultSettings.background, ...parsed.background },
       player: { ...defaultSettings.player, ...parsed.player },
@@ -266,6 +276,15 @@ function load(): AppSettings {  try {
   }
 }
 
+export function resolveDeepAnalysisDefault(
+  current: AppSettings,
+  resolve: (choice: boolean | null) => boolean,
+): AppSettings {
+  const enabled = resolve(current.lyrics.deepAnalysisEnabled)
+  if (enabled === current.lyrics.deepAnalysisEnabled) return current
+  return { ...current, lyrics: { ...current.lyrics, deepAnalysisEnabled: enabled } }
+}
+
 interface SettingsApi {
   settings: AppSettings
   update: (patch: SettingsPatch) => void
@@ -275,7 +294,16 @@ interface SettingsApi {
 const SettingsContext = createContext<SettingsApi | null>(null)
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<AppSettings>(load)
+  const [settings, setSettings] = useState<AppSettings>(loadSettings)
+
+  useEffect(() => {
+    if (settings.lyrics.deepAnalysisEnabled !== null) return
+    let active = true
+    void initializeDeepAnalysisDefault(resolve => {
+      if (active) setSettings(current => resolveDeepAnalysisDefault(current, resolve))
+    })
+    return () => { active = false }
+  }, [settings.lyrics.deepAnalysisEnabled])
 
   useEffect(() => {
     // Kept in step with the state so the non-React readers above never see a

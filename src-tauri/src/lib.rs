@@ -4,6 +4,7 @@ mod database;
 mod background_search;
 mod pinterest_backgrounds;
 mod discord;
+mod hardware;
 mod lyrics;
 mod lrclib_publish;
 mod metadata;
@@ -83,6 +84,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            hardware::get_lyrics_analysis_hardware,
             commands::get_library_folders,
             commands::get_track_metadata_original,
             commands::get_track_metadata_editor_state,
