@@ -89,7 +89,8 @@ pub struct ModelManager {
     root: PathBuf,
     manifest: ModelManifest,
     base_url: String,
-    app: Option<AppHandle>,
+    publish: Arc<dyn Fn(&ModelState) + Send + Sync>,
+    publication: Mutex<()>,
     client: reqwest::Client,
     runtime: Mutex<ModelRuntime>,
     cancellation: watch::Sender<u64>,
@@ -127,7 +128,12 @@ impl ModelManager {
             root,
             manifest,
             base_url,
-            app,
+            publish: Arc::new(move |state| {
+                if let Some(app) = &app {
+                    let _ = app.emit(MODEL_STATE_EVENT, state);
+                }
+            }),
+            publication: Mutex::new(()),
             client: reqwest::Client::builder()
                 .user_agent("tempo-player")
                 .timeout(Duration::from_secs(120))
@@ -199,6 +205,10 @@ impl ModelManager {
     }
 
     fn update(&self, generation: u64, phase: ModelPhase, loaded: u64, error: Option<String>) {
+        // Mutation and dispatch share one short gate. Releasing runtime before
+        // dispatch permits native event listeners to read status, while a new
+        // generation cannot overtake this event between snapshot and emit.
+        let _publication = self.publication.lock().unwrap_or_else(|e| e.into_inner());
         let state = {
             let mut runtime = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
             if runtime.generation != generation || !runtime.state.enabled {
@@ -212,9 +222,19 @@ impl ModelManager {
         self.emit(&state);
     }
     fn emit(&self, state: &ModelState) {
-        if let Some(app) = &self.app {
-            let _ = app.emit(MODEL_STATE_EVENT, state);
-        }
+        (self.publish)(state);
+    }
+
+    fn publish_current(&self, generation: u64) {
+        let _publication = self.publication.lock().unwrap_or_else(|e| e.into_inner());
+        let state = {
+            let runtime = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
+            if runtime.generation != generation {
+                return;
+            }
+            runtime.state.clone()
+        };
+        self.emit(&state);
     }
 
     pub async fn set_enabled(&self, enabled: bool) -> Result<ModelState, String> {
@@ -222,6 +242,7 @@ impl ModelManager {
         // that deletion, then starts a fresh generation with no old writer.
         let _transition = self.transitions.lock().await;
         let generation = {
+            let _publication = self.publication.lock().unwrap_or_else(|e| e.into_inner());
             let mut runtime = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
             if enabled && runtime.state.enabled {
                 return Ok(runtime.state.clone());
@@ -233,9 +254,12 @@ impl ModelManager {
             runtime.state.loaded_bytes = 0;
             runtime.state.error = None;
             self.cancellation.send_replace(runtime.generation);
-            runtime.generation
+            let generation = runtime.generation;
+            let state = runtime.state.clone();
+            drop(runtime);
+            self.emit(&state);
+            generation
         };
-        self.emit(&self.status());
         if !enabled {
             // The HTTP select wakes immediately; acquiring this gate proves
             // every file writer is closed before the checked recursive delete.
@@ -250,6 +274,7 @@ impl ModelManager {
                 Ok::<(), String>(())
             })();
             if let Err(error) = cleanup {
+                let _publication = self.publication.lock().unwrap_or_else(|e| e.into_inner());
                 let state = {
                     let mut runtime = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
                     if runtime.generation == generation {
@@ -261,6 +286,7 @@ impl ModelManager {
                 self.emit(&state);
                 return Err(error);
             }
+            self.publish_current(generation);
         }
         Ok(self.status())
     }

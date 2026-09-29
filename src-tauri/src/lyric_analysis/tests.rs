@@ -276,6 +276,92 @@ async fn enable_during_disable_cannot_resurrect_cancelled_download() {
     assert!(!model.directory().exists());
 }
 
+#[test]
+fn paused_progress_publication_cannot_follow_a_newer_disabled_event() {
+    use std::sync::mpsc;
+    let root = Temp::new();
+    let server = Server::new(Reply::Good);
+    let mut model = ModelManager::with_source(
+        root.0.clone(),
+        true,
+        None,
+        fixture_manifest(),
+        server.url.clone(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(model.directory()).unwrap();
+    std::fs::write(model.directory().join("config.json.part"), b"partial").unwrap();
+    let events = Arc::new(Mutex::new(Vec::<ModelState>::new()));
+    let (paused_tx, paused_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (disabled_tx, disabled_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let captured = events.clone();
+    model.publish = Arc::new(move |state| {
+        if state.enabled && state.phase == ModelPhase::Downloading {
+            paused_tx.send(()).unwrap();
+            release_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap();
+        }
+        captured.lock().unwrap().push(state.clone());
+        if !state.enabled {
+            disabled_tx.send(()).unwrap();
+        }
+    });
+    let model = Arc::new(model);
+    let old_model = model.clone();
+    let old = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let _writer = old_model.writer.lock().await;
+                old_model.update(0, ModelPhase::Downloading, 1, None);
+            });
+    });
+    paused_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let disabling_model = model.clone();
+    let disabling = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(disabling_model.set_enabled(false))
+            .unwrap()
+    });
+    // On the broken publisher, the old snapshot holds no publication gate:
+    // make disable publish first, then release the paused old writer/event.
+    // On the repaired publisher, disable cannot publish until that event exits.
+    let unprotected = model.publication.try_lock().is_ok();
+    if unprotected {
+        disabled_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    }
+    release_tx.send(()).unwrap();
+    old.join().unwrap();
+    let disabled = disabling.join().unwrap();
+    assert!(!disabled.enabled);
+    assert!(!model.directory().exists());
+    let event_count = events.lock().unwrap().len();
+    model.update(0, ModelPhase::Ready, model.status().total_bytes, None);
+    assert_eq!(
+        events.lock().unwrap().len(),
+        event_count,
+        "cancelled generation published ready"
+    );
+    let events = events.lock().unwrap();
+    let first_disabled = events.iter().position(|state| !state.enabled).unwrap();
+    assert!(
+        events[first_disabled..].iter().all(|state| !state.enabled),
+        "old enabled event followed a newer disabled event"
+    );
+    assert!(!events.last().unwrap().enabled);
+    assert_eq!(events.last().unwrap().phase, ModelPhase::Absent);
+}
+
 #[tokio::test]
 async fn disabled_ensure_does_not_fetch_or_create_directory() {
     let root = Temp::new();
