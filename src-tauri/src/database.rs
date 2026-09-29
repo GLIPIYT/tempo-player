@@ -429,10 +429,22 @@ SET provider = COALESCE((SELECT provider FROM track_lyrics_override WHERE track_
     offset_ms = COALESCE((SELECT offset_ms FROM track_lyrics_override WHERE track_id = track_lyrics_editor_documents.track_id), offset_ms);
 "#;
 
+const MIGRATION_19: &str = r#"
+-- Compact analysis JSON keeps completed empty windows as well as partial ASR
+-- results. Source endpoints are keyed independently from a provider's offset.
+CREATE TABLE IF NOT EXISTS lyric_audio_analysis (
+    fingerprint TEXT PRIMARY KEY,
+    audio_key TEXT NOT NULL,
+    analysis_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lyric_audio_analysis_key ON lyric_audio_analysis(audio_key);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
     MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_13,
-    MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_17, MIGRATION_18,
+    MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_17, MIGRATION_18, MIGRATION_19,
 ];
 
 pub struct Db {
@@ -500,6 +512,89 @@ impl Db {
     pub fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
         let conn = self.lock_conn()?;
         f(&conn)
+    }
+
+    pub fn lyrics_analysis_track(
+        &self,
+        id: Option<i64>,
+        source: &str,
+        source_id: Option<&str>,
+    ) -> Result<Option<crate::lyric_analysis::AnalysisTrack>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT id,path,source,external_id FROM tracks WHERE (?1 IS NOT NULL AND id=?1) OR (?1 IS NULL AND source=?2 AND external_id=?3) ORDER BY id LIMIT 1",
+                params![id, source, source_id], |row| Ok(crate::lyric_analysis::AnalysisTrack {
+                    id: row.get(0)?, path: row.get(1)?, source: row.get(2)?, source_id: row.get(3)?,
+                }),
+            ).optional().map_err(db_err)
+        })
+    }
+
+    pub fn lyrics_analysis_get(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<crate::lyric_analysis::AudioAnalysis>, String> {
+        self.with_conn(|conn| {
+            let json: Option<String> = conn
+                .query_row(
+                    "SELECT analysis_json FROM lyric_audio_analysis WHERE fingerprint=?1",
+                    params![fingerprint],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(db_err)?;
+            json.map(|json| {
+                serde_json::from_str(&json)
+                    .map_err(|e| format!("invalid cached audio analysis: {e}"))
+            })
+            .transpose()
+        })
+    }
+
+    pub fn lyrics_analysis_merge(
+        &self,
+        identity: &crate::lyric_analysis::AudioIdentity,
+        algorithm: &str,
+        model: &str,
+        bpm: Option<&crate::lyric_analysis::BpmEstimate>,
+        fragment: Option<&crate::lyric_analysis::CompletedFragment>,
+        matches: Option<&crate::lyric_analysis::CachedLyricMatches>,
+    ) -> Result<crate::lyric_analysis::AudioAnalysis, String> {
+        use crate::lyric_analysis::{validate_analysis, AudioAnalysis};
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction().map_err(db_err)?;
+            let json: Option<String> = tx.query_row("SELECT analysis_json FROM lyric_audio_analysis WHERE fingerprint=?1", params![identity.fingerprint], |row| row.get(0)).optional().map_err(db_err)?;
+            let mut analysis = match json {
+                Some(json) => serde_json::from_str::<AudioAnalysis>(&json).map_err(|e| e.to_string())?,
+                None => AudioAnalysis::empty(identity, algorithm, model),
+            };
+            validate_analysis(&analysis, identity)?;
+            analysis.reset_versions(algorithm, model);
+            if let Some(bpm) = bpm { analysis.bpm = Some(bpm.bpm); analysis.bpm_confidence = bpm.confidence; }
+            if let Some(fragment) = fragment {
+                analysis.fragments.retain(|old| old.start_sec != fragment.start_sec || old.end_sec != fragment.end_sec);
+                analysis.fragments.push(fragment.clone());
+                analysis.fragments.sort_by(|a, b| a.start_sec.total_cmp(&b.start_sec).then(a.end_sec.total_cmp(&b.end_sec)));
+            }
+            if let Some(matches) = matches {
+                if let Some(old) = analysis.lyric_matches.iter_mut().find(|old| old.source_lyric_key == matches.source_lyric_key) {
+                    for end in &matches.ends {
+                        old.ends.retain(|old| old.line_index != end.line_index);
+                        old.ends.push(end.clone());
+                    }
+                    old.ends.sort_by_key(|end| end.line_index);
+                } else {
+                    analysis.lyric_matches.push(matches.clone());
+                }
+            }
+            validate_analysis(&analysis, identity)?;
+            let json = serde_json::to_string(&analysis).map_err(|e| e.to_string())?;
+            if json.len() > 2 * 1024 * 1024 { return Err("audio analysis cache exceeds its size limit".into()); }
+            tx.execute("DELETE FROM lyric_audio_analysis WHERE audio_key=?1 AND fingerprint<>?2", params![identity.absolute_path, identity.fingerprint]).map_err(db_err)?;
+            tx.execute("INSERT INTO lyric_audio_analysis(fingerprint,audio_key,analysis_json,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(fingerprint) DO UPDATE SET audio_key=excluded.audio_key,analysis_json=excluded.analysis_json,updated_at=excluded.updated_at", params![identity.fingerprint, identity.absolute_path, json, now()]).map_err(db_err)?;
+            tx.commit().map_err(db_err)?;
+            Ok(analysis)
+        })
     }
 
     pub fn list_file_stamps(&self) -> Result<HashMap<String, FileStamp>, String> {

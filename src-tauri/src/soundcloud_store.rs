@@ -349,6 +349,24 @@ fn cached_file_path(dir: &Path, track_id: &str) -> PathBuf {
     dir.join(format!("{}.mp3", track_id))
 }
 
+/// Cache-only read: never resolves a stream, starts a download or creates dirs.
+pub fn existing_cached_file(db: &Db, default_root: &Path, track_id: &str) -> Result<Option<PathBuf>, String> {
+    if track_id.is_empty() || track_id.len() > 32 || !track_id.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("invalid SoundCloud track ID".into());
+    }
+    let root = db.get_app_setting(CACHE_DIR_KEY)?.map(PathBuf::from).unwrap_or_else(|| default_root.to_path_buf());
+    let root = match std::fs::canonicalize(root) {
+        Ok(root) => root,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
+    let path = cached_file_path(&root, track_id);
+    if !path.is_file() { return Ok(None); }
+    let canonical = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+    if canonical.parent() != Some(root.as_path()) { return Err("SoundCloud cache file is outside its cache directory".into()); }
+    Ok(Some(canonical))
+}
+
 async fn download_to_cache(url: &str, final_path: &Path) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .user_agent(DESKTOP_UA)

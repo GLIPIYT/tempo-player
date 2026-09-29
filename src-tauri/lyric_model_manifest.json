@@ -1,0 +1,13 @@
+{
+  "modelId": "onnx-community/whisper-tiny_timestamped",
+  "revision": "517244293732ee2d58139af5814231b7e6830a0d",
+  "files": [
+    { "relativePath": "config.json", "size": 2243, "sha256": "46aeea0a406afbeb563fc8e59ca10609203df4299af6a83f73752fef369efd2d" },
+    { "relativePath": "generation_config.json", "size": 3772, "sha256": "f5c67e5a4f7102f8cb4d058bc95da276bbc19eeec997267c3bb0f25ef68facd1" },
+    { "relativePath": "preprocessor_config.json", "size": 339, "sha256": "a6a76d28c93edb273669eb9e0b0636a2bddbb1272c3261e47b7ca6dfdbac1b8d" },
+    { "relativePath": "tokenizer.json", "size": 2480466, "sha256": "27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566" },
+    { "relativePath": "tokenizer_config.json", "size": 282683, "sha256": "2a4c4281cf9f51ac6ccc406fdc711a087afe6530f671fa7b80953edc498275ce" },
+    { "relativePath": "onnx/encoder_model_quantized.onnx", "size": 10097109, "sha256": "d4397fbfed1975bb5dd1bedb748808367331c85293f54cbc927774728daec2b2" },
+    { "relativePath": "onnx/decoder_model_merged_quantized.onnx", "size": 30730264, "sha256": "ced2053c1aa8ff7048927197416a5c169f50010e7b280e5d564b46a991fca011" }
+  ]
+}

@@ -1,6 +1,6 @@
 # Умная длительность строк Tempo
 
-Дата: 28 сентября 2026. Статус: дизайн для согласования; реализация ещё не начата.
+Дата: 28 сентября 2026. Статус: дизайн согласован; реализация в работе.
 
 ## Задача и принятые решения
 
@@ -50,6 +50,8 @@
 ## Анализ аудио и распознавание
 
 Выбран компактный multilingual Whisper tiny через Transformers.js в отдельном Worker, с WASM и одним вычислительным потоком. Квантованные веса выбранного ONNX-варианта занимают около 40,8 МБ; конфигурация, токенизатор и WASM добавляются отдельно. GPU по умолчанию не используется.
+
+Уточнение 29 сентября 2026: закреплён `onnx-community/whisper-tiny_timestamped` на ревизии `517244293732ee2d58139af5814231b7e6830a0d`, с q8 encoder и merged decoder. Декодер исходного `whisper-tiny` не содержит выходов cross-attention, необходимых Transformers.js для таймкодов слов. Выбранный вариант содержит эти выходы и остаётся той же multilingual tiny моделью; семь файлов проверены по размеру и SHA-256 (всего 43 596 876 байт). Проверка реального распознавания и качества таймкодов ещё предстоит.
 
 Модель скачивается в выделенный кеш Tempo с закреплённой ревизией и проверкой целостности. Оригинальное аудио не отправляется на сервис распознавания. Worker получает mono PCM 16 кГц и возвращает слова с относительными таймкодами. Готовые данные переводятся в время трека.
 
@@ -107,7 +109,7 @@ SQLite хранит версию алгоритма, отпечаток исхо
 ## Источники
 
 - [Transformers.js ASR и таймкоды слов](https://huggingface.co/docs/transformers.js/api/pipelines)
-- [ONNX multilingual Whisper tiny: файлы и размеры](https://huggingface.co/onnx-community/whisper-tiny/tree/main/onnx)
+- [ONNX multilingual Whisper tiny с таймкодами: закреплённые файлы](https://huggingface.co/onnx-community/whisper-tiny_timestamped/tree/517244293732ee2d58139af5814231b7e6830a0d/onnx)
 - [Источники моделей и кеш Transformers.js](https://huggingface.co/docs/transformers.js/api/env)
 - [Чувствительность Whisper encoder к квантованию](https://huggingface.co/docs/transformers.js/main/en/guides/dtypes)
 - [Ограничения Whisper](https://huggingface.co/openai/whisper-tiny/blob/main/README.md)

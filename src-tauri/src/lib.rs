@@ -6,6 +6,7 @@ mod pinterest_backgrounds;
 mod discord;
 mod hardware;
 mod lyrics;
+mod lyric_analysis;
 mod lrclib_publish;
 mod metadata;
 mod models;
@@ -75,6 +76,17 @@ pub fn run() {
                 yt_cache_dir,
                 bin_dir,
             });
+            {
+                let state = app.state::<commands::AppState>();
+                app.manage(Arc::new(lyric_analysis::AudioAnalysisStore::new(
+                    state.db.clone(), state.sc_cache_dir.clone(), state.yt_cache_dir.clone(),
+                )));
+            }
+            // The frontend resolves the persisted hardware/manual choice. No
+            // model is fetched until an enabled analysis explicitly asks for it.
+            app.manage(Arc::new(lyric_analysis::ModelManager::new(
+                app.path().app_cache_dir()?, false, Some(app.handle().clone()),
+            )?));
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let state = handle.state::<commands::AppState>();
@@ -85,6 +97,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             hardware::get_lyrics_analysis_hardware,
+            lyric_analysis::lyrics_analysis_status,
+            lyric_analysis::lyrics_analysis_set_enabled,
+            lyric_analysis::lyrics_analysis_ensure_model,
+            lyric_analysis::lyrics_analysis_audio_identity,
+            lyric_analysis::lyrics_analysis_get,
+            lyric_analysis::lyrics_analysis_merge,
             commands::get_library_folders,
             commands::get_track_metadata_original,
             commands::get_track_metadata_editor_state,
