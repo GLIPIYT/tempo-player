@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TARGET_RMS_DB, analyse, dbToLinear } from './loudness'
+import { TARGET_RMS_DB, analyse, analyseCooperatively, dbToLinear } from './loudness'
 
 /**
  * `analyse` only ever reads these three members, so a plain object stands in
@@ -78,4 +78,11 @@ describe('dbToLinear', () => {
     expect(dbToLinear(6.0206)).toBeCloseTo(2, 3)
     expect(dbToLinear(-6.0206)).toBeCloseTo(0.5, 3)
   })
+})
+
+it('cooperative loudness keeps channel RMS and gain semantics without blocking a full track loop', async () => {
+  const audio = buffer([new Array<number>(100000).fill(0.1), new Array<number>(100000).fill(0.3)])
+  expect(await analyseCooperatively(audio, new AbortController().signal)).toEqual(analyse(audio))
+  const aborted = new AbortController(); aborted.abort()
+  await expect(analyseCooperatively(audio, aborted.signal)).rejects.toMatchObject({ name: 'AbortError' })
 })

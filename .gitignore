@@ -1,4 +1,6 @@
 node_modules/
+public/asr-runtime/ort-wasm-*.mjs
+public/asr-runtime/ort-wasm-*.wasm
 dist/
 target/
 src-tauri/gen/schemas/

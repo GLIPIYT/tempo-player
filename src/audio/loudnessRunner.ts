@@ -1,6 +1,6 @@
-import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '../api/client'
 import { measureLoudness } from './loudness'
+import { analysisNativeClient } from '../features/lyrics/analysis/nativeClient'
 
 /**
  * Background loudness measurement.
@@ -23,7 +23,8 @@ export async function analyzeTracks(tracks: { id: number; path: string }[]): Pro
   for (const track of tracks) {
     if (handled.has(track.id)) continue
     handled.add(track.id)
-    const result = await measureLoudness(convertFileSrc(track.path))
+    const identity = await analysisNativeClient.identity({ dbId: track.id, source: 'local', sourceId: String(track.id) }).catch(() => null)
+    const result = identity ? await measureLoudness(identity) : null
     // a null result still marks the file as attempted, so one the decoder
     // cannot handle is not retried on every pass
     await api

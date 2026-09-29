@@ -4,6 +4,9 @@
   "version": "0.9.0",
   "type": "module",
   "scripts": {
+    "prepare:asr": "node scripts/prepare-asr-runtime.mjs",
+    "predev": "npm run prepare:asr",
+    "prebuild": "npm run prepare:asr",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
@@ -16,6 +19,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@huggingface/transformers": "3.8.1",
     "@primer/octicons-react": "^19.38.0",
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-autostart": "^2.5.1",
@@ -23,6 +27,7 @@
     "@tauri-apps/plugin-opener": "^2.5.5",
     "hls.js": "^1.7.1",
     "lucide-react": "^1.33.0",
+    "onnxruntime-web": "1.22.0-dev.20250409-89f8206ba4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

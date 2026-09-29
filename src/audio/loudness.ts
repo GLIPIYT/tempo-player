@@ -7,6 +7,9 @@
  * local files. Nothing here touches the audio that is currently playing.
  */
 
+import type { AudioIdentity } from '../features/lyrics/analysis/contract'
+import { withDecodedAudio, yieldToUi } from './decodeForAnalysis'
+
 /** Reference level the tracks are pulled towards. */
 export const TARGET_RMS_DB = -18
 const MAX_BOOST_DB = 12
@@ -15,20 +18,10 @@ const MAX_CUT_DB = -24
 const CLIP_HEADROOM_DB = 1
 /** Sampling stride for the RMS pass; the peak is still tracked on every sample. */
 const STRIDE = 4
-/** decodeAudioData allocates the whole track as float32 - skip very long files. */
-const MAX_DURATION_SEC = 30 * 60
 
 export interface LoudnessResult {
   gainDb: number
   peakDb: number
-}
-
-function audioContextCtor(): typeof AudioContext | null {
-  return (
-    window.AudioContext ??
-    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext ??
-    null
-  )
 }
 
 /**
@@ -54,6 +47,10 @@ export function analyse(buffer: AudioBuffer): LoudnessResult | null {
     }
   }
 
+  return resultFromEnergy(sumSquares, samples, peak)
+}
+
+function resultFromEnergy(sumSquares: number, samples: number, peak: number): LoudnessResult | null {
   if (samples === 0 || peak <= 0) return null
 
   const rms = Math.sqrt(sumSquares / samples)
@@ -72,27 +69,26 @@ export function analyse(buffer: AudioBuffer): LoudnessResult | null {
 }
 
 /** Decodes and measures one file. Returns null when it cannot be measured. */
-export async function measureLoudness(url: string): Promise<LoudnessResult | null> {
-  const Ctor = audioContextCtor()
-  if (!Ctor) return null
-  let ctx: AudioContext | null = null
-  try {
-    ctx = new Ctor()
-    const response = await fetch(url)
-    if (!response.ok) return null
-    const bytes = await response.arrayBuffer()
-    const buffer = await ctx.decodeAudioData(bytes)
-    if (buffer.duration > MAX_DURATION_SEC) return null
-    return analyse(buffer)
-  } catch {
-    // an undecodable file is a normal outcome, not an error worth surfacing
-    return null
-  } finally {
-    if (ctx) void ctx.close().catch(() => {})
-  }
+export function measureLoudness(identity: AudioIdentity, signal = new AbortController().signal): Promise<LoudnessResult | null> {
+  return withDecodedAudio(identity, signal, buffer => analyseCooperatively(buffer, signal))
 }
 
 /** dB to the linear multiplier the engine expects. */
 export function dbToLinear(db: number): number {
   return Math.pow(10, db / 20)
+}
+
+export async function analyseCooperatively(buffer: AudioBuffer, signal: AbortSignal): Promise<LoudnessResult | null> {
+  let sumSquares = 0, samples = 0, peak = 0
+  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+    const data = buffer.getChannelData(ch)
+    for (let base = 0; base < data.length; base += 32768) {
+      signal.throwIfAborted()
+      for (let i = base; i < Math.min(base + 32768, data.length); i += STRIDE) {
+        peak = Math.max(peak, Math.abs(data[i])); sumSquares += data[i] * data[i]; samples++
+      }
+      await yieldToUi()
+    }
+  }
+  return resultFromEnergy(sumSquares, samples, peak)
 }

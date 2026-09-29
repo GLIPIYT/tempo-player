@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  worker: { format: 'es' },
+  // The matching JSEP pair is supplied by prepare:asr; avoid a second emitted WASM copy.
+  resolve: { conditions: ['onnxruntime-web-use-extern-wasm', 'module', 'browser', 'development|production'] },
   clearScreen: false,
   server: {
     port: 1420,
