@@ -13,6 +13,10 @@
 - Give each task its own clearly named topic and local start time (`Asia/Yekaterinburg`). Record its goal, relevant files or actions, verification approach, and final result including commit/push status.
 - Keep `.task-plans/` ignored by Git; daily plans are local working notes and must not be committed.
 
+## Git workflow
+
+- Commit every completed change directly on `main` and push it to GitHub.
+- Do not create feature branches or separate Git worktrees. Subagents must use this project checkout and coordinate file ownership.
 ## Development preview
 
 - After code changes, keep the Tauri development player running so the user can review the result. Reuse the current `npm run tauri dev` session and its hot reload when it is already active; start it from the project root if it is not. Confirm that both the Vite dev server and the `target/debug/tempo.exe` process are running. Leave them open unless the user asks to stop them.
