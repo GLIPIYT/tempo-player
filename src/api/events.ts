@@ -1,5 +1,10 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { ScanProgress } from '../types/models'
+import { LYRIC_MODEL_STATE_EVENT, type ModelState } from '../features/lyrics/analysis/contract'
+
+export function onLyricsAnalysisModelState(handler: (state: ModelState) => void): Promise<UnlistenFn> {
+  return listen<ModelState>(LYRIC_MODEL_STATE_EVENT, event => handler(event.payload))
+}
 
 export const SCAN_EVENT = 'scan://progress'
 export const LIBRARY_CHANGED_EVENT = 'library://changed'

@@ -17,6 +17,7 @@ import PlaylistDetailPage from './pages/PlaylistDetailPage'
 import HourMixPage from './pages/HourMixPage'
 import Onboarding from './components/onboarding/Onboarding'
 import PresenceBridge from './components/integration/PresenceBridge'
+import LyricsAnalysisBridge from './components/integration/LyricsAnalysisBridge'
 import MiniPlayerBridge from './components/integration/MiniPlayerBridge'
 import SystemBridge from './components/integration/SystemBridge'
 import LoudnessBridge from './components/integration/LoudnessBridge'
@@ -216,6 +217,7 @@ function Shell() {
         <LibraryChangeWatcher />
         <FolderDropWatcher />
         <TaskbarProgress />
+        <LyricsAnalysisBridge />
         <PresenceBridge />
         <MiniPlayerBridge />
         <SystemBridge />

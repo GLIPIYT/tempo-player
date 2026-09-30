@@ -1,4 +1,8 @@
 export const en: Record<string, string> = {
+  'Deep lyrics analysis': 'Deep lyrics analysis',
+  'Not downloaded': 'Not downloaded',
+  'Ready': 'Ready',
+  'Model unavailable': 'Model unavailable',
   'Search wallpapers, tags…': 'Search wallpapers, tags…',
   Anime: 'Anime',
   General: 'General',

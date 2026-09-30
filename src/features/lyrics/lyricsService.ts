@@ -1,163 +1,141 @@
 import { api } from '../../api/client'
-import { parseLrc } from './lrc'
+import { parseLrc, shiftLyricsLines } from './lrc'
+import { overridePlaybackResult } from './playbackDocument'
+import { createPlaybackTiming } from './playbackTiming'
+import { lyricTimingAt, resolveLyricTiming, type LyricTimingAnalysis, type ResolvedLyricsTiming } from './timingResolver'
 import type { LyricsResult } from './types'
 
 export interface CurrentLyrics {
   trackId: string
   result: LyricsResult | null
+  sourceResult: LyricsResult | null
+  lyricKey: string
+  sourceLyricKey: string
+  offsetMs: number
+  durationSec: number | null
+  generation: number
+  timing: ResolvedLyricsTiming
+}
+export interface LyricsTrack {
+  sourceId: string; source?: string; title: string; artists: string[]; dbId: number | null
+  album?: string | null; durationSec?: number | null
+}
+interface Candidate { result: LyricsResult | null; provider: string; offsetMs: number }
+export function lyricSourceKey(result: LyricsResult | null, provider: string): string {
+  return JSON.stringify([provider, result])
 }
 
 let current: CurrentLyrics | null = null
 let currentKey = ''
+let requestedId = ''
+let generation = 0
 let version = 0
+let position = 0
+let resolved: ResolvedLyricsTiming = { lines: [], segments: [] }
+let pass = createPlaybackTiming()
 const listeners = new Set<() => void>()
-
-function emit(): void {
-  version += 1
-  listeners.forEach((l) => l())
+function emit(): void { version++; listeners.forEach(listener => listener()) }
+function activate(trackId: string, sourceResult: LyricsResult | null, durationSec: number | null,
+  sourceLyricKey: string, offsetMs: number): void {
+  const lyricKey = JSON.stringify([sourceLyricKey, offsetMs])
+  if (current?.trackId === trackId && current.lyricKey === lyricKey && current.durationSec === durationSec) return
+  generation++
+  const result: LyricsResult | null = sourceResult?.kind === 'synced'
+    ? { kind: 'synced', lines: shiftLyricsLines(sourceResult.lines, offsetMs) } : sourceResult
+  resolved = resolveLyricTiming(result?.kind === 'synced' ? result.lines : [], durationSec)
+  pass = createPlaybackTiming()
+  current = { trackId, result, sourceResult, sourceLyricKey, lyricKey, offsetMs, durationSec, generation,
+    timing: pass.update(resolved, position) }
+  emit()
 }
 
 export const lyricsService = {
-  subscribe: (l: () => void): (() => void) => {
-    listeners.add(l)
-    return () => {
-      listeners.delete(l)
-    }
-  },
+  subscribe: (listener: () => void): (() => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
   getVersion: (): number => version,
   getCurrent: (): CurrentLyrics | null => current,
-  /** Fetches (embedded -> online) lyrics for the track once per track change. */
-  ensure: (
-    track: {
-      sourceId: string
-      title: string
-      artists: string[]
-      dbId: number | null
-      album?: string | null
-      durationSec?: number | null
-    },
-    cacheOnline: boolean,
-  ): void => {
-    if (currentKey === track.sourceId) return
-    currentKey = track.sourceId
-    current = null
-    emit()
-    const run = async () => {
-      const res = await fetchLyrics(track, cacheOnline)
-      current = { trackId: track.sourceId, result: res }
-      emit()
-    }
-    void run().catch(() => {})
+  /** Only the controller's actual media clock advances the shared playback pass. */
+  setPosition(positionSec: number): void {
+    position = Number.isFinite(positionSec) ? positionSec : 0
+    if (!current) return
+    const timing = pass.update(resolved, position)
+    if (timing !== current.timing) { current = { ...current, timing }; emit() }
   },
-  /**
-   * Drops the per-track guard so the next `ensure` refetches. Called when the user
-   * pins other lyrics or nudges the offset: without this the presence would keep
-   * the old lines until the track changed.
-   */
-  invalidate: (sourceId?: string): void => {
-    if (sourceId !== undefined && currentKey !== sourceId) return
-    currentKey = ''
+  setActiveCandidate(trackId: string, result: LyricsResult | null, durationSec: number | null,
+    sourceLyricKey: string, offsetMs = 0): void {
+    if (requestedId !== trackId) return
+    activate(trackId, result, durationSec, sourceLyricKey, offsetMs)
+  },
+  publishAnalysis(trackId: string, lyricKey: string, expectedGeneration: number, analysis: LyricTimingAnalysis): boolean {
+    if (!current || current.trackId !== trackId || current.lyricKey !== lyricKey || generation !== expectedGeneration) return false
+    resolved = resolveLyricTiming(current.result?.kind === 'synced' ? current.result.lines : [], current.durationSec, analysis)
+    current = { ...current, timing: pass.update(resolved, position) }
+    emit()
+    return true
+  },
+  ensure(track: LyricsTrack, cacheOnline: boolean): void {
+    const key = JSON.stringify([track.source, track.sourceId, track.dbId, track.title, track.artists])
+    if (currentKey === key) return
+    const job = ++generation
+    currentKey = key; requestedId = track.sourceId; current = null
+    pass = createPlaybackTiming()
+    emit()
+    void fetchLyrics(track, cacheOnline).then(candidate => {
+      if (job !== generation || key !== currentKey) return
+      activate(track.sourceId, candidate.result, track.durationSec ?? null,
+        lyricSourceKey(candidate.result, candidate.provider), candidate.offsetMs)
+    }).catch(() => {})
+  },
+  invalidate(sourceId?: string): void {
+    if (sourceId !== undefined && requestedId !== sourceId) return
+    if (!currentKey && !current) return
+    generation++; currentKey = ''; current = null; requestedId = ''
+    emit()
   },
 }
 
-async function fetchLyrics(
-  track: {
-    sourceId: string
-    title: string
-    artists: string[]
-    dbId: number | null
-    album?: string | null
-    durationSec?: number | null
-  },
-  cacheOnline: boolean,
-): Promise<LyricsResult | null> {
-  // What the user pinned outranks everything, including embedded tags, so the
-  // overlay and the Discord presence can never show different words.
+async function fetchLyrics(track: LyricsTrack, cacheOnline: boolean): Promise<Candidate> {
   if (track.dbId != null) {
     try {
       const pinned = await api.getLyricsOverride(track.dbId)
-      if (pinned?.isActive !== false && pinned?.lrc.trim()) {
-        const lines = parseLrc(pinned.lrc, pinned.offsetMs)
-        if (lines && lines.length > 0) return { kind: 'synced', lines }
-        return { kind: 'plain', text: pinned.lrc.trim() }
+      if (pinned && pinned.isActive !== false && pinned.lrc.trim()) {
+        return { result: overridePlaybackResult(pinned), provider: pinned.provider, offsetMs: pinned.offsetMs }
       }
-    } catch {}
-  }
-  if (track.dbId != null) {
+    } catch { /* Continue to embedded or online lyrics. */ }
     try {
       const raw = await api.getTrackLyrics(track.dbId)
-      if (raw && raw.trim()) {
+      if (raw?.trim()) {
         const lines = parseLrc(raw)
-        if (lines && lines.length > 0) return { kind: 'synced', lines }
-        return { kind: 'plain', text: raw.trim() }
+        return { result: lines?.length ? { kind: 'synced', lines } : { kind: 'plain', text: raw.trim() }, provider: 'embedded', offsetMs: 0 }
       }
-    } catch {}
+    } catch { /* Continue to online lyrics. */ }
   }
-  if (!track.title.trim()) return null
-  try {
-    const data = await api.fetchOnlineLyrics(
-      track.artists[0] ?? '',
-      track.title,
-      track.album ?? null,
-      track.durationSec ?? null,
-    )
-    if (!data) return null
-    let res: LyricsResult | null = null
-    if (data.syncedLrc) {
-      const lines = parseLrc(data.syncedLrc)
-      if (lines && lines.length > 0) res = { kind: 'synced', lines }
-    }
-    if (!res && data.plain && data.plain.trim()) res = { kind: 'plain', text: data.plain.trim() }
-    if (res && cacheOnline && track.dbId != null) {
-      const rawToStore = data.syncedLrc ?? data.plain
-      if (rawToStore && rawToStore.trim()) {
-        void api.setTrackLyrics(track.dbId, rawToStore).catch(() => {})
+  if (track.title.trim()) {
+    try {
+      const data = await api.fetchOnlineLyrics(track.artists[0] ?? '', track.title, track.album ?? null, track.durationSec ?? null)
+      if (data) {
+        const lines = data.syncedLrc ? parseLrc(data.syncedLrc) : null
+        const result: LyricsResult | null = lines?.length ? { kind: 'synced', lines }
+          : data.plain?.trim() ? { kind: 'plain', text: data.plain.trim() } : null
+        const raw = data.syncedLrc ?? data.plain
+        if (result && cacheOnline && track.dbId != null && raw?.trim()) void api.setTrackLyrics(track.dbId, raw).catch(() => {})
+        return { result, provider: 'online', offsetMs: 0 }
       }
-    }
-    return res
-  } catch {
-    return null
+    } catch { /* Unavailable providers leave the cheap empty baseline. */ }
   }
+  return { result: null, provider: '', offsetMs: 0 }
 }
 
-/** The active line plus the one after it, for the paired-lines presence. */
-export interface LyricSlice {
-  /** active line, or null on an instrumental marker / no synced lyrics */
-  text: string | null
-  /** the line after the active one, or null when there is none to show */
-  nextText: string | null
-  /** seconds between the two; Infinity when there is no next line */
-  gapSec: number
-}
-
+export interface LyricSlice { text: string | null; nextText: string | null; gapSec: number }
 const NO_SLICE: LyricSlice = { text: null, nextText: null, gapSec: Infinity }
 
-/**
- * Active synced line and its successor at the given position.
- *
- * `gapSec` is what decides pairing: two lines a second apart cannot each get
- * their own Discord update, since Discord accepts about five per 20s, so the
- * caller sends them together as two rows of one activity. An instrumental marker
- * (a timecode with no text) yields null in either slot on purpose, so a caller
- * like the Discord presence falls back to the artist rather than leaving the last
- * sung line frozen on screen through the whole break.
- */
-export function lyricSliceAt(result: LyricsResult | null, positionSec: number): LyricSlice {
-  if (!result || result.kind !== 'synced') return NO_SLICE
-  let i = -1
-  for (let k = 0; k < result.lines.length; k += 1) {
-    if (result.lines[k].timeSec <= positionSec + 0.3) i = k
-    else break
-  }
-  if (i < 0) return NO_SLICE
-  const cur = result.lines[i]
-  const next = i + 1 < result.lines.length ? result.lines[i + 1] : null
-  const text = cur.text.trim() ? cur.text : null
-  return {
-    text,
-    // pairing only runs forward from a real line: with no current line there is
-    // nothing for the second row to sit under
-    nextText: text && next && next.text.trim() ? next.text : null,
-    gapSec: next ? Math.max(0, next.timeSec - cur.timeSec) : Infinity,
-  }
+/** Overlay and Discord use the same resolved, pass-stabilized intervals. */
+export function lyricSliceAt(result: LyricsResult | ResolvedLyricsTiming | null, positionSec: number): LyricSlice {
+  if (!result || ('kind' in result && result.kind !== 'synced')) return NO_SLICE
+  const timing = 'segments' in result ? result : resolveLyricTiming(result.lines, null)
+  const { segmentIndex } = lyricTimingAt(timing, positionSec)
+  const segment = timing.segments[segmentIndex]
+  if (!segment || segment.kind !== 'line') return NO_SLICE
+  const next = timing.segments[segmentIndex + 1]
+  return { text: segment.text, nextText: next?.kind === 'line' ? next.text : null,
+    gapSec: next?.kind === 'line' ? next.timeSec - segment.timeSec : Infinity }
 }

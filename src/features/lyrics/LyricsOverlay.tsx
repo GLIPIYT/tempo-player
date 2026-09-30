@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { Check, ChevronDown, ChevronLeft, MicVocal, Music2, Pause, Pencil, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 import type { CSSProperties, TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from 'react'
@@ -12,9 +12,11 @@ import type { LyricsEditedVersion, LyricsOverride, LrclibPublishRequest } from '
 import { EmbeddedTagsLyricsProvider } from './embeddedProvider'
 import { fetchOnlineLyricsCandidates, toLyricsCandidates } from './onlineProvider'
 import type { LyricsCandidate } from './onlineProvider'
-import type { LyricsLine, LyricsResult } from './types'
-import { formatLrc, parseLrc } from './lrc'
-import { lyricsService } from './lyricsService'
+import type { LyricsResult } from './types'
+import { formatLrc, shiftLyricsLines } from './lrc'
+import { lyricSourceKey, lyricsService } from './lyricsService'
+import { activeOverrideDocument, candidatePlaybackDocument as candidateDocument, overridePlaybackResult } from './playbackDocument'
+import { lyricTimingAt, type ResolvedLyricsTiming } from './timingResolver'
 import LyricsEditorPanel from './LyricsEditorPanel'
 import { fromLrc, fromPlainLyrics, toLrclibLyricsfile, toPlainText, toPlaybackLrc } from './editorDocument'
 import type { LyricsEditorDocument } from './editorDocument'
@@ -26,18 +28,8 @@ interface LyricsOverlayProps {
 
 type OverlayMode = 'synced' | 'plain' | 'empty' | 'loading'
 
-interface LyricSegment {
-  kind: 'line' | 'notes'
-  timeSec: number
-  endTimeSec: number
-  text: string
-  seekToSec: number
-}
-
-const GAP_THRESHOLD_SEC = 5
 const ANCHOR_RATIO = 0.38
 const PAUSE_MS = 4000
-const END_HOLD_SEC = 3
 const OFFSET_STEP_MS = 500
 const OFFSET_LIMIT_MS = 30000
 
@@ -54,49 +46,15 @@ function candidateLrc(c: LyricsCandidate): string {
   if (c.plain && c.plain.trim()) return c.plain
   return c.result.kind === 'plain' ? c.result.text : ''
 }
-
-function candidateDocument(
-  candidate: LyricsCandidate,
-  durationMs: number | null | undefined,
-  mode: 'plain' | 'synced' = candidate.result.kind,
-): LyricsEditorDocument {
-  if (mode === 'synced') {
-    const lrc = candidate.syncedLrc?.trim()
-    if (lrc) return fromLrc(lrc, durationMs)
-    if (candidate.result.kind === 'synced') {
-      // Embedded lyrics are already parsed numeric timestamps, with the source
-      // offset normalized. Keep those values directly instead of round-tripping
-      // through serialized LRC, which can lose timestamp precision.
-      const knownDuration = Number.isFinite(durationMs) && (durationMs ?? 0) > 0 ? Math.round(durationMs!) : null
-      let nextDistinctStart: number | null = null
-      const lines = new Array<{ text: string; startMs: number; endMs: number | null }>(candidate.result.lines.length)
-      for (let index = candidate.result.lines.length - 1; index >= 0; index -= 1) {
-        const sourceLine = candidate.result.lines[index]
-        const startMs = Math.max(0, Math.round(sourceLine.timeSec * 1000))
-        lines[index] = { text: sourceLine.text, startMs, endMs: nextDistinctStart ?? knownDuration }
-        if (index === 0 || Math.round(candidate.result.lines[index - 1].timeSec * 1000) < startMs) {
-          nextDistinctStart = startMs
-        }
-      }
-      return { mode: 'synced', lines }
-    }
-  }
-  const plain = candidate.plain ?? (candidate.result.kind === 'plain' ? candidate.result.text : '')
-  return fromPlainLyrics(plain)
-}
-
 /**
  * Re-times an already-parsed candidate by `offsetMs`. The pinned row keeps the
  * unshifted body plus an offset, so the offset has to be re-applied whenever the
  * overlay renders - and re-applied from the original, not stacked on the last
- * render, which is why this re-parses instead of nudging in place.
+ * render. Shift the rich fields together without serializing them to LRC.
  */
 function shiftCandidate(c: LyricsCandidate, offsetMs: number): LyricsCandidate {
   if (offsetMs === 0 || c.result.kind !== 'synced') return c
-  const raw = candidateLrc(c)
-  const lines = raw ? parseLrc(raw, offsetMs) : null
-  if (!lines || lines.length === 0) return c
-  return { ...c, result: { kind: 'synced', lines } }
+  return { ...c, result: { kind: 'synced', lines: shiftLyricsLines(c.result.lines, offsetMs) } }
 }
 
 type OverlayCandidate = LyricsCandidate & {
@@ -130,7 +88,8 @@ function overrideCandidate(
     ...(metadata.offsetMs !== undefined ? { savedOffsetMs: metadata.offsetMs } : {}),
     ...(metadata.sourceArtist ? { artistName: metadata.sourceArtist } : {}),
   }
-  const lines = parseLrc(pinned.lrc)
+  const result = overridePlaybackResult(pinned)
+  const lines = result.kind === 'synced' ? result.lines : null
   if (lines && lines.length > 0) {
     return {
       provider: pinned.provider,
@@ -181,60 +140,6 @@ function providerLabel(provider: string, t: (k: string) => string): string {
   if (provider === 'genius') return 'Genius'
   return provider
 }
-
-function buildSegments(lines: LyricsLine[]): LyricSegment[] {
-  const segs: LyricSegment[] = []
-  for (let i = 0; i < lines.length; i++) {
-    const next = lines[i + 1]
-    const gap = next ? Math.max(0, next.timeSec - lines[i].timeSec) : 0
-    // a timecode with no text is the file's own instrumental marker - drawn as
-    // notes rather than a blank row, and it needs no gap threshold to qualify
-    if (!lines[i].text.trim()) {
-      const end = next ? next.timeSec : lines[i].timeSec + 6
-      const prev = segs[segs.length - 1]
-      if (prev && prev.kind === 'notes' && prev.endTimeSec >= lines[i].timeSec) {
-        // consecutive markers collapse into one run of notes, and the click target
-        // moves with it so it always lands on the next sung line
-        prev.endTimeSec = end
-        prev.seekToSec = next ? next.timeSec : lines[i].timeSec
-        continue
-      }
-      segs.push({
-        kind: 'notes',
-        timeSec: lines[i].timeSec,
-        endTimeSec: end,
-        text: '',
-        seekToSec: next ? next.timeSec : lines[i].timeSec,
-      })
-      continue
-    }
-    if (next && gap > GAP_THRESHOLD_SEC) {
-      const dotsAt = lines[i].timeSec + gap * 0.5
-      segs.push({ kind: 'line', timeSec: lines[i].timeSec, endTimeSec: dotsAt, text: lines[i].text, seekToSec: lines[i].timeSec })
-      segs.push({ kind: 'notes', timeSec: dotsAt, endTimeSec: next.timeSec, text: '', seekToSec: next.timeSec })
-    } else {
-      segs.push({
-        kind: 'line',
-        timeSec: lines[i].timeSec,
-        endTimeSec: next ? next.timeSec : lines[i].timeSec + 6,
-        text: lines[i].text,
-        seekToSec: lines[i].timeSec,
-      })
-    }
-  }
-  const last = segs[segs.length - 1]
-  if (last && last.kind === 'line') {
-    segs.push({
-      kind: 'notes',
-      timeSec: last.endTimeSec + END_HOLD_SEC,
-      endTimeSec: Number.POSITIVE_INFINITY,
-      text: '',
-      seekToSec: last.seekToSec,
-    })
-  }
-  return segs
-}
-
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v))
 }
@@ -320,11 +225,11 @@ function LyricsVolumeRow() {
   )
 }
 
-function SyncedView({ lines }: { lines: LyricsLine[] }) {
+function SyncedView({ timing }: { timing: ResolvedLyricsTiming }) {
   const p = usePlayer()
   const t = useT()
   const seek = p.seek
-  const segments = useMemo(() => buildSegments(lines), [lines])
+  const segments = timing.segments
   const stageRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const itemEls = useRef<Array<HTMLElement | null>>([])
@@ -406,18 +311,7 @@ function SyncedView({ lines }: { lines: LyricsLine[] }) {
   useEffect(() => {
     if (segments.length === 0) return
     const pos = p.position
-    let lo = 0
-    let hi = segments.length - 1
-    let found = -1
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1
-      if (segments[mid].timeSec <= pos) {
-        found = mid
-        lo = mid + 1
-      } else {
-        hi = mid - 1
-      }
-    }
+    const { segmentIndex: found, progress } = lyricTimingAt(timing, pos)
     if (found !== segIdxRef.current) {
       segIdxRef.current = found
       setSegIdx(found)
@@ -427,18 +321,16 @@ function SyncedView({ lines }: { lines: LyricsLine[] }) {
     const ul = underlineRef.current
     const tx = textRef.current
     if (seg && seg.kind === 'line' && seg.endTimeSec > seg.timeSec) {
-      const pct = Math.floor(clamp(((pos - seg.timeSec) / (seg.endTimeSec - seg.timeSec)) * 100, 0, 100))
-      if (pct !== pctRef.current) {
-        pctRef.current = pct
-        if (ul) ul.style.width = `${pct}%`
-        if (tx) tx.style.setProperty('--lyr-fill', `${pct}%`)
-      }
+      const pct = Math.floor(progress * 100)
+      pctRef.current = pct
+      if (ul) ul.style.width = `${pct}%`
+      if (tx) tx.style.setProperty('--lyr-fill', `${pct}%`)
     } else if (pctRef.current !== 0) {
       pctRef.current = 0
       if (ul) ul.style.width = '0%'
       if (tx) tx.style.setProperty('--lyr-fill', '0%')
     }
-  }, [p.position, segments, applyTransform])
+  }, [p.position, timing, segments, applyTransform, segIdx])
 
   const endPause = useCallback(() => {
     if (pauseTimerRef.current !== 0) {
@@ -522,6 +414,7 @@ function SyncedView({ lines }: { lines: LyricsLine[] }) {
           >
             <span
               className="lyr-line-text"
+              style={{ whiteSpace: 'pre-line' }}
               ref={
                 i === segIdx
                   ? (el) => {
@@ -940,6 +833,12 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   const trackKey = track ? `${track.source}|${track.sourceId}|${track.title}|${track.artists.join(',')}` : ''
   const [candidates, setCandidates] = useState<LyricsCandidate[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [candidatesTrackKey, setCandidatesTrackKey] = useState('')
+  const candidateRequest = useRef(0)
+  const pinRequest = useRef(0)
+  const currentTrackKey = useRef(trackKey)
+  currentTrackKey.current = trackKey
+  useSyncExternalStore(lyricsService.subscribe, lyricsService.getVersion)
   const [loading, setLoading] = useState(false)
   const [unavailableHint, setUnavailableHint] = useState(false)
   const [showManual, setShowManual] = useState(false)
@@ -961,6 +860,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
 
   useEffect(() => {
     let cancelled = false
+    pinRequest.current++
     const id = p.currentTrack?.dbId ?? null
     if (id == null) {
       setPinned(null)
@@ -1027,6 +927,9 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
 
   useEffect(() => {
     let cancelled = false
+    const request = ++candidateRequest.current
+    setCandidatesTrackKey('')
+    setSearching(false)
     const tr = p.currentTrack
     const key = tr ? `${tr.source}|${tr.sourceId}|${tr.title}|${tr.artists.join(',')}` : ''
     if (!tr) {
@@ -1038,6 +941,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
     }
     const cached = overlayCache.get(key)
     if (cached) {
+      setCandidatesTrackKey(key)
       setCandidates(cached.candidates)
       setSelectedIndex(cached.selectedIndex)
       setLoading(false)
@@ -1052,9 +956,10 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
     EmbeddedTagsLyricsProvider.getLyrics(tr)
       .catch(() => null)
       .then((embedded: LyricsResult | null) => {
-        if (cancelled) return
+        if (cancelled || request !== candidateRequest.current) return
         if (embedded) {
           list = [{ provider: 'embedded', result: embedded, plain: null, syncedLrc: null }]
+          setCandidatesTrackKey(key)
           setCandidates([...list])
           setSelectedIndex(0)
           setLoading(false)
@@ -1064,7 +969,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
         const title = tr.title
         return fetchOnlineLyricsCandidates(artist, title, tr)
           .then((online) => {
-            if (cancelled) return
+            if (cancelled || request !== candidateRequest.current) return
             if (online.length === 0) {
               if (list.length === 0) {
                 setUnavailableHint(true)
@@ -1078,6 +983,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
               const firstSynced = combined.findIndex((c) => c.result.kind === 'synced')
               sel = firstSynced >= 0 ? firstSynced : 0
             }
+            setCandidatesTrackKey(key)
             setCandidates(combined)
             setSelectedIndex(sel)
             setLoading(false)
@@ -1085,7 +991,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
             overlayCache.set(key, { candidates: combined, selectedIndex: sel })
           })
           .catch(() => {
-            if (cancelled) return
+            if (cancelled || request !== candidateRequest.current) return
             if (list.length === 0) {
               setLoading(false)
               setUnavailableHint(true)
@@ -1095,12 +1001,12 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           })
       })
       .catch(() => {
-        if (cancelled) return
+        if (cancelled || request !== candidateRequest.current) return
         const artist = tr.artists[0] ?? ''
         const title = tr.title
         fetchOnlineLyricsCandidates(artist, title, tr)
           .then((online) => {
-            if (cancelled) return
+            if (cancelled || request !== candidateRequest.current) return
             if (online.length === 0) {
               setLoading(false)
               setUnavailableHint(true)
@@ -1108,13 +1014,14 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
             }
             const firstSynced = online.findIndex((c) => c.result.kind === 'synced')
             const sel = firstSynced >= 0 ? firstSynced : 0
+            setCandidatesTrackKey(key)
             setCandidates(online)
             setSelectedIndex(sel)
             setLoading(false)
             overlayCache.set(key, { candidates: online, selectedIndex: sel })
           })
           .catch(() => {
-            if (!cancelled) {
+            if (!cancelled && request === candidateRequest.current) {
               setLoading(false)
               setUnavailableHint(true)
             }
@@ -1205,8 +1112,18 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       ? viewPinnedIndex
       : baseCandidates.length > 0 ? selectedIndex + (pinnedExtra ? 1 : 0) : -1
   const selected = viewCandidates[viewSelectedIndex] ?? null
+  const sourceSelected = rawViewCandidates[viewSelectedIndex] ?? null
+  useEffect(() => {
+    if (!track || !pinnedLoaded || candidatesTrackKey !== trackKey) return
+    const result = pinned ? overridePlaybackResult(pinned) : sourceSelected?.result ?? null
+    if (!result) return
+    lyricsService.setActiveCandidate(track.sourceId, result, track.durationSec ?? null,
+      lyricSourceKey(result, pinned?.provider ?? sourceSelected?.provider ?? ''), pinned?.offsetMs ?? 0)
+  }, [track, trackKey, candidatesTrackKey, pinnedLoaded, pinned, sourceSelected])
+  const sharedLyrics = lyricsService.getCurrent()
+  const activeLyrics = sharedLyrics?.trackId === track?.sourceId ? sharedLyrics : null
   const mode: OverlayMode =
-    loading && viewCandidates.length === 0 ? 'loading' : selected ? selected.result.kind : 'empty'
+    activeLyrics?.result?.kind ?? (loading && viewCandidates.length === 0 ? 'loading' : 'empty')
   const durationMs = track?.durationSec != null ? track.durationSec * 1000 : null
   const editorSourceOptions = useMemo(
     () => {
@@ -1260,6 +1177,10 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       const lrc = candidateLrc(candidate)
       if (!lrc.trim()) return
       const overlayCandidate = candidate as OverlayCandidate
+      const mutation = ++pinRequest.current
+      const requestTrackKey = trackKey
+      const document = overlayCandidate.isEditedVersion ? editedVersion?.editorDocument
+        : pinned && sameExactPin(candidate, pinned) ? activeOverrideDocument(pinned) : null
       const sourceArtist = overlayCandidate.isEditedVersion
         ? overlayCandidate.savedSourceArtist || tr.artists[0] || null
         : overlayCandidate.savedSourceArtist ?? searchedAs?.artist ?? tr.artists[0] ?? null
@@ -1275,6 +1196,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           lrc,
           offsetMs: nextOffsetMs,
         })
+        if (mutation !== pinRequest.current || currentTrackKey.current !== requestTrackKey) return
         setPinned({
           provider: candidate.provider,
           sourceArtist,
@@ -1282,12 +1204,13 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           lrc,
           offsetMs: nextOffsetMs,
           updatedAt: Math.floor(Date.now() / 1000),
+          ...(document ? { editorDocument: document } : {}),
         })
         lyricsService.invalidate(tr.sourceId)
         lyricsService.ensure(tr, settings.lyrics.cacheOnline)
       } catch {}
     },
-    [p.currentTrack, searchedAs, settings.lyrics.cacheOnline],
+    [p.currentTrack, searchedAs, settings.lyrics.cacheOnline, trackKey, pinned, editedVersion],
   )
 
   /**
@@ -1296,7 +1219,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
    */
   const handleSelect = useCallback(
     (viewIdx: number) => {
-      const candidate = viewCandidates[viewIdx]
+      const candidate = rawViewCandidates[viewIdx]
       if (!candidate) return
       const idx = viewIdx - (pinnedExtra ? 1 : 0)
       if (idx >= 0 && idx < candidates.length) {
@@ -1311,22 +1234,25 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       // The offset is dropped, since it was tuned against the previous lines.
       void persistPin(candidate, (candidate as OverlayCandidate).savedOffsetMs ?? 0)
     },
-    [p.currentTrack, candidates, persistPin, pinnedExtra, viewCandidates],
+    [p.currentTrack, candidates, persistPin, pinnedExtra, rawViewCandidates],
   )
 
   /** Back to automatic: drops the row and lets the normal chain resolve again. */
   const handleResetPin = useCallback(() => {
     const tr = p.currentTrack
     if (!tr || tr.dbId == null) return
+    const mutation = ++pinRequest.current
+    const requestTrackKey = trackKey
     setPinned(null)
     api
       .clearLyricsOverride(tr.dbId)
       .then(() => {
+        if (mutation !== pinRequest.current || currentTrackKey.current !== requestTrackKey) return
         lyricsService.invalidate(tr.sourceId)
         lyricsService.ensure(tr, settings.lyrics.cacheOnline)
       })
       .catch(() => {})
-  }, [p.currentTrack, settings.lyrics.cacheOnline])
+  }, [p.currentTrack, settings.lyrics.cacheOnline, trackKey])
 
   /**
    * Nudging automatic lyrics has to pin them first - `offset_ms` lives on the
@@ -1338,10 +1264,13 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       if (!tr || tr.dbId == null) return
       const next = clamp((pinned?.offsetMs ?? 0) + deltaMs, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS)
       if (pinned) {
+        const mutation = ++pinRequest.current
+        const requestTrackKey = trackKey
         setPinned({ ...pinned, offsetMs: next })
         api
           .setLyricsOverrideOffset(tr.dbId, next)
           .then(() => {
+            if (mutation !== pinRequest.current || currentTrackKey.current !== requestTrackKey) return
             lyricsService.invalidate(tr.sourceId)
             lyricsService.ensure(tr, settings.lyrics.cacheOnline)
           })
@@ -1351,7 +1280,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       const candidate = candidates[selectedIndex]
       if (candidate) void persistPin(candidate, next)
     },
-    [p.currentTrack, pinned, candidates, selectedIndex, persistPin, settings.lyrics.cacheOnline],
+    [p.currentTrack, pinned, candidates, selectedIndex, persistPin, settings.lyrics.cacheOnline, trackKey],
   )
 
   const handleManualSearch = useCallback(
@@ -1359,10 +1288,14 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       const a = artist.trim()
       const tt = title.trim()
       if (!a || !tt) return
+      const request = ++candidateRequest.current
+      const searchTrackKey = trackKey
       setSearching(true)
       setUnavailableHint(false)
       try {
         const raw = await api.fetchOnlineLyricsAll(a, tt)
+        if (currentTrackKey.current !== searchTrackKey || request !== candidateRequest.current) return
+        setCandidatesTrackKey(searchTrackKey)
         const out = toLyricsCandidates(raw)
         const embeddedOnly = candidates.filter((c) => c.provider === 'embedded')
         const combined = [...embeddedOnly, ...out]
@@ -1385,14 +1318,15 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           if (key2) overlayCache.set(key2, { candidates: combined, selectedIndex: sel })
         }
       } catch {
+        if (currentTrackKey.current !== searchTrackKey || request !== candidateRequest.current) return
         if (candidates.filter((c) => c.provider === 'embedded').length === 0) {
           setUnavailableHint(true)
         }
       } finally {
-        setSearching(false)
+        if (currentTrackKey.current === searchTrackKey && request === candidateRequest.current) setSearching(false)
       }
     },
-    [candidates, p.currentTrack],
+    [candidates, p.currentTrack, trackKey],
   )
 
   const selectedEditorSource = (sourceId: string | null): LyricsCandidate | null => {
@@ -1440,6 +1374,8 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
     if (!tr || tr.dbId == null) throw new Error('Track cannot store lyrics')
     const source = sourceMetadata(sourceId)
     const lrc = toPlaybackLrc(document)
+    const mutation = ++pinRequest.current
+    const requestTrackKey = trackKey
     setSavingLyrics(true)
     try {
       await api.saveLyricsEditorDocument({
@@ -1451,6 +1387,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
         offsetMs: source.offsetMs,
         editorDocument: document,
       })
+      if (mutation !== pinRequest.current || currentTrackKey.current !== requestTrackKey) return
       const updatedAt = Math.floor(Date.now() / 1000)
       setEditedVersion({
         provider: source.provider,
@@ -1607,10 +1544,10 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
                 <div className="lyr-copyright">{selected.copyright}</div>
               )}
               {searching && viewCandidates.length > 0 && <LoadingMark />}
-              {mode === 'synced' && selected?.result.kind === 'synced' && (
-                <SyncedView key={`${trackKey}-${viewSelectedIndex}-${offsetMs}`} lines={selected.result.lines} />
+              {mode === 'synced' && activeLyrics?.result?.kind === 'synced' && (
+                <SyncedView key={trackKey} timing={activeLyrics.timing} />
               )}
-              {mode === 'plain' && selected?.result.kind === 'plain' && <PlainView text={selected.result.text} />}
+              {activeLyrics?.result?.kind === 'plain' && <PlainView text={activeLyrics.result.text} />}
               {mode === 'loading' && !searching && <LoadingMark />}
               {mode === 'empty' && (
                 <>

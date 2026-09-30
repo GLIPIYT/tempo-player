@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { activeOverrideDocument } from './playbackDocument'
+import { activeOverrideDocument, candidatePlaybackDocument } from './playbackDocument'
+import { toPlaybackLines } from './editorDocument'
 import type { LyricsOverride } from '../../types/models'
 
 const pinned: LyricsOverride = {
@@ -9,6 +10,24 @@ const pinned: LyricsOverride = {
 }
 
 describe('activeOverrideDocument', () => {
+  it('keeps source words and authored ends on embedded candidate import; derived ends stay automatic', () => {
+    const document = candidatePlaybackDocument({ provider: 'embedded', syncedLrc: null, plain: null,
+      result: { kind: 'synced', lines: [
+        { text: 'exact', timeSec: 1.123, endTimeSec: 3.456, endSource: 'source', words: [{ text: 'exact', timeSec: 1.123, endTimeSec: 3.456 }] },
+        { text: 'estimated', timeSec: 8 },
+      ] } }, 40000)
+    expect(toPlaybackLines(document)).toEqual([
+      { text: 'exact', timeSec: 1.123, endTimeSec: 3.456, endSource: 'source', words: [{ text: 'exact', timeSec: 1.123, endTimeSec: 3.456 }] },
+      { text: 'estimated', timeSec: 8 },
+    ])
+  })
+  it('does not replace a rich candidate with its lossy compatibility LRC', () => {
+    const document = candidatePlaybackDocument({ provider: 'manual', plain: null, syncedLrc: '[00:01.00]one',
+      result: { kind: 'synced', lines: [{ text: 'one', timeSec: 1, endTimeSec: 4, endSource: 'manual',
+        words: [{ text: 'one', timeSec: 1, endTimeSec: 3 }] }] } }, 40000)
+    expect(toPlaybackLines(document)?.[0]).toEqual({ text: 'one', timeSec: 1, endTimeSec: 4, endSource: 'manual',
+      words: [{ text: 'one', timeSec: 1, endTimeSec: 3 }] })
+  })
   it('uses saved endpoints for the active saved version even after an offset nudge', () => {
     expect(activeOverrideDocument(pinned)).toEqual(pinned.editorDocument)
   })

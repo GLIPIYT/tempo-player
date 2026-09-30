@@ -1,4 +1,8 @@
 export const ru: Record<string, string> = {
+  'Deep lyrics analysis': 'Углубленное анализирование лирики',
+  'Not downloaded': 'Не загружено',
+  'Ready': 'Готово',
+  'Model unavailable': 'Модель недоступна',
   'Search wallpapers, tags…': 'Поиск обоев, теги…',
   Anime: 'Аниме',
   People: 'Люди',

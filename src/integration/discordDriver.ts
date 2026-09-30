@@ -104,7 +104,7 @@ const UPLOAD_RETRY_MAX_MS = 15 * 60_000
 function activeSlice(trackKey: string, position: number): LyricSlice {
   const cur = lyricsService.getCurrent()
   if (!cur || cur.trackId !== trackKey) return { text: null, nextText: null, gapSec: Infinity }
-  return lyricSliceAt(cur.result, position)
+  return lyricSliceAt(cur.timing, position)
 }
 
 /**

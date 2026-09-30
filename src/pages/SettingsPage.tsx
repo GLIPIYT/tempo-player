@@ -51,6 +51,7 @@ import { applyTheme, parseHex, toHex } from '../theme/engine'
 import UpdateDialog from '../updater/UpdateDialog'
 import VisualizerPreview from '../components/settings/VisualizerPreview'
 import BackgroundSearchPanel from '../components/settings/BackgroundSearchPanel'
+import LyricsAnalysisCard from '../components/settings/LyricsAnalysisCard'
 import {
   appVersion,
   forgetSkippedVersions,
@@ -1802,6 +1803,7 @@ export default function SettingsPage() {
                 </div>
               </Card>
               <UpdateCard />
+              <LyricsAnalysisCard />
             </>
           ) : null}
         </div>
