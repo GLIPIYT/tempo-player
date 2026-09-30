@@ -28,7 +28,7 @@ describe('main playback connection without an overlay', () => {
         get: () => saved, merge: async () => cache, ensureModel: async () => { audioWork++; throw Error('unexpected model') }, assetUrl: value => value },
       decode: async () => { audioWork++; return null }, worker: () => { audioWork++; throw Error('unexpected worker') },
     })
-    let snapshot = { currentTrack: track as UnifiedTrack | null, position: 0, isPlaying: true, playbackRate: rate }
+    let snapshot = { currentTrack: track as UnifiedTrack | null, position: 0, isPlaying: true, playbackRate: rate, duration: 40, preparing: false }
     const listeners = new Set<() => void>()
     const player = { getSnapshot: () => snapshot, subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } } }
     const disconnect = connectLyricsAnalysis({ player, runner, lyrics: lyricsService, lifecycle: { setSchedulingAllowed: () => {} }, cacheOnline: () => false })

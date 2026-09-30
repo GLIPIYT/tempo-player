@@ -31,21 +31,25 @@ let requestedId = ''
 let generation = 0
 let version = 0
 let position = 0
+let mediaDurationSec: number | null = null
+let latestAnalysis: LyricTimingAnalysis | null = null
 let resolved: ResolvedLyricsTiming = { lines: [], segments: [] }
 let pass = createPlaybackTiming()
 const listeners = new Set<() => void>()
 function emit(): void { version++; listeners.forEach(listener => listener()) }
 function activate(trackId: string, sourceResult: LyricsResult | null, durationSec: number | null,
   sourceLyricKey: string, offsetMs: number): void {
+  durationSec = mediaDurationSec ?? durationSec
   const lyricKey = JSON.stringify([sourceLyricKey, offsetMs])
   if (current?.trackId === trackId && current.lyricKey === lyricKey && current.durationSec === durationSec) return
   generation++
+  latestAnalysis = null
   const result: LyricsResult | null = sourceResult?.kind === 'synced'
     ? { kind: 'synced', lines: shiftLyricsLines(sourceResult.lines, offsetMs) } : sourceResult
   resolved = resolveLyricTiming(result?.kind === 'synced' ? result.lines : [], durationSec)
   pass = createPlaybackTiming()
   current = { trackId, result, sourceResult, sourceLyricKey, lyricKey, offsetMs, durationSec, generation,
-    timing: pass.update(resolved, position) }
+    timing: pass.update(resolved, position, durationSec) }
   emit()
 }
 
@@ -53,11 +57,20 @@ export const lyricsService = {
   subscribe: (listener: () => void): (() => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
   getVersion: (): number => version,
   getCurrent: (): CurrentLyrics | null => current,
+  /** Actual loaded media wins over metadata and preserves candidate/pass identity. */
+  setMediaDuration(trackId: string, durationSec: number): void {
+    if (requestedId !== trackId || !Number.isFinite(durationSec) || durationSec <= 0) return
+    mediaDurationSec = durationSec
+    if (!current || current.durationSec === durationSec) return
+    resolved = resolveLyricTiming(current.result?.kind === 'synced' ? current.result.lines : [], durationSec, latestAnalysis)
+    current = { ...current, durationSec, timing: pass.update(resolved, position, durationSec) }
+    emit()
+  },
   /** Only the controller's actual media clock advances the shared playback pass. */
   setPosition(positionSec: number): void {
     position = Number.isFinite(positionSec) ? positionSec : 0
     if (!current) return
-    const timing = pass.update(resolved, position)
+    const timing = pass.update(resolved, position, current.durationSec)
     if (timing !== current.timing) { current = { ...current, timing }; emit() }
   },
   setActiveCandidate(trackId: string, result: LyricsResult | null, durationSec: number | null,
@@ -67,8 +80,9 @@ export const lyricsService = {
   },
   publishAnalysis(trackId: string, lyricKey: string, expectedGeneration: number, analysis: LyricTimingAnalysis): boolean {
     if (!current || current.trackId !== trackId || current.lyricKey !== lyricKey || generation !== expectedGeneration) return false
+    latestAnalysis = analysis
     resolved = resolveLyricTiming(current.result?.kind === 'synced' ? current.result.lines : [], current.durationSec, analysis)
-    current = { ...current, timing: pass.update(resolved, position) }
+    current = { ...current, timing: pass.update(resolved, position, current.durationSec) }
     emit()
     return true
   },
@@ -77,6 +91,7 @@ export const lyricsService = {
     if (currentKey === key) return
     const job = ++generation
     currentKey = key; requestedId = track.sourceId; current = null
+    mediaDurationSec = null; latestAnalysis = null
     pass = createPlaybackTiming()
     emit()
     void fetchLyrics(track, cacheOnline).then(candidate => {
@@ -89,6 +104,7 @@ export const lyricsService = {
     if (sourceId !== undefined && requestedId !== sourceId) return
     if (!currentKey && !current) return
     generation++; currentKey = ''; current = null; requestedId = ''
+    mediaDurationSec = null; latestAnalysis = null
     emit()
   },
 }

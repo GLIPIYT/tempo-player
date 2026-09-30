@@ -28,6 +28,7 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
   // Debt is a lifetime property of the runner, never of a track/provider/playback pass.
   let readyAt = 0
   let restoring: number | null = null
+  let identityRefreshPending = false
   let input: AnalysisTrackInput | null = null
   let identity: AudioIdentity | null = null, cache: AudioAnalysis | null = null, pcm: AnalysisPcm | null = null
   let worker: ReturnType<RunnerDependencies['worker']> | null = null
@@ -48,6 +49,7 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
   function cancel(): void {
     generation++; controller.abort(); controller = new AbortController()
     restoring = null
+    identityRefreshPending = false
     clearTimeout(timer); release()
   }
   function touchIdle(): void {
@@ -104,7 +106,15 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
       if (job !== generation) return
       publish('idle')
     } catch (error) { if (job === generation) publish('error', String(error)) }
-    finally { if (restoring === job) { restoring = null; schedule() } }
+    finally {
+      if (restoring === job) {
+        restoring = null
+        const retry = identityRefreshPending && !identity && input !== null
+        identityRefreshPending = false
+        if (retry) { publish('loading'); void restore(generation, input!.track) }
+        else schedule()
+      }
+    }
   }
   function nextWindow() {
     if (!input) return null
@@ -178,11 +188,22 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
     } finally { busy = false; schedule() }
   }
   return {
+    /** Explicit availability signal only; never fetches audio or ensures a model. */
+    refreshAudioIdentity(): void {
+      if (!input || identity) return
+      if (restoring !== null) { identityRefreshPending = true; return }
+      publish('loading')
+      void restore(generation, input.track)
+    },
     setEnabled(value: boolean): void {
       if (enabled === value) return
       enabled = value
       if (!value) { cancel(); publish('idle'); if (input && !cache) void restore(generation, input.track) }
-      else { publish('idle'); if (input && !identity) void restore(generation, input.track); else schedule() }
+      else {
+        publish('idle')
+        if (input && !identity) { if (restoring === null) void restore(generation, input.track) }
+        else schedule()
+      }
     },
     setTrack(value: AnalysisTrackInput | null): void {
       const sameTrack = input && value && input.track.dbId === value.track.dbId && input.track.source === value.track.source && input.track.sourceId === value.track.sourceId

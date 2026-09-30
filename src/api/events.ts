@@ -18,6 +18,13 @@ export function onLibraryChanged(handler: () => void): Promise<UnlistenFn> {
   return listen(LIBRARY_CHANGED_EVENT, () => handler())
 }
 
+/** soundcloud_store emits the completed track ID, or '' for a whole job. */
+export function onSoundcloudCacheReady(handler: (sourceId: string) => void): Promise<UnlistenFn> {
+  return listen<unknown>(LIBRARY_CHANGED_EVENT, event => {
+    if (typeof event.payload === 'string' && event.payload.length > 0) handler(event.payload)
+  })
+}
+
 export const TRAY_EVENT = 'tray://command'
 
 /**

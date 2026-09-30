@@ -5,7 +5,7 @@ export function createPlaybackTiming() {
   let stable: ResolvedLyricsTiming | null = null
   let position = -1
   return {
-    update(timing: ResolvedLyricsTiming, positionSec: number): ResolvedLyricsTiming {
+    update(timing: ResolvedLyricsTiming, positionSec: number, durationSec?: number | null): ResolvedLyricsTiming {
       const backwards = positionSec < position
       if (!stable || backwards) stable = timing
       else if (timing !== latest) {
@@ -24,6 +24,18 @@ export function createPlaybackTiming() {
         }
         stable = { segments: [...prefix, ...tail], lines: timing.lines.map(line =>
           fixedLines.has(line.lineIndex) ? stable!.lines.find(old => old.lineIndex === line.lineIndex) ?? line : line) }
+      }
+      // A newly known file boundary is authoritative even for a begun segment.
+      // Shortening only advances fill; expansions still respect the pass latch.
+      if (durationSec != null && Number.isFinite(durationSec) && durationSec > 0
+        && (stable.segments.some(segment => segment.endTimeSec > durationSec)
+          || stable.lines.some(line => line.endTimeSec > durationSec))) {
+        stable = {
+          segments: stable.segments.filter(segment => segment.timeSec < durationSec)
+            .map(segment => ({ ...segment, endTimeSec: Math.min(segment.endTimeSec, durationSec) })),
+          lines: stable.lines.filter(line => line.timeSec < durationSec)
+            .map(line => ({ ...line, endTimeSec: Math.min(line.endTimeSec, durationSec) })),
+        }
       }
       latest = timing
       position = positionSec

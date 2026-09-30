@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { onLyricsAnalysisModelState } from '../../api/events'
+import { onLyricsAnalysisModelState, onSoundcloudCacheReady } from '../../api/events'
 import { lyricsAnalysisRunner } from '../../features/lyrics/analysis/runner'
 import { getAnalysisModelState, setAnalysisModelEnabled } from '../../features/lyrics/analysis/nativeClient'
 import { lyricsService } from '../../features/lyrics/lyricsService'
@@ -19,7 +19,7 @@ export default function LyricsAnalysisBridge() {
   useEffect(() => {
     const stopLifecycle = lyricsAnalysisLifecycle.start()
     const disconnect = connectLyricsAnalysis({ player: playerController, runner: lyricsAnalysisRunner, lyrics: lyricsService,
-      lifecycle: lyricsAnalysisLifecycle, cacheOnline: () => cacheOnline.current })
+      lifecycle: lyricsAnalysisLifecycle, cacheOnline: () => cacheOnline.current, listenCacheReady: onSoundcloudCacheReady })
     return () => { disconnect(); stopLifecycle() }
   }, [])
   useEffect(() => {
