@@ -21,6 +21,21 @@ it('rejects repeated ASR tokens, remote phrase times and invalid endpoints', () 
   expect(matchLyricEnds([{ timeSec: 0, text: 'silver rivers' }], words, 30)).toEqual([])
   expect(matchLyricEnds([{ timeSec: 12, text: 'silver rivers' }], words.map(w => ({ ...w, endSec: NaN })), 30)).toEqual([])
 })
+it('rejects an invented or repeated prefix on a five-word line, while allowing preceding context and a clean partial suffix', () => {
+  const line = [{ timeSec: 12, text: 'Silver rivers carry golden dreams' }]
+  const phrase: AnalysisWord[] = ['silver', 'rivers', 'carry', 'golden', 'dreams'].map((text, index) =>
+    ({ text, startSec: 12.3 + index * 0.5, endSec: 12.7 + index * 0.5 }))
+  for (const extra of ['invented', 'silver']) {
+    expect(matchLyricEnds(line, [{ text: extra, startSec: 12.05, endSec: 12.2 }, ...phrase], 30)).toEqual([])
+  }
+  const context = { text: 'previous', startSec: 11.7, endSec: 11.9 }
+  expect(matchLyricEnds(line, [context, ...phrase], 30)).toEqual([
+    { lineIndex: 0, endTimeSec: 14.7, confidence: 5 / 6 },
+  ])
+  expect(matchLyricEnds(line, phrase.slice(1), 30)).toEqual([
+    { lineIndex: 0, endTimeSec: 14.7, confidence: 0.8 },
+  ])
+})
 it('projects persisted source endpoints with current offset once and clamps duration', () => {
   const ends = [{ lineIndex: 0, sourceEndSec: 19, matchedMediaEndSec: 14, offsetAtMatchMs: -5000, confidence: 1 }]
   expect(projectSourceEnds(ends, -5000, 30)[0].endTimeSec).toBe(14)

@@ -39,6 +39,9 @@ export function matchLyricEnds(lines: readonly LyricsLine[], words: readonly Ana
       while (matched < expected.length && end - matched >= 0 && nearby[end - matched].token === expected[expected.length - 1 - matched]) matched++
       const confidence = matched / Math.max(expected.length, nearby.length)
       if (confidence < 0.8 || expected.slice(-matched).filter(meaningful).length < 2) continue
+      const firstMatched = end - matched + 1
+      // Earlier fragment context may precede the lyric start; extra tokens inside the line cannot.
+      if (nearby.some(({ word }, index) => (index < firstMatched || index > end) && word.startSec >= line.timeSec)) continue
       const first = nearby[end - matched + 1].word, last = nearby[end].word
       if (window && (first.startSec < window.startSec + 0.18 || last.endSec > window.endSec - 0.18)) continue
       // Duplicate suffix tokens and generated repetitions cannot establish a unique endpoint.

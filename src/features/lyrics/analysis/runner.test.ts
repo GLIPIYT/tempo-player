@@ -127,6 +127,24 @@ it('accounts an uncancellable old decode before allowing the new track to start 
   runner.stop()
   await vi.advanceTimersByTimeAsync(100)
 })
+it('pays the combined decode and BPM work debt before model initialization', async () => {
+  const { runner, deps, calls } = setup()
+  let bpmCalls = 0
+  deps.estimateBpm = () => {
+    bpmCalls++
+    vi.setSystemTime(Date.now() + 10)
+    return { value: null, confidence: 0 }
+  }
+  try {
+    runner.setEnabled(true); runner.setTrack(input); runner.setPosition(2, true)
+    await vi.advanceTimersByTimeAsync(150)
+    expect(bpmCalls).toBe(1)
+    expect(calls.filter(call => call.request.type === 'init')).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(calls.filter(call => call.request.type === 'init')).toHaveLength(1)
+    expect(calls.find(call => call.request.type === 'init')?.time).toBeGreaterThanOrEqual(200)
+  } finally { runner.stop() }
+})
 it('reopens completed empty checkpoints without decoding or initializing another model', async () => {
   const first = setup()
   first.runner.setEnabled(true); first.runner.setTrack(input); first.runner.setPosition(2, true)

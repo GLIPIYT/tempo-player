@@ -13,6 +13,7 @@ export interface AnalysisSnapshot { lyricKey: string | null; phase: 'idle' | 'lo
 export interface RunnerDependencies {
   native: AnalysisNativeClient
   decode: (identity: AudioIdentity, signal: AbortSignal) => Promise<AnalysisPcm | null>
+  estimateBpm?: typeof estimateBpm
   worker: () => { request(message: AsrRequest, signal: AbortSignal): Promise<AsrResponse>; dispose(): void }
   now: () => number
   wasmBaseUrl: () => string
@@ -55,7 +56,11 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
   }
   function charged<T>(work: () => Promise<T>): Promise<T> {
     const start = deps.now()
-    return work().finally(() => { const elapsed = Math.max(0, deps.now() - start); readyAt = Math.max(readyAt, deps.now() + elapsed * 9) })
+    return work().finally(() => {
+      const elapsed = Math.max(0, deps.now() - start)
+      // Unpaid earlier work accumulates even when preprocessing stages run back-to-back.
+      readyAt = Math.max(readyAt, start) + elapsed * 10
+    })
   }
   function shiftedLines(): LyricsLine[] {
     return input?.sourceLines.map(line => ({ ...line, timeSec: line.timeSec + input!.offsetMs / 1000,
@@ -138,7 +143,7 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
         if (!decoded) { publish('unavailable'); return }
         pcm = decoded
         if (cache?.bpm == null) {
-          const bpm = await withAnalysisLane(signal, () => charged(async () => estimateBpm(decoded.pcm, decoded.sampleRate)))
+          const bpm = await withAnalysisLane(signal, () => charged(async () => (deps.estimateBpm ?? estimateBpm)(decoded.pcm, decoded.sampleRate)))
           if (bpm.value != null) await checkpoint({ bpm: { bpm: bpm.value, confidence: bpm.confidence } }, job)
         }
         return // Pay preprocessing debt before model initialization or inference.

@@ -11,7 +11,8 @@ export interface AnalysisNativeClient {
   assetUrl(path: string): string
 }
 export const analysisNativeClient: AnalysisNativeClient = {
-  identity: (track) => invoke('lyrics_analysis_audio_identity', { trackId: track.dbId, source: track.source, sourceId: track.sourceId }),
+  identity: (track) => invoke('lyrics_analysis_audio_identity', { trackId: track.dbId, source: track.source,
+    sourceId: track.source === 'local' ? null : track.sourceId }),
   get: (fingerprint) => invoke('lyrics_analysis_get', { fingerprint }),
   merge: (update) => invoke('lyrics_analysis_merge', { ...update }),
   ensureModel: () => invoke('lyrics_analysis_ensure_model'),
