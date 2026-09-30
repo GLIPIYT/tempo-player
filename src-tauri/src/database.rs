@@ -4266,7 +4266,7 @@ mod tests {
 
     static DIR_SEQ: AtomicU64 = AtomicU64::new(0);
 
-    fn test_db(tag: &str) -> (Db, PathBuf) {
+    fn test_dir(tag: &str) -> PathBuf {
         let seq = DIR_SEQ.fetch_add(1, Ordering::Relaxed);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -4280,8 +4280,22 @@ mod tests {
             seq
         ));
         std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn test_db(tag: &str) -> (Db, PathBuf) {
+        let dir = test_dir(tag);
         let db = Db::open_at(&dir.join("tempo.db")).unwrap();
         (db, dir)
+    }
+
+    fn fixture_file(dir: &Path, name: &str) -> String {
+        let path = dir.join(name);
+        std::fs::write(&path, [0u8; 1024]).unwrap();
+        std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_times(
+            std::fs::FileTimes::new().set_modified(UNIX_EPOCH + std::time::Duration::from_secs(111)),
+        ).unwrap();
+        path.to_str().unwrap().to_owned()
     }
 
     fn track_input(
@@ -4291,6 +4305,7 @@ mod tests {
         artist: Option<&str>,
         album: Option<&str>,
     ) -> TrackInput {
+        let stamp = file_stamp_precise(Path::new(path)).expect("existing media fixture");
         TrackInput {
             path: path.to_string(),
             folder_id,
@@ -4304,9 +4319,9 @@ mod tests {
             year: Some(2020),
             genre: Some("Rock".to_string()),
             cover_path: None,
-            file_size: 1024,
-            modified_at: 111,
-            modified_at_ns: 111_000_000_000,
+            file_size: stamp.0,
+            modified_at: stamp.1 / 1_000_000_000,
+            modified_at_ns: stamp.1,
             lyrics: None,
             gain_db: None,
             peak_db: None,
@@ -4316,17 +4331,19 @@ mod tests {
     #[test]
     fn hide_track_blacklists_the_path_and_prunes_orphans() {
         let (db, dir) = test_db("hide");
-        let folder = db.add_library_folder(r"C:\music").unwrap();
-        let junk = track_input(r"C:\music\junk.mp3", folder.id, "Junk", Some("Noise"), Some("Sounds"));
-        let keeper = track_input(r"C:\music\keep.mp3", folder.id, "Keeper", Some("Band"), Some("LP"));
+        let media_0 = fixture_file(&dir, "junk.mp3");
+        let media_1 = fixture_file(&dir, "keep.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let junk = track_input(&media_0, folder.id, "Junk", Some("Noise"), Some("Sounds"));
+        let keeper = track_input(&media_1, folder.id, "Keeper", Some("Band"), Some("LP"));
         db.upsert_scanned_tracks(&[junk, keeper], &[]).unwrap();
-        let junk_id = db.find_track_id_by_path(r"C:\music\junk.mp3").unwrap().unwrap();
+        let junk_id = db.find_track_id_by_path(&media_0).unwrap().unwrap();
 
         let path = db.hide_track(junk_id).unwrap();
 
-        assert_eq!(path, r"C:\music\junk.mp3");
+        assert_eq!(path, media_0);
         assert_eq!(db.count_tracks().unwrap(), 1);
-        assert!(db.find_track_id_by_path(r"C:\music\junk.mp3").unwrap().is_none());
+        assert!(db.find_track_id_by_path(&media_0).unwrap().is_none());
         // "Noise"/"Sounds" only existed for that track, so they go with it, while the
         // keeper's own album and artist stay
         let hidden = db.list_hidden_tracks().unwrap();
@@ -4344,12 +4361,12 @@ mod tests {
 
         // the scanner gets lowercased paths, whatever the row was stored as
         let lowered = db.list_hidden_paths().unwrap();
-        assert!(lowered.contains(&r"c:\music\junk.mp3".to_string()));
+        assert!(lowered.contains(&media_0.to_lowercase()));
 
         // hiding is idempotent and a second hide of a gone id is an error, not a panic
         assert!(db.hide_track(junk_id).is_err());
 
-        db.unhide_track(r"C:\MUSIC\JUNK.MP3").unwrap();
+        db.unhide_track(&media_0.to_ascii_uppercase()).unwrap();
         assert!(db.list_hidden_tracks().unwrap().is_empty());
 
         drop(db);
@@ -4424,19 +4441,24 @@ mod tests {
     #[test]
     fn scan_upsert_and_stamp_flow() {
         let (db, dir) = test_db("scan");
-        let folder = db.add_library_folder(r"C:\music").unwrap();
-        let fresh = track_input(r"C:\music\a.mp3", folder.id, "Song A", Some("Artist X"), Some("Album Y"));
+        let media_0 = fixture_file(&dir, "a.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let fresh = track_input(&media_0, folder.id, "Song A", Some("Artist X"), Some("Album Y"));
         let counts = db.upsert_scanned_tracks(&[fresh], &[]).unwrap();
         assert_eq!(counts, (1, 0));
         let stamps = db.list_file_stamps().unwrap();
-        assert!(stamps.contains_key(r"C:\music\a.mp3"));
-        assert_eq!(stamps[r"C:\music\a.mp3"].size, 1024);
-        assert_eq!(stamps[r"C:\music\a.mp3"].mtime_ns, 111_000_000_000);
+        assert!(stamps.contains_key(&media_0));
+        assert_eq!(stamps[&media_0].size, 1024);
+        assert_eq!(stamps[&media_0].mtime_ns, 111_000_000_000);
+        let file = std::fs::OpenOptions::new().write(true).open(&media_0).unwrap();
+        file.set_len(2048).unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(
+            UNIX_EPOCH + std::time::Duration::from_secs(222),
+        )).unwrap();
+        drop(file);
         let mut changed =
-            track_input(r"C:\music\a.mp3", folder.id, "Song A Remastered", Some("Artist X"), Some("Album Y"));
+            track_input(&media_0, folder.id, "Song A Remastered", Some("Artist X"), Some("Album Y"));
         changed.cover_path = Some(r"C:\covers\y.jpg".to_string());
-        changed.file_size = 2048;
-        changed.modified_at = 222;
         let counts = db.upsert_scanned_tracks(&[], &[changed]).unwrap();
         assert_eq!(counts, (0, 1));
         let tracks = db.list_tracks("", 10, 0).unwrap();
@@ -4459,7 +4481,8 @@ mod tests {
             })
             .unwrap();
         assert_eq!(album_cover.as_deref(), Some(r"C:\covers\y.jpg"));
-        let deleted = db.delete_tracks_by_paths(&[r"C:\music\a.mp3".to_string()]).unwrap();
+        std::fs::remove_file(&media_0).unwrap();
+        let deleted = db.delete_tracks_by_paths(&[media_0.clone()]).unwrap();
         assert_eq!(deleted, 1);
         assert_eq!(db.count_tracks().unwrap(), 0);
         let orphan_counts: (i64, i64) = db
@@ -4474,7 +4497,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(orphan_counts, (0, 0));
-        let deleted_again = db.delete_tracks_by_paths(&[r"C:\music\a.mp3".to_string()]).unwrap();
+        let deleted_again = db.delete_tracks_by_paths(&[media_0.clone()]).unwrap();
         assert_eq!(deleted_again, 0);
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
@@ -4486,11 +4509,11 @@ mod tests {
         let pl = db.create_playlist("Focus").unwrap();
         assert_eq!(pl.name, "Focus");
         assert_eq!(pl.track_count, Some(0));
-        let folder = db.add_library_folder(r"C:\pl").unwrap();
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
         let names = ["One", "Two", "Three"];
         let mut ids = Vec::new();
         for name in names {
-            let path = format!(r"C:\pl\{}.mp3", name.to_lowercase());
+            let path = fixture_file(&dir, &format!("{}.mp3", name.to_lowercase()));
             let input = track_input(&path, folder.id, name, None, None);
             let counts = db.upsert_scanned_tracks(&[input], &[]).unwrap();
             assert_eq!(counts, (1, 0));
@@ -4550,8 +4573,9 @@ mod tests {
     #[test]
     fn record_history_counts_plays_and_skips() {
         let (db, dir) = test_db("history");
-        let folder = db.add_library_folder(r"C:\h").unwrap();
-        let input = track_input(r"C:\h\t.mp3", folder.id, "H", Some("HA"), None);
+        let media_0 = fixture_file(&dir, "t.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let input = track_input(&media_0, folder.id, "H", Some("HA"), None);
         let counts = db.upsert_scanned_tracks(&[input], &[]).unwrap();
         assert_eq!(counts, (1, 0));
         let track_id: i64 = db
@@ -4595,18 +4619,22 @@ mod tests {
     #[test]
     fn catalog_search_and_detail_queries() {
         let (db, dir) = test_db("catalog");
-        let folder = db.add_library_folder(r"C:\cat").unwrap();
+        let media_0 = fixture_file(&dir, "arrival.mp3");
+        let media_1 = fixture_file(&dir, "first.mp3");
+        let media_2 = fixture_file(&dir, "departure.mp3");
+        let media_3 = fixture_file(&dir, "wanderer.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
         let mut inputs = Vec::new();
-        inputs.push(track_input(r"C:\cat\arrival.mp3", folder.id, "Arrival", Some("Aurora"), Some("North")));
+        inputs.push(track_input(&media_0, folder.id, "Arrival", Some("Aurora"), Some("North")));
         let mut first_light =
-            track_input(r"C:\cat\first.mp3", folder.id, "First Light", Some("Aurora"), Some("North"));
+            track_input(&media_1, folder.id, "First Light", Some("Aurora"), Some("North"));
         first_light.track_number = Some(2);
         inputs.push(first_light);
         let mut departure =
-            track_input(r"C:\cat\departure.mp3", folder.id, "Departure", Some("Aurora"), Some("North"));
+            track_input(&media_2, folder.id, "Departure", Some("Aurora"), Some("North"));
         departure.disc_number = Some(2);
         inputs.push(departure);
-        inputs.push(track_input(r"C:\cat\wanderer.mp3", folder.id, "Wanderer", Some("Borealis"), None));
+        inputs.push(track_input(&media_3, folder.id, "Wanderer", Some("Borealis"), None));
         let counts = db.upsert_scanned_tracks(&inputs, &[]).unwrap();
         assert_eq!(counts, (4, 0));
 
@@ -4729,17 +4757,21 @@ mod tests {
 
     #[test]
     fn migration_11_drops_catbox_cover_urls_only() {
-        let (db, dir) = test_db("covers_v11");
-        db.save_cover_upload(r"C:\covers\a.jpg", "https://files.catbox.moe/vsqz30.jpg")
-            .unwrap();
-        db.save_cover_upload(r"C:\covers\b.jpg", "https://iili.io/nH7ZrWx.jpg")
-            .unwrap();
-        // rewind past migration 11 so reopening replays it over the seeded rows
-        db.with_conn(|c| {
-            c.execute_batch("PRAGMA user_version = 10;").map_err(db_err)
-        })
-        .unwrap();
-        drop(db);
+        let dir = test_dir("covers_v11");
+        {
+            let conn = Connection::open(dir.join("tempo.db")).unwrap();
+            for migration in &MIGRATIONS[..10] {
+                conn.execute_batch(migration).unwrap();
+            }
+            conn.execute_batch("PRAGMA user_version = 10;").unwrap();
+            for (path, url) in [
+                (r"C:\covers\a.jpg", "https://files.catbox.moe/vsqz30.jpg"),
+                (r"C:\covers\b.jpg", "https://iili.io/nH7ZrWx.jpg"),
+            ] {
+                conn.execute("INSERT INTO cover_uploads (cover_path, url, uploaded_at) VALUES (?1, ?2, ?3)",
+                    params![path, url, now()]).unwrap();
+            }
+        }
 
         let reopened = Db::open_at(&dir.join("tempo.db")).unwrap();
         // catbox is an origin discord's media proxy often refuses; those links
@@ -4787,9 +4819,11 @@ mod tests {
     #[test]
     fn analytics_summary_top_lists_and_recent() {
         let (db, dir) = test_db("analytics");
-        let folder = db.add_library_folder(r"C:\an").unwrap();
-        let t1 = seed_track(&db, folder.id, r"C:\an\one.mp3", "One", "Alpha", None, 200.0);
-        let t2 = seed_track(&db, folder.id, r"C:\an\two.mp3", "Two", "Beta", None, 100.0);
+        let media_0 = fixture_file(&dir, "one.mp3");
+        let media_1 = fixture_file(&dir, "two.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let t1 = seed_track(&db, folder.id, &media_0, "One", "Alpha", None, 200.0);
+        let t2 = seed_track(&db, folder.id, &media_1, "Two", "Beta", None, 100.0);
         db.record_history(t1, Some(150.0), false, false).unwrap();
         db.record_history(t1, Some(200.0), true, false).unwrap();
         db.record_history(t2, Some(50.0), false, true).unwrap();
@@ -4831,8 +4865,9 @@ mod tests {
     #[test]
     fn analytics_respects_since_cutoff() {
         let (db, dir) = test_db("since");
-        let folder = db.add_library_folder(r"C:\sn").unwrap();
-        let t1 = seed_track(&db, folder.id, r"C:\sn\a.mp3", "A", "Solo", None, 300.0);
+        let media_0 = fixture_file(&dir, "a.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let t1 = seed_track(&db, folder.id, &media_0, "A", "Solo", None, 300.0);
         insert_old_history(&db, t1, now() - 60 * 60 * 24 * 30, 120.0);
         db.record_history(t1, Some(300.0), true, false).unwrap();
 
@@ -4866,8 +4901,9 @@ mod tests {
     #[test]
     fn history_page_orders_desc_and_pages() {
         let (db, dir) = test_db("page");
-        let folder = db.add_library_folder(r"C:\pg").unwrap();
-        let t1 = seed_track(&db, folder.id, r"C:\pg\a.mp3", "A", "P", None, 90.0);
+        let media_0 = fixture_file(&dir, "a.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let t1 = seed_track(&db, folder.id, &media_0, "A", "P", None, 90.0);
         for _ in 0..5 {
             db.record_history(t1, Some(10.0), false, false).unwrap();
         }
@@ -4896,8 +4932,9 @@ mod tests {
     #[test]
     fn clear_history_removes_rows_keeps_aggregates() {
         let (db, dir) = test_db("clear");
-        let folder = db.add_library_folder(r"C:\cl").unwrap();
-        let t1 = seed_track(&db, folder.id, r"C:\cl\a.mp3", "A", "C", None, 60.0);
+        let media_0 = fixture_file(&dir, "a.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let t1 = seed_track(&db, folder.id, &media_0, "A", "C", None, 60.0);
         db.bump_play_count(t1).unwrap();
         for _ in 0..3 {
             db.record_history(t1, Some(30.0), false, true).unwrap();
@@ -4929,15 +4966,16 @@ mod tests {
     #[test]
     fn reset_cover_refs_nulls_track_and_album_covers() {
         let (db, dir) = test_db("covers");
-        let folder = db.add_library_folder(r"C:\cv").unwrap();
-        let mut input = track_input(r"C:\cv\a.mp3", folder.id, "A", Some("Art"), Some("Lp"));
+        let media_0 = fixture_file(&dir, "a.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let mut input = track_input(&media_0, folder.id, "A", Some("Art"), Some("Lp"));
         input.cover_path = Some(r"C:\covers\a.jpg".to_string());
         db.upsert_scanned_tracks(&[input], &[]).unwrap();
         let track_cover: Option<String> = db
             .with_conn(|c| {
                 c.query_row(
                     "SELECT cover_path FROM tracks WHERE path = ?1",
-                    params![r"C:\cv\a.mp3"],
+                    params![&media_0],
                     |r| r.get(0),
                 )
                 .map_err(db_err)
@@ -4960,7 +4998,7 @@ mod tests {
             .with_conn(|c| {
                 c.query_row(
                     "SELECT cover_path FROM tracks WHERE path = ?1",
-                    params![r"C:\cv\a.mp3"],
+                    params![&media_0],
                     |r| r.get(0),
                 )
                 .map_err(db_err)
@@ -5050,9 +5088,10 @@ mod tests {
     #[test]
     fn favorites_order_mixes_kinds_and_tolerates_unknown_ids() {
         let (db, dir) = test_db("favorder");
-        let folder = db.add_library_folder(r"C:\music").unwrap();
+        let media_0 = fixture_file(&dir, "one.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
         db.upsert_scanned_tracks(
-            &[track_input(r"C:\music\one.mp3", folder.id, "One", Some("Band"), Some("LP"))],
+            &[track_input(&media_0, folder.id, "One", Some("Band"), Some("LP"))],
             &[],
         )
         .unwrap();
@@ -5140,8 +5179,9 @@ mod tests {
     #[test]
     fn lyrics_round_trip_through_scanned_tracks() {
         let (db, dir) = test_db("lyrics");
-        let folder = db.add_library_folder(r"C:\lyr").unwrap();
-        let mut input = track_input(r"C:\lyr\s.mp3", folder.id, "Song", Some("Art"), None);
+        let media_0 = fixture_file(&dir, "s.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let mut input = track_input(&media_0, folder.id, "Song", Some("Art"), None);
         input.lyrics = Some("first verse".to_string());
         db.upsert_scanned_tracks(&[input], &[]).unwrap();
         let track_id: i64 = db
@@ -5151,14 +5191,14 @@ mod tests {
             db.get_track_lyrics(track_id).unwrap().as_deref(),
             Some("first verse")
         );
-        let mut changed = track_input(r"C:\lyr\s.mp3", folder.id, "Song", Some("Art"), None);
+        let mut changed = track_input(&media_0, folder.id, "Song", Some("Art"), None);
         changed.lyrics = Some("second verse".to_string());
         db.upsert_scanned_tracks(&[], &[changed]).unwrap();
         assert_eq!(
             db.get_track_lyrics(track_id).unwrap().as_deref(),
             Some("second verse")
         );
-        let mut cleared = track_input(r"C:\lyr\s.mp3", folder.id, "Song", Some("Art"), None);
+        let mut cleared = track_input(&media_0, folder.id, "Song", Some("Art"), None);
         cleared.lyrics = None;
         db.upsert_scanned_tracks(&[], &[cleared]).unwrap();
         assert_eq!(db.get_track_lyrics(track_id).unwrap(), None);
@@ -5170,8 +5210,9 @@ mod tests {
     #[test]
     fn lyrics_override_survives_rescan_and_resets() {
         let (db, dir) = test_db("lyrover");
-        let folder = db.add_library_folder(r"C:\ov").unwrap();
-        let mut input = track_input(r"C:\ov\s.mp3", folder.id, "Song", Some("Art"), None);
+        let media_0 = fixture_file(&dir, "s.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let mut input = track_input(&media_0, folder.id, "Song", Some("Art"), None);
         input.lyrics = Some("scanned verse".to_string());
         db.upsert_scanned_tracks(&[input], &[]).unwrap();
         let track_id: i64 = db
@@ -5191,7 +5232,7 @@ mod tests {
 
         // The whole point of the separate table: a rescan rewrites tracks.lyrics
         // but must not touch what the user pinned.
-        let mut changed = track_input(r"C:\ov\s.mp3", folder.id, "Song", Some("Art"), None);
+        let mut changed = track_input(&media_0, folder.id, "Song", Some("Art"), None);
         changed.lyrics = Some("rescanned verse".to_string());
         db.upsert_scanned_tracks(&[], &[changed]).unwrap();
         assert_eq!(
@@ -5230,11 +5271,13 @@ mod tests {
     #[test]
     fn track_search_unicode_case_insensitive_and_fuzzy() {
         let (db, dir) = test_db("usearch");
-        let folder = db.add_library_folder(r"C:\ru").unwrap();
+        let media_0 = fixture_file(&dir, "a.mp3");
+        let media_1 = fixture_file(&dir, "z.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
         let mut apple =
-            track_input(r"C:\ru\a.mp3", folder.id, "Эппл", Some("Купце"), Some("Апельсин"));
+            track_input(&media_0, folder.id, "Эппл", Some("Купце"), Some("Апельсин"));
         apple.genre = Some("Рок".to_string());
-        let zen = track_input(r"C:\ru\z.mp3", folder.id, "Zenith", Some("Lumen"), None);
+        let zen = track_input(&media_1, folder.id, "Zenith", Some("Lumen"), None);
         let counts = db.upsert_scanned_tracks(&[apple, zen], &[]).unwrap();
         assert_eq!(counts, (2, 0));
         for q in ["эпп", "ЭПП", "купц"] {
@@ -5285,11 +5328,13 @@ mod tests {
     #[test]
     fn album_artist_search_unicode_contains_and_fuzzy() {
         let (db, dir) = test_db("ucatalog");
-        let folder = db.add_library_folder(r"C:\uc").unwrap();
-        let mut t1 = track_input(r"C:\uc\a.mp3", folder.id, "Трек", Some("Заря"), Some("Север"));
+        let media_0 = fixture_file(&dir, "a.mp3");
+        let media_1 = fixture_file(&dir, "b.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let mut t1 = track_input(&media_0, folder.id, "Трек", Some("Заря"), Some("Север"));
         t1.genre = Some("Инди".to_string());
         let t2 =
-            track_input(r"C:\uc\b.mp3", folder.id, "North Wind", Some("Lumen"), Some("Horizon"));
+            track_input(&media_1, folder.id, "North Wind", Some("Lumen"), Some("Horizon"));
         db.upsert_scanned_tracks(&[t1, t2], &[]).unwrap();
         let albums = db.list_albums("СЕВЕР").unwrap();
         assert_eq!(albums.len(), 1);
@@ -5369,8 +5414,9 @@ mod tests {
     #[test]
     fn soundcloud_rows_hidden_from_library_but_kept_in_playlists() {
         let (db, dir) = test_db("schidden");
-        let folder = db.add_library_folder(r"C:\hidden").unwrap();
-        let local = seed_track(&db, folder.id, r"C:\hidden\sun.mp3", "Sunlit Path", "Lumen", None, 120.0);
+        let media_0 = fixture_file(&dir, "sun.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let local = seed_track(&db, folder.id, &media_0, "Sunlit Path", "Lumen", None, 120.0);
         let sc_id = db.upsert_sc_track("42", "Nightdrive Zqx", "Neon Wolf", 240_000, None).unwrap();
         assert_ne!(local, sc_id);
 
@@ -5403,8 +5449,9 @@ mod tests {
     #[test]
     fn artist_display_coalesce_prefers_join_then_override() {
         let (db, dir) = test_db("coalname");
-        let folder = db.add_library_folder(r"C:\coal").unwrap();
-        let local = seed_track(&db, folder.id, r"C:\coal\a.mp3", "Song", "Real Artist", None, 60.0);
+        let media_0 = fixture_file(&dir, "a.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let local = seed_track(&db, folder.id, &media_0, "Song", "Real Artist", None, 60.0);
         let sc = db
             .upsert_sc_track("55", "Remote Song", "Override Artist", 90_000, None)
             .unwrap();
@@ -5437,11 +5484,14 @@ mod tests {
     #[test]
     fn track_search_tolerates_layout_swap_and_transliteration() {
         let (db, dir) = test_db("layout");
-        let folder = db.add_library_folder(r"C:\lay").unwrap();
+        let media_0 = fixture_file(&dir, "s.mp3");
+        let media_1 = fixture_file(&dir, "z.mp3");
+        let media_2 = fixture_file(&dir, "l.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
         let inputs = vec![
-            track_input(r"C:\lay\s.mp3", folder.id, "Шаман", Some("Горная"), None),
-            track_input(r"C:\lay\z.mp3", folder.id, "Зппп", Some("Круг"), None),
-            track_input(r"C:\lay\l.mp3", folder.id, "Zppp", Some("Loop"), None),
+            track_input(&media_0, folder.id, "Шаман", Some("Горная"), None),
+            track_input(&media_1, folder.id, "Зппп", Some("Круг"), None),
+            track_input(&media_2, folder.id, "Zppp", Some("Loop"), None),
         ];
         let counts = db.upsert_scanned_tracks(&inputs, &[]).unwrap();
         assert_eq!(counts, (3, 0));
@@ -5467,8 +5517,9 @@ mod tests {
     #[test]
     fn likes_playlist_auto_created_cannot_be_deleted_and_tracks_toggle() {
         let (db, dir) = test_db("likes");
-        let folder = db.add_library_folder(r"C:\likes").unwrap();
-        let t1 = seed_track(&db, folder.id, r"C:\likes\a.mp3", "Song One", "Artist", None, 90.0);
+        let media_0 = fixture_file(&dir, "a.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let t1 = seed_track(&db, folder.id, &media_0, "Song One", "Artist", None, 90.0);
         let t2 = db.upsert_sc_track("900", "SC Song", "SC Artist", 120_000, None).unwrap();
 
         let playlists = db.list_playlists().unwrap();
@@ -5501,8 +5552,9 @@ mod tests {
     #[test]
     fn cached_soundcloud_tracks_become_visible_in_library_and_search() {
         let (db, dir) = test_db("scvis");
-        let folder = db.add_library_folder(r"C:\vis").unwrap();
-        let local = seed_track(&db, folder.id, r"C:\vis\l.mp3", "Local Song", "Local", None, 60.0);
+        let media_0 = fixture_file(&dir, "l.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let local = seed_track(&db, folder.id, &media_0, "Local Song", "Local", None, 60.0);
         let sc = db.upsert_sc_track("901", "Cached Song", "Net Artist", 100_000, None).unwrap();
 
         assert_eq!(db.count_tracks().unwrap(), 1);
@@ -5523,9 +5575,11 @@ mod tests {
     #[test]
     fn playlist_cover_follows_last_added_track_with_cover() {
         let (db, dir) = test_db("plcover");
-        let folder = db.add_library_folder(r"C:\plc").unwrap();
-        let t1 = seed_track(&db, folder.id, r"C:\plc\a.mp3", "One", "A", None, 60.0);
-        let t2 = seed_track(&db, folder.id, r"C:\plc\b.mp3", "Two", "B", None, 60.0);
+        let media_0 = fixture_file(&dir, "a.mp3");
+        let media_1 = fixture_file(&dir, "b.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let t1 = seed_track(&db, folder.id, &media_0, "One", "A", None, 60.0);
+        let t2 = seed_track(&db, folder.id, &media_1, "Two", "B", None, 60.0);
         db.with_conn(|c| {
             c.execute(
                 "UPDATE tracks SET cover_path = 'covers/a.png' WHERE id = ?1",
@@ -5580,9 +5634,11 @@ mod tests {
     #[test]
     fn list_tracks_sorted_orders_by_each_key() {
         let (db, dir) = test_db("sort");
-        let folder = db.add_library_folder(r"C:\srt").unwrap();
-        let played = seed_track(&db, folder.id, r"C:\srt.mp3", "Beta", "Zeta", None, 200.0);
-        seed_track(&db, folder.id, r"C:\srt.mp3", "Alpha", "Yankee", None, 100.0);
+        let media_0 = fixture_file(&dir, "a.mp3");
+        let media_1 = fixture_file(&dir, "b.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let played = seed_track(&db, folder.id, &media_0, "Beta", "Zeta", None, 200.0);
+        seed_track(&db, folder.id, &media_1, "Alpha", "Yankee", None, 100.0);
         db.upsert_sc_track("777", "Charlie", "Xray", 150_000, None).unwrap();
         db.mark_sc_cached("777", 1000).unwrap();
         db.bump_play_count(played).unwrap();
@@ -5607,9 +5663,11 @@ mod tests {
     #[test]
     fn hour_picks_return_tracks_played_at_the_current_hour() {
         let (db, dir) = test_db("hourpicks");
-        let folder = db.add_library_folder(r"C:\hp").unwrap();
-        let now_track = seed_track(&db, folder.id, r"C:\hp\m.mp3", "Morning", "A", None, 60.0);
-        seed_track(&db, folder.id, r"C:\hp\n.mp3", "Night", "B", None, 60.0);
+        let media_0 = fixture_file(&dir, "m.mp3");
+        let media_1 = fixture_file(&dir, "n.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let now_track = seed_track(&db, folder.id, &media_0, "Morning", "A", None, 60.0);
+        seed_track(&db, folder.id, &media_1, "Night", "B", None, 60.0);
         db.with_conn(|c| {
             c.execute(
                 "INSERT INTO listening_history(track_id, played_at, listened_sec, completed, skipped) \
@@ -5630,10 +5688,13 @@ mod tests {
     #[test]
     fn home_dormant_tracks_and_playlist_starts_use_real_history() {
         let (db, dir) = test_db("homehistory");
-        let folder = db.add_library_folder(r"C:\homehistory").unwrap();
-        let old = seed_track(&db, folder.id, r"C:\homehistory\old.mp3", "Old", "A", None, 60.0);
-        let recent = seed_track(&db, folder.id, r"C:\homehistory\recent.mp3", "Recent", "A", None, 60.0);
-        seed_track(&db, folder.id, r"C:\homehistory\never.mp3", "Never", "A", None, 60.0);
+        let media_0 = fixture_file(&dir, "old.mp3");
+        let media_1 = fixture_file(&dir, "recent.mp3");
+        let media_2 = fixture_file(&dir, "never.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let old = seed_track(&db, folder.id, &media_0, "Old", "A", None, 60.0);
+        let recent = seed_track(&db, folder.id, &media_1, "Recent", "A", None, 60.0);
+        seed_track(&db, folder.id, &media_2, "Never", "A", None, 60.0);
         db.with_conn(|conn| {
             conn.execute("UPDATE tracks SET last_played_at = ?1 WHERE id = ?2", params![now() - 31 * 86400, old]).map_err(db_err)?;
             Ok(())

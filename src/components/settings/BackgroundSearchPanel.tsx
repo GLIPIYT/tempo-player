@@ -58,7 +58,7 @@ function displayError(error: unknown, fallback: string): string {
   return fallback
 }
 
-function isProviderImageUrl(result: BackgroundImageResult): boolean {
+function isProviderImageUrl(result: Pick<BackgroundImageResult, 'provider' | 'previewUrl'>): boolean {
   try {
     const url = new URL(result.previewUrl)
     if (url.protocol !== 'https:' || url.username || url.password || url.port) return false
@@ -71,6 +71,7 @@ function isProviderImageUrl(result: BackgroundImageResult): boolean {
 }
 
 function WallpaperPreview({ result }: { result: BackgroundImageResult }) {
+  const { provider, previewUrl } = result
   const t = useT()
   const [source, setSource] = useState<string | null>(() => isProviderImageUrl(result) ? result.previewUrl : null)
   const [failed, setFailed] = useState(false)
@@ -81,11 +82,11 @@ function WallpaperPreview({ result }: { result: BackgroundImageResult }) {
   useEffect(() => {
     generation.current += 1
     proxyAttempted.current = false
-    setSource(isProviderImageUrl(result) ? result.previewUrl : null)
+    setSource(isProviderImageUrl({ provider, previewUrl }) ? previewUrl : null)
     setFailed(false)
     setProxyLoading(false)
     return () => { generation.current += 1 }
-  }, [result.provider, result.previewUrl])
+  }, [provider, previewUrl])
 
   const retryWithProxy = async () => {
     if (proxyAttempted.current || !isProviderImageUrl(result)) {

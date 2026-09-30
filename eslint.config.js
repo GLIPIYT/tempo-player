@@ -15,7 +15,7 @@ import reactHooks from 'eslint-plugin-react-hooks'
  */
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'src-tauri/**', 'target/**', 'graphify-out/**', 'scripts/**'],
+    ignores: ['dist/**', 'node_modules/**', 'src-tauri/**', 'target/**', 'graphify-out/**', 'scripts/**', '.superpowers/**', '.task-plans/**'],
   },
   {
     files: ['src/**/*.{ts,tsx}'],
