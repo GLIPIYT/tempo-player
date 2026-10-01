@@ -1,4 +1,5 @@
 export const en: Record<string, string> = {
+  'Lyrics speed': 'Lyrics speed',
   'Deep lyrics analysis': 'Deep lyrics analysis',
   'Not downloaded': 'Not downloaded',
   'Ready': 'Ready',

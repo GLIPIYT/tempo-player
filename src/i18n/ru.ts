@@ -375,6 +375,7 @@ export const ru: Record<string, string> = {
   'These lyrics are pinned to this track': 'Этот текст закреплён за треком',
   'Edit lyrics': 'Редактировать текст',
   'Lyrics timing': 'Тайминг текста',
+  'Lyrics speed': 'Скорость лирики',
   'Shifting the timing pins these lyrics to the track.':
     'Сдвиг тайминга закрепит этот текст за треком.',
   'Lyrics earlier by 0.5s': 'Текст раньше на 0,5 с',

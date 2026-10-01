@@ -214,7 +214,7 @@ export function resolveLyricTiming(
     const quartileIndex = (durations.length - 1) * 0.25
     const lower = Math.floor(quartileIndex)
     const q1 = durations[lower] + (durations[Math.ceil(quartileIndex)] - durations[lower]) * (quartileIndex - lower)
-    const cutoff = Math.min(2.5, q1 * 1.1)
+    const cutoff = Math.min(3.5, q1 * 1.1)
     for (const segment of internalNotes) {
       if (segment.endTimeSec - segment.timeSec <= cutoff) segment.skipPool = true
     }

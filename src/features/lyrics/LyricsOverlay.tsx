@@ -32,8 +32,47 @@ const ANCHOR_RATIO = 0.38
 const PAUSE_MS = 4000
 const OFFSET_STEP_MS = 500
 const OFFSET_LIMIT_MS = 30000
+const LYRICS_RATE_MIN = 0.5
+const LYRICS_RATE_MAX = 2
+const LYRICS_RATE_STEP = 0.05
 
 const overlayCache = new Map<string, { candidates: LyricsCandidate[]; selectedIndex: number }>()
+
+function normalizeLyricsRate(value: number): number {
+  if (!Number.isFinite(value)) return 1
+  const clamped = Math.min(LYRICS_RATE_MAX, Math.max(LYRICS_RATE_MIN, value))
+  const stepsPerRate = 1 / LYRICS_RATE_STEP
+  return Math.round(clamped * stepsPerRate) / stepsPerRate
+}
+
+function lyricsRateStorageKey(
+  track: { source: string; sourceId: string } | null,
+  sourceLyricKey: string | undefined,
+): string {
+  if (!track || !sourceLyricKey) return ''
+  return `tempo.lyrics-speed.v1:${JSON.stringify([track.source, track.sourceId, sourceLyricKey])}`
+}
+
+function readLyricsRate(key: string): number {
+  if (!key || typeof window === 'undefined') return 1
+  try {
+    const stored = window.localStorage.getItem(key)
+    return stored === null ? 1 : normalizeLyricsRate(Number(stored))
+  } catch {
+    return 1
+  }
+}
+
+function writeLyricsRate(key: string, value: number): void {
+  if (!key || typeof window === 'undefined') return
+  try {
+    const rate = normalizeLyricsRate(value)
+    if (rate === 1) window.localStorage.removeItem(key)
+    else window.localStorage.setItem(key, String(rate))
+  } catch {
+    // Keep the slider usable for this session when browser storage is unavailable.
+  }
+}
 
 /**
  * The raw text a candidate would be pinned as. Online candidates carry their
@@ -225,7 +264,15 @@ function LyricsVolumeRow() {
   )
 }
 
-function SyncedView({ timing }: { timing: ResolvedLyricsTiming }) {
+function SyncedView({
+  timing,
+  lyricsRate,
+  offsetMs,
+}: {
+  timing: ResolvedLyricsTiming
+  lyricsRate: number
+  offsetMs: number
+}) {
   const p = usePlayer()
   const t = useT()
   const seek = p.seek
@@ -245,6 +292,10 @@ function SyncedView({ timing }: { timing: ResolvedLyricsTiming }) {
   const touchYRef = useRef(0)
   const [segIdx, setSegIdx] = useState(-1)
   const [paused, setPaused] = useState(false)
+  const seekToLyricTime = useCallback((timeSec: number) => {
+    const offsetSec = offsetMs / 1000
+    seek((timeSec - offsetSec) / lyricsRate + offsetSec)
+  }, [seek, lyricsRate, offsetMs])
 
   const applyTransform = useCallback((instant: boolean) => {
     const c = containerRef.current
@@ -328,8 +379,12 @@ function SyncedView({ timing }: { timing: ResolvedLyricsTiming }) {
 
   useEffect(() => {
     if (segments.length === 0) return
+    // p.position already advances at the track playback rate. Keep the manual
+    // offset in seconds, then apply the independent lyrics multiplier around it.
     const pos = p.position
-    const { segmentIndex: found, progress } = lyricTimingAt(timing, pos)
+    const offsetSec = offsetMs / 1000
+    const lyricsPosition = (pos - offsetSec) * lyricsRate + offsetSec
+    const { segmentIndex: found, progress } = lyricTimingAt(timing, lyricsPosition)
     if (found !== segIdxRef.current) {
       segIdxRef.current = found
       setSegIdx(found)
@@ -348,7 +403,7 @@ function SyncedView({ timing }: { timing: ResolvedLyricsTiming }) {
       if (ul) ul.style.width = '0%'
       if (tx) tx.style.setProperty('--lyr-fill', '0%')
     }
-  }, [p.position, timing, segments, applyTransform, segIdx])
+  }, [p.position, timing, segments, applyTransform, segIdx, lyricsRate, offsetMs])
 
   const endPause = useCallback(() => {
     if (pauseTimerRef.current !== 0) {
@@ -411,7 +466,7 @@ function SyncedView({ timing }: { timing: ResolvedLyricsTiming }) {
               }}
               onClick={() => {
                 endPause()
-                seek(s.seekToSec)
+                seekToLyricTime(s.seekToSec)
               }}
               aria-label={t('Skip instrumental')}
             >
@@ -431,7 +486,7 @@ function SyncedView({ timing }: { timing: ResolvedLyricsTiming }) {
             className={cls}
             onClick={() => {
               endPause()
-              seek(s.seekToSec)
+              seekToLyricTime(s.seekToSec)
             }}
           >
             <span
@@ -460,7 +515,7 @@ function SyncedView({ timing }: { timing: ResolvedLyricsTiming }) {
           </div>
         )
       }),
-    [segments, segIdx, seek, t, endPause, measureAll],
+    [segments, segIdx, seekToLyricTime, t, endPause, measureAll],
   )
 
   return (
@@ -766,11 +821,15 @@ function PinnedBadge() {
  */
 function LyricsEditMenu({
   offsetMs,
+  lyricsRate,
   onNudge,
+  onLyricsRateChange,
   onEdit,
 }: {
   offsetMs: number
+  lyricsRate: number | null
   onNudge: (deltaMs: number) => void
+  onLyricsRateChange: (rate: number) => void
   onEdit: () => void
 }) {
   const t = useT()
@@ -832,6 +891,25 @@ function LyricsEditMenu({
               +0.5s
             </button>
           </div>
+          {lyricsRate !== null && (
+            <label className="lyr-speed">
+              <span className="lyr-speed-label">{t('Lyrics speed')}</span>
+              <span className="lyr-speed-value">{lyricsRate.toFixed(2)}×</span>
+              <input
+                className="lyr-speed-range"
+                type="range"
+                min={LYRICS_RATE_MIN}
+                max={LYRICS_RATE_MAX}
+                step={LYRICS_RATE_STEP}
+                value={lyricsRate}
+                onChange={(event) => onLyricsRateChange(Number(event.currentTarget.value))}
+                style={{
+                  '--fill': `${((lyricsRate - LYRICS_RATE_MIN) / (LYRICS_RATE_MAX - LYRICS_RATE_MIN)) * 100}%`,
+                } as CSSProperties}
+                aria-label={t('Lyrics speed')}
+              />
+            </label>
+          )}
           <p className="lyr-edit-hint">{t('Shifting the timing pins these lyrics to the track.')}</p>
         </div>
       )}
@@ -1144,6 +1222,18 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   }, [track, trackKey, candidatesTrackKey, pinnedLoaded, pinned, sourceSelected])
   const sharedLyrics = lyricsService.getCurrent()
   const activeLyrics = sharedLyrics?.trackId === track?.sourceId ? sharedLyrics : null
+  const lyricsRateKey = activeLyrics?.result?.kind === 'synced'
+    ? lyricsRateStorageKey(track, activeLyrics.sourceLyricKey)
+    : ''
+  const [lyricsRateState, setLyricsRateState] = useState<{ key: string; value: number }>({ key: '', value: 1 })
+  const lyricsRate = lyricsRateKey
+    ? lyricsRateState.key === lyricsRateKey ? lyricsRateState.value : readLyricsRate(lyricsRateKey)
+    : 1
+  const handleLyricsRateChange = useCallback((value: number) => {
+    const rate = normalizeLyricsRate(value)
+    writeLyricsRate(lyricsRateKey, rate)
+    setLyricsRateState({ key: lyricsRateKey, value: rate })
+  }, [lyricsRateKey])
   const mode: OverlayMode =
     activeLyrics?.result?.kind ?? (loading && viewCandidates.length === 0 ? 'loading' : 'empty')
   const durationMs = track?.durationSec != null ? track.durationSec * 1000 : null
@@ -1567,7 +1657,12 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
               )}
               {searching && viewCandidates.length > 0 && <LoadingMark />}
               {mode === 'synced' && activeLyrics?.result?.kind === 'synced' && (
-                <SyncedView key={trackKey} timing={activeLyrics.timing} />
+                <SyncedView
+                  key={trackKey}
+                  timing={activeLyrics.timing}
+                  lyricsRate={lyricsRate}
+                  offsetMs={activeLyrics.offsetMs}
+                />
               )}
               {activeLyrics?.result?.kind === 'plain' && <PlainView text={activeLyrics.result.text} />}
               {mode === 'loading' && !searching && <LoadingMark />}
@@ -1582,7 +1677,13 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
         </section>
       </div>
       {canPin && pinnedLoaded && !editingLyrics && (
-        <LyricsEditMenu offsetMs={offsetMs} onNudge={handleNudgeOffset} onEdit={() => setEditingLyrics(true)} />
+        <LyricsEditMenu
+          offsetMs={offsetMs}
+          lyricsRate={activeLyrics?.result?.kind === 'synced' ? lyricsRate : null}
+          onNudge={handleNudgeOffset}
+          onLyricsRateChange={handleLyricsRateChange}
+          onEdit={() => setEditingLyrics(true)}
+        />
       )}
     </div>
   )
