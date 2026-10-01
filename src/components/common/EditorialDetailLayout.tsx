@@ -10,6 +10,7 @@ export default function EditorialDetailLayout({
   round = false,
   kind,
   title,
+  description,
   meta,
   actions,
   children,
@@ -21,6 +22,7 @@ export default function EditorialDetailLayout({
   round?: boolean
   kind: ReactNode
   title: string
+  description?: ReactNode
   meta: ReactNode
   actions?: ReactNode
   children: ReactNode
@@ -37,6 +39,7 @@ export default function EditorialDetailLayout({
         <div className="editorial-detail-copy">
           <div className="section-label editorial-detail-kind">{kind}</div>
           <h1 className="editorial-detail-title">{title}</h1>
+          {description ? <p className="editorial-detail-description">{description}</p> : null}
           <div className="editorial-detail-meta">{meta}</div>
           {actions ? <div className="editorial-detail-actions">{actions}</div> : null}
         </div>

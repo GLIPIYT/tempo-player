@@ -136,7 +136,7 @@ export default function HomeMixFeature({
                   {mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}
                 </span>
                 <h2>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</h2>
-                {mix.kind === 'hour' ? <p>{t('Picked from what you usually play around this time of day')}</p> : null}
+                <p>{t(mix.description)}</p>
                 <div className="home-mix-actions">
                   <button type="button" className="home-mix-play" tabIndex={current && !pickerOpen ? 0 : -1} onClick={() => onPlay(mix.tracks, 0)}>
                     <Play size={15} fill="currentColor" />
@@ -183,7 +183,8 @@ export default function HomeMixFeature({
                   <span className="home-mix-choice-copy">
                     <small>{mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}</small>
                     <strong>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</strong>
-                    <span>{formatCount(mix.tracks.length, 'track', t, lang)}</span>
+                    <span className="home-mix-choice-description">{t(mix.description)}</span>
+                    <span className="home-mix-choice-meta">{formatCount(mix.tracks.length, 'track', t, lang)}</span>
                   </span>
                 </button>
               ))}

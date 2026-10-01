@@ -3762,7 +3762,8 @@ html.has-bg .app-content {
 .titlebar-icon {
   width: 17px;
   height: 17px;
-  border-radius: 5px;
+  border-radius: 24%;
+  clip-path: inset(0 round 24%);
   display: block;
   box-shadow: 0 0 0 1px var(--border);
 }
@@ -4124,7 +4125,8 @@ html.has-bg .app-content {
 .onb-icon {
   width: 64px;
   height: 64px;
-  border-radius: 16px;
+  border-radius: 24%;
+  clip-path: inset(0 round 24%);
   margin-bottom: 16px;
 }
 
@@ -4388,6 +4390,10 @@ html.has-bg .app-content {
    The class is assigned to text-bearing nodes, so SVG artwork is never altered. */
 html[data-bright-wallpaper='true'] .adaptive-text-outline {
   text-shadow: 0 1px 2px rgba(0, 0, 0, .9), 1px 0 1px rgba(0, 0, 0, .62), -1px 0 1px rgba(0, 0, 0, .62), 0 -1px 1px rgba(0, 0, 0, .62);
+}
+
+html[data-bright-wallpaper='true'] .adaptive-text-outline-soft {
+  text-shadow: 0 0 .8px rgba(0, 0, 0, .72), 0 .35px .7px rgba(0, 0, 0, .42);
 }
 
 .profile-avatar {
@@ -4995,6 +5001,14 @@ html[data-bright-wallpaper='true'] .adaptive-text-outline {
   line-height: 1.08;
 }
 
+.editorial-detail-description {
+  max-width: 560px;
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .editorial-detail-meta {
   display: flex;
   align-items: center;
@@ -5064,6 +5078,8 @@ html[data-bright-wallpaper='true'] .adaptive-text-outline {
     margin-top: 6px;
     font-size: 10px;
   }
+
+  .editorial-detail-description { margin-top: 6px; font-size: 11px; }
 
   .editorial-detail-actions .btn {
     min-height: 32px;

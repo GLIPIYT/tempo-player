@@ -1508,7 +1508,7 @@ html.theme-gradient .set-page .slider-row input[type='range']::-moz-range-thumb 
 }
 
 .set-page .switch::after {
-  top: 3px;
+  top: 4px;
   left: 3px;
   width: 18px;
   height: 18px;
@@ -1588,6 +1588,8 @@ html.theme-gradient .set-page .slider-row input[type='range']::-moz-range-thumb 
   height: 46px;
   flex: none;
   object-fit: contain;
+  border-radius: 24%;
+  clip-path: inset(0 round 24%);
 }
 
 .brand-icon-choice span { font-size: 13px; font-weight: 600; }

@@ -6,6 +6,7 @@ export interface HourMix {
   key: string
   kind: HomeMixKind
   title: string
+  description: string
   tracks: Track[]
 }
 
@@ -97,11 +98,12 @@ function diverseRanked(tracks: Track[], score: (track: Track) => number): Track[
 function smartMix(
   key: string,
   title: string,
+  description: string,
   tracks: Track[],
   score: (track: Track) => number,
 ): HourMix | null {
   const ranked = diverseRanked(tracks.filter(isSong), score)
-  return ranked.length >= 3 ? { key, kind: 'smart', title, tracks: ranked } : null
+  return ranked.length >= 3 ? { key, kind: 'smart', title, description, tracks: ranked } : null
 }
 
 export function buildHourMixes(
@@ -129,13 +131,25 @@ export function buildHourMixes(
 
   if (picks.length >= 4) {
     const ordered = picks.slice().sort((a, b) => stableMixRank(a.id) - stableMixRank(b.id) || a.id - b.id)
-    mixes.push({ key: 'mix', kind: 'hour', title: hourMixTitle, tracks: ordered.slice(0, MIX_LIMIT) })
+    mixes.push({
+      key: 'mix',
+      kind: 'hour',
+      title: hourMixTitle,
+      description: 'Picked from what you usually play around this time of day',
+      tracks: ordered.slice(0, MIX_LIMIT),
+    })
   }
   for (const [artist, tracks] of [...byArtist.entries()]
     .filter(([, artistTracks]) => artistTracks.length >= 3)
     .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
     .slice(0, 3)) {
-    mixes.push({ key: `artist:${artist}`, kind: 'artist', title: artist, tracks })
+    mixes.push({
+      key: `artist:${artist}`,
+      kind: 'artist',
+      title: artist,
+      description: 'Tracks by this artist in your hourly picks',
+      tracks,
+    })
   }
 
   if (!sources) return mixes
@@ -156,6 +170,7 @@ export function buildHourMixes(
   const onRepeat = smartMix(
     'smart:on-repeat',
     sources.titles.onRepeat,
+    'Tracks you return to most often',
     allTracks.filter((track) =>
       track.lastPlayedAt != null &&
       track.lastPlayedAt >= twoWeeksAgo &&
@@ -173,6 +188,7 @@ export function buildHourMixes(
   const newToYou = smartMix(
     'smart:new-to-you',
     sources.titles.newToYou,
+    'Recently added tracks you have barely played',
     allTracks.filter((track) => track.addedAt >= monthAgo && track.playCount <= 1),
     (track) => {
       const ageDays = Math.max(0, (now - track.addedAt) / DAY_SECONDS)
@@ -187,6 +203,7 @@ export function buildHourMixes(
   const forgotten = smartMix(
     'smart:forgotten-favorites',
     sources.titles.forgottenFavorites,
+    "Favorites you haven't played in a month",
     allTracks.filter((track) =>
       (liked.has(track.id) || track.playCount >= 3) &&
       (track.lastPlayedAt == null || track.lastPlayedAt < monthAgo)),
@@ -199,6 +216,7 @@ export function buildHourMixes(
   const noSkips = smartMix(
     'smart:no-skips',
     sources.titles.noSkips,
+    'Tracks you usually listen to without skipping',
     allTracks.filter((track) =>
       track.playCount >= 5 &&
       track.skipCount <= Math.floor(track.playCount * 0.15)),

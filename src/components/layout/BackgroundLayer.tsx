@@ -54,15 +54,25 @@ function hasVisibleDirectText(element: Element): boolean {
 }
 
 function updateOutlineForText(element: Element): void {
+  const removeOutline = () => {
+    element.classList.remove('adaptive-text-outline', 'adaptive-text-outline-soft')
+  }
   if (OUTLINE_EXCLUDED_TAGS.has(element.tagName) || element.closest('[aria-hidden="true"]') || !hasVisibleDirectText(element)) {
-    element.classList.remove('adaptive-text-outline')
+    removeOutline()
     return
   }
   const style = getComputedStyle(element)
   const fill = style.getPropertyValue('-webkit-text-fill-color')
   const luminance = colorLuminance(fill && fill !== 'currentcolor' ? fill : style.color)
-  if (luminance === null || luminance < 0.62) {
-    element.classList.remove('adaptive-text-outline')
+  const outlineClass = luminance === null
+    ? null
+    : luminance >= 0.62
+      ? 'adaptive-text-outline'
+      : luminance >= 0.24
+        ? 'adaptive-text-outline-soft'
+        : null
+  if (!outlineClass) {
+    removeOutline()
     return
   }
 
@@ -79,7 +89,8 @@ function updateOutlineForText(element: Element): void {
     }
     ancestor = ancestor.parentElement
   }
-  element.classList.toggle('adaptive-text-outline', backdropIsBright)
+  element.classList.toggle('adaptive-text-outline', backdropIsBright && outlineClass === 'adaptive-text-outline')
+  element.classList.toggle('adaptive-text-outline-soft', backdropIsBright && outlineClass === 'adaptive-text-outline-soft')
 }
 
 function refreshTextOutlines(): void {
@@ -173,7 +184,9 @@ export default function BackgroundLayer() {
       image.onerror = null
       if (refreshFrame) window.cancelAnimationFrame(refreshFrame)
       root.dataset.brightWallpaper = 'false'
-      document.querySelectorAll('.adaptive-text-outline').forEach((element) => element.classList.remove('adaptive-text-outline'))
+      document.querySelectorAll('.adaptive-text-outline, .adaptive-text-outline-soft').forEach((element) => {
+        element.classList.remove('adaptive-text-outline', 'adaptive-text-outline-soft')
+      })
     }
   }, [bg.path, bg.dimPct, settings.theme])
 

@@ -476,24 +476,46 @@ fn decode_artwork(data: Vec<u8>) -> Result<(Vec<u8>, String), String> {
     }
     let mut reader = image::ImageReader::new(std::io::Cursor::new(&data))
         .with_guessed_format()
-        .map_err(|_| "Only valid JPEG and PNG artwork can be embedded".to_string())?;
+        .map_err(|_| "The selected artwork format is not supported".to_string())?;
     let format = reader
         .format()
-        .ok_or_else(|| "Only valid JPEG and PNG artwork can be embedded".to_string())?;
-    let mime_type = match format {
-        image::ImageFormat::Jpeg => "image/jpeg",
-        image::ImageFormat::Png => "image/png",
-        _ => return Err("Only JPEG and PNG artwork can be embedded".into()),
-    };
+        .ok_or_else(|| "The selected artwork format is not supported".to_string())?;
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(8192);
     limits.max_image_height = Some(8192);
     limits.max_alloc = Some(128 * 1024 * 1024);
     reader.limits(limits);
-    reader
+    let decoded = reader
         .decode()
         .map_err(|_| "The image could not be decoded safely".to_string())?;
-    Ok((data, mime_type.to_string()))
+    match format {
+        image::ImageFormat::Jpeg => Ok((data, "image/jpeg".to_string())),
+        image::ImageFormat::Png => Ok((data, "image/png".to_string())),
+        image::ImageFormat::WebP => {
+            // SoundCloud artwork commonly arrives as WebP. Embed a bounded
+            // JPEG copy because the audio tag writer only accepts JPEG/PNG.
+            // Composite transparency on white rather than turning transparent
+            // pixels into black when converting to RGB.
+            let rgba = decoded.thumbnail(2048, 2048).to_rgba8();
+            let rgb = image::RgbImage::from_fn(rgba.width(), rgba.height(), |x, y| {
+                let pixel = rgba.get_pixel(x, y).0;
+                let alpha = u32::from(pixel[3]);
+                let composite = |channel: u8| {
+                    ((u32::from(channel) * alpha + 255 * (255 - alpha) + 127) / 255) as u8
+                };
+                image::Rgb([composite(pixel[0]), composite(pixel[1]), composite(pixel[2])])
+            });
+            let mut jpeg = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+                .encode_image(&rgb)
+                .map_err(|_| "The SoundCloud artwork could not be converted to JPEG".to_string())?;
+            if jpeg.len() > MAX_EMBEDDED_ARTWORK_BYTES {
+                return Err("Converted artwork files must be 16 MB or smaller".into());
+            }
+            Ok((jpeg, "image/jpeg".to_string()))
+        }
+        _ => Err("Only JPEG, PNG, and WebP artwork can be embedded".into()),
+    }
 }
 
 fn cleanup_uncommitted_metadata_edit(

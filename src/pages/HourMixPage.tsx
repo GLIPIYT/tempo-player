@@ -51,6 +51,7 @@ export default function HourMixPage({ mix }: { mix: HourMix }) {
       }
       kind={t(mix.kind === 'hour' ? 'For this hour' : mix.kind === 'artist' ? 'Artist mix' : 'From your library')}
       title={mix.title}
+      description={t(mix.description)}
       meta={<span>{mix.tracks.length} {t(mix.tracks.length === 1 ? 'track' : 'tracks')} · {t('From your library')}</span>}
       actions={
         <>
