@@ -49,7 +49,7 @@ export default function HourMixPage({ mix }: { mix: HourMix }) {
           <Cover path={mix.tracks[0]?.coverPath ?? null} label={mix.title} size={232} />
         )
       }
-      kind={t(mix.key === 'mix' ? 'For this hour' : 'Artist mix')}
+      kind={t(mix.kind === 'hour' ? 'For this hour' : mix.kind === 'artist' ? 'Artist mix' : 'From your library')}
       title={mix.title}
       meta={<span>{mix.tracks.length} {t(mix.tracks.length === 1 ? 'track' : 'tracks')} · {t('From your library')}</span>}
       actions={

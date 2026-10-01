@@ -44,7 +44,7 @@ const PAGE_LABELS: Record<StartupPage, string> = {
 import ScanLine from '../components/common/ScanLine'
 import ConfirmModal from '../components/common/ConfirmModal'
 import { toast } from '../components/common/Toast'
-import type { CustomTheme, ThemeTokens } from '../types/theme'
+import type { ActiveTheme, CustomTheme, ThemeTokens } from '../types/theme'
 import { TOKEN_VARS } from '../types/theme'
 import { CUSTOM_DEFAULT_BASE, PRESETS, getPreset } from '../theme/presets'
 import { applyTheme, parseHex, toHex } from '../theme/engine'
@@ -62,6 +62,7 @@ import {
 } from '../updater/service'
 import { newerThan } from '../updater/version'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
+import { resolveBrandIcon } from '../theme/brandIcon'
 
 type Category = 'general' | 'appearance' | 'library' | 'storage' | 'about'
 type FontMode = 'default' | 'system' | 'file'
@@ -474,10 +475,7 @@ function LoudnessCard() {
   const { settings, update } = useSettings()
 
   return (
-    <Card
-      title={t('Volume normalization')}
-      desc={t('Evens out loudness differences between tracks.')}
-    >
+    <Card title={t('Volume normalization')}>
       <div className="set-row">
         <span className="set-row-label">{t('Normalize volume')}</span>
         <button
@@ -489,7 +487,7 @@ function LoudnessCard() {
         />
       </div>
       <div className="set-note">
-        {t('Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest are measured automatically a few tracks ahead of what is playing, so there is nothing to start by hand.')}
+        {t('Uses ReplayGain tags when available; measures other tracks before playback.')}
       </div>
     </Card>
   )
@@ -527,7 +525,7 @@ function HiddenTracksCard() {
   return (
     <Card
       title={t('Hidden tracks')}
-      desc={t('Files you removed from the library. They stay on disk and scans walk past them.')}
+      desc={t('Hidden files stay on disk and are skipped during scans.')}
     >
       {hidden.loading ? (
         <div className="muted" style={{ marginTop: 14, fontSize: 12.5 }}>{t('Loading…')}</div>
@@ -639,7 +637,7 @@ function StorageCard() {
   }
 
   return (
-    <Card title={t('Storage')} desc={t('Where Tempo keeps its data.')}>
+    <Card title={t('Storage')}>
       {info.error ? <div className="error-line">{info.error}</div> : null}
       {!info.data && info.loading ? (
         <div className="muted settings-line">{t('Loading…')}</div>
@@ -654,9 +652,6 @@ function StorageCard() {
           </div>
         </>
       ) : null}
-      <div className="muted settings-line" style={{ marginTop: 8 }}>
-        {t('The music database lives in the application data directory as tempo.db. Removing a folder also removes its cached references.')}
-      </div>
       <div className="set-actions">
         <button className="btn btn-danger" disabled={busy} onClick={() => setConfirmOpen(true)}>
           <Trash2 size={14} />
@@ -712,7 +707,7 @@ function StorageCard() {
           />
         </div>
         <div className="set-note" style={{ marginTop: 6 }}>
-          {t('Downloads a track in full before starting it. The first play waits, but the track then plays from disk instead of streaming, which is what lets it show a spectrum.')}
+          {t('Downloads first and enables SoundCloud spectrum analysis.')}
         </div>
         <CommitSlider
           label={t('Cache limit')}
@@ -864,6 +859,44 @@ function ThemePreview({
         <span className="theme-preview-pill" style={{ background: accent }} />
         <span className="theme-preview-pill" style={{ background: tokens.border }} />
       </div>
+    </div>
+  )
+}
+
+function BrandIconChoices({
+  value,
+  theme,
+  onChange,
+  label,
+}: {
+  value: 'pulse' | 'orbit'
+  theme: ActiveTheme
+  onChange: (value: 'pulse' | 'orbit') => void
+  label: string
+}) {
+  const t = useT()
+  const options = [
+    { id: 'pulse' as const, label: 'Pulse' },
+    { id: 'orbit' as const, label: 'Orbit' },
+  ]
+
+  return (
+    <div className="brand-icon-choices" role="group" aria-label={label}>
+      {options.map((option) => {
+        const icon = resolveBrandIcon(option.id, theme)
+        return (
+          <button
+            key={option.id}
+            type="button"
+            className={value === option.id ? 'brand-icon-choice is-active' : 'brand-icon-choice'}
+            aria-pressed={value === option.id}
+            onClick={() => onChange(option.id)}
+          >
+            <img src={icon.src} style={icon.filter ? { filter: icon.filter } : undefined} alt="" draggable={false} />
+            <span>{t(option.label)}</span>
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -1093,7 +1126,7 @@ export default function SettingsPage() {
 
           {cat === 'general' ? (
             <>
-              <Card title={t('Language')} desc={t('Interface language. System follows your OS setting.')}>
+              <Card title={t('Language')}>
                 <div className="set-row">
                   <span className="set-row-label">{t('Language')}</span>
                   <Segmented<'ru' | 'en' | 'system'>
@@ -1107,7 +1140,7 @@ export default function SettingsPage() {
                   />
                 </div>
               </Card>
-              <Card title={t('Startup')} desc={t('Choose what Tempo shows when it launches.')}>
+              <Card title={t('Startup')} desc={t('Page opened at launch.')}>
                 <div className="set-row">
                   <span className="set-row-label">{t('Startup page')}</span>
                   <select
@@ -1133,9 +1166,8 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div className="set-note">
-                  {t('When enabled, favorite playlists, artists and albums are grouped into separate sidebar sections. Turn it off for one continuous list.')}
+                  {t('Separates favorite playlists, artists and albums in the sidebar.')}
                 </div>
-                <div className="set-note">{t('Tempo is offline-first: your library never leaves this machine.')}</div>
               </Card>
               <Card title={t('Integrations')}>
                 <div className="set-row">
@@ -1150,19 +1182,6 @@ export default function SettingsPage() {
                 </div>
                 {settings.discord.enabled ? (
                   <>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Discord Application ID')}</span>
-                      <input
-                        className="text-input stack-input"
-                        value={settings.discord.clientId}
-                        placeholder="000000000000000000"
-                        spellCheck={false}
-                        onChange={(e) => update({ discord: { clientId: e.target.value.trim() } })}
-                      />
-                    </div>
-                    <div className="set-note">
-                      {t('Application ID is already built in. Replace it only if you want your own app: create one at discord.com/developers and paste its ID. The synced lyrics line shows up in your status while it plays.')}
-                    </div>
                     <SliderRow
                       label={t('Discord lyric merge gap')}
                       min={0}
@@ -1186,13 +1205,11 @@ export default function SettingsPage() {
                     onClick={() => update({ lyrics: { cacheOnline: !settings.lyrics.cacheOnline } })}
                   />
                 </div>
-                <div className="set-note">
-                  {t('Lyrics found online are stored with the track and keep working offline. Lyrics are fetched automatically in the background.')}
-                </div>
+                <div className="set-note">{t('Online lyrics are cached for offline playback.')}</div>
               </Card>
               <Card
                 title={t('Mini player')}
-                desc={t('A small always-on-top window with playback controls.')}
+                desc={t('Always-on-top playback controls.')}
               >
                 <div className="set-row">
                   <span className="set-row-label">{t('Floating mini player')}</span>
@@ -1261,13 +1278,10 @@ export default function SettingsPage() {
                         </div>
                       </>
                     ) : null}
-                    <div className="set-note">
-                      {t('The mini player rests at the top edge of the screen. Click the pill to expand it, click the cover to jump back to Tempo.')}
-                    </div>
                   </>
                 ) : null}
               </Card>
-              <Card title={t('System integration')} desc={t('How Tempo behaves as a desktop application.')}>
+              <Card title={t('System integration')}>
                 <div className="set-row">
                   <span className="set-row-label">{t('Launch at startup')}</span>
                   <button
@@ -1278,7 +1292,7 @@ export default function SettingsPage() {
                     onClick={() => update({ system: { autostart: !settings.system.autostart } })}
                   />
                 </div>
-                <div className="set-note">{t('Tempo launches automatically when you sign in.')}</div>
+                <div className="set-note">{t('Starts Tempo when you sign in.')}</div>
                 <div className="set-row" style={{ marginTop: 6 }}>
                   <span className="set-row-label">{t('Keep running in the tray')}</span>
                   <button
@@ -1289,9 +1303,7 @@ export default function SettingsPage() {
                     onClick={() => update({ system: { closeToTray: !settings.system.closeToTray } })}
                   />
                 </div>
-                <div className="set-note">
-                  {t('Closing the window hides Tempo instead of quitting, so playback and the mini player keep running. Right-click the tray icon to bring the window back or quit.')}
-                </div>
+                <div className="set-note">{t('Closing the window keeps playback running in the tray.')}</div>
               </Card>
               <LoudnessCard />
             </>
@@ -1324,6 +1336,15 @@ export default function SettingsPage() {
                     <span className="theme-card-name">{t('Custom')}</span>
                   </button>
                 </div>
+              </Card>
+
+              <Card title={t('App icon')}>
+                <BrandIconChoices
+                  value={settings.brandIconStyle}
+                  theme={settings.theme}
+                  label={t('App icon')}
+                  onChange={(brandIconStyle) => update({ brandIconStyle })}
+                />
               </Card>
 
               {settings.theme.kind === 'custom' ? (

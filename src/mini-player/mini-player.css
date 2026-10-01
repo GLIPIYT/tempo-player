@@ -116,10 +116,10 @@ body,
      dark corners */
   inset: 0 12px 12px;
   box-sizing: border-box;
-  padding: 12px 10px 10px;
+  padding: 11px 10px 7px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   border: 1px solid var(--mini-border);
   border-radius: 0 0 var(--mini-radius) var(--mini-radius);
   background: var(--mini-surface);

@@ -7,9 +7,10 @@ interface ModalProps {
   title: string
   onClose: () => void
   children: ReactNode
+  className?: string
 }
 
-export default function Modal({ open, title, onClose, children }: ModalProps) {
+export default function Modal({ open, title, onClose, children, className }: ModalProps) {
   const t = useT()
   useEffect(() => {
     if (!open) return
@@ -24,12 +25,12 @@ export default function Modal({ open, title, onClose, children }: ModalProps) {
 
   return (
     <div
-      className="modal-overlay"
+      className={className ? `modal-overlay ${className}-overlay` : 'modal-overlay'}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className="modal" role="dialog" aria-label={title}>
+      <div className={className ? `modal ${className}` : 'modal'} role="dialog" aria-label={title}>
         <div className="modal-head">
           <span className="modal-title">{title}</span>
           <button className="icon-btn" onClick={onClose} aria-label={t('Close dialog')}>

@@ -1,5 +1,5 @@
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { Play, Search, Star, StarOff } from 'lucide-react'
+import { Disc3, Play, Search, Star, StarOff } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
 import type { Album } from '../types/models'
@@ -80,7 +80,7 @@ export default function AlbumsPage() {
       <div className="page-head collection-library-heading">
         <div>
           <h1 className="page-title">{t('Albums')}</h1>
-          <div className="page-sub">{data ? formatCount(data.length, 'album', t, lang) : t('Loading…')}</div>
+          <div className="page-sub album-catalog-count">{data ? formatCount(data.length, 'album', t, lang) : t('Loading…')}</div>
         </div>
       </div>
 
@@ -104,11 +104,14 @@ export default function AlbumsPage() {
       ) : visibleAlbums.length === 0 ? (
         <EmptyState icon={<Search size={30} />} title={t('No albums match')} hint={t('Try another search.')} />
       ) : (
-        <div className="album-wall-grid">
+        <div className="album-wall-grid album-wall-grid-remaster">
           {visibleAlbums.map((album) => (
             <div key={album.id} className="album-wall-item">
               <button type="button" className="album-wall-open" onClick={() => navigate({ name: 'album', id: album.id })} onContextMenu={(event) => albumMenu(event, album)} title={album.title}>
-                <span className="album-wall-cover"><Cover path={album.coverPath} label={album.title} size={170} /></span>
+                <span className="album-wall-cover">
+                  <Cover path={album.coverPath} label={album.title} size={170} />
+                  {album.trackCount != null ? <span className="album-wall-track-count"><Disc3 size={12} />{album.trackCount}</span> : null}
+                </span>
                 <strong>{album.title}</strong>
                 <small>{album.artistName ?? t('Unknown artist')}{album.year != null ? ` · ${album.year}` : ''}</small>
               </button>

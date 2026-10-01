@@ -93,6 +93,7 @@ pub fn run() {
                 soundcloud_store::startup_maintenance(&state.db, &state.sc_cache_dir, &state.covers_dir);
                 commands::startup_rescan(handle.clone());
             });
+            theaudiodb::start_automatic_lookup(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

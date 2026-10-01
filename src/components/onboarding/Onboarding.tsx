@@ -7,10 +7,11 @@ import { useSettings } from '../../state/settings'
 import { useFolders } from '../../hooks/useFolders'
 import { api } from '../../api/client'
 import { useT } from '../../i18n'
-import appIcon from '../../assets/app-icon.png'
+import { resolveBrandIcon } from '../../theme/brandIcon'
 
 export default function Onboarding() {
   const { settings, update } = useSettings()
+  const appIcon = resolveBrandIcon(settings.brandIconStyle, settings.theme)
   const t = useT()
   const navigate = useNav().navigate
   const foldersApi = useFolders()
@@ -61,7 +62,13 @@ export default function Onboarding() {
 
         {step === 0 ? (
           <>
-            <img className="onb-icon" src={appIcon} alt="" draggable={false} />
+            <img
+              className="onb-icon"
+              src={appIcon.src}
+              style={appIcon.filter ? { filter: appIcon.filter } : undefined}
+              alt=""
+              draggable={false}
+            />
             <h1 className="onb-title">{t('Welcome to Tempo')}</h1>
             <p className="onb-sub">{t('A local-first player. No accounts, no cloud — just your music.')}</p>
             <label className="onb-label">{t('What should we call you?')}</label>

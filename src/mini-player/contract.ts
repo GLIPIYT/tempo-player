@@ -30,7 +30,7 @@ export const MINI_COLLAPSED_SIZE = { width: 124, height: 20 } as const
  */
 export const MINI_HIDDEN_SIZE = { width: 124, height: 10 } as const
 /** Card body, without the inset that gives the drop shadow room to breathe. */
-export const MINI_CARD_BODY_SIZE = { width: 428, height: 112 } as const
+export const MINI_CARD_BODY_SIZE = { width: 408, height: 104 } as const
 /**
  * Transparent margin around the card inside its window.
  *

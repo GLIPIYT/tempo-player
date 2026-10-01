@@ -4,6 +4,7 @@ import { getSettings } from '../state/settings'
 import { toast } from '../components/common/Toast'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { lyricsService } from '../features/lyrics/lyricsService'
+import { onSoundcloudCacheReady } from '../api/events'
 import type { RepeatMode, Track, UnifiedTrack } from '../types/models'
 import { trackToUnified } from '../utils/unified'
 import { AudioEngine, type AudioChannel } from './engine'
@@ -50,12 +51,20 @@ interface ScPlayback {
   format: string | null
 }
 
+interface PrefetchItem {
+  key: string
+  source: 'soundcloud' | 'youtube'
+  track: UnifiedTrack
+}
+
 const VOLUME_KEY = 'tempo.volume'
 const PLAYBACK_RATE_KEY = 'tempo.playbackRate'
 const PRESERVE_PITCH_KEY = 'tempo.preservePitch'
 const REPEAT_KEY = 'tempo.repeat'
 const SHUFFLE_KEY = 'tempo.shuffle'
 const QUEUE_SNAPSHOT_KEY = 'tempo.queue.snapshot.v1'
+const SHORT_CLIP_CROSSFADE_LIMIT_SEC = 8
+const CROSSFADE_TRACK_FRACTION = 0.2
 
 function readPref(key: string): string | null {
   try {
@@ -210,8 +219,6 @@ export class PlayerController {
   private bufferPct: number | null = null
   /** Set while a track is being resolved and fetched, before it can start. */
   private preparing = false
-  /** The track the cache has already been warmed for, so it is only done once. */
-  private preloadedSourceId: string | null = null
   private playedSourceIds = new Set<string>()
   private autoPickBusy = false
   private saveTimer: number | null = null
@@ -237,6 +244,9 @@ export class PlayerController {
     this.engine.setPlaybackRate(this.playbackRate)
     this.engine.setPreservePitch(this.preservePitch)
     this.engine.setEqualizer(getSettings().audio.equalizer)
+    this.engine.onFadeComplete = () => {
+      this.crossfading = false
+    }
     this.engine.onTime = t => {
       this.position = t
       this.maybeCrossfade()
@@ -255,10 +265,14 @@ export class PlayerController {
     this.engine.onEnded = () => this.handleEnded()
     this.engine.onError = msg => {
       console.error('[tempo player]', msg)
+      this.crossfading = false
       this.engine.pause()
       this.isPlaying = false
       this.emit()
     }
+    void onSoundcloudCacheReady(sourceId => {
+      void this.handleSoundcloudCacheReady(sourceId)
+    }).catch(() => {})
     this.setupMediaSession()
     this.emit()
   }
@@ -275,9 +289,12 @@ export class PlayerController {
   playTracks(tracks: UnifiedTrack[], startIndex = 0): void {
     // switching tracks manually counts as a skip for the track that was playing
     this.recordSkip()
+    this.startSeq += 1
+    this.crossfading = false
     this.engine.stop()
     this.playedSourceIds.clear()
     this.queueCtl.setQueue(tracks, startIndex)
+    this.preloadNext()
     void this.startPlayableFromCurrent()
   }
 
@@ -297,6 +314,7 @@ export class PlayerController {
       this.engine.stop()
       this.beginTransition(cur)
       const seq = ++this.startSeq
+      this.crossfading = false
       const resolved = await this.resolveTrackUrl(cur)
       if (seq !== this.startSeq) return
       if (!resolved) return
@@ -308,6 +326,8 @@ export class PlayerController {
   }
 
   async next(): Promise<void> {
+    this.startSeq += 1
+    this.crossfading = false
     this.engine.stop()
     this.recordSkip()
     const advanced = this.queueCtl.next(this.repeat)
@@ -329,10 +349,13 @@ export class PlayerController {
       this.seek(0)
       return
     }
+    this.startSeq += 1
+    this.crossfading = false
     this.engine.stop()
     this.recordSkip()
     const prev = this.queueCtl.previous(this.repeat)
     if (!prev) return
+    this.preloadNext()
     if (prev.sourceId !== this.loadedSourceId) this.beginTransition(prev)
     const seq = ++this.startSeq
     const resolved = await this.resolveTrackUrl(prev)
@@ -385,6 +408,7 @@ export class PlayerController {
   setRepeat(m: RepeatMode): void {
     this.repeat = m
     writePref(REPEAT_KEY, m)
+    this.preloadNext()
     this.emit()
   }
 
@@ -392,11 +416,13 @@ export class PlayerController {
     this.shuffle = !this.shuffle
     this.queueCtl.setShuffled(this.shuffle)
     writePref(SHUFFLE_KEY, this.shuffle ? '1' : '0')
+    this.preloadNext()
     this.emit()
   }
 
   addToQueue(t: UnifiedTrack): void {
     this.queueCtl.append(t)
+    this.preloadNext()
     this.emit()
   }
 
@@ -418,16 +444,21 @@ export class PlayerController {
 
   removeFromQueue(index: number): void {
     this.queueCtl.removeAt(index)
+    this.preloadNext()
     this.emit()
   }
 
   moveInQueue(from: number, to: number): void {
     this.queueCtl.move(from, to)
+    this.preloadNext()
     this.emit()
   }
 
   clearQueue(): void {
+    this.startSeq += 1
+    this.crossfading = false
     this.queueCtl.clear()
+    this.preloadNext()
     this.engine.stop()
     this.loadedSourceId = null
     this.isPlaying = false
@@ -463,6 +494,10 @@ export class PlayerController {
   }
 
   private startSeq = 0
+
+  private prefetchPending: PrefetchItem[] = []
+  private prefetchActiveKey: string | null = null
+  private prefetchRunning = false
 
   private async resolveTrackUrl(t: UnifiedTrack): Promise<ResolvedTrack | null> {
     if (t.localPath) return { url: convertFileSrc(t.localPath), format: null, channel: 'local' }
@@ -571,6 +606,8 @@ export class PlayerController {
 
   private async startPlayableFromCurrent(): Promise<void> {
     const seq = ++this.startSeq
+    this.crossfading = false
+    this.preloadNext()
     this.engine.stop()
     // Resolving can take seconds with cache-before-play on, so the bar is told
     // something is happening instead of sitting at 0:00 looking broken.
@@ -590,6 +627,7 @@ export class PlayerController {
         return
       }
       if (!this.queueCtl.next(this.repeat)) break
+      this.preloadNext()
     }
     if (seq !== this.startSeq) return
     this.stop()
@@ -628,22 +666,107 @@ export class PlayerController {
     this.preloadNext()
   }
 
-  /**
-   * Fetches the next track while the current one plays.
-   *
-   * Only worth doing with cache-before-play on, where a track that is not on
-   * disk means a wait before it can start. Warming it in advance turns that
-   * wait into something that only ever happens once, on the first track.
-   */
+  /** Warm the next four remote queue entries while the current track plays. */
   private preloadNext(): void {
-    if (!cacheScBeforePlay()) return
-    const next = this.queueCtl.peekNext(this.repeat)
-    if (!next || next.source !== 'soundcloud') return
-    // precache is a no-op when the file is already there, but this stops the
-    // same track being asked for again and again across a long queue
-    if (next.sourceId === this.preloadedSourceId) return
-    this.preloadedSourceId = next.sourceId
-    void api.scPrecache(next.sourceId).catch(() => {})
+    const items = this.queueCtl.getItems()
+    const currentIndex = this.queueCtl.getIndex()
+    const wanted = new Map<string, PrefetchItem>()
+    if (this.repeat !== 'one' && currentIndex >= 0 && items.length > 1) {
+      const currentTrack = items[currentIndex]
+      const currentKey = currentTrack ? `${currentTrack.source}:${currentTrack.sourceId}` : null
+      let index = currentIndex
+      let visited = 0
+      const lookAheadSlots = Math.min(4, items.length - 1)
+      while (wanted.size < 4 && visited < lookAheadSlots) {
+        index += 1
+        if (index >= items.length) {
+          if (this.repeat !== 'all') break
+          index = 0
+        }
+        if (index === currentIndex) break
+        visited += 1
+        const track = items[index]
+        if (track.source !== 'soundcloud' && track.source !== 'youtube') continue
+        const key = `${track.source}:${track.sourceId}`
+        if (key === currentKey || wanted.has(key)) continue
+        wanted.set(key, { key, source: track.source, track })
+      }
+    }
+
+    // Downloads already in flight finish naturally; queued downloads that are
+    // no longer ahead of the playhead are discarded before they start.
+    const pendingKeys = new Set(this.prefetchPending.map(item => item.key))
+    this.prefetchPending = [...wanted.values()].filter(
+      item => item.key !== this.prefetchActiveKey && pendingKeys.has(item.key),
+    )
+    const queuedKeys = new Set(this.prefetchPending.map(item => item.key))
+
+    for (const [key, item] of wanted) {
+      if (key === this.prefetchActiveKey || queuedKeys.has(key)) continue
+      queuedKeys.add(key)
+      this.prefetchPending.push(item)
+    }
+    void this.drainPrefetchQueue()
+  }
+
+  private async drainPrefetchQueue(): Promise<void> {
+    if (this.prefetchRunning) return
+    this.prefetchRunning = true
+    try {
+      // Keep the queue sequential to bound network and yt-dlp load. Backend
+      // path locks also cover concurrent playback/collection cache requests.
+      while (this.prefetchPending.length > 0) {
+        const item = this.prefetchPending.shift()
+        if (!item || item.key === this.prefetchActiveKey) continue
+        this.prefetchActiveKey = item.key
+        try {
+          if (item.source === 'soundcloud') {
+            await api.scPrecache(item.track.sourceId)
+          } else {
+            await api.ytdlpCache(
+              getSettings().ytdlp.path,
+              item.track.externalUrl ?? `https://www.youtube.com/watch?v=${item.track.sourceId}`,
+              item.track.sourceId,
+            )
+          }
+        } catch {
+          // A later queue or repeat change may ask for this ID again.
+        } finally {
+          if (this.prefetchActiveKey === item.key) this.prefetchActiveKey = null
+        }
+      }
+    } finally {
+      this.prefetchRunning = false
+      if (this.prefetchPending.length > 0) void this.drainPrefetchQueue()
+    }
+  }
+
+  private async handleSoundcloudCacheReady(sourceId: string): Promise<void> {
+    // The download may finish while this ID is still later in the queue. Drop
+    // its signed-stream answer now so playback resolves the local copy later.
+    scPlaybackCache.delete(`${sourceId}|stream`)
+    const current = this.queueCtl.current()
+    if (
+      !current ||
+      current.source !== 'soundcloud' ||
+      current.sourceId !== sourceId ||
+      this.loadedSourceId !== sourceId ||
+      this.engine.getActiveChannel() !== 'stream'
+    ) return
+
+    const playback = await fetchScPlayback(sourceId, false)
+    if (!playback?.cached) return
+
+    const stillCurrent = this.queueCtl.current()
+    if (
+      !stillCurrent ||
+      stillCurrent.source !== 'soundcloud' ||
+      stillCurrent.sourceId !== sourceId ||
+      this.loadedSourceId !== sourceId ||
+      this.engine.getActiveChannel() !== 'stream'
+    ) return
+
+    if (await this.engine.replaceStreamWithCachedFile(playback.url)) this.emit()
   }
 
   /**
@@ -658,42 +781,85 @@ export class PlayerController {
     if (this.crossfading || !this.isPlaying) return
     const seconds = crossfadeSeconds()
     if (seconds <= 0) return
-    const remaining = this.duration - this.position
-    if (!Number.isFinite(remaining) || remaining <= 0 || remaining > seconds) return
-    void this.beginCrossfade(seconds)
+    const current = this.queueCtl.current()
+    const incoming = this.queueCtl.peekNext(this.repeat)
+    if (!current || !incoming) return
+    const duration = this.duration > 0 ? this.duration : current.durationSec ?? 0
+    const incomingDuration = incoming.durationSec ?? 0
+
+    // Tiny clips are usually sound effects. Crossfading them can cut off most
+    // of the sound or start resolving the next track before the clip plays.
+    if (
+      duration <= SHORT_CLIP_CROSSFADE_LIMIT_SEC ||
+      incomingDuration <= SHORT_CLIP_CROSSFADE_LIMIT_SEC
+    ) return
+
+    const safeFade = Math.min(
+      seconds,
+      (duration * CROSSFADE_TRACK_FRACTION) / this.playbackRate,
+      (incomingDuration * CROSSFADE_TRACK_FRACTION) / this.playbackRate,
+    )
+    if (safeFade < 0.2) return
+    const remainingWallSeconds = (duration - this.position) / this.playbackRate
+    if (!Number.isFinite(remainingWallSeconds) || remainingWallSeconds <= 0 || remainingWallSeconds > safeFade) return
+    void this.beginCrossfade(safeFade)
   }
 
   private async beginCrossfade(seconds: number): Promise<void> {
     if (this.crossfading) return
     this.crossfading = true
+    const startSeq = this.startSeq
+    const transitionRepeat = this.repeat
+    const outgoing = this.queueCtl.current()
+    const incoming = this.repeat === 'one' ? outgoing : this.queueCtl.peekNext(this.repeat)
+    let rampStarted = false
     try {
-      const cur = this.queueCtl.current()
-      if (!cur) return
-      if (cur.dbId !== null) {
-        const dur = this.duration > 0 ? this.duration : cur.durationSec ?? 0
-        api.recordHistory(cur.dbId, Math.round(dur), true, false).catch(() => {})
-      }
-
-      // Repeat-one loops the same track, so it crossfades into itself. Asking
-      // `queueCtl.next` here would advance - that method only knows about
-      // repeat-all - and quietly turn repeat-one into repeat-all.
-      let incoming = cur
-      if (this.repeat !== 'one') {
-        if (!this.queueCtl.next(this.repeat)) {
-          const picked = await this.autoPick()
-          if (!picked) return
-        }
-        const advanced = this.queueCtl.current()
-        if (!advanced) return
-        incoming = advanced
-      }
-
+      if (!outgoing || !incoming) return
       const resolved = await this.resolveTrackUrl(incoming)
       if (!resolved) return
+
+      // Resolution may take long enough for a manual action or a seek to make
+      // this transition stale. Leave the queue and current source untouched.
+      if (
+        startSeq !== this.startSeq ||
+        transitionRepeat !== this.repeat ||
+        !this.isPlaying ||
+        this.queueCtl.current()?.sourceId !== outgoing.sourceId
+      ) return
+      if (this.repeat !== 'one' && this.queueCtl.peekNext(this.repeat)?.sourceId !== incoming.sourceId) return
+
+      const duration = this.duration > 0 ? this.duration : outgoing.durationSec ?? 0
+      const incomingDuration = incoming.durationSec ?? 0
+      if (
+        duration <= SHORT_CLIP_CROSSFADE_LIMIT_SEC ||
+        incomingDuration <= SHORT_CLIP_CROSSFADE_LIMIT_SEC
+      ) return
+      const safeFade = Math.min(
+        seconds,
+        (duration * CROSSFADE_TRACK_FRACTION) / this.playbackRate,
+        (incomingDuration * CROSSFADE_TRACK_FRACTION) / this.playbackRate,
+      )
+      const remainingWallSeconds = (duration - this.engine.getCurrentTime()) / this.playbackRate
+      if (safeFade < 0.2 || remainingWallSeconds > safeFade + 0.3 || !this.isPlaying) return
+
+      if (outgoing.dbId !== null) {
+        const listened = this.duration > 0 ? this.position : duration
+        api.recordHistory(
+          outgoing.dbId,
+          Math.max(0, Math.round(listened)),
+          duration > 0 && listened / duration >= 0.9,
+          false,
+        ).catch(() => {})
+      }
+      if (this.repeat !== 'one') {
+        const advanced = this.queueCtl.next(this.repeat)
+        if (!advanced || advanced.sourceId !== incoming.sourceId) return
+      }
       this.beginTransition(incoming)
-      this.startTrack(incoming, resolved, seconds)
+      this.startTrack(incoming, resolved, safeFade)
+      rampStarted = true
     } finally {
-      this.crossfading = false
+      if (!rampStarted) this.crossfading = false
     }
   }
 
@@ -750,6 +916,7 @@ export class PlayerController {
     // move playback to the newly appended track; otherwise current() still
     // points at the track that just ended and it would simply replay
     this.queueCtl.goToLast()
+    this.preloadNext()
     this.emit()
     return marked
   }
@@ -793,7 +960,10 @@ export class PlayerController {
   }
 
   private stop(): void {
+    this.startSeq += 1
+    this.crossfading = false
     this.engine.stop()
+    this.loadedSourceId = null
     this.isPlaying = false
     this.bufferPct = null
     this.preparing = false

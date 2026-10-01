@@ -113,8 +113,8 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="page profile-page-remaster">
-      <div className="profile-head">
+    <div className="page profile-page-remaster profile-layout-b">
+      <div className="profile-head profile-passport">
         <button
           className="avatar-edit"
           title={settings.profile.avatarPath ? t('Change avatar') : t('Pick an avatar')}
@@ -186,7 +186,7 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      <section className="home-section">
+      <section className="home-section profile-activity">
         <div className="home-section-head profile-chart-head">
           <span className="home-section-title">{t('Listening activity')}</span>
           <div className="profile-chart-controls">
@@ -273,7 +273,7 @@ export default function ProfilePage() {
         )}
       </section>
 
-      <div className="profile-columns">
+      <div className="profile-columns profile-rankings">
         <section className="home-section profile-col">
           <div className="home-section-head">
             <span className="home-section-title">{t('Top artists')}</span>
@@ -312,7 +312,7 @@ export default function ProfilePage() {
         </section>
       </div>
 
-      <section className="home-section">
+      <section className="home-section profile-recent">
         <div className="home-section-head">
           <span className="home-section-title">{t('Recent plays')}</span>
         </div>

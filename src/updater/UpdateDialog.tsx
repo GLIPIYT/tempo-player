@@ -96,48 +96,53 @@ export default function UpdateDialog({ release, onDismiss }: Props) {
       : null
 
   return (
-    <Modal open title={`${t('Update available')} — ${version}`} onClose={onDismiss}>
-      <div className="update-head">
-        <span className="update-version">{release.name || release.tag}</span>
-        {release.assetSize ? (
-          <span className="muted update-size">{formatBytes(release.assetSize)}</span>
+    <Modal open className="update-modal" title={`${t('Update available')} — ${version}`} onClose={onDismiss}>
+      <div className="update-dialog-layout">
+        <aside className="update-summary">
+          <div className="update-head">
+            <span className="update-version">{release.name || release.tag}</span>
+            {release.assetSize ? (
+              <span className="muted update-size">{formatBytes(release.assetSize)}</span>
+            ) : null}
+          </div>
+          {phase === 'downloading' ? (
+            <div className="update-download-state">
+              <div className="update-progress" role="progressbar" aria-valuenow={percent ?? 0}>
+                <div className="update-progress-fill" style={{ width: `${percent ?? 0}%` }} />
+              </div>
+              <div className="muted settings-line" style={{ marginTop: 6 }}>
+                {percent === null
+                  ? t('Downloading…')
+                  : `${t('Downloading…')} ${percent}% · ${formatBytes(progress?.downloaded ?? 0)}`}
+              </div>
+              <div className="set-note">
+                {t('Tempo will close and start again to finish installing.')}
+              </div>
+            </div>
+          ) : null}
+          {phase === 'failed' && error ? <div className="error-line update-error">{error}</div> : null}
+        </aside>
+
+        <section className="update-release-notes" aria-label={t('Release notes')}>
+          <div className="update-notes-heading">{t('Release notes')}</div>
+          {release.notes ? (
+            <div className="update-notes">{release.notes}</div>
+          ) : (
+            <div className="muted settings-line">{t('No release notes.')}</div>
+          )}
+        </section>
+
+        {phase !== 'downloading' ? (
+          <div className="modal-actions update-dialog-actions">
+            <button className="btn" onClick={skip}>
+              {t('Skip this version')}
+            </button>
+            <button className="btn btn-primary" onClick={() => void begin()}>
+              {phase === 'failed' ? t('Try again') : t('Download and install')}
+            </button>
+          </div>
         ) : null}
       </div>
-
-      {release.notes ? (
-        <div className="update-notes">{release.notes}</div>
-      ) : (
-        <div className="muted settings-line">{t('No release notes.')}</div>
-      )}
-
-      {phase === 'downloading' ? (
-        <>
-          <div className="update-progress" role="progressbar" aria-valuenow={percent ?? 0}>
-            <div className="update-progress-fill" style={{ width: `${percent ?? 0}%` }} />
-          </div>
-          <div className="muted settings-line" style={{ marginTop: 6 }}>
-            {percent === null
-              ? t('Downloading…')
-              : `${t('Downloading…')} ${percent}% · ${formatBytes(progress?.downloaded ?? 0)}`}
-          </div>
-          <div className="set-note">
-            {t('Tempo will close and start again to finish installing.')}
-          </div>
-        </>
-      ) : null}
-
-      {phase === 'failed' && error ? <div className="error-line">{error}</div> : null}
-
-      {phase === 'downloading' ? null : (
-        <div className="modal-actions">
-          <button className="btn" onClick={skip}>
-            {t('Skip this version')}
-          </button>
-          <button className="btn btn-primary" onClick={() => void begin()}>
-            {phase === 'failed' ? t('Try again') : t('Download and install')}
-          </button>
-        </div>
-      )}
     </Modal>
   )
 }

@@ -4,6 +4,7 @@ import { DEFAULT_EQUALIZER_SETTINGS, normalizeEqualizer, type EqualizerSettings 
 import { initializeDeepAnalysisDefault } from '../features/lyrics/analysis/hardwareDefault'
 
 export type StartupPage = 'home' | 'library' | 'albums' | 'artists' | 'playlists'
+export type BrandIconStyle = 'pulse' | 'orbit'
 
 const STARTUP_PAGES: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists']
 
@@ -21,6 +22,7 @@ export interface ProfileSettings {
 export interface AppSettings {
   lang: 'ru' | 'en' | 'system'
   theme: ActiveTheme
+  brandIconStyle: BrandIconStyle
   startupPage: StartupPage
   profile: ProfileSettings
   discord: {
@@ -120,6 +122,7 @@ export interface AppSettings {
 export const defaultSettings: AppSettings = {
   lang: 'system',
   theme: { kind: 'preset', presetId: 'tempo' },
+  brandIconStyle: 'pulse',
   startupPage: 'home',
   profile: { nickname: null, avatarPath: null, onboarded: false },
   discord: { enabled: false, clientId: '1543766505295183904', lyricStitchGapSec: 2 },
@@ -233,15 +236,15 @@ export function loadSettings(): AppSettings {
       startupPage: STARTUP_PAGES.includes(parsed.startupPage as StartupPage)
         ? (parsed.startupPage as StartupPage)
         : defaultSettings.startupPage,
+      brandIconStyle: parsed.brandIconStyle === 'orbit' ? 'orbit' : 'pulse',
       profile: { ...defaultSettings.profile, ...parsed.profile },
       discord: {
         ...defaultSettings.discord,
         ...parsed.discord,
         lyricStitchGapSec: clampDiscordStitchGap(parsed.discord?.lyricStitchGapSec),
-        clientId:
-          parsed.discord?.clientId && parsed.discord.clientId.trim()
-            ? parsed.discord.clientId
-            : defaultSettings.discord.clientId,
+        // The application ID is built into Tempo. Ignore stale custom IDs
+        // left in settings by older versions where the field was editable.
+        clientId: defaultSettings.discord.clientId,
       },
       lyrics: {
         ...defaultSettings.lyrics,

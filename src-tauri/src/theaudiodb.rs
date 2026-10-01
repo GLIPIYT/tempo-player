@@ -1,15 +1,73 @@
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use reqwest::{header, Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use rusqlite::{params, OptionalExtension};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+use crate::database::Db;
 
 const API_SEARCH: &str = "https://www.theaudiodb.com/api/v1/json/123/search.php";
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+// Search and image requests, including manual requests, share this budget.
+const REQUEST_INTERVAL_MS: u64 = 5_000;
+const BLOCKED_UNTIL_KEY: &str = "artist_artwork.theaudiodb.blocked_until";
+const LAST_REQUEST_KEY: &str = "artist_artwork.theaudiodb.last_request_ms";
+const DAY_SEC: u64 = 24 * 60 * 60;
+const NO_MATCH_RETRY_SEC: u64 = 7 * DAY_SEC;
+const ERROR_RETRY_SEC: u64 = 60 * 60;
+
+fn unix_millis() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+}
+
+fn stored_number(db: &Db, key: &str) -> u64 {
+    db.get_app_setting(key).ok().flatten().and_then(|value| value.parse().ok()).unwrap_or(0)
+}
+
+/// Persist the request budget as well: restarting the app must not bypass it.
+async fn reserve_request(db: &Db) -> Result<(), String> {
+    static GATE: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    let _guard = GATE.get_or_init(|| tokio::sync::Mutex::new(())).lock().await;
+    if stored_number(db, BLOCKED_UNTIL_KEY) > unix_millis() / 1_000 {
+        return Err("TheAudioDB is temporarily unavailable. Tempo will retry later.".into());
+    }
+    let wait = stored_number(db, LAST_REQUEST_KEY)
+        .saturating_add(REQUEST_INTERVAL_MS)
+        .saturating_sub(unix_millis())
+        .min(REQUEST_INTERVAL_MS);
+    if wait > 0 {
+        tokio::time::sleep(Duration::from_millis(wait)).await;
+    }
+    // Another request can have received a 403 while this request was waiting.
+    if stored_number(db, BLOCKED_UNTIL_KEY) > unix_millis() / 1_000 {
+        return Err("TheAudioDB is temporarily unavailable. Tempo will retry later.".into());
+    }
+    db.set_app_setting(LAST_REQUEST_KEY, &unix_millis().to_string())
+}
+
+fn response_error(db: &Db, response: &reqwest::Response) -> String {
+    let status = response.status();
+    let delay = if status == StatusCode::FORBIDDEN {
+        DAY_SEC
+    } else if status == StatusCode::TOO_MANY_REQUESTS {
+        response.headers().get(header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(60).clamp(60, DAY_SEC)
+    } else {
+        0
+    };
+    if delay > 0 {
+        let until = stored_number(db, BLOCKED_UNTIL_KEY).max(unix_millis() / 1_000 + delay);
+        let _ = db.set_app_setting(BLOCKED_UNTIL_KEY, &until.to_string());
+    }
+    request_error(status)
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -144,7 +202,14 @@ fn request_error(status: StatusCode) -> String {
 }
 
 #[tauri::command]
-pub async fn search_artist_images(query: String) -> Result<Vec<ArtistImageCandidate>, String> {
+pub async fn search_artist_images(
+    state: State<'_, crate::commands::AppState>,
+    query: String,
+) -> Result<Vec<ArtistImageCandidate>, String> {
+    search_images(&state.db, &query).await
+}
+
+async fn search_images(db: &Db, query: &str) -> Result<Vec<ArtistImageCandidate>, String> {
     let query = query.trim();
     if query.is_empty() {
         return Ok(Vec::new());
@@ -155,6 +220,7 @@ pub async fn search_artist_images(query: String) -> Result<Vec<ArtistImageCandid
 
     let mut url = Url::parse(API_SEARCH).map_err(|error| error.to_string())?;
     url.query_pairs_mut().append_pair("s", query);
+    reserve_request(db).await?;
     let response = client()
         .get(url)
         .send()
@@ -162,7 +228,7 @@ pub async fn search_artist_images(query: String) -> Result<Vec<ArtistImageCandid
         .map_err(|error| format!("TheAudioDB request failed: {error}"))?;
     let status = response.status();
     if !status.is_success() {
-        return Err(request_error(status));
+        return Err(response_error(db, &response));
     }
     let body = read_limited(response, MAX_RESPONSE_BYTES).await?;
     let body = std::str::from_utf8(&body).map_err(|error| error.to_string())?;
@@ -178,7 +244,23 @@ pub async fn save_artist_image_from_url(
     if artist_id <= 0 {
         return Err("invalid artist id".to_string());
     }
-    let url = validate_artist_image_url(&url)?;
+    let path = download_artist_image(&state.db, &state.avatars_dir, artist_id, &url).await?;
+    let stored_path = path.to_string_lossy().into_owned();
+    if let Err(error) = state.db.set_artist_image(artist_id, Some(&stored_path)) {
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(error);
+    }
+    Ok(stored_path)
+}
+
+async fn download_artist_image(
+    db: &Db,
+    avatars_dir: &std::path::Path,
+    artist_id: i64,
+    url: &str,
+) -> Result<PathBuf, String> {
+    let url = validate_artist_image_url(url)?;
+    reserve_request(db).await?;
     let response = client()
         .get(url)
         .send()
@@ -186,7 +268,7 @@ pub async fn save_artist_image_from_url(
         .map_err(|error| format!("TheAudioDB image request failed: {error}"))?;
     let status = response.status();
     if !status.is_success() {
-        return Err(request_error(status));
+        return Err(response_error(db, &response));
     }
     validate_artist_image_url(response.url().as_str())?;
     let content_type = response
@@ -201,7 +283,7 @@ pub async fn save_artist_image_from_url(
     let extension = detect_image_extension(&bytes)
         .ok_or_else(|| "TheAudioDB returned an unsupported image format".to_string())?;
 
-    let directory = state.avatars_dir.join("artists");
+    let directory = avatars_dir.join("artists");
     tokio::fs::create_dir_all(&directory)
         .await
         .map_err(|error| error.to_string())?;
@@ -212,29 +294,201 @@ pub async fn save_artist_image_from_url(
     let filename = format!("{artist_id}-theaudiodb-{timestamp}.{extension}");
     let destination = directory.join(&filename);
     let temporary = temporary_path(&directory, &filename);
-    tokio::fs::write(&temporary, &bytes)
-        .await
-        .map_err(|error| error.to_string())?;
+    if let Err(error) = tokio::fs::write(&temporary, &bytes).await {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(error.to_string());
+    }
     if let Err(error) = tokio::fs::rename(&temporary, &destination).await {
         let _ = tokio::fs::remove_file(&temporary).await;
         return Err(error.to_string());
     }
 
-    let stored_path = destination.to_string_lossy().into_owned();
-    if let Err(error) = state.db.set_artist_image(artist_id, Some(&stored_path)) {
-        let _ = tokio::fs::remove_file(&destination).await;
-        return Err(error);
-    }
-    Ok(stored_path)
+    Ok(destination)
 }
 
 fn temporary_path(directory: &std::path::Path, filename: &str) -> PathBuf {
     directory.join(format!(".{filename}.part"))
 }
 
+fn normalized_artist_name(name: &str) -> String {
+    // Keep punctuation/diacritics: loose matching risks using another artist's
+    // portrait. Only casing and whitespace are insignificant here.
+    name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+fn next_missing_artist(db: &Db) -> Result<Option<(i64, String)>, String> {
+    db.with_conn(|conn| {
+        conn.query_row(
+            "SELECT a.id, a.name FROM artists a
+             LEFT JOIN artist_artwork_lookup l ON l.artist_id = a.id
+             WHERE (a.image_path IS NULL OR trim(a.image_path) = '')
+               AND length(trim(a.name)) BETWEEN 1 AND 150
+               AND lower(trim(a.name)) NOT IN ('unknown artist', 'неизвестный исполнитель')
+               AND (l.artist_id IS NULL OR l.artist_name <> a.name OR l.next_attempt_at <= ?1)
+             ORDER BY a.id LIMIT 1",
+            params![unix_millis() / 1_000],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional().map_err(|error| error.to_string())
+    })
+}
+
+fn record_lookup(
+    db: &Db,
+    artist_id: i64,
+    name: &str,
+    status: &str,
+    candidate: Option<&ArtistImageCandidate>,
+    error: Option<&str>,
+    retry_sec: u64,
+) -> Result<(), String> {
+    let now = unix_millis() / 1_000;
+    let bounded_error = error.map(|value| value.chars().take(500).collect::<String>());
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO artist_artwork_lookup
+               (artist_id, artist_name, status, provider_id, source_url, error, next_attempt_at, updated_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 WHERE EXISTS(SELECT 1 FROM artists WHERE id = ?1)
+             ON CONFLICT(artist_id) DO UPDATE SET
+               artist_name = excluded.artist_name, status = excluded.status,
+               provider_id = excluded.provider_id, source_url = excluded.source_url,
+               error = excluded.error, next_attempt_at = excluded.next_attempt_at,
+               updated_at = excluded.updated_at",
+            params![artist_id, name, status, candidate.map(|value| &value.artist_id),
+                candidate.map(|value| &value.thumbnail_url), bounded_error, now + retry_sec, now],
+        ).map_err(|error| error.to_string())?;
+        Ok(())
+    })
+}
+
+fn store_missing_image(db: &Db, artist_id: i64, name: &str, path: &str) -> Result<usize, String> {
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE artists SET image_path = ?1 WHERE id = ?2 AND name = ?3
+             AND (image_path IS NULL OR trim(image_path) = '')",
+            params![path, artist_id, name],
+        ).map_err(|error| error.to_string())
+    })
+}
+
+async fn lookup_missing_artist(
+    db: &Db,
+    avatars_dir: &std::path::Path,
+    app: &AppHandle,
+    artist_id: i64,
+    name: &str,
+) -> Result<(), String> {
+    // If the process exits mid-request, it retries after this cooldown rather
+    // than making the same request immediately on every launch.
+    record_lookup(db, artist_id, name, "searching", None, None, ERROR_RETRY_SEC)?;
+    let normalized_name = normalized_artist_name(name);
+    let candidates = search_images(db, name).await?;
+    let matches: Vec<_> = candidates.iter()
+        .filter(|candidate| normalized_artist_name(&candidate.name) == normalized_name)
+        .collect();
+    if matches.len() != 1 {
+        return record_lookup(db, artist_id, name,
+            if matches.is_empty() { "not_found" } else { "ambiguous" },
+            None, None, NO_MATCH_RETRY_SEC);
+    }
+    let candidate = matches[0];
+    let path = download_artist_image(db, avatars_dir, artist_id, &candidate.thumbnail_url).await?;
+    let stored_path = path.to_string_lossy().into_owned();
+    let saved = store_missing_image(db, artist_id, name, &stored_path);
+    match saved {
+        Ok(changed) => {
+            if changed == 0 {
+                // The user may have chosen a portrait while the download ran.
+                let _ = tokio::fs::remove_file(path).await;
+            } else {
+                // A non-track change must not look like a SoundCloud cache ID
+                // to the playback cache-ready listener.
+                let _ = app.emit(crate::soundcloud_store::LIBRARY_CHANGED_EVENT, String::new());
+            }
+            record_lookup(db, artist_id, name, if changed > 0 { "ready" } else { "superseded" },
+                Some(candidate), None, NO_MATCH_RETRY_SEC)
+        }
+        Err(error) => {
+            let _ = tokio::fs::remove_file(path).await;
+            Err(error)
+        }
+    }
+}
+
+/// One worker per application, independent of mounted pages. Idle polling also
+/// picks up artists imported after startup without tying requests to rendering.
+pub fn start_automatic_lookup(app: AppHandle) {
+    let state = app.state::<crate::commands::AppState>();
+    let db: Arc<Db> = state.db.clone();
+    let avatars_dir = state.avatars_dir.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        loop {
+            let remaining = stored_number(&db, BLOCKED_UNTIL_KEY)
+                .saturating_sub(unix_millis() / 1_000);
+            if remaining > 0 {
+                tokio::time::sleep(Duration::from_secs(remaining.min(60))).await;
+                continue;
+            }
+            match next_missing_artist(&db) {
+                Ok(Some((artist_id, name))) => {
+                    if let Err(error) = lookup_missing_artist(&db, &avatars_dir, &app, artist_id, &name).await {
+                        let _ = record_lookup(&db, artist_id, &name, "error", None, Some(&error), ERROR_RETRY_SEC);
+                        eprintln!("Tempo artist artwork lookup failed for artist {artist_id}: {error}");
+                    }
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+                Ok(None) => tokio::time::sleep(Duration::from_secs(60)).await,
+                Err(error) => {
+                    eprintln!("Tempo artist artwork queue unavailable: {error}");
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                }
+            }
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{detect_image_extension, parse_search_response, validate_artist_image_url};
+    use super::*;
+
+    #[test]
+    fn matching_keeps_identity_beyond_case_and_whitespace() {
+        assert_eq!(normalized_artist_name("  Arctic   MONKEYS "), "arctic monkeys");
+        assert_ne!(normalized_artist_name("A.B"), normalized_artist_name("AB"));
+        assert_ne!(normalized_artist_name("Beyoncé"), normalized_artist_name("Beyonce"));
+    }
+
+    #[test]
+    fn missing_queue_honors_cached_misses_and_later_imports() {
+        let db = Db::open_at(std::path::Path::new(":memory:")).unwrap();
+        let first = db.ensure_artist("First Artist").unwrap();
+        let manual = db.ensure_artist("Manual Artist").unwrap();
+        db.set_artist_image(manual, Some("manual.png")).unwrap();
+        assert_eq!(next_missing_artist(&db).unwrap().unwrap().0, first);
+        record_lookup(&db, first, "First Artist", "not_found", None, None, NO_MATCH_RETRY_SEC).unwrap();
+        assert!(next_missing_artist(&db).unwrap().is_none());
+        let later = db.ensure_artist("Later Artist").unwrap();
+        assert_eq!(next_missing_artist(&db).unwrap().unwrap().0, later);
+        // A rename must not retain the old name's negative cache.
+        db.with_conn(|conn| {
+            conn.execute("UPDATE artists SET name = 'Renamed Artist' WHERE id = ?1", params![first])
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        }).unwrap();
+        assert_eq!(next_missing_artist(&db).unwrap().unwrap().0, first);
+    }
+
+    #[test]
+    fn automatic_save_cannot_overwrite_a_manual_choice_or_renamed_artist() {
+        let db = Db::open_at(std::path::Path::new(":memory:")).unwrap();
+        let artist = db.ensure_artist("Original Artist").unwrap();
+        db.set_artist_image(artist, Some("manual.png")).unwrap();
+        assert_eq!(store_missing_image(&db, artist, "Original Artist", "auto.png").unwrap(), 0);
+        db.set_artist_image(artist, None).unwrap();
+        assert_eq!(store_missing_image(&db, artist, "Old Name", "auto.png").unwrap(), 0);
+        assert_eq!(store_missing_image(&db, artist, "Original Artist", "auto.png").unwrap(), 1);
+        assert_eq!(store_missing_image(&db, artist, "Original Artist", "second.png").unwrap(), 0);
+    }
 
     #[test]
     fn parses_artist_candidates_and_ignores_missing_thumbnails() {

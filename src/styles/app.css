@@ -38,20 +38,6 @@
   min-height: 0;
 }
 
-.sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 4px 12px 18px;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.sidebar-brand-icon {
-  color: var(--accent);
-}
-
 .sidebar-nav {
   display: flex;
   flex-direction: column;
@@ -2725,14 +2711,6 @@
   display: none;
 }
 
-.sidebar.is-collapsed .sidebar-brand {
-  justify-content: center;
-  gap: 0;
-  padding-left: 0;
-  padding-right: 0;
-}
-
-.sidebar.is-collapsed .sidebar-brand span,
 .sidebar.is-collapsed .side-item span,
 .sidebar.is-collapsed .fav-head,
 .sidebar.is-collapsed .fav-name,
@@ -3465,39 +3443,8 @@ html.has-bg .app-content {
   margin-top: 18px;
 }
 
-.sidebar-brand {
-  gap: 10px;
-}
-
-.sidebar-brand-icon {
-  display: none;
-}
-
-.sidebar-brand::before {
-  content: '';
-  width: 22px;
-  height: 22px;
-  border-radius: 7px;
-  flex-shrink: 0;
-  background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23ffffff' d='M8 5v14l11-7z'/%3E%3C/svg%3E"),
-    linear-gradient(135deg, var(--accent), var(--accent-strong));
-  background-size: 12px 12px, 100% 100%;
-  background-position: center, center;
-  background-repeat: no-repeat, no-repeat;
-}
-
-.sidebar-brand span {
-  font-weight: 700;
-  letter-spacing: 0.06em;
-}
-
 .side-item {
   padding: 8px 10px;
-}
-
-.sidebar.is-collapsed .sidebar-brand::before {
-  margin: 0 auto;
 }
 
 .fav-count {
@@ -4304,6 +4251,143 @@ html.has-bg .app-content {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 60%);
+}
+
+/* Profile B: a compact listener card sits beside activity, with ranked lists
+   and recent plays below it. The underlying data and controls are unchanged. */
+.profile-layout-b {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.82fr) minmax(0, 1.75fr);
+  grid-template-areas:
+    'passport activity'
+    'rankings recent';
+  align-items: start;
+  gap: 16px;
+}
+
+.profile-layout-b > .profile-passport { grid-area: passport; }
+.profile-layout-b > .profile-activity { grid-area: activity; }
+.profile-layout-b > .profile-rankings { grid-area: rankings; }
+.profile-layout-b > .profile-recent { grid-area: recent; }
+.profile-layout-b > .profile-passport,
+.profile-layout-b > .profile-activity,
+.profile-layout-b > .profile-rankings,
+.profile-layout-b > .profile-recent { min-width: 0; margin: 0; }
+
+.profile-layout-b .profile-passport {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 18px;
+}
+
+.profile-layout-b .profile-avatar { width: 68px; height: 68px; }
+.profile-layout-b .profile-info { flex: 1 1 130px; }
+.profile-layout-b .profile-name { font-size: 21px; }
+.profile-layout-b .profile-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+  gap: 7px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border);
+}
+.profile-layout-b .profile-stat { align-items: flex-start; min-width: 0; }
+.profile-layout-b .profile-stat-num { font-size: 18px; }
+.profile-layout-b .profile-stat-label { font-size: 10px; }
+.profile-layout-b .profile-rankings { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.profile-layout-b .profile-rankings .profile-col { padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.profile-layout-b .profile-activity > .chart { width: 100%; }
+.profile-layout-b .profile-activity .chart-bar-wrap { flex: 1 1 0; min-width: 0; }
+.profile-layout-b .profile-recent .tl { max-height: 540px; overflow: auto; }
+
+@media (max-width: 860px) {
+  .profile-layout-b { grid-template-columns: minmax(220px, .7fr) minmax(0, 1.3fr); gap: 12px; }
+  .profile-layout-b .profile-chart-controls { width: 100%; justify-content: flex-start; }
+}
+
+@media (max-width: 680px) {
+  .profile-layout-b {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'passport' 'activity' 'rankings' 'recent';
+  }
+  .profile-layout-b .profile-rankings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 460px) {
+  .profile-layout-b .profile-rankings { grid-template-columns: minmax(0, 1fr); }
+  .profile-layout-b .profile-chart-controls { gap: 6px; }
+  .profile-layout-b .profile-chart-controls .seg { max-width: 100%; }
+}
+
+/* Update B separates release details from the notes while keeping the action
+   row anchored at the bottom of the window. */
+.update-modal-overlay {
+  align-items: center;
+  padding: 16px;
+}
+
+.modal.update-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(820px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: hidden;
+}
+
+.update-modal .modal-body { min-height: 0; overflow: hidden; }
+.update-dialog-layout {
+  display: grid;
+  grid-template-columns: minmax(190px, .7fr) minmax(0, 1.3fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 18px;
+  min-height: 280px;
+  max-height: min(460px, calc(100vh - 116px));
+}
+.update-summary {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+}
+.update-head { align-items: flex-start; flex-direction: column; gap: 5px; }
+.update-version { font-size: 16px; font-weight: 650; }
+.update-download-state { margin-top: auto; }
+.update-download-state .update-progress { margin-top: 0; }
+.update-error { margin-top: auto; overflow-wrap: anywhere; }
+.update-release-notes { display: flex; min-width: 0; min-height: 0; flex-direction: column; }
+.update-notes-heading { margin: 2px 0 8px; font-size: 12px; font-weight: 650; }
+.update-notes {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+}
+.update-dialog-actions { grid-column: 1 / -1; margin-top: 0; padding-top: 12px; border-top: 1px solid var(--border); }
+
+@media (max-width: 600px) {
+  .update-dialog-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(120px, 1fr) auto;
+    gap: 12px;
+    max-height: calc(100vh - 94px);
+  }
+  .update-summary { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; }
+  .update-download-state { flex: 1 1 45%; min-width: 110px; margin: 0; }
+  .update-download-state .set-note { display: none; }
+  .update-error { margin: 0; }
+  .update-dialog-actions { flex-wrap: wrap; }
+}
+
+/* Text gets a subtle dark edge only when a bright wallpaper sits behind it.
+   The class is assigned to text-bearing nodes, so SVG artwork is never altered. */
+html[data-bright-wallpaper='true'] .adaptive-text-outline {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .9), 1px 0 1px rgba(0, 0, 0, .62), -1px 0 1px rgba(0, 0, 0, .62), 0 -1px 1px rgba(0, 0, 0, .62);
 }
 
 .profile-avatar {

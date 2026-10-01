@@ -110,9 +110,56 @@
   gap: 6px;
 }
 
+.metadata-editor-field-head {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.metadata-editor-field-head > label {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .metadata-editor-field > span {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.metadata-editor-add-entity {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin: -2px -4px -2px 0;
+  padding: 0;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+.metadata-editor-add-entity:hover,
+.metadata-editor-add-entity[aria-expanded="true"] {
+  color: var(--text);
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+
+.metadata-editor-add-entity:focus-visible,
+.metadata-editor-create-entity button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.metadata-editor-add-entity:disabled,
+.metadata-editor-create-entity button:disabled {
+  cursor: default;
+  opacity: .55;
 }
 
 .metadata-editor-field input,
@@ -140,6 +187,42 @@
 .metadata-editor-library-search:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.metadata-editor-create-entity {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.metadata-editor-create-entity input {
+  height: 34px;
+  flex: 1 1 auto;
+}
+
+.metadata-editor-create-entity button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.metadata-editor-create-entity button:first-of-type:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface));
+}
+
+.metadata-editor-create-entity button:last-of-type:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text-muted) 15%, var(--surface));
 }
 
 .metadata-editor-track-title input {

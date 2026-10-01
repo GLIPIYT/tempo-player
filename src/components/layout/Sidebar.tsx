@@ -225,12 +225,10 @@ export default function Sidebar() {
     updatePosition()
     const resizeObserver = new ResizeObserver(updatePosition)
     resizeObserver.observe(sidebar)
-    const brand = sidebar.querySelector('.sidebar-brand')
     const nav = sidebar.querySelector('.sidebar-nav')
     const favorites = sidebar.querySelector('.sidebar-favs')
     const bottom = sidebar.querySelector('.sidebar-bottom')
     const target = sidebar.querySelector('.side-item.is-active')
-    if (brand) resizeObserver.observe(brand)
     if (nav) resizeObserver.observe(nav)
     if (favorites) resizeObserver.observe(favorites)
     if (bottom) resizeObserver.observe(bottom)
@@ -643,10 +641,6 @@ export default function Sidebar() {
         style={{ width: collapsed ? COLLAPSED_W : width }}
       >
         <span ref={activeMarkerRef} className="sidebar-active-marker" aria-hidden="true" />
-        <div className="sidebar-brand">
-          <Disc3 size={18} className="sidebar-brand-icon" />
-          <span>Tempo</span>
-        </div>
         <nav className="sidebar-nav">
           {items.map((it) => {
             const Icon = it.icon

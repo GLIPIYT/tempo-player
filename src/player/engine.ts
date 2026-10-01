@@ -86,6 +86,8 @@ export class AudioEngine {
   private eqBoostDb = 0
   private rafId = 0
   private epoch = 0
+  private loadGeneration = 0
+  private swappingStream = false
   private lastSeekAt = Number.NEGATIVE_INFINITY
   private lastReported = 0
   private pendingSeek: number | null = null
@@ -100,9 +102,14 @@ export class AudioEngine {
   onLoaded: (duration: number) => void = () => {}
   onError: (message: string) => void = () => {}
   onProgress: (pct: number | null) => void = () => {}
+  onFadeComplete: () => void = () => {}
 
   getSeekEpoch(): number {
     return this.epoch
+  }
+
+  getActiveChannel(): AudioChannel {
+    return this.activeChannel
   }
 
   /**
@@ -138,12 +145,16 @@ export class AudioEngine {
     format: string | null,
     channel: AudioChannel = 'local',
   ): Promise<void> {
+    // Invalidate an older async load before touching the channels. In
+    // particular, ensure() can fail before the media element exists.
+    const generation = ++this.loadGeneration
     this.destroyHls()
     this.silenceOther(channel)
     this.activeChannel = channel
     this.lastLoad = { url, format, channel }
     const el = this.ensure(channel)
     this.applyPlaybackOptions(el)
+    el.muted = false
     this.epoch += 1
     this.pendingSeek = null
     this.lastReported = 0
@@ -154,6 +165,11 @@ export class AudioEngine {
     if (format === 'hls') {
       try {
         const mod = await import('hls.js')
+        if (
+          generation !== this.loadGeneration ||
+          this.activeChannel !== channel ||
+          this.channels[channel] !== el
+        ) return
         const Hls = mod.default
         if (Hls.isSupported()) {
           const hlsInstance = new Hls({ maxBufferLength: 30 })
@@ -164,16 +180,31 @@ export class AudioEngine {
         }
       } catch {}
     }
+    if (
+      generation !== this.loadGeneration ||
+      this.activeChannel !== channel ||
+      this.channels[channel] !== el
+    ) return
     el.src = url
     el.load()
   }
 
   stop(): void {
+    this.loadGeneration += 1
     this.destroyHls()
+    const wasFading = this.fading !== null
     this.detachFade()
     this.fadeLevel = 1
+    if (wasFading) this.onFadeComplete()
     const el = this.active()
     if (!el) return
+    if (this.swappingStream && this.activeChannel === 'stream') {
+      const prepared = this.channels.local
+      prepared?.pause()
+      prepared?.removeAttribute('src')
+      prepared?.load()
+      if (prepared) prepared.muted = false
+    }
     this.stopTicker()
     this.pendingSeek = null
     this.lastReported = 0
@@ -309,18 +340,29 @@ export class AudioEngine {
   ): Promise<void> {
     const outgoing = this.active()
     if (!outgoing || outgoing.paused || seconds <= 0) {
-      await this.loadWithFormat(url, format, channel)
+      const loading = this.loadWithFormat(url, format, channel)
+      const generation = this.loadGeneration
+      try {
+        await loading
+      } catch (error) {
+        if (generation === this.loadGeneration) {
+          this.onError(error instanceof Error ? error.message : 'Could not load the next track')
+        }
+      } finally {
+        if (generation === this.loadGeneration) this.onFadeComplete()
+      }
       return
     }
     this.destroyHls()
     this.detachFade()
     const outgoingChannel = this.activeChannel
-    this.fading = {
+    const transition = {
       el: outgoing,
       gain: this.gainNode,
       compressor: this.compressorNode,
       eqFilters: this.eqFilters,
     }
+    this.fading = transition
     this.gainNode = null
     this.compressorNode = null
     this.eqFilters = []
@@ -329,36 +371,244 @@ export class AudioEngine {
     this.activeChannel = channel
     this.fadeLevel = 0
 
-    await this.loadWithFormat(url, format, channel)
-    const el = this.active()
-    if (!el) return
-    void el.play().catch(() => {})
-    this.startTicker(el)
-    this.rampFade(seconds)
+    const loading = this.loadWithFormat(url, format, channel)
+    const generation = this.loadGeneration
+    try {
+      await loading
+      if (generation !== this.loadGeneration || this.fading !== transition) return
+      const el = this.active()
+      if (!el) {
+        this.failFade('Could not load the next track')
+        return
+      }
+      await el.play()
+      if (
+        generation !== this.loadGeneration ||
+        this.active() !== el ||
+        this.fading !== transition
+      ) return
+      this.startTicker(el)
+      this.rampFade(seconds)
+    } catch (error) {
+      // An old load/play promise may reject after a newer track transition
+      // replaced this fade. Never tear down the newer transition as cleanup.
+      if (generation === this.loadGeneration && this.fading === transition) {
+        this.failFade(error instanceof Error ? error.message : 'Could not start the next track')
+      }
+    }
+  }
+
+  /**
+   * Replaces a progressive, cross-origin SoundCloud stream with its completed
+   * local cache file. The file is prepared on the local element while the
+   * stream remains audible; the handoff keeps the current media position and
+   * uses a very short fade to avoid a click.
+   */
+  async replaceStreamWithCachedFile(url: string): Promise<boolean> {
+    const outgoing = this.channels.stream
+    if (this.activeChannel !== 'stream' || !outgoing || this.fading || this.swappingStream) return false
+    const incoming = this.ensure('local')
+    if (incoming === outgoing) return false
+    const generation = this.loadGeneration
+    this.swappingStream = true
+
+    const discardPrepared = () => {
+      // A manual track change may now be using this same element. Never clear
+      // that newer source as cleanup for a stale handoff.
+      if (this.activeChannel === 'local' && this.channels.local === incoming) return
+      incoming.pause()
+      incoming.muted = false
+      incoming.removeAttribute('src')
+      incoming.load()
+    }
+
+    try {
+      // Reuse the local element because its MediaElementSource may already be
+      // connected to the EQ/visualizer graph. A new element would not inherit
+      // that one-time Web Audio connection.
+      incoming.pause()
+      incoming.muted = true
+      incoming.removeAttribute('src')
+      incoming.load()
+      this.applyPlaybackOptions(incoming)
+      incoming.src = url
+      incoming.load()
+
+      await new Promise<void>((resolve, reject) => {
+        let settled = false
+        const finish = (error?: Error) => {
+          if (settled) return
+          settled = true
+          window.clearTimeout(timeout)
+          incoming.removeEventListener('canplay', onReady)
+          incoming.removeEventListener('loadeddata', onReady)
+          incoming.removeEventListener('error', onError)
+          if (error) reject(error)
+          else resolve()
+        }
+        const onReady = () => {
+          if (incoming.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) finish()
+        }
+        const onError = () => finish(new Error('Cached audio file could not be loaded'))
+        const timeout = window.setTimeout(
+          () => finish(new Error('Timed out waiting for the cached audio file')),
+          12_000,
+        )
+        incoming.addEventListener('canplay', onReady)
+        incoming.addEventListener('loadeddata', onReady)
+        incoming.addEventListener('error', onError)
+        onReady()
+      })
+
+      if (
+        this.loadGeneration !== generation ||
+        this.activeChannel !== 'stream' ||
+        this.channels.stream !== outgoing ||
+        this.fading
+      ) {
+        discardPrepared()
+        return false
+      }
+
+      const targetTime = this.clampMediaTime(incoming, outgoing.currentTime)
+      await this.seekElement(incoming, targetTime)
+      let shouldPlay = !outgoing.paused && !outgoing.ended
+      if (shouldPlay) {
+        // Start silently so the local decoder is already running when the
+        // active channel changes. The stream stays live until the fade begins.
+        await incoming.play()
+        if (
+          this.loadGeneration !== generation ||
+          this.activeChannel !== 'stream' ||
+          this.channels.stream !== outgoing ||
+          this.fading
+        ) {
+          discardPrepared()
+          return false
+        }
+        await this.seekElement(incoming, this.clampMediaTime(incoming, outgoing.currentTime))
+        if (outgoing.paused || outgoing.ended) {
+          incoming.pause()
+          shouldPlay = false
+        }
+      }
+
+      this.channels.stream = null
+      this.activeChannel = 'local'
+      this.lastLoad = { url, format: null, channel: 'local' }
+      this.pendingSeek = null
+      this.lastReported = incoming.currentTime
+      this.lastBufferPct = null
+      this.onProgress(null)
+      this.onLoaded(Number.isFinite(incoming.duration) ? incoming.duration : 0)
+      this.fading = shouldPlay
+        ? { el: outgoing, gain: null, compressor: null, eqFilters: [] }
+        : null
+      this.fadeLevel = shouldPlay ? 0 : 1
+      incoming.muted = false
+      this.applyGain()
+
+      if (shouldPlay) {
+        this.startTicker(incoming)
+        this.rampFade(0.16)
+      } else {
+        outgoing.pause()
+        outgoing.removeAttribute('src')
+        outgoing.load()
+        this.reportBuffer(incoming)
+      }
+      return true
+    } catch {
+      discardPrepared()
+      return false
+    } finally {
+      this.swappingStream = false
+    }
+  }
+
+  private clampMediaTime(el: HTMLAudioElement, value: number): number {
+    if (!Number.isFinite(value) || value <= 0) return 0
+    if (!Number.isFinite(el.duration) || el.duration <= 0) return value
+    return Math.min(value, Math.max(0, el.duration - 0.04))
+  }
+
+  private async seekElement(el: HTMLAudioElement, time: number): Promise<void> {
+    if (Math.abs(el.currentTime - time) < 0.04) return
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timeout)
+        el.removeEventListener('seeked', finish)
+        resolve()
+      }
+      const timeout = window.setTimeout(finish, 700)
+      el.addEventListener('seeked', finish, { once: true })
+      try {
+        el.currentTime = time
+      } catch {
+        finish()
+      }
+    })
   }
 
   private rampFade(seconds: number): void {
     const started = performance.now()
     const total = Math.max(120, seconds * 1000)
     const step = (): void => {
-      const t = Math.min(1, (performance.now() - started) / total)
-      this.fadeLevel = t
-      this.applyGain()
-      const fade = this.fading
-      if (fade) {
-        const level = 1 - t
-        if (fade.gain) fade.gain.gain.value = this.volumeLevel * this.trackGain * level
-        else fade.el.volume = Math.max(0, Math.min(1, this.volumeLevel * level))
-      }
-      if (t < 1) {
-        this.fadeTimer = window.setTimeout(step, 40)
-      } else {
-        this.fadeLevel = 1
+      try {
+        const t = Math.min(1, (performance.now() - started) / total)
+        this.fadeLevel = t
         this.applyGain()
-        this.detachFade()
+        const fade = this.fading
+        if (fade) {
+          const level = 1 - t
+          if (fade.gain) fade.gain.gain.value = this.volumeLevel * this.trackGain * level
+          else fade.el.volume = Math.max(0, Math.min(1, this.volumeLevel * level))
+        }
+        if (t < 1) {
+          this.fadeTimer = window.setTimeout(step, 40)
+        } else {
+          this.fadeLevel = 1
+          this.applyGain()
+          try {
+            this.detachFade()
+          } finally {
+            this.onFadeComplete()
+          }
+        }
+      } catch (error) {
+        this.failFade(error instanceof Error ? error.message : 'Could not complete the audio transition')
       }
     }
     step()
+  }
+
+  private failFade(message: string): void {
+    if (!this.fading) return
+    if (this.fadeTimer !== 0) {
+      window.clearTimeout(this.fadeTimer)
+      this.fadeTimer = 0
+    }
+    this.stopTicker()
+    this.fadeLevel = 1
+    try {
+      this.detachFade()
+    } catch {
+      // Detach clears the transition reference before touching the media
+      // element, so the fade is no longer live even if browser cleanup fails.
+    }
+    try {
+      this.applyGain()
+    } catch {
+      // Report the original transition failure after restoring logical state.
+    }
+    try {
+      this.onError(message)
+    } finally {
+      this.onFadeComplete()
+    }
   }
 
   private detachFade(): void {
@@ -569,7 +819,9 @@ export class AudioEngine {
       if (!el.src && !this.hls) return
       this.destroyHls()
       this.stopTicker()
-      this.onError(this.describeError(el))
+      const message = this.describeError(el)
+      if (this.fading) this.failFade(message)
+      else this.onError(message)
     })
     this.channels[channel] = el
     // A crossfade replaces the channel's element while the graph is already

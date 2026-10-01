@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
-import { Check, Disc3, ImagePlus, Library, LoaderCircle, Music2, RotateCcw, UserRound, X } from 'lucide-react'
+import { Check, Disc3, ImagePlus, Library, LoaderCircle, Music2, Plus, RotateCcw, UserRound, X } from 'lucide-react'
 import { api } from '../../api/client'
 import type {
   Album,
@@ -56,6 +56,11 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
   const [coverSources, setCoverSources] = useState<CoverSource[]>([])
   const [coverOffset, setCoverOffset] = useState(0)
   const [coverHasMore, setCoverHasMore] = useState(false)
+  const [creatingEntity, setCreatingEntity] = useState<'artist' | 'album' | null>(null)
+  const [newArtistName, setNewArtistName] = useState('')
+  const [newAlbumTitle, setNewAlbumTitle] = useState('')
+  const [artistDraftName, setArtistDraftName] = useState('')
+  const [albumDraftTitle, setAlbumDraftTitle] = useState('')
   const [loading, setLoading] = useState(true)
   const [coverLoading, setCoverLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -178,6 +183,38 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
       : null)
   const isBusy = saving || restoring
 
+  const cancelEntityCreation = () => {
+    setCreatingEntity(null)
+    setNewArtistName('')
+    setNewAlbumTitle('')
+  }
+
+  const acceptArtistDraft = () => {
+    const name = newArtistName.trim()
+    if (!name) {
+      setError(t('Artist name cannot be empty'))
+      return
+    }
+    setError(null)
+    setArtistDraftName(name)
+    setArtistId(null)
+    setCreatingEntity(null)
+    setNewArtistName('')
+  }
+
+  const acceptAlbumDraft = () => {
+    const title = newAlbumTitle.trim()
+    if (!title) {
+      setError(t('Album title cannot be empty'))
+      return
+    }
+    setError(null)
+    setAlbumDraftTitle(title)
+    setAlbumId(null)
+    setCreatingEntity(null)
+    setNewAlbumTitle('')
+  }
+
   const openLocalCover = async () => {
     setError(null)
     try {
@@ -245,6 +282,20 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
       setError(t('Enter valid track, disc and year values'))
       return
     }
+    const pendingArtistName = creatingEntity === 'artist' ? newArtistName.trim() : artistDraftName
+    const pendingAlbumTitle = creatingEntity === 'album' ? newAlbumTitle.trim() : albumDraftTitle
+    if (creatingEntity === 'artist' && !pendingArtistName) {
+      setError(t('Artist name cannot be empty'))
+      return
+    }
+    if (creatingEntity === 'album' && !pendingAlbumTitle) {
+      setError(t('Album title cannot be empty'))
+      return
+    }
+    if (pendingArtistName.length > 240 || pendingAlbumTitle.length > 240) {
+      setError(t(pendingArtistName.length > 240 ? 'Artist name is too long' : 'Album title is too long'))
+      return
+    }
     setSaving(true)
     setError(null)
     const request: TrackMetadataEditRequest = {
@@ -252,8 +303,10 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
       expectedFileSize: state.fileSize,
       expectedFileMtimeNs: state.modifiedAtNs,
       title: normalizedTitle,
-      artistId,
-      albumId,
+      artistId: pendingArtistName ? null : artistId,
+      albumId: pendingAlbumTitle ? null : albumId,
+      newArtistName: pendingArtistName || undefined,
+      newAlbumTitle: pendingAlbumTitle || undefined,
       trackNumber: nextTrackNumber,
       discNumber: nextDiscNumber,
       year: nextYear,
@@ -286,9 +339,9 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
   }
 
   const options = useMemo(() => ({
-    artistId: artistId == null ? '' : String(artistId),
-    albumId: albumId == null ? '' : String(albumId),
-  }), [albumId, artistId])
+    artistId: artistDraftName ? '__draft_artist__' : artistId == null ? '' : String(artistId),
+    albumId: albumDraftTitle ? '__draft_album__' : albumId == null ? '' : String(albumId),
+  }), [albumDraftTitle, artistDraftName, albumId, artistId])
 
   const kindIcon = (kind: LibraryElementKind) => {
     if (kind === 'artist') return <UserRound size={13} />
@@ -420,20 +473,106 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
             ) : null}
 
             <div className="metadata-editor-grid">
-              <label className="metadata-editor-field">
-                <span>{t('Artist')}</span>
-                <select value={options.artistId} onChange={(event) => setArtistId(event.target.value ? Number(event.target.value) : null)}>
+              <div className="metadata-editor-field">
+                <div className="metadata-editor-field-head">
+                  <label htmlFor="metadata-editor-artist">{t('Artist')}</label>
+                  <button
+                    className="metadata-editor-add-entity"
+                    type="button"
+                    aria-label={t('Create artist')}
+                    title={t('Create artist')}
+                    aria-expanded={creatingEntity === 'artist'}
+                    onClick={() => {
+                      setError(null)
+                      setCreatingEntity((current) => current === 'artist' ? null : 'artist')
+                      setNewArtistName(artistDraftName)
+                      setNewAlbumTitle('')
+                    }}
+                    disabled={isBusy}
+                  >
+                    <Plus size={14} />
+                  </button>
+                </div>
+                <select
+                  id="metadata-editor-artist"
+                  value={options.artistId}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    if (value === '__draft_artist__') return
+                    setArtistDraftName('')
+                    setArtistId(value ? Number(value) : null)
+                  }}
+                  disabled={isBusy || creatingEntity === 'artist'}
+                >
                   <option value="">{t('Unassigned')}</option>
+                  {artistDraftName ? <option value="__draft_artist__">{t('New artist')}: {artistDraftName}</option> : null}
                   {selectedArtist && !artists.some((artist) => artist.id === selectedArtist.id) ? (
                     <option value={selectedArtist.id}>{selectedArtist.name}</option>
                   ) : null}
                   {artists.map((artist) => <option key={artist.id} value={artist.id}>{artist.name}</option>)}
                 </select>
-              </label>
-              <label className="metadata-editor-field">
-                <span>{t('Album')}</span>
-                <select value={options.albumId} onChange={(event) => setAlbumId(event.target.value ? Number(event.target.value) : null)}>
+                {creatingEntity === 'artist' ? (
+                  <div className="metadata-editor-create-entity">
+                    <input
+                      value={newArtistName}
+                      maxLength={240}
+                      placeholder={t('Artist name')}
+                      aria-label={t('Artist name')}
+                      autoFocus
+                      disabled={isBusy}
+                      onChange={(event) => setNewArtistName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          acceptArtistDraft()
+                        } else if (event.key === 'Escape') {
+                          event.stopPropagation()
+                          cancelEntityCreation()
+                        }
+                      }}
+                    />
+                    <button type="button" aria-label={t('Create artist')} title={t('Create artist')} onClick={acceptArtistDraft} disabled={isBusy}>
+                      <Check size={14} />
+                    </button>
+                    <button type="button" aria-label={t('Cancel')} title={t('Cancel')} onClick={cancelEntityCreation} disabled={isBusy}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <div className="metadata-editor-field">
+                <div className="metadata-editor-field-head">
+                  <label htmlFor="metadata-editor-album">{t('Album')}</label>
+                  <button
+                    className="metadata-editor-add-entity"
+                    type="button"
+                    aria-label={t('Create album')}
+                    title={t('Create album')}
+                    aria-expanded={creatingEntity === 'album'}
+                    onClick={() => {
+                      setError(null)
+                      setCreatingEntity((current) => current === 'album' ? null : 'album')
+                      setNewArtistName('')
+                      setNewAlbumTitle(albumDraftTitle)
+                    }}
+                    disabled={isBusy}
+                  >
+                    <Plus size={14} />
+                  </button>
+                </div>
+                <select
+                  id="metadata-editor-album"
+                  value={options.albumId}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    if (value === '__draft_album__') return
+                    setAlbumDraftTitle('')
+                    setAlbumId(value ? Number(value) : null)
+                  }}
+                  disabled={isBusy || creatingEntity === 'album'}
+                >
                   <option value="">{t('Unassigned')}</option>
+                  {albumDraftTitle ? <option value="__draft_album__">{t('New album')}: {albumDraftTitle}</option> : null}
                   {selectedAlbum && !albums.some((album) => album.id === selectedAlbum.id) ? (
                     <option value={selectedAlbum.id}>{selectedAlbum.title}</option>
                   ) : null}
@@ -443,7 +582,35 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
                     </option>
                   ))}
                 </select>
-              </label>
+                {creatingEntity === 'album' ? (
+                  <div className="metadata-editor-create-entity">
+                    <input
+                      value={newAlbumTitle}
+                      maxLength={240}
+                      placeholder={t('Album title')}
+                      aria-label={t('Album title')}
+                      autoFocus
+                      disabled={isBusy}
+                      onChange={(event) => setNewAlbumTitle(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          acceptAlbumDraft()
+                        } else if (event.key === 'Escape') {
+                          event.stopPropagation()
+                          cancelEntityCreation()
+                        }
+                      }}
+                    />
+                    <button type="button" aria-label={t('Create album')} title={t('Create album')} onClick={acceptAlbumDraft} disabled={isBusy}>
+                      <Check size={14} />
+                    </button>
+                    <button type="button" aria-label={t('Cancel')} title={t('Cancel')} onClick={cancelEntityCreation} disabled={isBusy}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <label className="metadata-editor-field">
                 <span>{t('Track number')}</span>
                 <input inputMode="numeric" value={trackNumber} onChange={(event) => setTrackNumber(event.target.value)} />

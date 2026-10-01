@@ -54,8 +54,10 @@ pub struct MetadataDbUpdate {
     /// Explicit entity assignment survives rescans even when audio tags cannot
     /// express an artistless album relationship.
     pub preserve_entity_assignment: bool,
-    /// Recreate artist/album rows from the original tag names during restore.
+    /// Resolve selected IDs or create/reuse entities from the staged tag names.
     pub resolve_entities: bool,
+    /// Clear the saved original tags only after a successful restore.
+    pub clear_original_snapshot: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -441,10 +443,27 @@ CREATE TABLE IF NOT EXISTS lyric_audio_analysis (
 CREATE INDEX IF NOT EXISTS idx_lyric_audio_analysis_key ON lyric_audio_analysis(audio_key);
 "#;
 
+const MIGRATION_20: &str = r#"
+-- Automatic artwork keeps misses/backoff across restarts. An artist rename
+-- makes the previous lookup stale without touching manually chosen images.
+CREATE TABLE IF NOT EXISTS artist_artwork_lookup (
+    artist_id INTEGER PRIMARY KEY REFERENCES artists(id) ON DELETE CASCADE,
+    artist_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    provider_id TEXT,
+    source_url TEXT,
+    error TEXT,
+    next_attempt_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_artist_artwork_retry ON artist_artwork_lookup(next_attempt_at);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
     MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_13,
     MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_17, MIGRATION_18, MIGRATION_19,
+    MIGRATION_20,
 ];
 
 pub struct Db {
@@ -1548,7 +1567,7 @@ impl Db {
         } else {
             tx.execute("DELETE FROM track_metadata_entity_override WHERE track_id = ?1", params![track_id]).map_err(db_err)?;
         }
-        if update.resolve_entities {
+        if update.clear_original_snapshot {
             tx.execute(
                 "DELETE FROM track_metadata_original WHERE track_id = ?1",
                 params![track_id],

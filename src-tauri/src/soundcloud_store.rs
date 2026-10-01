@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
@@ -12,6 +12,26 @@ const DESKTOP_UA: &str =
 const CACHE_DIR_KEY: &str = "sc_cache_dir";
 const CACHE_LIMIT_KEY: &str = "sc_cache_limit_bytes";
 pub const LIBRARY_CHANGED_EVENT: &str = "library://changed";
+
+fn cache_download_locks(
+) -> &'static std::sync::Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>> {
+    static LOCKS: OnceLock<std::sync::Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>>> =
+        OnceLock::new();
+    LOCKS.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn cache_download_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    let mut locks = cache_download_locks()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(lock) = locks.get(path).and_then(Weak::upgrade) {
+        return lock;
+    }
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(path.to_path_buf(), Arc::downgrade(&lock));
+    lock
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -158,25 +178,44 @@ pub async fn get_playback(
     if info.format == "hls" {
         return Ok(ScPlayback { url: Some(info.url), cached_path: None, format });
     }
-    let limit = cache_limit(&db);
+
+    // A concurrent prefetch may have completed while stream metadata was
+    // loading. Prefer the local copy instead of reopening the remote URL.
+    if cached.exists() {
+        return Ok(local_playback(&cached));
+    }
     if wait_for_cache {
         // Falls back to streaming when the download does not finish in time: a
         // slow connection should cost a few seconds of waiting, not playback.
-        if download_to_cache(&info.url, &cached).await.is_ok() {
-            finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
-            enforce_cache_limit(&db, &dir, limit);
+        if ensure_cached_file(
+            db.clone(),
+            dir.clone(),
+            covers_dir.clone(),
+            track_id,
+            Some(info.clone()),
+            app.clone(),
+        )
+        .await
+        .is_ok()
+        {
             return Ok(local_playback(&cached));
         }
     }
-    let bg_url = info.url.clone();
-    let bg_id = track_id.to_string();
+    let background_track_id = track_id.to_string();
+    let background_info = info.clone();
+    let remote_url = info.url.clone();
     tokio::spawn(async move {
-        if download_to_cache(&bg_url, &cached).await.is_ok() {
-            finalize_cached_file(&db, &dir, &covers_dir, &bg_id, app.as_ref());
-            enforce_cache_limit(&db, &dir, limit);
-        }
+        let _ = ensure_cached_file(
+            db,
+            dir,
+            covers_dir,
+            &background_track_id,
+            Some(background_info),
+            app,
+        )
+        .await;
     });
-    Ok(ScPlayback { url: Some(info.url), cached_path: None, format })
+    Ok(ScPlayback { url: Some(remote_url), cached_path: None, format })
 }
 
 fn local_playback(path: &Path) -> ScPlayback {
@@ -200,16 +239,33 @@ pub async fn precache(
     app: Option<AppHandle>,
 ) -> Result<(), String> {
     let dir = cache_dir(&db, &default_root);
+    ensure_cached_file(db, dir, covers_dir, track_id, None, app).await
+}
+
+/// Downloads one ID once even when playback and queue prefetch reach it at the
+/// same time. The completed path is checked again under the per-file lock,
+/// before either path writes the shared temporary file.
+async fn ensure_cached_file(
+    db: Arc<Db>,
+    dir: PathBuf,
+    covers_dir: PathBuf,
+    track_id: &str,
+    known_info: Option<crate::soundcloud::StreamInfo>,
+    app: Option<AppHandle>,
+) -> Result<(), String> {
     let dest = cached_file_path(&dir, track_id);
-    if dest.exists() {
-        // already on disk - make sure the row is flagged and enriched
+    let lock = cache_download_lock(&dest);
+    let _guard = lock.lock().await;
+    if dest.is_file() {
         finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
         return Ok(());
     }
-    let info = crate::soundcloud::get_stream_info(track_id).await?;
+
+    let info = match known_info {
+        Some(info) => info,
+        None => crate::soundcloud::get_stream_info(track_id).await?,
+    };
     if info.format == "hls" {
-        // HLS reaches the element through MediaSource and never lands in the
-        // cache, so there is nothing here to download.
         return Err("hls cannot be cached".to_string());
     }
     download_to_cache(&info.url, &dest).await?;

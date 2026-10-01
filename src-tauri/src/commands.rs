@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
@@ -34,6 +34,26 @@ pub struct AppState {
 
 const SCAN_EVENT: &str = "scan://progress";
 const PROGRESS_INTERVAL_MS: u64 = 150;
+
+fn ytdlp_cache_locks(
+) -> &'static Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>>> =
+        OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn ytdlp_cache_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    let mut locks = ytdlp_cache_locks()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(path).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(path.to_path_buf(), Arc::downgrade(&lock));
+    lock
+}
 
 fn now_millis() -> u64 {
     SystemTime::now()
@@ -502,6 +522,7 @@ async fn commit_staged_track_edit(
     selected_ids: (Option<i64>, Option<i64>),
     preserve_entity_assignment: bool,
     resolve_entities: bool,
+    clear_original_snapshot: bool,
 ) -> Result<Track, String> {
     if let Err(error) = db.begin_track_metadata_file_edit(
         track_id,
@@ -557,6 +578,7 @@ async fn commit_staged_track_edit(
             selected_ids,
             preserve_entity_assignment,
             resolve_entities,
+            clear_original_snapshot,
         )
     })
     .await
@@ -619,6 +641,7 @@ fn metadata_update_from_file(
     selected_ids: (Option<i64>, Option<i64>),
     preserve_entity_assignment: bool,
     resolve_entities: bool,
+    clear_original_snapshot: bool,
 ) -> Result<MetadataDbUpdate, String> {
     let parsed = metadata::read_metadata(path, covers_dir)
         .map_err(|error| format!("cannot read the saved metadata back from disk: {error}"))?;
@@ -648,6 +671,7 @@ fn metadata_update_from_file(
         modified_at_ns,
         preserve_entity_assignment,
         resolve_entities,
+        clear_original_snapshot,
     })
 }
 
@@ -701,8 +725,36 @@ pub async fn update_local_track_metadata(
     request: TrackMetadataEditRequest,
 ) -> Result<Track, String> {
     let track_id = request.track_id;
-    let artist_id = request.artist_id;
-    let album_id = request.album_id;
+    let new_artist_name = request
+        .new_artist_name
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty());
+    let new_album_title = request
+        .new_album_title
+        .map(|title| title.trim().to_string())
+        .filter(|title| !title.is_empty());
+    if new_artist_name
+        .as_ref()
+        .is_some_and(|name| name.chars().count() > 240)
+    {
+        return Err("Artist name is too long".into());
+    }
+    if new_album_title
+        .as_ref()
+        .is_some_and(|title| title.chars().count() > 240)
+    {
+        return Err("Album title is too long".into());
+    }
+    let artist_id = if new_artist_name.is_some() {
+        None
+    } else {
+        request.artist_id
+    };
+    let album_id = if new_album_title.is_some() {
+        None
+    } else {
+        request.album_id
+    };
     let target = state.db.metadata_edit_target(track_id, artist_id, album_id)?;
     let expected_mtime_ns = request
         .expected_file_mtime_ns
@@ -737,9 +789,13 @@ pub async fn update_local_track_metadata(
     };
     let fields = EditableMetadata {
         title: request.title,
-        artist: target.artist_name.clone(),
-        album: target.album_title.clone(),
-        album_artist: target.album_artist_name.clone(),
+        artist: new_artist_name.clone().or(target.artist_name.clone()),
+        album: new_album_title.clone().or(target.album_title.clone()),
+        album_artist: if new_album_title.is_some() {
+            new_artist_name.clone().or(target.artist_name.clone())
+        } else {
+            target.album_artist_name.clone()
+        },
         track_number: request.track_number,
         disc_number: request.disc_number,
         year: request.year,
@@ -782,6 +838,7 @@ pub async fn update_local_track_metadata(
         staged,
         (artist_id, album_id),
         true,
+        new_artist_name.is_some() || new_album_title.is_some(),
         false,
     )
     .await
@@ -827,6 +884,7 @@ pub async fn restore_track_metadata(
         staged,
         selected_ids,
         false,
+        true,
         true,
     )
     .await
@@ -1716,6 +1774,11 @@ pub async fn ytdlp_cache(
     }
     let dir = state.yt_cache_dir.clone();
     let destination = dir.join(&safe);
+    // Playback, queue prefetch and collection downloads share this cache.
+    // Serialize the check and download for one destination so yt-dlp cannot
+    // have concurrent processes write the same output file.
+    let lock = ytdlp_cache_lock(&destination);
+    let _cache_guard = lock.lock().await;
 
     // Already downloaded? The extension is whatever yt-dlp chose, so look for
     // the stem rather than a name we would have to guess.

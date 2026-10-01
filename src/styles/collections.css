@@ -283,19 +283,22 @@
 .artist-gallery-card:hover .artist-gallery-card-art { border-color: var(--accent); }
 
 /* Albums: compact cover wall with search and sort above it. */
-.album-wall-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(125px, 1fr)); gap: 20px 13px; }
+.album-wall-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(154px, 1fr)); gap: 18px 14px; }
 .album-wall-item { position: relative; min-width: 0; }
-.album-wall-open { display: flex; flex-direction: column; width: 100%; min-width: 0; text-align: left; }
-.album-wall-cover { display: block; width: 100%; aspect-ratio: 1; margin-bottom: 7px; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.album-wall-open { display: flex; flex-direction: column; width: 100%; min-width: 0; padding: 6px; border: 1px solid transparent; border-radius: 11px; text-align: left; transition: background .15s ease, border-color .15s ease, transform .15s ease; }
+.album-wall-cover { position: relative; display: block; width: 100%; aspect-ratio: 1; margin-bottom: 8px; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .album-wall-cover .cover { width: 100% !important; height: 100% !important; object-fit: cover; }
 .album-wall-open strong,
 .album-wall-open small { display: block; overflow: hidden; width: 100%; text-overflow: ellipsis; white-space: nowrap; }
-.album-wall-open strong { font-size: 12px; }
+.album-wall-open strong { font-size: 12px; line-height: 1.4; }
 .album-wall-open small { margin-top: 3px; color: var(--text-muted); font-size: 10px; }
-.album-wall-play { position: absolute; top: 9px; right: 9px; display: grid; width: 29px; height: 29px; place-items: center; border-radius: 50%; background: var(--accent); color: var(--bg); opacity: 0; }
+.album-wall-track-count { position: absolute; right: 6px; bottom: 6px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid color-mix(in srgb, white 18%, transparent); border-radius: 6px; background: color-mix(in srgb, #090b10 78%, transparent); color: #f6f7f9; font-size: 10px; line-height: 1; backdrop-filter: blur(8px); }
+.album-wall-play { position: absolute; top: 16px; right: 16px; display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid color-mix(in srgb, white 20%, transparent); border-radius: 50%; background: var(--accent); color: var(--bg); opacity: 0; transform: translateY(3px); transition: opacity .15s ease, transform .15s ease; }
+.album-wall-open:hover { border-color: var(--border); background: color-mix(in srgb, var(--surface) 72%, transparent); transform: translateY(-2px); }
 .album-wall-item:hover .album-wall-play,
-.album-wall-item:focus-within .album-wall-play { opacity: 1; }
-.album-wall-item:hover .album-wall-cover { border-color: var(--accent); }
+.album-wall-item:focus-within .album-wall-play { opacity: 1; transform: none; }
+.album-wall-item:hover .album-wall-cover,
+.album-wall-item:focus-within .album-wall-cover { border-color: var(--accent); }
 
 /* Playlists: a dense list; the cover strip uses a single small DB query. */
 .playlist-list-header,
@@ -346,13 +349,13 @@
   .artist-gallery-featured-open > .cache-badge,
   .artist-gallery-featured-open > .cover { width: 43px !important; height: 43px !important; }
   .artist-gallery-inline-play { width: 22px; }
-  .album-wall-grid { grid-template-columns: repeat(auto-fill, minmax(105px, 1fr)); gap: 16px 10px; }
+  .album-wall-grid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 13px 9px; }
   .playlist-list-header,
   .playlist-list-row { grid-template-columns: minmax(0, 1fr) 36px; }
   .playlist-list-header span:nth-child(3),
   .playlist-list-count { display: none; }
   .artist-gallery-card-play,
-  .album-wall-play { opacity: 1; }
+  .album-wall-play { opacity: 1; transform: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

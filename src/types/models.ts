@@ -189,6 +189,8 @@ export interface TrackMetadataEditRequest {
   title: string
   artistId: number | null
   albumId: number | null
+  newArtistName?: string
+  newAlbumTitle?: string
   trackNumber: number | null
   discNumber: number | null
   year: number | null

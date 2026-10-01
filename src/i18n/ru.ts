@@ -35,6 +35,14 @@ export const ru: Record<string, string> = {
   'A picture behind the library view. Dim and blur it to taste.':
     'Изображение на фоне библиотеки. Настройте затемнение и размытие по вкусу.',
   About: 'О программе',
+  'App icon': 'Значок приложения',
+  'Page opened at launch.': 'Страница при запуске.',
+  'Hidden files stay on disk and are skipped during scans.':
+    'Скрытые файлы остаются на диске и пропускаются при сканировании.',
+  'Downloads first and enables SoundCloud spectrum analysis.':
+    'Сначала скачивает трек и включает спектр SoundCloud.',
+  Pulse: 'Пульс',
+  Orbit: 'Орбита',
   Accent: 'Акцент',
   'Accent soft': 'Мягкий акцент',
   'Accent strong': 'Насыщенный акцент',
@@ -450,6 +458,8 @@ export const ru: Record<string, string> = {
   'Use image': 'Использовать фото',
   'No image found': 'Фото не найдено',
   'Group favorites in sidebar': 'Группировать избранное в сайдбаре',
+  'Separates favorite playlists, artists and albums in the sidebar.':
+    'Разделяет избранные плейлисты, альбомы и исполнителей в боковой панели.',
   'When enabled, favorite playlists, artists and albums are grouped into separate sidebar sections. Turn it off for one continuous list.':
     'Когда включено, избранные плейлисты, исполнители и альбомы сгруппированы по отдельным секциям сайдбара. Выключите, чтобы получить один сплошной список.',
   'Download to cache': 'Скачать в кэш',
@@ -461,10 +471,14 @@ export const ru: Record<string, string> = {
   'Playlist imported': 'Плейлист импортирован',
   'Hour mix': 'Микс часа',
   'Music for this hour': 'Музыка этого часа',
+  'On repeat': 'На повторе',
+  'New to you': 'Новое для вас',
+  'Forgotten favorites': 'Забытые фавориты',
+  'No skips': 'Без пропусков',
+  'From your library': 'Из вашей медиатеки',
   'Your music is here. Start with what fits this hour.': 'Ваша музыка здесь. Начните с того, что подходит этому часу.',
   'Artist mix': 'Микс исполнителя',
   'Tracks by this artist in your hourly picks': 'Треки этого исполнителя из подборки текущего часа.',
-  'From your library': 'из вашей медиатеки',
   'Play mix': 'Слушать подборку',
   'View tracks': 'Посмотреть треки',
   'All mixes': 'Все подборки',
@@ -479,12 +493,10 @@ export const ru: Record<string, string> = {
   'Auto-generated playlists from what you usually play around this time of day':
     'Автоплейлисты из того, что ты обычно слушаешь в это время суток',
   Integrations: 'Интеграции',
-  'Discord Application ID': 'Discord Application ID',
-  'Create an app at discord.com/developers and paste its Application ID. The synced lyrics line shows up in your status while it plays.':
-    'Application ID уже вшит — поле можно не трогать. Свой ID нужен, только если хочешь своё приложение с обложками: создай его на discord.com/developers и вставь сюда. В статусе будет показываться активная строчка синхронизированной лирики.',
   'Save lyrics to cache': 'Сохранять лирику в кэш',
   'Lyrics found online are stored with the track and keep working offline. Lyrics are fetched automatically in the background.':
     'Найденная в сети лирика сохраняется вместе с треком и работает офлайн. Лирика ищется автоматически в фоне.',
+  'Online lyrics are cached for offline playback.': 'Лирика из сети сохраняется для прослушивания офлайн.',
   Shuffle: 'Перемешать',
   'Repeat off': 'Повтор выключен',
   'Repeat all': 'Повторять список',
@@ -533,6 +545,7 @@ export const ru: Record<string, string> = {
   'Mini player': 'Мини-плеер',
   'A small always-on-top window with playback controls.':
     'Небольшое окно поверх всех окон с управлением воспроизведением.',
+  'Always-on-top playback controls.': 'Окно управления поверх других окон.',
   'Floating mini player': 'Плавающий мини-плеер',
   'Show it when the track changes': 'Показывать при смене трека',
   'Hide until tomorrow': 'Скрыть до завтра',
@@ -556,11 +569,15 @@ export const ru: Record<string, string> = {
   'Launch at startup': 'Запускать при входе в систему',
   'Tempo launches automatically when you sign in.':
     'Tempo будет запускаться автоматически при входе в систему.',
+  'Starts Tempo when you sign in.': 'Запускать Tempo при входе в систему.',
   'Keep running in the tray': 'Оставаться в трее',
   'Closing the window hides Tempo instead of quitting, so playback and the mini player keep running. Right-click the tray icon to bring the window back or quit.':
     'Закрытие окна скрывает Tempo, а не завершает его: воспроизведение и мини-плеер продолжают работать. Правый клик по значку в трее вернёт окно или завершит приложение.',
+  'Closing the window keeps playback running in the tray.': 'При закрытии окна воспроизведение продолжится в трее.',
   'Volume normalization': 'Нормализация громкости',
   'Evens out loudness differences between tracks.': 'Выравнивает громкость между треками.',
+  'Uses ReplayGain tags when available; measures other tracks before playback.':
+    'Использует ReplayGain, если он есть; остальные треки анализирует перед воспроизведением.',
   'Normalize volume': 'Нормализовать громкость',
   'Tracks are levelled towards a common loudness. Files carrying ReplayGain tags use those straight away; the rest are measured automatically a few tracks ahead of what is playing, so there is nothing to start by hand.':
     'Треки выравниваются к общей громкости. Файлы с тегами ReplayGain используют их сразу, остальные измеряются автоматически на несколько треков вперёд от играющего — запускать вручную ничего не нужно.',
@@ -725,6 +742,15 @@ export const ru: Record<string, string> = {
   'No matches': 'Ничего не найдено',
   'Choose artwork source': 'Источник обложки',
   Unassigned: 'Не задано',
+  'Create artist': 'Создать исполнителя',
+  'Create album': 'Создать альбом',
+  'New artist': 'Новый исполнитель',
+  'New album': 'Новый альбом',
+  'Album title': 'Название альбома',
+  'Artist name cannot be empty': 'Укажите имя исполнителя',
+  'Album title cannot be empty': 'Укажите название альбома',
+  'Artist name is too long': 'Имя исполнителя слишком длинное',
+  'Album title is too long': 'Название альбома слишком длинное',
   'Track number': 'Номер трека',
   'Disc number': 'Номер диска',
   Year: 'Год',

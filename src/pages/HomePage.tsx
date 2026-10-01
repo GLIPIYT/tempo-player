@@ -52,6 +52,8 @@ function dedupeRecent(entries: { track: Track }[], limit: number): Track[] {
   return out
 }
 
+const NO_TRACKS: Track[] = []
+
 export default function HomePage() {
   const t = useT()
   const { settings } = useSettings()
@@ -62,6 +64,7 @@ export default function HomePage() {
   const version = useLibraryVersion()
   const total = useAsync(() => api.countTracks(), [version])
   const recent = useAsync(() => api.listTracks('', 10, 0), [version])
+  const mixLibrary = useAsync(() => api.listTracks('', 300, 0, 'added'), [version])
   const hourPicks = useAsync(() => api.getHourPicks(30), [version])
   const top = useAsync(() => api.getTopTracks(40), [version])
   const played = useAsync(async () => {
@@ -80,10 +83,29 @@ export default function HomePage() {
   const hourPicksList = useMemo(() => hourPicks.data ?? [], [hourPicks.data])
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
   const nickname = settings.profile.nickname
-  const hourMixes = useMemo(
-    () => buildHourMixes(hourPicksList, unknownArtist, t('Music for this hour')),
-    [hourPicksList, unknownArtist, t],
-  )
+  const likedTracks = playlistData.data?.likedTracks ?? NO_TRACKS
+  const hourMixes = useMemo(() => buildHourMixes(
+    hourPicksList,
+    unknownArtist,
+    t('Music for this hour'),
+    {
+      tracks: [
+        ...(mixLibrary.data ?? NO_TRACKS),
+        ...(top.data ?? []).map((item) => item.track),
+        ...(played.data ?? NO_TRACKS),
+        ...(dormant.data ?? NO_TRACKS),
+        ...likedTracks,
+        ...hourPicksList,
+      ],
+      likedTrackIds: new Set(likedTracks.map((track) => track.id)),
+      titles: {
+        onRepeat: t('On repeat'),
+        newToYou: t('New to you'),
+        forgottenFavorites: t('Forgotten favorites'),
+        noSkips: t('No skips'),
+      },
+    },
+  ), [hourPicksList, unknownArtist, t, mixLibrary.data, top.data, played.data, dormant.data, likedTracks])
 
   // Reuse one track menu for cards across the home shelves.
   const [ctx, setCtx] = useState<TrackContextRequest | null>(null)

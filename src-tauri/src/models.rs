@@ -102,6 +102,10 @@ pub struct TrackMetadataEditRequest {
     pub title: String,
     pub artist_id: Option<i64>,
     pub album_id: Option<i64>,
+    #[serde(default)]
+    pub new_artist_name: Option<String>,
+    #[serde(default)]
+    pub new_album_title: Option<String>,
     pub track_number: Option<i64>,
     pub disc_number: Option<i64>,
     pub year: Option<i64>,
