@@ -34,7 +34,7 @@ const OFFSET_STEP_MS = 500
 const OFFSET_LIMIT_MS = 30000
 const LYRICS_RATE_MIN = 0.5
 const LYRICS_RATE_MAX = 2
-const LYRICS_RATE_STEP = 0.05
+const LYRICS_RATE_STEP = 0.02
 
 const overlayCache = new Map<string, { candidates: LyricsCandidate[]; selectedIndex: number }>()
 
