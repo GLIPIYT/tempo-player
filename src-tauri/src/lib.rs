@@ -17,6 +17,7 @@ mod theaudiodb;
 mod tray;
 mod updater;
 mod ytdlp;
+mod youtube_music;
 
 use std::sync::Arc;
 

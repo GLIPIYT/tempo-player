@@ -294,7 +294,9 @@ export default function SearchPage() {
   const [results, setResults] = useState<SearchResults | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [scStatus, setScStatus] = useState<ScStatus>('idle')
+  const [scStatuses, setScStatuses] = useState<Record<'tracks' | 'playlists' | 'artists', ScStatus>>({
+    tracks: 'idle', playlists: 'idle', artists: 'idle',
+  })
   const [scTracks, setScTracks] = useState<ScTrack[]>([])
   const [ytHits, setYtHits] = useState<YtSearchHit[]>([])
   const [ytStatus, setYtStatus] = useState<ScStatus>('idle')
@@ -353,36 +355,35 @@ export default function SearchPage() {
 
   useEffect(() => {
     if (trimmed.length === 0 || source === 'youtube') {
-      setScStatus('idle')
+      setScStatuses({ tracks: 'idle', playlists: 'idle', artists: 'idle' })
       setScTracks([])
       setScPlaylists([])
       setScArtists([])
       return
     }
-    setScStatus('loading')
+    setScStatuses({ tracks: 'loading', playlists: 'loading', artists: 'loading' })
     setScTracks([])
     setScPlaylists([])
     setScArtists([])
     let cancelled = false
     const timer = window.setTimeout(() => {
-      // All three kinds at once, so switching tabs never waits. Searches are
-      // debounced, so a burst of typing still only costs one round.
-      Promise.all([
-        api.scSearchTracks(trimmed, 50, 0),
-        api.scSearchPlaylists(trimmed, 24, 0),
-        api.scSearchArtists(trimmed, 24, 0),
-      ])
-        .then(([tracks, playlists, artists]) => {
-          if (cancelled) return
-          setScTracks(tracks)
-          setScPlaylists(playlists)
-          setScArtists(artists)
-          setScStatus('done')
-        })
-        .catch(() => {
-          if (cancelled) return
-          setScStatus('error')
-        })
+      // Each kind appears as soon as it arrives; another kind's delay or error
+      // must not hold back tracks and their artwork.
+      const status = (kind: 'tracks' | 'playlists' | 'artists', value: ScStatus) => {
+        if (!cancelled) setScStatuses((previous) => ({ ...previous, [kind]: value }))
+      }
+      void api.scSearchTracks(trimmed, 50, 0).then((tracks) => {
+        if (!cancelled) setScTracks(tracks)
+        status('tracks', 'done')
+      }).catch(() => status('tracks', 'error'))
+      void api.scSearchPlaylists(trimmed, 24, 0).then((playlists) => {
+        if (!cancelled) setScPlaylists(playlists)
+        status('playlists', 'done')
+      }).catch(() => status('playlists', 'error'))
+      void api.scSearchArtists(trimmed, 24, 0).then((artists) => {
+        if (!cancelled) setScArtists(artists)
+        status('artists', 'done')
+      }).catch(() => status('artists', 'error'))
     }, 250)
     return () => {
       cancelled = true
@@ -391,6 +392,9 @@ export default function SearchPage() {
   }, [trimmed, source])
 
   useEffect(() => {
+    const previous = ytJob.current
+    ytJob.current = ''
+    if (previous) void api.ytdlpEnrichCancel(previous).catch(() => undefined)
     if (trimmed.length === 0 || source === 'soundcloud') {
       setYtStatus('idle')
       setYtHits([])
@@ -401,31 +405,26 @@ export default function SearchPage() {
     setYtPending(new Set())
     let cancelled = false
     const timer = window.setTimeout(() => {
-      // A missing yt-dlp lands in the same place as a failed search: the
-      // section says YouTube is unavailable rather than pretending it is empty.
+      // The backend tries the public music search before the yt-dlp fallback.
       api
         .ytdlpSearch(ytdlpPath(), trimmed, 20)
         .then((hits) => {
           if (cancelled) return
           setYtHits(hits)
           setYtStatus('done')
-          // The list is on screen with covers, because a cover comes from the
-          // video id and costs nothing. The artist, album and duration need a
-          // full extraction at about a second and a half per track, so they
-          // arrive one by one on an event and the rows fill in as they land.
-          if (hits.length === 0) {
+          const unresolved = hits.filter((hit) => !hit.metadataComplete)
+          // Normally search already supplies metadata. Only fallback/partial
+          // rows need the more expensive yt-dlp enrichment pass.
+          if (unresolved.length === 0) {
             setYtPending(new Set())
             return
           }
-          const previous = ytJob.current
-          ytJob.current = `${Date.now()}:${trimmed}`
-          // A batch of twenty takes half a minute; without this, typing one
-          // more letter leaves the previous one running alongside the new one.
-          if (previous) void api.ytdlpEnrichCancel(previous).catch(() => undefined)
-          setYtPending(new Set(hits.map((h) => h.id)))
+          const job = `${Date.now()}:${trimmed}`
+          ytJob.current = job
+          setYtPending(new Set(unresolved.map((hit) => hit.id)))
           void api
-            .ytdlpEnrich(ytdlpPath(), ytJob.current, hits.map((h) => h.id))
-            .catch(() => setYtPending(new Set()))
+            .ytdlpEnrich(ytdlpPath(), job, unresolved.map((hit) => hit.id))
+            .catch(() => { if (!cancelled && ytJob.current === job) setYtPending(new Set()) })
         })
         .catch(() => {
           if (cancelled) return
@@ -435,13 +434,16 @@ export default function SearchPage() {
     return () => {
       cancelled = true
       window.clearTimeout(timer)
+      const active = ytJob.current
+      ytJob.current = ''
+      if (active) void api.ytdlpEnrichCancel(active).catch(() => undefined)
     }
   }, [trimmed, source])
 
-  // The tab picks which of YouTube Music's sections to ask. Albums, artists and
-  // playlists come back as bare ids, so their metadata is fetched afterwards
-  // and each card appears as soon as it resolves.
+  // Collection search normally includes titles and covers. Bare fallback hits
+  // are resolved separately without delaying the already complete cards.
   useEffect(() => {
+    ytBrowseJob.current = ''
     if (source !== 'youtube' || ytSection === null || trimmed.length === 0) {
       setYtCollStatus('idle')
       setYtHitsColl([])
@@ -458,13 +460,16 @@ export default function SearchPage() {
         .then((hits) => {
           if (cancelled) return
           setYtHitsColl(hits)
-          if (hits.length === 0) {
+          const unresolved = hits.filter((hit) => !hit.metadataComplete)
+          if (unresolved.length === 0) {
             setYtCollStatus('done')
             return
           }
           const job = `browse:${Date.now()}:${ytSection}:${trimmed}`
           ytBrowseJob.current = job
-          void api.ytdlpBrowse(ytdlpPath(), job, hits).catch(() => setYtCollStatus('done'))
+          void api.ytdlpBrowse(ytdlpPath(), job, unresolved).catch(() => {
+            if (!cancelled && ytBrowseJob.current === job) setYtCollStatus('done')
+          })
         })
         .catch(() => {
           if (!cancelled) setYtCollStatus('error')
@@ -642,7 +647,11 @@ export default function SearchPage() {
   const localRelevant = source === 'all' && tab !== 'playlists'
   const localPending = localRelevant && (loading || (results === null && error === null))
   const scRelevant = source !== 'youtube'
-  const scPending = scRelevant && (scStatus === 'idle' || scStatus === 'loading')
+  const activeScStatuses = tab === 'all' ? Object.values(scStatuses)
+    : [scStatuses[tab === 'albums' ? 'playlists' : tab]]
+  const scStatus: ScStatus = activeScStatuses.every((status) => status === 'error') ? 'error'
+    : activeScStatuses.some((status) => status === 'loading' || status === 'idle') ? 'loading' : 'done'
+  const scPending = scRelevant && scStatus === 'loading'
   const ytRelevant = ytTrackMode || ytCollectionMode
   const ytProviderPending = ytTrackMode
     ? ytStatus === 'idle' || ytStatus === 'loading'
@@ -790,9 +799,9 @@ export default function SearchPage() {
               {scRelevant && (scPending || scStatus === 'error' || scCount > 0) ? (
                 <section className="search-provider-group">
                   {providerHeading(t('SoundCloud'), scCount, 'soundcloud')}
-                  {scPending ? (
+                  {scPending && scCount === 0 ? (
                     searchSkeleton
-                  ) : scStatus === 'error' ? (
+                  ) : scStatus === 'error' && scCount === 0 ? (
                     <div className="search-provider-message muted">{t('SoundCloud is unavailable')}</div>
                   ) : (
                     <>
@@ -809,7 +818,7 @@ export default function SearchPage() {
                                   className={'sc-row' + (idx === undefined ? ' is-disabled' : '')}
                                   onClick={() => playSoundCloud(track)}
                                 >
-                                  <ScArtwork url={track.artworkUrl} title={track.title} />
+                                  <ScArtwork url={track.artworkUrl} title={track.title} compact />
                                   <div className="sc-meta">
                                     <span className="sc-title">{track.title}</span>
                                     <span className="sc-artist">{track.artist}</span>
@@ -876,7 +885,7 @@ export default function SearchPage() {
               {ytRelevant && (ytProviderPending || (ytTrackMode && ytStatus === 'error') || (ytCollectionMode && ytCollStatus === 'error') || ytCount > 0) ? (
                 <section className="search-provider-group">
                   {providerHeading(t('YouTube Music'), ytCount, 'youtubemusic')}
-                  {ytProviderPending ? (
+                  {ytProviderPending && ytCount === 0 ? (
                     searchSkeleton
                   ) : (ytTrackMode && ytStatus === 'error') || (ytCollectionMode && ytCollStatus === 'error') ? (
                     <div className="search-provider-message muted">{t('YouTube needs yt-dlp')}</div>
@@ -887,21 +896,21 @@ export default function SearchPage() {
                         // Names come from different fields depending on collection kind.
                         const name =
                           ytSection === 'artists'
-                            ? (info?.uploader ?? info?.title ?? null)
+                            ? (info?.uploader ?? hit.uploader ?? info?.title ?? hit.title ?? null)
                             : ytSection === 'albums'
-                              ? (info?.title?.replace(/^Album - /i, '') ?? null)
-                              : (info?.title ?? null)
+                              ? ((info?.title ?? hit.title)?.replace(/^Album - /i, '') ?? null)
+                              : (info?.title ?? hit.title ?? null)
                         return (
                           <YtCard
                             key={hit.id}
                             kind={ytKind}
                             id={hit.id}
                             name={name}
-                            sub={info?.uploader ?? null}
-                            count={info?.count ?? null}
+                            sub={info?.uploader ?? hit.uploader ?? null}
+                            count={info?.count ?? hit.count ?? null}
                             thumbnailUrl={info?.thumbnailUrl ?? hit.thumbnailUrl}
                             fallbackUrls={info?.thumbnailUrls ?? hit.thumbnailUrls}
-                            pending={!info}
+                            pending={!info && !hit.metadataComplete}
                           />
                         )
                       })}

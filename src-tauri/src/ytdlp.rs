@@ -46,6 +46,8 @@ pub struct YtSearchHit {
     pub id: String,
     pub title: String,
     pub artist: String,
+    pub album: Option<String>,
+    pub metadata_complete: bool,
     pub duration_ms: i64,
     pub thumbnail_url: Option<String>,
     pub url: String,
@@ -396,6 +398,8 @@ fn map_hit(item: &serde_json::Value) -> Option<YtSearchHit> {
         id,
         title,
         artist,
+        album: item.get("album").and_then(|v| v.as_str()).map(str::to_string),
+        metadata_complete: false,
         duration_ms,
         thumbnail_url,
     })
@@ -416,6 +420,14 @@ pub const BROWSE_DONE_EVENT: &str = "ytdlp://browsed-done";
 pub struct YtCollectionHit {
     pub id: String,
     pub url: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub uploader: Option<String>,
+    #[serde(default)]
+    pub count: Option<i64>,
+    #[serde(default)]
+    pub metadata_complete: bool,
     #[serde(default)]
     pub thumbnail_url: Option<String>,
     #[serde(default)]
@@ -466,6 +478,10 @@ mod collection_tests {
         let hit = YtCollectionHit {
             id: "album-id".into(),
             url: "https://music.youtube.com/playlist?list=album-id".into(),
+            title: None,
+            uploader: None,
+            count: None,
+            metadata_complete: false,
             thumbnail_url: Some("https://example.test/search.jpg".into()),
             thumbnail_urls: vec!["https://example.test/search.jpg".into()],
         };
@@ -803,6 +819,10 @@ pub fn search_collections(
             Some(YtCollectionHit {
                 id: item.get("id").and_then(|v| v.as_str())?.to_string(),
                 url: item.get("url").and_then(|v| v.as_str())?.to_string(),
+                title: None,
+                uploader: None,
+                count: None,
+                metadata_complete: false,
                 thumbnail_url: thumbnail_urls.first().cloned(),
                 thumbnail_urls,
             })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { firstAvailableArtwork } from './artworkFallback'
 
 /** The spinning ring shown wherever something is still being fetched. */
@@ -9,8 +9,6 @@ export function Spinner({ size = 12 }: { size?: number }) {
 /**
  * Artwork for a remote music item.
  *
- * Remote URLs are rendered directly rather than through the asset protocol -
- * `Cover` assumes a local path and would run these through `convertFileSrc`.
  * Remote URLs use a plain `img`; alternate URLs are tried before falling back
  * to the first letter, so one stale thumbnail does not hide the artwork.
  */
@@ -19,6 +17,7 @@ export default function ScArtwork({
   fallbackUrls = [],
   title,
   pending = false,
+  compact = false,
 }: {
   url: string | null
   /** Additional image URLs used when the primary image is unavailable. */
@@ -26,17 +25,27 @@ export default function ScArtwork({
   title: string
   /** Show the spinner regardless of whether the image has loaded. */
   pending?: boolean
+  /** Use SoundCloud's small thumbnail for track rows, retaining the full image as a fallback. */
+  compact?: boolean
 }) {
-  const sources = Array.from(new Set([url, ...fallbackUrls].filter((source): source is string => Boolean(source))))
+  const urls = [url, ...fallbackUrls].filter((source): source is string => Boolean(source))
+  const sources = Array.from(new Set(urls.flatMap((source) => {
+    // Search rows only need 32–48px; the CDN's 500px PNG can be over 15 times larger.
+    const thumbnail = /^https:\/\/[^/]+\.sndcdn\.com\//i.test(source)
+      ? source.replace(/-t500x500\.(jpg|png|webp)(?=[?#]|$)/i, '-large.$1')
+      : source
+    return compact ? [thumbnail, source] : [source, thumbnail]
+  })))
   const sourcesKey = sources.join('\u0000')
+  // A new candidate list must get a new loading state, even if the primary URL
+  // stays the same. Resetting it in an effect can hide an already loaded image.
+  return <ArtworkImage key={sourcesKey} sources={sources} title={title} pending={pending} />
+}
+
+function ArtworkImage({ sources, title, pending }: { sources: string[]; title: string; pending: boolean }) {
   const [failedSources, setFailedSources] = useState<string[]>([])
   const [loadedSource, setLoadedSource] = useState<string | null>(null)
   const source = firstAvailableArtwork(sources, failedSources)
-
-  useEffect(() => {
-    setFailedSources([])
-    setLoadedSource(null)
-  }, [sourcesKey])
   if (!source) {
     return <span className="sc-art sc-art-fallback">{(title.trim()[0] ?? '?').toUpperCase()}</span>
   }
@@ -53,6 +62,9 @@ export default function ScArtwork({
         src={source}
         alt=""
         draggable={false}
+        ref={(image) => {
+          if (image?.complete && image.naturalWidth > 0) setLoadedSource(source)
+        }}
         onLoad={() => setLoadedSource(source)}
         onError={() => setFailedSources((failed) => [...new Set([...failed, source])])}
       />

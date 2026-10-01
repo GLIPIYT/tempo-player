@@ -52,25 +52,29 @@ export interface YtdlpStatus {
   error: string | null
 }
 
-/** One YouTube search result, as yt-dlp reports it. */
+/** One YouTube Music result, with yt-dlp as a fallback. */
 export interface YtSearchHit {
   id: string
   title: string
-  /** Empty until the enrichment pass has run; a flat search carries no artist. */
+  /** May be empty when the fallback search needs enrichment. */
   artist: string
   album: string | null
+  metadataComplete?: boolean
   durationMs: number
   thumbnailUrl: string | null
   url: string
 }
 
 /**
- * A YouTube Music album, artist or playlist as the search reports it: an id and
- * a browse URL, with no name - the search response does not carry one.
+ * A YouTube Music album, artist or playlist. Fallback hits need enrichment.
  */
 export interface YtCollectionHit {
   id: string
   url: string
+  title?: string | null
+  uploader?: string | null
+  count?: number | null
+  metadataComplete?: boolean
   thumbnailUrl: string | null
   thumbnailUrls: string[]
 }

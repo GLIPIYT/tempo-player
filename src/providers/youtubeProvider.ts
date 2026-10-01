@@ -30,12 +30,8 @@ export function ytHitToUnified(hit: YtSearchHit): UnifiedTrack {
 }
 
 /**
- * YouTube, through yt-dlp rather than through InnerTube.
- *
- * Search is a yt-dlp invocation, not a reimplementation of YouTube's private
- * API: one thing to keep updated instead of two, and the one that is kept
- * updated is maintained by people whose whole job is following YouTube's
- * changes.
+ * Search reads metadata from YouTube Music's web response, falling back to
+ * yt-dlp on failure. Playback and downloads remain managed by yt-dlp.
  */
 export const youtubeProvider: MusicProvider = {
   id: 'youtube',

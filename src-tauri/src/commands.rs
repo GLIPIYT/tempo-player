@@ -1607,6 +1607,9 @@ pub async fn ytdlp_search(
     query: String,
     limit: u32,
 ) -> Result<Vec<crate::ytdlp::YtSearchHit>, String> {
+    if let Ok(hits) = crate::youtube_music::search_tracks(&query, limit).await {
+        return Ok(hits);
+    }
     let bin_dir = state.bin_dir.clone();
     tauri::async_runtime::spawn_blocking(move || {
         crate::ytdlp::search(&configured, &bin_dir, &query, limit)
@@ -1653,6 +1656,9 @@ pub async fn ytdlp_search_collections(
     limit: u32,
     section: String,
 ) -> Result<Vec<crate::ytdlp::YtCollectionHit>, String> {
+    if let Ok(hits) = crate::youtube_music::search_collections(&query, &section, limit).await {
+        return Ok(hits);
+    }
     let bin_dir = state.bin_dir.clone();
     tauri::async_runtime::spawn_blocking(move || {
         crate::ytdlp::search_collections(&configured, &bin_dir, &query, limit, &section)
