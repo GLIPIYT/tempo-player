@@ -1,5 +1,7 @@
 # Local lyric timing analysis
 
+[Detailed Russian report](local-lyrics-analysis-ru.md).
+
 Tempo combines explicit lyric endpoints, text estimates, optional BPM and conservative local word matching. Manual endings take priority. A failed or ambiguous recognition result retains the text/BPM fallback; silence or an empty transcript never proves that vocals ended.
 
 ## Runtime and storage
