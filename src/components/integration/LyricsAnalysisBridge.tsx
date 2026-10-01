@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { onLyricsAnalysisModelState, onSoundcloudCacheReady } from '../../api/events'
 import { lyricsAnalysisRunner } from '../../features/lyrics/analysis/runner'
-import { getAnalysisModelState, setAnalysisModelEnabled } from '../../features/lyrics/analysis/nativeClient'
+import { ensureAnalysisModel, getAnalysisModelState, setAnalysisModelEnabled } from '../../features/lyrics/analysis/nativeClient'
 import { lyricsService } from '../../features/lyrics/lyricsService'
 import { connectLyricsAnalysis } from './lyricsAnalysisConnection'
 import { playerController } from '../../player/controller'
@@ -9,7 +9,7 @@ import { useSettings } from '../../state/settings'
 import { createLyricsAnalysisLifecycle } from './lyricsAnalysisLifecycle'
 
 export const lyricsAnalysisLifecycle = createLyricsAnalysisLifecycle({ runner: lyricsAnalysisRunner,
-  status: getAnalysisModelState, setEnabled: setAnalysisModelEnabled, listen: onLyricsAnalysisModelState })
+  status: getAnalysisModelState, setEnabled: setAnalysisModelEnabled, ensureModel: ensureAnalysisModel, listen: onLyricsAnalysisModelState })
 
 /** Mounted only by App: the mini player and overlay never create an analysis writer. */
 export default function LyricsAnalysisBridge() {

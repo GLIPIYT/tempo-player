@@ -458,6 +458,25 @@ html.has-bg .page {
   color: var(--text-muted);
 }
 
+.lyrics-analysis-progress {
+  height: 4px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.lyrics-analysis-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+
+.lyrics-analysis-bytes { margin-top: 5px; }
+.lyrics-analysis-error { color: var(--danger, #d94b4b); overflow-wrap: anywhere; }
+.lyrics-analysis-retry { margin-top: 8px; }
+
 /* Controls that have nothing to act on - the visualiser block with the band
    switched off. Kept visible rather than hidden, so the card does not resize
    as the style changes. */

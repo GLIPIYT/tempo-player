@@ -1,9 +1,10 @@
 import type { ModelState } from '../../features/lyrics/analysis/contract'
 
 export interface AnalysisLifecycleDependencies {
-  runner: { setEnabled(enabled: boolean): void }
+  runner: { setEnabled(enabled: boolean): void; retry?(): void }
   status(): Promise<ModelState>
   setEnabled(enabled: boolean): Promise<ModelState>
+  ensureModel?(): Promise<unknown>
   listen(handler: (state: ModelState) => void): Promise<() => void>
 }
 const ABSENT: ModelState = { enabled: false, phase: 'absent', loadedBytes: 0, totalBytes: 0, error: null }
@@ -17,9 +18,32 @@ export function createLyricsAnalysisLifecycle(deps: AnalysisLifecycleDependencie
   let transition = 0
   let revision = 0
   let command = Promise.resolve()
+  let listenerReady: Promise<void> = Promise.resolve()
   const listeners = new Set<() => void>()
   const publish = (value: ModelState) => { snapshot = value; revision++; listeners.forEach(listener => listener()) }
   const schedule = () => deps.runner.setEnabled(active && preference === true && nativeEnabled && allowed)
+  const launchEnsure = (job: number) => {
+    if (!deps.ensureModel) return
+    void (async () => {
+      await listenerReady
+      if (!active || job !== transition || !nativeEnabled) return
+      const before = revision
+      try {
+        await deps.ensureModel!()
+      } catch (error) {
+        if (!active || job !== transition || !nativeEnabled || revision !== before) return
+        publish({ ...snapshot, enabled: true, phase: 'error', error: String(error) })
+        return
+      }
+      if (!active || job !== transition || !nativeEnabled) return
+      deps.runner.retry?.()
+      if (revision !== before) return
+      try {
+        const value = await deps.status()
+        if (active && job === transition && nativeEnabled && revision === before) publish(value)
+      } catch { /* Native events remain the primary status source. */ }
+    })()
+  }
   return {
     start(): () => void {
       active = true
@@ -28,9 +52,9 @@ export function createLyricsAnalysisLifecycle(deps: AnalysisLifecycleDependencie
       schedule()
       let disposed = false
       let unlisten: (() => void) | undefined
-      void deps.listen(value => { if (!disposed) publish(value) })
+      listenerReady = deps.listen(value => { if (!disposed) publish(value) })
         .then(remove => { if (disposed) remove(); else unlisten = remove })
-        .catch(() => {})
+        .then(() => {}, () => {})
       const initialRevision = revision
       void deps.status().then(value => {
         if (!disposed && revision === initialRevision) publish(value)
@@ -56,9 +80,18 @@ export function createLyricsAnalysisLifecycle(deps: AnalysisLifecycleDependencie
           nativeEnabled = enabled && value.enabled
           if (revision === before) publish(value)
           schedule()
+          if (nativeEnabled) launchEnsure(job)
         } catch (error) {
           if (active && job === transition) publish({ ...ABSENT, phase: 'error', error: String(error) })
         }
+      })
+    },
+    retryDownload(): void {
+      if (!active || preference !== true || !nativeEnabled || !deps.ensureModel) return
+      const job = transition
+      command = command.then(async () => {
+        if (!active || job !== transition || !nativeEnabled || preference !== true) return
+        launchEnsure(job)
       })
     },
     setSchedulingAllowed(value: boolean): void { allowed = value; schedule() },

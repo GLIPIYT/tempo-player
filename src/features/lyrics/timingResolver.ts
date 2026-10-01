@@ -19,6 +19,7 @@ export interface LyricSegment {
   text: string
   seekToSec: number
   lineIndices: number[]
+  skipPool?: boolean
 }
 
 export interface ResolvedLyricsTiming {
@@ -200,6 +201,22 @@ export function resolveLyricTiming(
     if (remainingGap >= 0.75 && (!Number.isFinite(limit) || remainingGap >= (limit - group.timeSec) * 0.2)) {
       addSegment({ kind: 'notes', timeSec: displayEnd, endTimeSec: limit, text: '',
         seekToSec: nextStart ?? group.timeSec, lineIndices: [] })
+    }
+  }
+  // Only pauses surrounded by sung lines establish the local short-gap pool.
+  // Intro, outro, and pauses adjacent to another notes segment retain their
+  // full height regardless of their duration.
+  const internalNotes = segments.filter((segment, index) =>
+    segment.kind === 'notes' && segments[index - 1]?.kind === 'line' && segments[index + 1]?.kind === 'line'
+      && Number.isFinite(segment.endTimeSec - segment.timeSec) && segment.endTimeSec > segment.timeSec)
+  if (internalNotes.length >= 4) {
+    const durations = internalNotes.map(segment => segment.endTimeSec - segment.timeSec).sort((a, b) => a - b)
+    const quartileIndex = (durations.length - 1) * 0.25
+    const lower = Math.floor(quartileIndex)
+    const q1 = durations[lower] + (durations[Math.ceil(quartileIndex)] - durations[lower]) * (quartileIndex - lower)
+    const cutoff = Math.min(2.5, q1 * 1.1)
+    for (const segment of internalNotes) {
+      if (segment.endTimeSec - segment.timeSec <= cutoff) segment.skipPool = true
     }
   }
   return { lines: resolved, segments }

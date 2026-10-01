@@ -275,14 +275,15 @@ function SyncedView({ timing }: { timing: ResolvedLyricsTiming }) {
       const stage = stageRef.current
       if (!c || !stage) return
       const offsets = offsetsRef.current
-      for (let i = 0; i < itemEls.current.length; i++) {
+      offsets.length = segments.length
+      for (let i = 0; i < segments.length; i++) {
         const el = itemEls.current[i]
         offsets[i] = el ? { top: el.offsetTop, height: el.offsetHeight } : { top: 0, height: 0 }
       }
       metaRef.current = { stageH: stage.clientHeight, contentH: c.scrollHeight }
-      applyTransform(instant)
+      if (!pausedRef.current) applyTransform(instant)
     },
-    [applyTransform],
+    [applyTransform, segments.length],
   )
 
   useEffect(() => {
@@ -304,6 +305,23 @@ function SyncedView({ timing }: { timing: ResolvedLyricsTiming }) {
     return () => {
       alive = false
       window.removeEventListener('resize', onResize)
+      cancelAnimationFrame(raf)
+    }
+  }, [measureAll])
+
+  useEffect(() => {
+    const stage = stageRef.current
+    const track = containerRef.current
+    if (!stage || !track) return
+    let raf = 0
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => measureAll(false))
+    })
+    observer.observe(stage)
+    observer.observe(track)
+    return () => {
+      observer.disconnect()
       cancelAnimationFrame(raf)
     }
   }, [measureAll])
@@ -386,7 +404,11 @@ function SyncedView({ timing }: { timing: ResolvedLyricsTiming }) {
               ref={(el) => {
                 itemEls.current[i] = el
               }}
-              className={'lyr-notes' + (isActive ? ' is-active' : '')}
+              className={'lyr-notes' + (s.skipPool ? ' is-skip-pool' : '') + (isActive ? ' is-active' : '')}
+              tabIndex={isActive ? 0 : -1}
+              onTransitionEnd={(event) => {
+                if (event.target === event.currentTarget && event.propertyName === 'height') measureAll(false)
+              }}
               onClick={() => {
                 endPause()
                 seek(s.seekToSec)
@@ -438,7 +460,7 @@ function SyncedView({ timing }: { timing: ResolvedLyricsTiming }) {
           </div>
         )
       }),
-    [segments, segIdx, seek, t, endPause],
+    [segments, segIdx, seek, t, endPause, measureAll],
   )
 
   return (

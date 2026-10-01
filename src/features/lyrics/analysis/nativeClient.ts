@@ -20,3 +20,4 @@ export const analysisNativeClient: AnalysisNativeClient = {
 }
 export const getAnalysisModelState = (): Promise<ModelState> => invoke('lyrics_analysis_status')
 export const setAnalysisModelEnabled = (enabled: boolean): Promise<ModelState> => invoke('lyrics_analysis_set_enabled', { enabled })
+export const ensureAnalysisModel = (): Promise<ModelBundle> => analysisNativeClient.ensureModel()

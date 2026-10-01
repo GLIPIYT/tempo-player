@@ -224,6 +224,11 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
       position = Number.isFinite(value) ? Math.max(0, value) : 0; playing = isPlaying
       if (!playing) { clearTimeout(timer); touchIdle() } else schedule()
     },
+    retry(): void {
+      if (snapshot.phase !== 'error') return
+      publish('idle')
+      schedule()
+    },
     getSnapshot: (): AnalysisSnapshot => snapshot,
     subscribe(listener: () => void): () => void { listeners.add(listener); return () => listeners.delete(listener) },
     stop(): void { enabled = false; cancel(); input = null; identity = null; cache = null; publish('idle') },
