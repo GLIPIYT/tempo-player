@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tempo · визуальная полировка</title>
+  <link rel="stylesheet" href="polish-preview.css">
+  <link rel="stylesheet" href="polish-extra.css">
+</head>
+<body>
+  <header class="preview-toolbar">
+    <div class="preview-heading"><strong>Tempo</strong><span>Визуальная полировка</span></div>
+    <label class="screen-picker"><span class="sr-only">Экран</span><select id="screen-select">
+      <option value="settings">Настройки · общее</option>
+      <option value="appearance">Настройки · внешний вид</option>
+      <option value="icons">Иконки приложения</option>
+      <option value="contrast">Контраст текста</option>
+      <option value="albums">Альбомы</option>
+      <option value="profile">Профиль</option>
+      <option value="mini">Мини-плеер</option>
+      <option value="update">Обновление</option>
+      <option value="metadata">Данные трека</option>
+      <option value="dialogs">Другие окна</option>
+    </select></label>
+    <div class="segmented layout-picker" aria-label="Компоновка">
+      <button data-variant="a" aria-pressed="true">A</button><button data-variant="b" aria-pressed="false">B</button>
+    </div>
+    <div class="preview-colors" aria-label="Цвета темы">
+      <button class="theme-dot mint" data-palette="mint" aria-label="Мята и синий"></button>
+      <button class="theme-dot sunset" data-palette="sunset" aria-label="Оранжевый и розовый"></button>
+      <button class="theme-dot violet" data-palette="violet" aria-label="Фиолетовый и голубой"></button>
+      <input type="color" id="color-one" value="#53e0c7" aria-label="Первый цвет темы">
+      <input type="color" id="color-two" value="#5a91ff" aria-label="Второй цвет темы">
+    </div>
+    <button id="width-toggle" class="btn toolbar-width" aria-pressed="false">Узкое окно</button>
+  </header>
+  <div class="preview-caption"><span id="layout-description"></span><span>Макеты · данные для примера</span></div>
+  <div class="app-window" id="app-window">
+    <div class="titlebar"><div class="titlebar-brand"><span id="titlebar-logo"></span><strong>Tempo</strong></div><span class="titlebar-path" id="titlebar-path">Настройки</span><div class="window-controls"><span>−</span><span>□</span><span>×</span></div></div>
+    <div class="app-body">
+      <aside class="sidebar"><nav id="sidebar-nav"></nav><div class="sidebar-divider"></div><div class="sidebar-label">Плейлисты</div><button class="sidebar-playlist"><span class="playlist-swatch"></span>Вечером</button><button class="sidebar-playlist"><span class="playlist-swatch second"></span>В дороге</button><button class="sidebar-playlist"><span class="playlist-swatch third"></span>Избранное</button><div class="sidebar-bottom"><button data-screen="profile" class="nav-item">Профиль</button><button data-screen="settings" class="nav-item">Настройки</button></div></aside>
+      <main id="screen" class="screen"></main>
+    </div>
+    <footer class="playerbar" id="playerbar"></footer>
+  </div>
+  <div class="preview-footer"><a href="polish-research.md">Технические предложения</a><a href="polish-design.md">Что показано в макетах</a></div>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="polish-preview.js"></script>
+  <script src="polish-extra.js"></script>
+  <script>window.Polish.init();</script>
+</body>
+</html>
