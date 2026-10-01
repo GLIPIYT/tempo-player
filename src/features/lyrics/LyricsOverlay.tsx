@@ -15,6 +15,17 @@ import type { LyricsCandidate } from './onlineProvider'
 import type { LyricsResult } from './types'
 import { formatLrc, shiftLyricsLines } from './lrc'
 import { lyricSourceKey, lyricsService } from './lyricsService'
+import {
+  LYRICS_RATE_MAX,
+  LYRICS_RATE_MIN,
+  LYRICS_RATE_STEP,
+  lyricTimeAtMediaPosition,
+  lyricsRateStorageKey,
+  mediaPositionAtLyricTime,
+  normalizeLyricsRate,
+  readLyricsRate,
+  writeLyricsRate,
+} from './lyricsRate'
 import { activeOverrideDocument, candidatePlaybackDocument as candidateDocument, overridePlaybackResult } from './playbackDocument'
 import { lyricTimingAt, type ResolvedLyricsTiming } from './timingResolver'
 import LyricsEditorPanel from './LyricsEditorPanel'
@@ -32,47 +43,8 @@ const ANCHOR_RATIO = 0.38
 const PAUSE_MS = 4000
 const OFFSET_STEP_MS = 500
 const OFFSET_LIMIT_MS = 30000
-const LYRICS_RATE_MIN = 0.5
-const LYRICS_RATE_MAX = 2
-const LYRICS_RATE_STEP = 0.02
 
 const overlayCache = new Map<string, { candidates: LyricsCandidate[]; selectedIndex: number }>()
-
-function normalizeLyricsRate(value: number): number {
-  if (!Number.isFinite(value)) return 1
-  const clamped = Math.min(LYRICS_RATE_MAX, Math.max(LYRICS_RATE_MIN, value))
-  const stepsPerRate = 1 / LYRICS_RATE_STEP
-  return Math.round(clamped * stepsPerRate) / stepsPerRate
-}
-
-function lyricsRateStorageKey(
-  track: { source: string; sourceId: string } | null,
-  sourceLyricKey: string | undefined,
-): string {
-  if (!track || !sourceLyricKey) return ''
-  return `tempo.lyrics-speed.v1:${JSON.stringify([track.source, track.sourceId, sourceLyricKey])}`
-}
-
-function readLyricsRate(key: string): number {
-  if (!key || typeof window === 'undefined') return 1
-  try {
-    const stored = window.localStorage.getItem(key)
-    return stored === null ? 1 : normalizeLyricsRate(Number(stored))
-  } catch {
-    return 1
-  }
-}
-
-function writeLyricsRate(key: string, value: number): void {
-  if (!key || typeof window === 'undefined') return
-  try {
-    const rate = normalizeLyricsRate(value)
-    if (rate === 1) window.localStorage.removeItem(key)
-    else window.localStorage.setItem(key, String(rate))
-  } catch {
-    // Keep the slider usable for this session when browser storage is unavailable.
-  }
-}
 
 /**
  * The raw text a candidate would be pinned as. Online candidates carry their
@@ -293,8 +265,7 @@ function SyncedView({
   const [segIdx, setSegIdx] = useState(-1)
   const [paused, setPaused] = useState(false)
   const seekToLyricTime = useCallback((timeSec: number) => {
-    const offsetSec = offsetMs / 1000
-    seek((timeSec - offsetSec) / lyricsRate + offsetSec)
+    seek(mediaPositionAtLyricTime(timeSec, lyricsRate, offsetMs))
   }, [seek, lyricsRate, offsetMs])
 
   const applyTransform = useCallback((instant: boolean) => {
@@ -382,8 +353,7 @@ function SyncedView({
     // p.position already advances at the track playback rate. Keep the manual
     // offset in seconds, then apply the independent lyrics multiplier around it.
     const pos = p.position
-    const offsetSec = offsetMs / 1000
-    const lyricsPosition = (pos - offsetSec) * lyricsRate + offsetSec
+    const lyricsPosition = lyricTimeAtMediaPosition(pos, lyricsRate, offsetMs)
     const { segmentIndex: found, progress } = lyricTimingAt(timing, lyricsPosition)
     if (found !== segIdxRef.current) {
       segIdxRef.current = found

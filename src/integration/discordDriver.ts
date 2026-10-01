@@ -2,7 +2,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { normalizeLyricText } from '../features/lyrics/lrc'
 import { lyricSliceAt, lyricsService } from '../features/lyrics/lyricsService'
 import type { LyricSlice } from '../features/lyrics/lyricsService'
+import { lyricTimeAtMediaPosition, lyricsRateStorageKey, readLyricsRate } from '../features/lyrics/lyricsRate'
 import { playerController } from '../player/controller'
+import type { UnifiedTrack } from '../types/models'
 
 /**
  * Discord Rich Presence driver, modelled after the proven SoundCloud Desktop
@@ -101,10 +103,16 @@ const coverFailures = new Map<string, number>()
 const UPLOAD_RETRY_BASE_MS = 30_000
 const UPLOAD_RETRY_MAX_MS = 15 * 60_000
 
-function activeSlice(trackKey: string, position: number): LyricSlice {
+function activeSlice(track: UnifiedTrack, position: number, playbackRate: number): LyricSlice {
   const cur = lyricsService.getCurrent()
-  if (!cur || cur.trackId !== trackKey) return { text: null, nextText: null, gapSec: Infinity }
-  return lyricSliceAt(cur.timing, position)
+  if (!cur || cur.trackId !== track.sourceId) return { text: null, nextText: null, gapSec: Infinity }
+  const lyricsRate = cur.result?.kind === 'synced'
+    ? readLyricsRate(lyricsRateStorageKey(track, cur.sourceLyricKey))
+    : 1
+  const lyricsPosition = lyricTimeAtMediaPosition(position, lyricsRate, cur.offsetMs)
+  const slice = lyricSliceAt(cur.timing, lyricsPosition)
+  const trackRate = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1
+  return { ...slice, gapSec: slice.gapSec / (lyricsRate * trackRate) }
 }
 
 /**
@@ -235,7 +243,7 @@ function doSend(snap: ReturnType<typeof playerController.getSnapshot>, reason: s
   const end = playing && dur > 0 && start !== null ? start + Math.round(dur * 1000) : null
   const cover = coverImage(track)
   const pair = playing
-    ? pairFor(activeSlice(track.sourceId, snap.position), cover !== null, settings.lyricStitchGapSec)
+    ? pairFor(activeSlice(track, snap.position, snap.playbackRate), cover !== null, settings.lyricStitchGapSec)
     : { line: null, nextLine: null, paired: null }
   if (playing) {
     lastLine = lineKey(pair.line)
@@ -349,7 +357,7 @@ function onPlayerChange(): void {
   }
   if (!snap.isPlaying) return
 
-  const slice = activeSlice(track.sourceId, snap.position)
+  const slice = activeSlice(track, snap.position, snap.playbackRate)
   const jumped = lastObservedElapsed >= 0 && Math.abs(snap.position - lastObservedElapsed) >= SEEK_DRIFT_SEC
   lastObservedElapsed = snap.position
   const key = lineKey(slice.text)
