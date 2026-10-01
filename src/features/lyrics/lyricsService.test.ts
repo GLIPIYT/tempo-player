@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import { api } from '../../api/client'
 import { lyricSliceAt, lyricSourceKey, lyricsService } from './lyricsService'
 import { lyricTimingAt } from './timingResolver'
@@ -13,6 +14,50 @@ const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve()
 
 describe('shared lyrics selection', () => {
   beforeEach(() => { vi.resetAllMocks(); lyricsService.invalidate() })
+  it.each(['Silver rivers cross the golden mountains', 'Серебряные реки пересекают золотые горы'])(
+    'bounds the full %s source key while distinguishing late canonical details', text => {
+      const result = { kind: 'synced' as const, lines: Array.from({ length: 12 }, (_, i) => ({
+        timeSec: i * 8, text: `${text} ${i}`,
+      })) }
+      const source = JSON.stringify(['embedded', result])
+      expect(Buffer.byteLength(source)).toBeGreaterThan(512)
+      const key = lyricSourceKey(result, 'embedded')
+      expect(Buffer.byteLength(key)).toBeLessThan(512)
+      expect(key).toBe(`v2:sha256:${createHash('sha256').update(source, 'utf8').digest('hex')}`)
+      expect(lyricSourceKey(structuredClone(result), 'embedded')).toBe(key)
+      expect(lyricSourceKey(result, 'manual')).not.toBe(key)
+      const changedText = structuredClone(result); changedText.lines[11].text += '!'
+      expect(lyricSourceKey(changedText, 'embedded')).not.toBe(key)
+      const changedStart = structuredClone(result); changedStart.lines[11].timeSec += 0.25
+      expect(lyricSourceKey(changedStart, 'embedded')).not.toBe(key)
+      const changedWords = { ...result, lines: result.lines.map((line, i) => i === 11
+        ? { ...line, words: [{ text: 'last', timeSec: 88.1, endTimeSec: 88.5 }] } : line) }
+      expect(lyricSourceKey(changedWords, 'embedded')).not.toBe(key)
+      const changedWordTime = { ...changedWords, lines: changedWords.lines.map((line, i) => i === 11
+        ? { ...line, words: [{ text: 'last', timeSec: 88.1, endTimeSec: 88.6 }] } : line) }
+      expect(lyricSourceKey(changedWordTime, 'embedded')).not.toBe(lyricSourceKey(changedWords, 'embedded'))
+      const changedEnd = { ...result, lines: result.lines.map((line, i) => i === 11
+        ? { ...line, endTimeSec: 90, endSource: 'manual' as const } : line) }
+      expect(lyricSourceKey(changedEnd, 'embedded')).not.toBe(key)
+      const changedEndTime = { ...changedEnd, lines: changedEnd.lines.map((line, i) => i === 11
+        ? { ...line, endTimeSec: 91 } : line) }
+      expect(lyricSourceKey(changedEndTime, 'embedded')).not.toBe(lyricSourceKey(changedEnd, 'embedded'))
+      const changedProvenance = { ...changedEnd, lines: changedEnd.lines.map((line, i) => i === 11
+        ? { ...line, endSource: 'source' as const } : line) }
+      expect(lyricSourceKey(changedProvenance, 'embedded')).not.toBe(lyricSourceKey(changedEnd, 'embedded'))
+    })
+  it('keeps previously persisted short source keys and excludes user offset', () => {
+    const result = { kind: 'synced' as const, lines: [{ timeSec: 17, text: 'chosen words' }] }
+    const key = JSON.stringify(['manual', result])
+    expect(lyricSourceKey(result, 'manual')).toBe(key)
+    vi.mocked(api.getLyricsOverride).mockReturnValue(new Promise(() => {}))
+    lyricsService.ensure(track('A'), false)
+    lyricsService.setActiveCandidate('A', result, 40, key, -5000)
+    const first = lyricsService.getCurrent()!
+    lyricsService.setActiveCandidate('A', result, 40, lyricSourceKey(result, 'manual'), -4000)
+    expect(lyricsService.getCurrent()?.sourceLyricKey).toBe(first.sourceLyricKey)
+    expect(lyricsService.getCurrent()?.lyricKey).not.toBe(first.lyricKey)
+  })
   it('rejects an old track fetch after B has resolved', async () => {
     const old = deferred<LyricsOverride>()
     vi.mocked(api.getLyricsOverride).mockReturnValueOnce(old.promise).mockResolvedValueOnce(pin('B'))

@@ -2,6 +2,7 @@ import { api } from '../../api/client'
 import { parseLrc, shiftLyricsLines } from './lrc'
 import { overridePlaybackResult } from './playbackDocument'
 import { createPlaybackTiming } from './playbackTiming'
+import { sha256Hex } from './sha256'
 import { lyricTimingAt, resolveLyricTiming, type LyricTimingAnalysis, type ResolvedLyricsTiming } from './timingResolver'
 import type { LyricsResult } from './types'
 
@@ -22,7 +23,9 @@ export interface LyricsTrack {
 }
 interface Candidate { result: LyricsResult | null; provider: string; offsetMs: number }
 export function lyricSourceKey(result: LyricsResult | null, provider: string): string {
-  return JSON.stringify([provider, result])
+  const canonical = JSON.stringify([provider, result])
+  // Existing short keys continue to find saved matches; longer sources use a bounded full-content identity.
+  return new TextEncoder().encode(canonical).length <= 512 ? canonical : `v2:sha256:${sha256Hex(canonical)}`
 }
 
 let current: CurrentLyrics | null = null
