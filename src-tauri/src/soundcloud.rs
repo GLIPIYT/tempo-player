@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use futures_util::StreamExt;
 use regex::Regex;
 use reqwest::Client;
 use serde_json::Value;
@@ -308,6 +309,117 @@ pub async fn search_playlists(query: &str, limit: u32, offset: u32) -> Result<Ve
 
 pub async fn search_artists(query: &str, limit: u32, offset: u32) -> Result<Vec<ScArtist>, String> {
     collection_map("/search/users", Some(query), limit, offset, map_artist).await
+}
+
+fn tracks_from_response(value: &Value) -> Vec<ScTrack> {
+    value
+        .get("collection")
+        .or_else(|| value.get("tracks"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(map_track)
+                .filter(|track| track.has_progressive || track.has_hls)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn related_for_seed(track_id: &str, limit: u32) -> Result<Vec<ScTrack>, String> {
+    if track_id.is_empty() || !track_id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("invalid SoundCloud seed track id".to_string());
+    }
+
+    let related_url = format!("{API}/tracks/{track_id}/related?limit={limit}&client_id=");
+    let primary_error = match get_json_with_fresh_client(&related_url).await {
+        Ok(json) => {
+            let tracks: Vec<_> = tracks_from_response(&json)
+                .into_iter()
+                .filter(|track| track.id != track_id)
+                .collect();
+            if !tracks.is_empty() {
+                return Ok(tracks);
+            }
+            "SoundCloud returned no playable related tracks".to_string()
+        }
+        Err(error) => error,
+    };
+
+    // Track stations provide a second SoundCloud-generated source when the
+    // related endpoint is empty or unavailable for a seed.
+    let station_url = format!("{API}/system-playlists/track-stations:{track_id}?client_id=");
+    match get_json_with_fresh_client(&station_url).await {
+        Ok(json) => {
+            let tracks: Vec<_> = tracks_from_response(&json)
+                .into_iter()
+                .filter(|track| track.id != track_id)
+                .collect();
+            if tracks.is_empty() {
+                Err(format!("{primary_error}; station returned no playable tracks"))
+            } else {
+                Ok(tracks)
+            }
+        }
+        Err(error) => Err(format!("{primary_error}; station fallback failed: {error}")),
+    }
+}
+
+/// Recommendations stay anchored to the user's own listening history: the
+/// caller chooses a small random batch of SoundCloud track ids from its top
+/// tracks and this function asks SoundCloud for related/station tracks.
+pub async fn related_tracks(track_ids: &[String], limit: u32) -> Result<Vec<ScTrack>, String> {
+    let mut seen_seeds = HashSet::new();
+    let seeds: Vec<String> = track_ids
+        .iter()
+        .filter(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()))
+        .filter(|id| seen_seeds.insert((*id).clone()))
+        .take(3)
+        .cloned()
+        .collect();
+    if seeds.is_empty() {
+        return Err("no valid SoundCloud recommendation seeds".to_string());
+    }
+
+    // Resolve once before fanning out so a cold start does not fetch the
+    // SoundCloud homepage separately for each seed request.
+    get_client_id().await?;
+    let per_seed = limit.clamp(1, 24);
+    let responses = futures_util::stream::iter(seeds.clone())
+        .map(|seed| async move {
+            let response = related_for_seed(&seed, per_seed).await;
+            (seed, response)
+        })
+        .buffer_unordered(3)
+        .collect::<Vec<_>>()
+        .await;
+
+    let seed_ids: HashSet<&str> = seeds.iter().map(String::as_str).collect();
+    let mut seen_tracks = HashSet::new();
+    let mut tracks = Vec::new();
+    let mut last_error = None;
+    for (_, response) in responses {
+        match response {
+            Ok(items) => {
+                for track in items {
+                    if seed_ids.contains(track.id.as_str()) || !seen_tracks.insert(track.id.clone()) {
+                        continue;
+                    }
+                    tracks.push(track);
+                    if tracks.len() >= limit.clamp(1, 24) as usize {
+                        return Ok(tracks);
+                    }
+                }
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    if tracks.is_empty() {
+        if let Some(error) = last_error {
+            return Err(error);
+        }
+    }
+    Ok(tracks)
 }
 
 pub async fn get_user(id: &str) -> Result<ScArtist, String> {

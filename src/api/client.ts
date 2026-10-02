@@ -254,6 +254,9 @@ export const api = {
   scSearchArtists: (query: string, limit: number, offset: number) =>
     invoke<ScArtist[]>('sc_search_artists', { query, limit, offset }),
 
+  scRelatedTracks: (seedIds: string[], limit: number) =>
+    invoke<ScTrack[]>('sc_related_tracks', { seedIds, limit }),
+
   // Read straight from SoundCloud; nothing is written to the library, which is
   // what lets a playlist or artist be browsed before deciding to keep it.
   scGetPlaylist: (id: string) => invoke<ScPlaylistDetail>('sc_get_playlist', { id }),

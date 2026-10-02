@@ -6,7 +6,7 @@ import {
 import { Eye, EyeOff, FolderPlus, Play, RefreshCw, UserRound } from 'lucide-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '../api/client'
-import type { Playlist, PlaylistPlayStat, TopTrackItem, Track } from '../types/models'
+import type { Playlist, PlaylistPlayStat, ScTrack, TopTrackItem, Track } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
@@ -26,6 +26,9 @@ import ScanLine from '../components/common/ScanLine'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import TrackContextMenu, { type TrackContextRequest } from '../components/common/TrackContextMenu'
 import { buildHourMixes } from '../utils/hourMixes'
+import { scTrackToUnified } from '../utils/unified'
+import { requestTrackCache } from '../soundcloud/cacheJobs'
+import { useSoundCloudRecommendations } from '../hooks/useSoundCloudRecommendations'
 import {
   anySectionHidden,
   hideSectionUntilTomorrow,
@@ -68,6 +71,7 @@ export default function HomePage() {
   const mixLibrary = useAsync(() => api.listTracks('', 300, 0, 'added'), [version])
   const hourPicks = useAsync(() => api.getHourPicks(30), [version])
   const top = useAsync(() => api.getTopTracks(40), [version])
+  const recommendations = useSoundCloudRecommendations(top.data)
   const played = useAsync(async () => {
     const since = Math.floor(Date.now() / 1000) - 30 * 86400
     return dedupeRecent((await api.getHistory(100, 0)).filter((entry) => entry.playedAt >= since), 16)
@@ -136,6 +140,19 @@ export default function HomePage() {
 
   const playSection = (tracks: Track[], index: number) => {
     player.playTracks(tracks.map((tr) => trackToUnified(tr)), index)
+  }
+
+  const playRecommendations = (index: number) => {
+    player.playTracks(recommendations.tracks.map(scTrackToUnified), index)
+  }
+
+  const cacheRecommendation = (track: ScTrack) => {
+    void requestTrackCache(track)
+      .then((outcome) => {
+        if (outcome === 'started') toast.show(t('Caching started'))
+        else toast.show(t('This track cannot be cached'), 'info')
+      })
+      .catch((cause: unknown) => toast.show(cause instanceof Error ? cause.message : String(cause), 'error'))
   }
 
   /**
@@ -292,14 +309,16 @@ export default function HomePage() {
 
           {!hidden('home.recommendations') ? (
             <RecommendationsShelf
-              tracks={[]}
-              loading={false}
-              error={null}
-              hasMore={false}
-              onPlay={() => undefined}
-              onCache={() => undefined}
-              onRetry={() => undefined}
-              onLoadMore={() => undefined}
+              tracks={recommendations.tracks}
+              loading={recommendations.loading}
+              error={recommendations.error}
+              hasLoaded={recommendations.hasLoaded}
+              hasMore={recommendations.hasMore}
+              onPlay={playRecommendations}
+              onCache={cacheRecommendation}
+              onRetry={recommendations.retry}
+              onLoadMore={recommendations.loadMore}
+              onNearViewport={recommendations.activate}
               onSectionMenu={(event) => sectionMenu(event, { title: t('Recommended for you'), id: 'home.recommendations' })}
             />
           ) : null}

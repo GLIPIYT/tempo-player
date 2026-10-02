@@ -159,6 +159,7 @@ pub fn run() {
             commands::sc_search_tracks,
             commands::sc_search_playlists,
             commands::sc_search_artists,
+            commands::sc_related_tracks,
             commands::sc_get_playlist,
             commands::sc_get_artist,
             commands::sc_artist_tracks,

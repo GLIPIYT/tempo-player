@@ -1,4 +1,4 @@
-import type { MouseEvent } from 'react'
+import { useEffect, useRef, type MouseEvent } from 'react'
 import { Download, Play, RefreshCw } from 'lucide-react'
 import type { ScTrack } from '../../types/models'
 import { useT } from '../../i18n'
@@ -7,11 +7,13 @@ interface RecommendationsShelfProps {
   tracks: ScTrack[]
   loading: boolean
   error: string | null
+  hasLoaded: boolean
   hasMore: boolean
   onPlay: (index: number) => void
   onCache: (track: ScTrack) => void
   onRetry: () => void
   onLoadMore: () => void
+  onNearViewport: () => void
   onSectionMenu: (event: MouseEvent) => void
 }
 
@@ -19,17 +21,36 @@ export default function RecommendationsShelf({
   tracks,
   loading,
   error,
+  hasLoaded,
   hasMore,
   onPlay,
   onCache,
   onRetry,
   onLoadMore,
+  onNearViewport,
   onSectionMenu,
 }: RecommendationsShelfProps) {
   const t = useT()
+  const sectionRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    const section = sectionRef.current
+    if (!section) return
+    if (typeof IntersectionObserver === 'undefined') {
+      onNearViewport()
+      return
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return
+      observer.disconnect()
+      onNearViewport()
+    }, { rootMargin: '420px 0px' })
+    observer.observe(section)
+    return () => observer.disconnect()
+  }, [onNearViewport])
 
   return (
-    <section className="home-section home-recommendations">
+    <section className="home-section home-recommendations" ref={sectionRef}>
       <div className="home-section-head" onContextMenu={onSectionMenu}>
         <div className="home-recommendations-title">
           <span className="home-section-title">{t('Recommended for you')}</span>
@@ -47,7 +68,7 @@ export default function RecommendationsShelf({
               <RefreshCw size={14} />
               {t('Try again')}
             </button>
-          ) : hasMore && tracks.length > 0 ? (
+          ) : hasMore ? (
             <button type="button" className="btn btn-ghost" onClick={onLoadMore} disabled={loading}>
               <RefreshCw size={14} className={loading ? 'spin' : undefined} />
               {t('Load more')}
@@ -57,7 +78,7 @@ export default function RecommendationsShelf({
       </div>
 
       {loading && tracks.length === 0 ? (
-        <div className="home-recommendation-skeletons" aria-label={t('Loading…')}>
+        <div className="home-recommendation-skeletons" role="status" aria-label={t('Loading…')}>
           {Array.from({ length: 5 }, (_, index) => <span className="home-recommendation-skeleton" key={index} />)}
         </div>
       ) : tracks.length > 0 ? (
@@ -88,7 +109,9 @@ export default function RecommendationsShelf({
       ) : error ? (
         <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}</div>
       ) : (
-        <div className="home-recommendation-empty" role="status">{t('SoundCloud recommendations will appear here.')}</div>
+        <div className="home-recommendation-empty" role="status">
+          {t(hasLoaded ? 'No recommendations yet' : 'SoundCloud recommendations will appear here.')}
+        </div>
       )}
     </section>
   )

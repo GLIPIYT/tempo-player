@@ -1352,7 +1352,15 @@ pub async fn sc_search_artists(
     crate::soundcloud::search_artists(&query, limit, offset).await
 }
 
-// The three below read straight from SoundCloud and write nothing to the
+#[tauri::command]
+pub async fn sc_related_tracks(
+    seed_ids: Vec<String>,
+    limit: u32,
+) -> Result<Vec<crate::soundcloud::ScTrack>, String> {
+    crate::soundcloud::related_tracks(&seed_ids, limit).await
+}
+
+// These endpoints read straight from SoundCloud and write nothing to the
 // library: they are what lets a playlist or artist be looked at before deciding
 // whether to keep it.
 
