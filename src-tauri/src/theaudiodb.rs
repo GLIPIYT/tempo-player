@@ -13,11 +13,15 @@ use crate::database::Db;
 const API_SEARCH: &str = "https://www.theaudiodb.com/api/v1/json/123/search.php";
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
-// Search and image requests, including manual requests, share this budget.
+// Keep API lookups below TheAudioDB's published 30 requests/minute free limit.
 const REQUEST_INTERVAL_MS: u64 = 5_000;
-const BLOCKED_UNTIL_KEY: &str = "artist_artwork.theaudiodb.blocked_until";
+// v2 intentionally ignores the old global block. Earlier builds treated any
+// HTTP 403 (including a single CDN image denial) as a provider-wide 24h block.
+const BLOCKED_UNTIL_KEY: &str = "artist_artwork.theaudiodb.api_blocked_until.v2";
+const BLOCK_REASON_KEY: &str = "artist_artwork.theaudiodb.api_block_reason.v2";
 const LAST_REQUEST_KEY: &str = "artist_artwork.theaudiodb.last_request_ms";
 const DAY_SEC: u64 = 24 * 60 * 60;
+const FORBIDDEN_COOLDOWN_SEC: u64 = 5 * 60;
 const NO_MATCH_RETRY_SEC: u64 = 7 * DAY_SEC;
 const ERROR_RETRY_SEC: u64 = 60 * 60;
 
@@ -33,8 +37,8 @@ fn stored_number(db: &Db, key: &str) -> u64 {
 async fn reserve_request(db: &Db) -> Result<(), String> {
     static GATE: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     let _guard = GATE.get_or_init(|| tokio::sync::Mutex::new(())).lock().await;
-    if stored_number(db, BLOCKED_UNTIL_KEY) > unix_millis() / 1_000 {
-        return Err("TheAudioDB is temporarily unavailable. Tempo will retry later.".into());
+    if let Some(error) = api_cooldown_error(db) {
+        return Err(error);
     }
     let wait = stored_number(db, LAST_REQUEST_KEY)
         .saturating_add(REQUEST_INTERVAL_MS)
@@ -43,28 +47,54 @@ async fn reserve_request(db: &Db) -> Result<(), String> {
     if wait > 0 {
         tokio::time::sleep(Duration::from_millis(wait)).await;
     }
-    // Another request can have received a 403 while this request was waiting.
-    if stored_number(db, BLOCKED_UNTIL_KEY) > unix_millis() / 1_000 {
-        return Err("TheAudioDB is temporarily unavailable. Tempo will retry later.".into());
+    // Another request can have received a provider response while this request was waiting.
+    if let Some(error) = api_cooldown_error(db) {
+        return Err(error);
     }
     db.set_app_setting(LAST_REQUEST_KEY, &unix_millis().to_string())
 }
 
-fn response_error(db: &Db, response: &reqwest::Response) -> String {
+fn api_cooldown_error(db: &Db) -> Option<String> {
+    let remaining = stored_number(db, BLOCKED_UNTIL_KEY).saturating_sub(unix_millis() / 1_000);
+    if remaining == 0 {
+        return None;
+    }
+    let minutes = remaining.saturating_add(59) / 60;
+    let reason = db.get_app_setting(BLOCK_REASON_KEY).ok().flatten();
+    Some(match reason.as_deref() {
+        Some("forbidden") => format!(
+            "TheAudioDB refused the artist search (HTTP 403). Tempo will retry in about {minutes} min."
+        ),
+        Some("rate_limit") => format!(
+            "TheAudioDB rate limit is active. Tempo will retry in about {minutes} min."
+        ),
+        _ => format!("TheAudioDB search is paused. Tempo will retry in about {minutes} min."),
+    })
+}
+
+fn set_api_cooldown(db: &Db, reason: &str, delay_sec: u64) {
+    let now = unix_millis() / 1_000;
+    let until = stored_number(db, BLOCKED_UNTIL_KEY).max(now + delay_sec);
+    let _ = db.set_app_setting(BLOCKED_UNTIL_KEY, &until.to_string());
+    let _ = db.set_app_setting(BLOCK_REASON_KEY, reason);
+}
+
+fn response_error(db: &Db, response: &reqwest::Response, is_api_request: bool) -> String {
     let status = response.status();
-    let delay = if status == StatusCode::FORBIDDEN {
-        DAY_SEC
-    } else if status == StatusCode::TOO_MANY_REQUESTS {
-        response.headers().get(header::RETRY_AFTER)
+    // TheAudioDB documents 429 as its rate-limit response. A 403 from one
+    // image URL is a resource-level denial and must not disable artist search.
+    if is_api_request && status == StatusCode::FORBIDDEN {
+        set_api_cooldown(db, "forbidden", FORBIDDEN_COOLDOWN_SEC);
+        return api_cooldown_error(db)
+            .unwrap_or_else(|| "TheAudioDB refused the artist search (HTTP 403).".into());
+    } else if is_api_request && status == StatusCode::TOO_MANY_REQUESTS {
+        let delay = response.headers().get(header::RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(60).clamp(60, DAY_SEC)
-    } else {
-        0
-    };
-    if delay > 0 {
-        let until = stored_number(db, BLOCKED_UNTIL_KEY).max(unix_millis() / 1_000 + delay);
-        let _ = db.set_app_setting(BLOCKED_UNTIL_KEY, &until.to_string());
+            .unwrap_or(60).clamp(60, DAY_SEC);
+        set_api_cooldown(db, "rate_limit", delay);
+        return api_cooldown_error(db)
+            .unwrap_or_else(|| "TheAudioDB rate limit is active. Try again later.".into());
     }
     request_error(status)
 }
@@ -228,7 +258,7 @@ async fn search_images(db: &Db, query: &str) -> Result<Vec<ArtistImageCandidate>
         .map_err(|error| format!("TheAudioDB request failed: {error}"))?;
     let status = response.status();
     if !status.is_success() {
-        return Err(response_error(db, &response));
+        return Err(response_error(db, &response, true));
     }
     let body = read_limited(response, MAX_RESPONSE_BYTES).await?;
     let body = std::str::from_utf8(&body).map_err(|error| error.to_string())?;
@@ -260,7 +290,6 @@ async fn download_artist_image(
     url: &str,
 ) -> Result<PathBuf, String> {
     let url = validate_artist_image_url(url)?;
-    reserve_request(db).await?;
     let response = client()
         .get(url)
         .send()
@@ -268,7 +297,7 @@ async fn download_artist_image(
         .map_err(|error| format!("TheAudioDB image request failed: {error}"))?;
     let status = response.status();
     if !status.is_success() {
-        return Err(response_error(db, &response));
+        return Err(response_error(db, &response, false));
     }
     validate_artist_image_url(response.url().as_str())?;
     let content_type = response
@@ -360,6 +389,40 @@ fn record_lookup(
     })
 }
 
+fn artwork_retry_delay(db: &Db, error: &str) -> u64 {
+    let lower = error.to_ascii_lowercase();
+    let minimum = if lower.contains("http 403") {
+        FORBIDDEN_COOLDOWN_SEC
+    } else if lower.contains("rate limit") {
+        60
+    } else if lower.contains("request failed") {
+        FORBIDDEN_COOLDOWN_SEC
+    } else {
+        return ERROR_RETRY_SEC;
+    };
+    stored_number(db, BLOCKED_UNTIL_KEY)
+        .saturating_sub(unix_millis() / 1_000)
+        .max(minimum)
+}
+
+/// Previous builds could strand each failed artist behind a stale retry after
+/// the provider's global cooldown had been fixed. Release only that known error
+/// so the worker can retry automatically with the corrected cooldown policy.
+fn release_legacy_unavailable_lookups(db: &Db) -> Result<(), String> {
+    let now = unix_millis() / 1_000;
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE artist_artwork_lookup
+             SET status = 'queued', error = NULL, next_attempt_at = ?1, updated_at = ?1
+             WHERE status = 'error'
+               AND error = 'TheAudioDB is temporarily unavailable. Tempo will retry later.'",
+            params![now],
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(())
+    })
+}
+
 fn store_missing_image(db: &Db, artist_id: i64, name: &str, path: &str) -> Result<usize, String> {
     db.with_conn(|conn| {
         conn.execute(
@@ -422,6 +485,9 @@ pub fn start_automatic_lookup(app: AppHandle) {
     let avatars_dir = state.avatars_dir.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(10)).await;
+        if let Err(error) = release_legacy_unavailable_lookups(&db) {
+            eprintln!("Tempo could not release old artist artwork retries: {error}");
+        }
         loop {
             let remaining = stored_number(&db, BLOCKED_UNTIL_KEY)
                 .saturating_sub(unix_millis() / 1_000);
@@ -432,7 +498,8 @@ pub fn start_automatic_lookup(app: AppHandle) {
             match next_missing_artist(&db) {
                 Ok(Some((artist_id, name))) => {
                     if let Err(error) = lookup_missing_artist(&db, &avatars_dir, &app, artist_id, &name).await {
-                        let _ = record_lookup(&db, artist_id, &name, "error", None, Some(&error), ERROR_RETRY_SEC);
+                        let retry_after = artwork_retry_delay(&db, &error);
+                        let _ = record_lookup(&db, artist_id, &name, "error", None, Some(&error), retry_after);
                         eprintln!("Tempo artist artwork lookup failed for artist {artist_id}: {error}");
                     }
                     tokio::time::sleep(Duration::from_secs(5)).await;

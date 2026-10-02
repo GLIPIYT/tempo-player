@@ -15,6 +15,7 @@ import {
 interface Props {
   release: ReleaseInfo
   onDismiss: () => void
+  preview?: boolean
 }
 
 type Phase = 'offer' | 'downloading' | 'failed'
@@ -26,7 +27,7 @@ type Phase = 'offer' | 'downloading' | 'failed'
  * a running executable, so the app has to quit for the upgrade to happen, and
  * splitting it into two buttons would only make that a surprise later.
  */
-export default function UpdateDialog({ release, onDismiss }: Props) {
+export default function UpdateDialog({ release, onDismiss, preview = false }: Props) {
   const t = useT()
   const [phase, setPhase] = useState<Phase>('offer')
   const [progress, setProgress] = useState<{ downloaded: number; total: number } | null>(null)
@@ -64,6 +65,7 @@ export default function UpdateDialog({ release, onDismiss }: Props) {
   }, [phase, version])
 
   const begin = async () => {
+    if (preview) return
     if (!release.assetUrl) {
       setError(t('This release has no Windows installer attached.'))
       setPhase('failed')
@@ -85,6 +87,7 @@ export default function UpdateDialog({ release, onDismiss }: Props) {
   }
 
   const skip = () => {
+    if (preview) return
     skipVersion(version)
     toast.show(`${t('Skipped update')} ${version}`)
     onDismiss()
@@ -101,6 +104,7 @@ export default function UpdateDialog({ release, onDismiss }: Props) {
         <aside className="update-summary">
           <div className="update-head">
             <span className="update-version">{release.name || release.tag}</span>
+            {preview ? <span className="update-preview-badge">{t('Preview only')}</span> : null}
             {release.assetSize ? (
               <span className="muted update-size">{formatBytes(release.assetSize)}</span>
             ) : null}
@@ -134,12 +138,20 @@ export default function UpdateDialog({ release, onDismiss }: Props) {
 
         {phase !== 'downloading' ? (
           <div className="modal-actions update-dialog-actions">
-            <button className="btn" onClick={skip}>
-              {t('Skip this version')}
-            </button>
-            <button className="btn btn-primary" onClick={() => void begin()}>
-              {phase === 'failed' ? t('Try again') : t('Download and install')}
-            </button>
+            {preview ? (
+              <button className="btn btn-primary" onClick={onDismiss}>
+                {t('Close')}
+              </button>
+            ) : (
+              <>
+                <button className="btn" onClick={skip}>
+                  {t('Skip this version')}
+                </button>
+                <button className="btn btn-primary" onClick={() => void begin()}>
+                  {phase === 'failed' ? t('Try again') : t('Download and install')}
+                </button>
+              </>
+            )}
           </div>
         ) : null}
       </div>

@@ -84,7 +84,13 @@ export default function ProfilePage() {
     if (activityDays.length === 0) return []
     const first = new Date(`${activityDays[0].date}T00:00:00`)
     const mondayOffset = (first.getDay() + 6) % 7
-    return [...Array.from({ length: mondayOffset }, () => null), ...activityDays]
+    const daysWithLeadingPadding = mondayOffset + activityDays.length
+    const trailingPadding = (7 - (daysWithLeadingPadding % 7)) % 7
+    return [
+      ...Array.from({ length: mondayOffset }, () => null),
+      ...activityDays,
+      ...Array.from({ length: trailingPadding }, () => null),
+    ]
   }, [activityDays])
   const activeDays = activityDays.filter((day) => day.minutes > 0).length
   const activityTotal = activityDays.reduce((sum, day) => sum + day.minutes, 0)
@@ -243,25 +249,29 @@ export default function ProfilePage() {
             ))}
           </div>
         ) : (
-          <div className="activity-grid-wrap">
-            <div className="activity-weekdays" aria-hidden="true">
-              {weekdays.map((day) => <span key={day}>{day}</span>)}
-            </div>
-            <div className="activity-grid" role="grid" aria-label={t('Listening activity')}>
-              {activityGrid.map((d, index) => {
-                if (d === null) return <span key={`empty-${index}`} className="activity-cell is-empty" role="presentation" />
-                const level = d.minutes === 0 ? 0 : Math.max(1, Math.ceil((d.minutes / chartMax) * 4))
-                return (
-                  <span
-                    key={d.date}
-                    className="activity-cell"
-                    data-level={Math.min(4, level)}
-                    role="gridcell"
-                    aria-label={`${dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
-                    title={`${dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
-                  />
-                )
-              })}
+          <div className={range === 365 ? 'activity-grid-wrap is-year' : 'activity-grid-wrap'}>
+            <div className="activity-grid-board">
+              <div className="activity-weekdays" aria-hidden="true">
+                {weekdays.map((day) => <span key={day}>{day}</span>)}
+              </div>
+              <div className="activity-grid-scroll">
+                <div className="activity-grid" role="grid" aria-label={t('Listening activity')}>
+                  {activityGrid.map((d, index) => {
+                    if (d === null) return <span key={`empty-${index}`} className="activity-cell is-empty" role="presentation" />
+                    const level = d.minutes === 0 ? 0 : Math.max(1, Math.ceil((d.minutes / chartMax) * 4))
+                    return (
+                      <span
+                        key={d.date}
+                        className="activity-cell"
+                        data-level={Math.min(4, level)}
+                        role="gridcell"
+                        aria-label={`${dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
+                        title={`${dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
+                      />
+                    )
+                  })}
+                </div>
+              </div>
             </div>
             <div className="activity-grid-footer">
               <span>{activeDays} {t('active days')} · {hourLabel(activityTotal)}</span>

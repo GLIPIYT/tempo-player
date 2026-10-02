@@ -286,6 +286,11 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
             onClick={() => player.playTracks(tracks, index)}
             onContextMenu={(e) => trackMenu(e, index)}
           >
+            <ScArtwork
+              url={track.coverPath ?? `https://i.ytimg.com/vi/${encodeURIComponent(track.sourceId)}/mqdefault.jpg`}
+              title={track.title}
+              compact
+            />
             <div className="sc-meta">
               <span className="sc-title">{track.title}</span>
               <span className="sc-artist">{track.artists.join(', ')}</span>

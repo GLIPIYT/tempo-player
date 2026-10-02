@@ -141,6 +141,7 @@ pub fn run() {
             background_search::get_background_provider_status,
             background_search::get_background_preview,
             background_search::save_selected_background,
+            background_search::list_saved_backgrounds,
             commands::import_avatar,
             commands::set_playlist_pinned,
             commands::move_pinned_playlist,

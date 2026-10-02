@@ -57,6 +57,45 @@ interface PrefetchItem {
   track: UnifiedTrack
 }
 
+function youtubeDownloadError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  const attemptedRetry = /after retrying once/i.test(raw)
+  const details = raw
+    .replace(/^yt-dlp could not download this track(?: after retrying once)?:\s*/i, '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1)
+    ?.replace(/^ERROR:\s*/i, '')
+  const language = getSettings().lang
+  const isRussian = language === 'ru' || (
+    language === 'system' && typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('ru')
+  )
+  const botCheck = /not a bot|sign in to confirm|captcha|cookie/i.test(raw)
+
+  if (isRussian) {
+    if (botCheck) {
+      return attemptedRetry
+        ? 'Не удалось загрузить аудио с YouTube: сервис запросил проверку. Tempo повторил попытку. Попробуй позже; если ошибка повторится, YouTube может потребовать cookies.'
+        : 'Не удалось загрузить аудио с YouTube: сервис запросил проверку. Попробуй ещё раз позже; если ошибка повторится, YouTube может потребовать cookies.'
+    }
+    const prefix = attemptedRetry
+      ? 'Не удалось загрузить трек с YouTube после повторной попытки. Попробуй ещё раз.'
+      : 'Не удалось загрузить трек с YouTube. Попробуй ещё раз.'
+    return details ? `${prefix}\n${details}` : prefix
+  }
+
+  if (botCheck) {
+    return attemptedRetry
+      ? 'Could not load audio from YouTube: it requested a verification check. Tempo retried once. Try again later; if it keeps happening, YouTube may require cookies.'
+      : 'Could not load audio from YouTube: it requested a verification check. Try again later; if it keeps happening, YouTube may require cookies.'
+  }
+  const prefix = attemptedRetry
+    ? 'Could not download this YouTube track after one retry. Please try again.'
+    : 'Could not download this YouTube track. Please try again.'
+  return details ? `${prefix}\n${details}` : prefix
+}
+
 const VOLUME_KEY = 'tempo.volume'
 const PLAYBACK_RATE_KEY = 'tempo.playbackRate'
 const PRESERVE_PITCH_KEY = 'tempo.preservePitch'
@@ -589,7 +628,7 @@ export class PlayerController {
       } catch (e) {
         // Silent here would mean a track that simply never plays, with nothing
         // anywhere to say why.
-        toast.show(e instanceof Error ? e.message : String(e), 'error')
+        toast.show(youtubeDownloadError(e), 'error')
         return null
       }
     }

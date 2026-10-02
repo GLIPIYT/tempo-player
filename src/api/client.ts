@@ -210,6 +210,7 @@ export const api = {
     invoke<string>('get_background_preview', { provider, imageUrl }),
   saveSelectedBackground: (provider: BackgroundImageProvider, imageUrl: string) =>
     invoke<string>('save_selected_background', { provider, imageUrl }),
+  listSavedBackgrounds: () => invoke<string[]>('list_saved_backgrounds'),
   importAvatar: (path: string) => invoke<string>('import_avatar', { path }),
 
   getDailyMinutes: (days: number) => invoke<DailyMinutes[]>('get_daily_minutes', { days }),

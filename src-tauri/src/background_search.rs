@@ -3,9 +3,12 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::fs;
 use std::io::{Cursor, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::time::SystemTime;
 use tauri::State;
 
 use crate::commands::AppState;
@@ -252,6 +255,39 @@ pub async fn save_selected_background(
     .await
     .map_err(|_| "The selected image could not be processed".to_owned())??;
     save_background_bytes(&state, extension, bytes)
+}
+
+/// Lists images already stored in Tempo's background folder, newest first.
+/// Wallpaper search saves sanitized local copies here so they can be selected
+/// again without contacting the image provider.
+#[tauri::command]
+pub fn list_saved_backgrounds(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let entries = fs::read_dir(&state.backgrounds_dir)
+        .map_err(|error| format!("Could not read saved backgrounds: {error}"))?;
+    let mut images: Vec<(SystemTime, PathBuf)> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !path.is_file() {
+                return None;
+            }
+            let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+            if !matches!(extension.as_str(), "jpg" | "jpeg" | "png" | "webp") {
+                return None;
+            }
+            let modified = entry
+                .metadata()
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            Some((modified, path))
+        })
+        .collect();
+    images.sort_by(|left, right| right.0.cmp(&left.0));
+    Ok(images
+        .into_iter()
+        .map(|(_, path)| path.to_string_lossy().into_owned())
+        .collect())
 }
 
 #[tauri::command]

@@ -51,6 +51,7 @@ import { applyTheme, parseHex, toHex } from '../theme/engine'
 import UpdateDialog from '../updater/UpdateDialog'
 import VisualizerPreview from '../components/settings/VisualizerPreview'
 import BackgroundSearchPanel from '../components/settings/BackgroundSearchPanel'
+import BackgroundImageLibrary from '../components/settings/BackgroundImageLibrary'
 import LyricsAnalysisCard from '../components/settings/LyricsAnalysisCard'
 import {
   appVersion,
@@ -762,6 +763,7 @@ function UpdateCard() {
   const t = useT()
   const [check, setCheck] = useState(0)
   const [offer, setOffer] = useState<ReleaseInfo | null>(null)
+  const [showPreview, setShowPreview] = useState(false)
   const [skipped, setSkipped] = useState<string[]>(skippedVersions)
   const current = useAsync(() => appVersion(), [])
   const releases = useAsync(() => listReleases(), [check])
@@ -771,6 +773,16 @@ function UpdateCard() {
   const installable =
     releases.data && currentVersion ? newerThan(releases.data, currentVersion) : []
   const upToDate = !releases.loading && !releases.error && releases.data !== null && installable.length === 0
+  const previewRelease: ReleaseInfo = releases.data?.[0] ?? {
+    version: currentVersion ?? '1.0.0',
+    tag: `v${currentVersion ?? '1.0.0'}`,
+    name: t('Update preview'),
+    notes: t('Example update notes'),
+    publishedAt: '',
+    assetName: null,
+    assetUrl: null,
+    assetSize: null,
+  }
 
   return (
     <>
@@ -816,6 +828,9 @@ function UpdateCard() {
           <button className="btn" disabled={releases.loading} onClick={() => setCheck((n) => n + 1)}>
             {t('Check now')}
           </button>
+          <button className="btn" onClick={() => setShowPreview(true)}>
+            {t('Preview update dialog')}
+          </button>
           {skipped.length > 0 ? (
             <button
               className="btn"
@@ -830,6 +845,9 @@ function UpdateCard() {
         </div>
       </Card>
       {offer ? <UpdateDialog release={offer} onDismiss={() => setOffer(null)} /> : null}
+      {showPreview ? (
+        <UpdateDialog release={previewRelease} preview onDismiss={() => setShowPreview(false)} />
+      ) : null}
     </>
   )
 }
@@ -1591,6 +1609,10 @@ export default function SettingsPage() {
                     <div className="set-bg-preview-dim" style={{ opacity: settings.background.dimPct / 100 }} />
                   </div>
                 ) : null}
+                <BackgroundImageLibrary
+                  selectedPath={settings.background.path}
+                  onSelect={(path) => update({ background: { path } })}
+                />
                 <BackgroundSearchPanel
                   search={api.searchBackgrounds}
                   onSelect={async (result) => {

@@ -1636,6 +1636,9 @@ pub async fn ytdlp_open_collection(
     configured: String,
     url: String,
 ) -> Result<crate::ytdlp::YtCollectionDetail, String> {
+    if let Ok(detail) = crate::youtube_music::open_collection(&url).await {
+        return Ok(detail);
+    }
     let bin_dir = state.bin_dir.clone();
     tauri::async_runtime::spawn_blocking(move || {
         crate::ytdlp::open_collection(&configured, &bin_dir, &url)

@@ -1070,25 +1070,53 @@ pub fn download(
         std::fs::create_dir_all(parent).map_err(|e| format!("cache directory: {e}"))?;
     }
     let template = format!("{}.%(ext)s", destination.to_string_lossy());
-    let out = run(
-        &path,
-        &[
-            "--no-playlist",
-            "--no-warnings",
-            "--no-progress",
-            "-f",
-            "bestaudio[ext=m4a]/bestaudio",
-            "-o",
-            &template,
-            url,
-        ],
-        600,
-    )?;
-    if !out.status.success() {
-        return Err(format!(
-            "yt-dlp download failed: {}",
-            String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("no output")
-        ));
+    let args = [
+        "--no-playlist",
+        "--no-warnings",
+        "--no-progress",
+        "-f",
+        "bestaudio[ext=m4a]/bestaudio",
+        "-o",
+        &template,
+        url,
+    ];
+    let mut succeeded = false;
+    let mut retried = false;
+    let mut last_error = String::new();
+    for attempt in 0..2 {
+        match run(&path, &args, 600) {
+            Ok(result) if result.status.success() => {
+                succeeded = true;
+                break;
+            }
+            Ok(result) => {
+                last_error = String::from_utf8_lossy(&result.stderr)
+                    .lines()
+                    .rev()
+                    .find(|line| !line.trim().is_empty())
+                    .unwrap_or("no output")
+                    .trim()
+                    .to_string();
+            }
+            Err(error) => last_error = error,
+        }
+        if attempt == 0 && retryable_download_error(&last_error) {
+            // Bot checks and transient YouTube/CDN failures sometimes resolve
+            // on an immediate second extraction. Keep this short so a failed
+            // track does not stall the queue for long.
+            retried = true;
+            std::thread::sleep(std::time::Duration::from_millis(900));
+        } else {
+            break;
+        }
+    }
+    if !succeeded {
+        let reason = if last_error.is_empty() { "no output" } else { &last_error };
+        return Err(if retried {
+            format!("yt-dlp could not download this track after retrying once: {reason}")
+        } else {
+            format!("yt-dlp could not download this track: {reason}")
+        });
     }
     // The extension is whatever yt-dlp chose, so the file is found rather than
     // assumed.
@@ -1107,4 +1135,31 @@ pub fn download(
                 .unwrap_or(false)
         })
         .ok_or_else(|| "yt-dlp reported success but wrote no file".to_string())
+}
+
+fn retryable_download_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "not a bot",
+        "sign in",
+        "captcha",
+        "cookie",
+        "timed out",
+        "timeout",
+        "temporary",
+        "temporarily",
+        "unavailable",
+        "connection",
+        "network",
+        "429",
+        "403",
+        "500",
+        "502",
+        "503",
+        "504",
+        "reset by peer",
+        "unreachable",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
 }
