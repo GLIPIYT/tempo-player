@@ -941,6 +941,20 @@ export default function SettingsPage() {
     const content = settingsContentRef.current
     if (!page || !content) return
 
+    let targetScrollTop = content.scrollTop
+    let frame: number | null = null
+
+    const animateScroll = () => {
+      const distance = targetScrollTop - content.scrollTop
+      if (Math.abs(distance) < 0.75) {
+        content.scrollTop = targetScrollTop
+        frame = null
+        return
+      }
+      content.scrollTop += distance * 0.24
+      frame = window.requestAnimationFrame(animateScroll)
+    }
+
     const routeWheel = (event: WheelEvent) => {
       if (content.contains(event.target as Node)) return
       if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
@@ -952,14 +966,18 @@ export default function SettingsPage() {
           ? event.deltaY * content.clientHeight
           : event.deltaY
       const maxScroll = Math.max(0, content.scrollHeight - content.clientHeight)
-      const next = Math.max(0, Math.min(maxScroll, content.scrollTop + delta))
-      if (next === content.scrollTop) return
-      content.scrollTop = next
+      const next = Math.max(0, Math.min(maxScroll, (frame === null ? content.scrollTop : targetScrollTop) + delta))
+      if (next === (frame === null ? content.scrollTop : targetScrollTop)) return
+      targetScrollTop = next
       event.preventDefault()
+      if (frame === null) frame = window.requestAnimationFrame(animateScroll)
     }
 
     page.addEventListener('wheel', routeWheel, { passive: false })
-    return () => page.removeEventListener('wheel', routeWheel)
+    return () => {
+      page.removeEventListener('wheel', routeWheel)
+      if (frame !== null) window.cancelAnimationFrame(frame)
+    }
   }, [])
 
   const fontMode: FontMode =

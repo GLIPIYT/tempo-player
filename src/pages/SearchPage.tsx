@@ -37,6 +37,31 @@ const YT_ENRICH_DONE_EVENT = 'ytdlp://enriched-done'
 /** Emitted once per album, artist or playlist as its name resolves. */
 const YT_BROWSE_EVENT = 'ytdlp://browsed'
 const YT_BROWSE_DONE_EVENT = 'ytdlp://browsed-done'
+// YouTube Music is sensitive to rapid repeat searches. Let typing settle before
+// starting provider requests; keep SoundCloud and local search independently fast.
+const YT_SEARCH_DEBOUNCE_MS = 650
+const YT_REQUEST_MIN_INTERVAL_MS = 500
+
+let ytRequestQueue = Promise.resolve()
+let ytLastRequestStartedAt = 0
+
+/** Reserve YouTube request starts one at a time with a small gap, without waiting
+ * for earlier responses. A canceled effect never starts its delayed request. */
+function scheduleYtProviderRequest<T>(
+  request: () => Promise<T>,
+  isCancelled: () => boolean,
+): Promise<T | undefined> {
+  const reservation = ytRequestQueue.then(async () => {
+    if (isCancelled()) return false
+    const waitMs = Math.max(0, YT_REQUEST_MIN_INTERVAL_MS - (Date.now() - ytLastRequestStartedAt))
+    if (waitMs > 0) await new Promise<void>((resolve) => window.setTimeout(resolve, waitMs))
+    if (isCancelled()) return false
+    ytLastRequestStartedAt = Date.now()
+    return true
+  })
+  ytRequestQueue = reservation.then(() => undefined, () => undefined)
+  return reservation.then((allowed) => (allowed ? request() : undefined))
+}
 
 type ScStatus = 'idle' | 'loading' | 'error' | 'done'
 type YtCollectionSection = 'albums' | 'artists' | 'playlists'
@@ -431,10 +456,12 @@ export default function SearchPage() {
     let cancelled = false
     const timer = window.setTimeout(() => {
       // The backend tries the public music search before the yt-dlp fallback.
-      api
-        .ytdlpSearch(ytdlpPath(), trimmed, 20)
+      void scheduleYtProviderRequest(
+        () => api.ytdlpSearch(ytdlpPath(), trimmed, 20),
+        () => cancelled,
+      )
         .then((hits) => {
-          if (cancelled) return
+          if (cancelled || hits === undefined) return
           setYtHits(hits)
           setYtStatus('done')
           const unresolved = hits.filter((hit) => !hit.metadataComplete)
@@ -455,7 +482,7 @@ export default function SearchPage() {
           if (cancelled) return
           setYtStatus('error')
         })
-    }, 250)
+    }, YT_SEARCH_DEBOUNCE_MS)
     return () => {
       cancelled = true
       window.clearTimeout(timer)
@@ -486,10 +513,12 @@ export default function SearchPage() {
     const jobs: Partial<Record<YtCollectionSection, string>> = {}
     const timer = window.setTimeout(() => {
       for (const section of ytCollectionSections) {
-        void api
-          .ytdlpSearchCollections(ytdlpPath(), trimmed, 12, section)
+        void scheduleYtProviderRequest(
+          () => api.ytdlpSearchCollections(ytdlpPath(), trimmed, 12, section),
+          () => cancelled,
+        )
           .then((hits) => {
-            if (cancelled) return
+            if (cancelled || hits === undefined) return
             setYtHitsColl((previous) => ({ ...previous, [section]: hits }))
             const unresolved = hits.filter((hit) => !hit.metadataComplete)
             if (unresolved.length === 0) {
@@ -509,7 +538,7 @@ export default function SearchPage() {
             if (!cancelled) setYtCollStatus((previous) => ({ ...previous, [section]: 'error' }))
           })
       }
-    }, 250)
+    }, YT_SEARCH_DEBOUNCE_MS)
     return () => {
       cancelled = true
       window.clearTimeout(timer)

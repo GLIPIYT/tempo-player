@@ -32,8 +32,16 @@ function CacheToast({ job }: { job: CacheJob }) {
     status = job.failed > 0 ? `${t('Cached')} · ${job.failed} ${t('failed')}` : t('Cached')
   }
 
+  const toastClass = [
+    'cache-toast',
+    job.state === 'running' ? '' : 'is-done',
+    job.exiting ? 'is-exiting' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   return (
-    <div className={job.state === 'running' ? 'cache-toast' : 'cache-toast is-done'}>
+    <div className={toastClass}>
       <svg
         className="cache-toast-ring"
         viewBox={`0 0 ${W} ${H}`}
@@ -87,7 +95,7 @@ export default function CacheToasts() {
   return (
     <div className="cache-toasts">
       {jobs.map((job) => (
-        <CacheToast key={job.id} job={job} />
+        <CacheToast key={`${job.id}:${job.generation}`} job={job} />
       ))}
     </div>
   )

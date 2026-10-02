@@ -51,7 +51,6 @@ export default function LibraryPage() {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
     const timer = window.setTimeout(() => {
       api
         .listTracks(query.trim(), PAGE, 0, sort)

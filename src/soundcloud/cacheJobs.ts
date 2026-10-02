@@ -33,6 +33,10 @@ export interface CacheJob {
   total: number
   failed: number
   state: 'running' | 'done' | 'cancelled'
+  /** Unique for each run, even when the same SoundCloud item is cached again. */
+  generation: number
+  /** The completed toast is fading out and is waiting for its removal timer. */
+  exiting: boolean
 }
 
 export const CACHE_PROGRESS_EVENT = 'sc-cache://progress'
@@ -48,6 +52,8 @@ interface ProgressPayload {
 
 /** How long a finished job stays on screen so the ring can be seen closing. */
 const LINGER_MS = 4000
+/** Keep in sync with the toast's CSS exit transition. */
+const EXIT_MS = 240
 
 /** Above this many tracks, an artist cache asks which ones to keep. */
 export const ARTIST_PICKER_THRESHOLD = 15
@@ -55,6 +61,48 @@ export const ARTIST_PICKER_THRESHOLD = 15
 let jobs: CacheJob[] = []
 const listeners = new Set<() => void>()
 let starting = false
+let nextGeneration = 0
+const completionTimers = new Map<string, { generation: number; timer: number }>()
+
+function clearCompletionTimer(id: string): void {
+  const current = completionTimers.get(id)
+  if (!current) return
+  window.clearTimeout(current.timer)
+  completionTimers.delete(id)
+}
+
+function scheduleDismiss(job: CacheJob): void {
+  const current = completionTimers.get(job.id)
+  if (current?.generation === job.generation) return
+  clearCompletionTimer(job.id)
+
+  const generation = job.generation
+  const timer = window.setTimeout(() => {
+    const latest = jobs.find((entry) => entry.id === job.id)
+    if (!latest || latest.generation !== generation || latest.state === 'running') {
+      if (completionTimers.get(job.id)?.timer === timer) completionTimers.delete(job.id)
+      return
+    }
+
+    jobs = jobs.map((entry) =>
+      entry.id === job.id && entry.generation === generation ? { ...entry, exiting: true } : entry,
+    )
+    emit()
+
+    const exitTimer = window.setTimeout(() => {
+      const currentJob = jobs.find((entry) => entry.id === job.id)
+      if (currentJob?.generation === generation && currentJob.exiting) {
+        dismissCacheJob(job.id, generation)
+      }
+      if (completionTimers.get(job.id)?.timer === exitTimer) completionTimers.delete(job.id)
+    }, EXIT_MS)
+    if (completionTimers.get(job.id)?.timer === timer) {
+      completionTimers.set(job.id, { generation, timer: exitTimer })
+    }
+  }, LINGER_MS)
+
+  completionTimers.set(job.id, { generation, timer })
+}
 
 function emit(): void {
   for (const listener of listeners) listener()
@@ -91,6 +139,8 @@ export async function initCacheJobs(): Promise<void> {
         total: p.total,
         failed: p.failed,
         state: p.state,
+        generation: known?.generation ?? ++nextGeneration,
+        exiting: known?.exiting ?? false,
       }
       jobs = known ? jobs.map((job) => (job.id === p.jobId ? next : job)) : [...jobs, next]
       emit()
@@ -106,7 +156,7 @@ export async function initCacheJobs(): Promise<void> {
           .catch(() => undefined)
       }
       if (p.state !== 'running') {
-        window.setTimeout(() => dismissCacheJob(p.jobId), LINGER_MS)
+        scheduleDismiss(next)
       }
     })
   } catch {
@@ -114,8 +164,10 @@ export async function initCacheJobs(): Promise<void> {
   }
 }
 
-export function dismissCacheJob(id: string): void {
-  if (!jobs.some((job) => job.id === id)) return
+export function dismissCacheJob(id: string, generation?: number): void {
+  const job = jobs.find((entry) => entry.id === id)
+  if (!job || (generation !== undefined && job.generation !== generation)) return
+  clearCompletionTimer(id)
   jobs = jobs.filter((job) => job.id !== id)
   emit()
 }
@@ -175,6 +227,8 @@ function startJob(
   created: boolean,
 ): void {
   const id = `${kind}:${scId}`
+  clearCompletionTimer(id)
+  const generation = ++nextGeneration
   jobs = [
     ...jobs.filter((job) => job.id !== id),
     {
@@ -187,6 +241,8 @@ function startJob(
       total: tracks.length,
       failed: 0,
       state: 'running',
+      generation,
+      exiting: false,
     },
   ]
   emit()
@@ -198,7 +254,7 @@ function startJob(
     trackIds: tracks.map((trk) => trk.id),
   }).catch(() => {
     // the job never started, so there is nothing to show progress for
-    dismissCacheJob(id)
+    dismissCacheJob(id, generation)
   })
 }
 
