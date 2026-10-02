@@ -13,7 +13,7 @@ mod models;
 mod scanner;
 mod soundcloud;
 mod soundcloud_store;
-mod theaudiodb;
+mod artist_artwork;
 mod tray;
 mod updater;
 mod ytdlp;
@@ -94,7 +94,7 @@ pub fn run() {
                 soundcloud_store::startup_maintenance(&state.db, &state.sc_cache_dir, &state.covers_dir);
                 commands::startup_rescan(handle.clone());
             });
-            theaudiodb::start_automatic_lookup(app.handle().clone());
+            artist_artwork::start_automatic_lookup(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -216,8 +216,8 @@ pub fn run() {
             commands::list_favorite_albums,
             commands::is_favorite_album,
             commands::import_artist_image,
-            theaudiodb::search_artist_images,
-            theaudiodb::save_artist_image_from_url,
+            artist_artwork::search_artist_images,
+            artist_artwork::save_artist_image_from_url,
             commands::export_playlist_m3u8,
             commands::export_tracks_m3u8,
             commands::import_playlist_m3u8,

@@ -82,6 +82,7 @@ export default function ProfilePage() {
   const chartMax = Math.max(30, ...chart.map((d) => d.minutes))
   const activityGrid = useMemo(() => {
     if (activityDays.length === 0) return []
+    if (range === 30) return activityDays
     const first = new Date(`${activityDays[0].date}T00:00:00`)
     const mondayOffset = (first.getDay() + 6) % 7
     const daysWithLeadingPadding = mondayOffset + activityDays.length
@@ -91,7 +92,7 @@ export default function ProfilePage() {
       ...activityDays,
       ...Array.from({ length: trailingPadding }, () => null),
     ]
-  }, [activityDays])
+  }, [activityDays, range])
   const activeDays = activityDays.filter((day) => day.minutes > 0).length
   const activityTotal = activityDays.reduce((sum, day) => sum + day.minutes, 0)
   const weekdays = lang === 'ru' ? ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -249,7 +250,7 @@ export default function ProfilePage() {
             ))}
           </div>
         ) : (
-          <div className={range === 365 ? 'activity-grid-wrap is-year' : 'activity-grid-wrap'}>
+          <div className={`activity-grid-wrap ${range === 365 ? 'is-year' : 'is-month'}`}>
             <div className="activity-grid-board">
               <div className="activity-weekdays" aria-hidden="true">
                 {weekdays.map((day) => <span key={day}>{day}</span>)}

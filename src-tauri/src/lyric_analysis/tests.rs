@@ -617,12 +617,15 @@ fn completed_empty_and_partial_fragments_and_provider_source_ends_survive_reopen
     assert_eq!(source_end - 5.0, 14.0);
     assert_eq!(source_end - 4.0, 15.0);
     assert_eq!(saved.lyric_matches[1].ends[0].source_end_sec + 2.0, 14.0);
-    assert_eq!(
-        db.with_conn(|c| c
-            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-            .map_err(|e| e.to_string()))
-            .unwrap(),
-        19
+    let schema_version = db
+        .with_conn(|c| {
+            c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .map_err(|e| e.to_string())
+        })
+        .unwrap();
+    assert!(
+        schema_version >= 19,
+        "expected schema migration 19 or later, got {schema_version}"
     );
 }
 

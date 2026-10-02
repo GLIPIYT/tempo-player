@@ -4567,7 +4567,6 @@ html[data-bright-wallpaper='true'] .adaptive-text-outline-soft {
 
 .activity-weekdays {
   margin-bottom: 6px;
-  padding-inline: 0;
 }
 
 .activity-weekdays span {
@@ -4639,8 +4638,22 @@ html[data-bright-wallpaper='true'] .adaptive-text-outline-soft {
   background: var(--surface-hover);
 }
 
-/* Year view follows the familiar compact activity heatmap: weeks run across,
-   weekdays run down. The 30-day view keeps its calendar-style 7-column grid. */
+/* The rolling 30-day view uses an even 6×5 grid; the year view groups days by
+   week, with weekdays down and weeks across. */
+.activity-grid-wrap.is-month .activity-weekdays {
+  display: none;
+}
+
+.activity-grid-wrap.is-month {
+  box-sizing: border-box;
+  width: min(100%, 360px);
+}
+
+.activity-grid-wrap.is-month .activity-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  width: min(100%, 328px);
+}
+
 .activity-grid-wrap.is-year .activity-grid-board {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);

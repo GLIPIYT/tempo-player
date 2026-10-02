@@ -90,15 +90,32 @@ function Shortcuts() {
   const player = usePlayer()
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
-      if (e.code === 'Space') {
+      const target = e.target
+      if (target instanceof Element && (
+        (target instanceof HTMLElement && target.isContentEditable) || target.closest(
+          'input, textarea, select, button, a, [role="button"], [role="link"], [role="slider"], [role="switch"], [role="textbox"], [contenteditable="true"], [contenteditable=""]',
+        )
+      )) return
+
+      const noModifiers = !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey
+      if (e.code === 'Space' && noModifiers) {
+        if (e.repeat) return
         e.preventDefault()
         player.toggle()
-      } else if (e.code === 'ArrowRight') {
-        player.seek(player.position + 5)
-      } else if (e.code === 'ArrowLeft') {
-        player.seek(Math.max(0, player.position - 5))
+      } else if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.code === 'ArrowRight') {
+        e.preventDefault()
+        player.seek(player.position + 1)
+      } else if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.code === 'ArrowLeft') {
+        e.preventDefault()
+        player.seek(player.position - 1)
+      } else if (noModifiers && e.code === 'ArrowRight') {
+        if (e.repeat) return
+        e.preventDefault()
+        player.next()
+      } else if (noModifiers && e.code === 'ArrowLeft') {
+        if (e.repeat) return
+        e.preventDefault()
+        player.previous()
       } else if (e.code === 'ArrowUp') {
         e.preventDefault()
         player.setVolume(Math.min(1, player.volume + 0.05))
