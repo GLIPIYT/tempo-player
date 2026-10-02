@@ -89,6 +89,12 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
     const normalized = normalizeGradientAnchors(anchors)
     root.style.setProperty('--t-gradient-first', normalized.first)
     root.style.setProperty('--t-gradient-second', normalized.second)
+    const needsOutline = [normalized.first, normalized.second].some((color) => {
+      const rgb = parseHex(color)
+      return rgb !== null && 1.05 / (relLuminance(rgb) + 0.05) < 4.5
+    })
+    if (needsOutline) root.dataset.brightGradient = 'true'
+    else delete root.dataset.brightGradient
     root.dataset.themeGradientSource = gradientSource
 
     // Presets keep their own background and surface palette; gradient colors
@@ -105,6 +111,7 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
   root.classList.toggle('theme-custom', custom !== undefined)
   root.classList.remove('theme-gradient')
   delete root.dataset.themeGradientSource
+  delete root.dataset.brightGradient
   clearInlineTheme()
   if (!custom) {
     const presetId = active && active.kind === 'preset' ? active.presetId : 'tempo'

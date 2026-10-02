@@ -164,6 +164,7 @@ pub fn run() {
             commands::sc_artist_tracks,
             commands::sc_artist_playlists,
             commands::sc_import_playlist,
+            commands::sc_import_track,
             commands::sc_cache_tracks,
             commands::sc_cache_cancel,
             commands::ytdlp_status,

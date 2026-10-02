@@ -1484,13 +1484,7 @@ pub async fn add_sc_track_to_playlist(
     playlist_id: i64,
     track: crate::soundcloud::ScTrack,
 ) -> Result<i64, String> {
-    let track_id = state.db.upsert_sc_track(
-        &track.id,
-        &track.title,
-        &track.artist,
-        track.duration_ms,
-        track.artwork_url.as_deref(),
-    )?;
+    let track_id = import_sc_track_for_library(&state, &track, None, None).await?;
     state.db.playlist_add_track(playlist_id, track_id)?;
     let db = state.db.clone();
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
@@ -1502,15 +1496,15 @@ pub async fn add_sc_track_to_playlist(
     Ok(track_id)
 }
 
-/// Turns a SoundCloud playlist into a local one: every track is upserted and
-/// linked, and nothing is downloaded.
+/// Turns a SoundCloud playlist into a local one: every track is filed under its
+/// uploader, and nothing is downloaded until the cache job starts.
 ///
 /// With `playlist_id` it appends to that playlist instead of creating one,
 /// which is what the "the name already exists" choice resolves to. Downloading
 /// stays the cache job's business, so an import that is never cached is still
 /// a perfectly valid playlist.
 #[tauri::command]
-pub fn sc_import_playlist(
+pub async fn sc_import_playlist(
     state: State<'_, AppState>,
     name: String,
     tracks: Vec<crate::soundcloud::ScTrack>,
@@ -1523,17 +1517,203 @@ pub fn sc_import_playlist(
         // pins it afterwards, deliberately.
         None => state.db.create_playlist_pinned(&name, false)?.id,
     };
+    let mut avatars = HashMap::<i64, String>::new();
     for track in tracks {
-        let track_id = state.db.upsert_sc_track(
-            &track.id,
-            &track.title,
-            &track.artist,
-            track.duration_ms,
-            track.artwork_url.as_deref(),
-        )?;
+        let (track_id, avatar) = file_sc_track_for_library(&state, &track, None, None)?;
+        if let Some((artist_id, url)) = avatar {
+            avatars.entry(artist_id).or_insert(url);
+        }
         state.db.playlist_add_track(target, track_id)?;
     }
+    save_sc_avatars_bounded(&state, avatars).await;
     Ok(target)
+}
+
+/// Explicitly saves a SoundCloud track to the library before its cache job
+/// starts. Stream-only playback continues to use `sc_upsert_track` instead.
+#[tauri::command]
+pub async fn sc_import_track(
+    state: State<'_, AppState>,
+    track: crate::soundcloud::ScTrack,
+) -> Result<i64, String> {
+    import_sc_track_for_library(&state, &track, None, None).await
+}
+
+async fn import_sc_track_for_library(
+    state: &AppState,
+    track: &crate::soundcloud::ScTrack,
+    artist_override: Option<i64>,
+    avatar_override: Option<&str>,
+) -> Result<i64, String> {
+    let (track_id, avatar) = file_sc_track_for_library(state, track, artist_override, avatar_override)?;
+    if let Some((artist_id, url)) = avatar {
+        if let Err(error) = save_sc_avatar_if_missing(&state.db, &state.avatars_dir, artist_id, &url).await {
+            eprintln!("SoundCloud artist avatar could not be saved: {error}");
+        }
+    }
+    Ok(track_id)
+}
+
+fn file_sc_track_for_library(
+    state: &AppState,
+    track: &crate::soundcloud::ScTrack,
+    artist_override: Option<i64>,
+    avatar_override: Option<&str>,
+) -> Result<(i64, Option<(i64, String)>), String> {
+    let track_id = state.db.upsert_sc_track(
+        &track.id,
+        &track.title,
+        &track.artist,
+        track.duration_ms,
+        track.artwork_url.as_deref(),
+    )?;
+    let artist_name = track.artist.trim();
+    let artist_id = match artist_override {
+        Some(id) => Some(id),
+        None if !artist_name.is_empty() && !artist_name.eq_ignore_ascii_case("unknown") => {
+            Some(state.db.ensure_artist(artist_name)?)
+        }
+        None => None,
+    };
+    let mut avatar = None;
+    if let Some(artist_id) = artist_id {
+        state.db.attach_sc_track(track_id, artist_id, None)?;
+        if let Some(url) = avatar_override.or(track.artist_avatar_url.as_deref()) {
+            avatar = Some((artist_id, url.to_string()));
+        }
+    }
+    Ok((track_id, avatar))
+}
+
+async fn save_sc_avatars_bounded(state: &AppState, avatars: HashMap<i64, String>) {
+    let db = state.db.clone();
+    let directory = state.avatars_dir.clone();
+    futures_util::stream::iter(avatars)
+        .map(|(artist_id, url)| {
+            let db = db.clone();
+            let directory = directory.clone();
+            async move {
+                if let Err(error) = save_sc_avatar_if_missing(&db, &directory, artist_id, &url).await {
+                    eprintln!("SoundCloud artist avatar could not be saved: {error}");
+                }
+            }
+        })
+        .buffer_unordered(4)
+        .collect::<Vec<_>>()
+        .await;
+}
+
+const SC_AVATAR_MAX_BYTES: usize = 8 * 1024 * 1024;
+
+fn is_allowed_sc_avatar_url(url: &reqwest::Url) -> bool {
+    let host = url.host_str().unwrap_or_default();
+    let soundcloud_image_host = matches!(host, "i1.sndcdn.com" | "i2.sndcdn.com" | "i3.sndcdn.com" | "i4.sndcdn.com");
+    let image_path = [".jpg", ".jpeg", ".png", ".webp"]
+        .iter()
+        .any(|extension| url.path().to_ascii_lowercase().ends_with(extension));
+    url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port_or_known_default() == Some(443)
+        && soundcloud_image_host
+        && image_path
+}
+
+async fn save_sc_avatar_if_missing(
+    db: &Db,
+    avatars_dir: &Path,
+    artist_id: i64,
+    raw_url: &str,
+) -> Result<(), String> {
+    if !db.artist_image_is_missing(artist_id)? {
+        return Ok(());
+    }
+    let url = reqwest::Url::parse(raw_url).map_err(|_| "invalid SoundCloud avatar URL".to_string())?;
+    if !is_allowed_sc_avatar_url(&url) {
+        return Err("SoundCloud returned an unsupported avatar URL".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .user_agent("Tempo/1.0 (SoundCloud artist artwork)")
+        .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 3 || !is_allowed_sc_avatar_url(attempt.url()) {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        }))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("SoundCloud avatar request failed: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("SoundCloud avatar returned HTTP {}", response.status()));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > SC_AVATAR_MAX_BYTES as u64)
+    {
+        return Err("SoundCloud avatar is too large".to_string());
+    }
+    if !is_allowed_sc_avatar_url(response.url()) {
+        return Err("SoundCloud avatar redirected to an unsupported host".to_string());
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if !content_type.to_ascii_lowercase().starts_with("image/") {
+        return Err("SoundCloud avatar response was not an image".to_string());
+    }
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| format!("SoundCloud avatar download failed: {error}"))?;
+        if bytes.len().saturating_add(chunk.len()) > SC_AVATAR_MAX_BYTES {
+            return Err("SoundCloud avatar is too large".to_string());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let extension = match image::guess_format(&bytes).map_err(|_| "invalid SoundCloud avatar image".to_string())? {
+        image::ImageFormat::Jpeg => "jpg",
+        image::ImageFormat::Png => "png",
+        image::ImageFormat::WebP => "webp",
+        _ => return Err("SoundCloud avatar format is unsupported".to_string()),
+    };
+    let directory = avatars_dir.join("artists");
+    tokio::fs::create_dir_all(&directory)
+        .await
+        .map_err(|error| error.to_string())?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let filename = format!("{artist_id}-soundcloud-{stamp}.{extension}");
+    let path = directory.join(&filename);
+    let temporary = directory.join(format!(".{filename}.part"));
+    tokio::fs::write(&temporary, &bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = tokio::fs::rename(&temporary, &path).await {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(error.to_string());
+    }
+    let stored_path = path.to_string_lossy().into_owned();
+    match db.set_artist_image_if_missing(artist_id, &stored_path) {
+        Ok(true) => Ok(()),
+        Ok(false) => {
+            let _ = tokio::fs::remove_file(path).await;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = tokio::fs::remove_file(path).await;
+            Err(error)
+        }
+    }
 }
 
 /// Downloads a list of tracks, emitting `sc-cache://progress` as it goes.
@@ -1852,9 +2032,10 @@ pub async fn sc_artist_releases(
 /// have this artist under a different spelling". `album_of` maps a track id to
 /// the release it came from, which is how the albums arrive with the tracks.
 #[tauri::command]
-pub fn sc_import_artist(
+pub async fn sc_import_artist(
     state: State<'_, AppState>,
     name: String,
+    avatar_url: Option<String>,
     tracks: Vec<crate::soundcloud::ScTrack>,
     album_of: std::collections::HashMap<String, String>,
     merge_into: Option<i64>,
@@ -1865,14 +2046,17 @@ pub fn sc_import_artist(
     };
     // one album row per release, however many of its tracks were picked
     let mut albums: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut artist_avatar = avatar_url.clone();
     for track in tracks {
-        let track_id = state.db.upsert_sc_track(
-            &track.id,
-            &track.title,
-            &track.artist,
-            track.duration_ms,
-            track.artwork_url.as_deref(),
+        let (track_id, track_avatar) = file_sc_track_for_library(
+            &state,
+            &track,
+            Some(artist_id),
+            artist_avatar.as_deref(),
         )?;
+        if artist_avatar.is_none() {
+            artist_avatar = track_avatar.map(|(_, url)| url);
+        }
         let album_id = match album_of.get(&track.id) {
             Some(title) => {
                 let id = match albums.get(title) {
@@ -1888,6 +2072,11 @@ pub fn sc_import_artist(
             None => None,
         };
         state.db.attach_sc_track(track_id, artist_id, album_id)?;
+    }
+    if let Some(url) = artist_avatar.as_deref() {
+        if let Err(error) = save_sc_avatar_if_missing(&state.db, &state.avatars_dir, artist_id, url).await {
+            eprintln!("SoundCloud artist avatar could not be saved: {error}");
+        }
     }
     Ok(artist_id)
 }

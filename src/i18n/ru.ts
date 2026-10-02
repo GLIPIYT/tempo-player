@@ -653,6 +653,8 @@ export const ru: Record<string, string> = {
   'Could not load this playlist.': 'Не удалось загрузить этот плейлист.',
   'Could not load this artist.': 'Не удалось загрузить этого артиста.',
   'Cache playlist': 'Кэшировать плейлист',
+  'Cache track': 'Кэшировать трек',
+  'This track cannot be cached': 'Этот трек нельзя кэшировать',
   'Caching started': 'Кэширование началось',
   Caching: 'Кэширование',
   'Caching…': 'Кэшируется',

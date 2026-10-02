@@ -3191,10 +3191,13 @@ html.has-bg .app-content {
 }
 
 .storage-path {
+  min-width: 0;
+  max-width: 100%;
   font-family: Consolas, monospace;
   font-size: 11.5px;
   color: var(--text-muted);
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .export-note {
@@ -4302,6 +4305,9 @@ html.has-bg .app-content {
 .profile-layout-b .profile-activity > .chart { width: 100%; }
 .profile-layout-b .profile-activity .chart-bar-wrap { flex: 1 1 0; min-width: 0; }
 .profile-layout-b .profile-recent .tl { max-height: 540px; overflow: auto; }
+.profile-layout-b .profile-recent .tl-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 35%) 132px;
+}
 
 @media (max-width: 860px) {
   .profile-layout-b { grid-template-columns: minmax(220px, .7fr) minmax(0, 1.3fr); gap: 12px; }
@@ -5097,6 +5103,17 @@ html[data-bright-wallpaper='true'] .adaptive-text-outline-soft {
   font-size: 12px;
 }
 
+.local-album-page .editorial-detail-meta > span:first-child,
+.local-album-page .editorial-detail-meta > .link-btn {
+  color: #fff;
+}
+
+html.theme-gradient .local-album-page .editorial-detail-meta > .link-btn {
+  background-image: none;
+  background-clip: border-box;
+  -webkit-text-fill-color: #fff;
+}
+
 .editorial-detail-actions {
   display: flex;
   align-items: center;
@@ -5214,19 +5231,7 @@ html[data-bright-wallpaper='true'] .adaptive-text-outline-soft {
 
 .local-playlist-page .editorial-detail-hero,
 .sc-playlist-page .editorial-detail-hero {
-  grid-template-columns: minmax(0, 1fr) minmax(170px, 220px);
-}
-
-.local-playlist-page .editorial-detail-art,
-.sc-playlist-page .editorial-detail-art {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-.local-playlist-page .editorial-detail-copy,
-.sc-playlist-page .editorial-detail-copy {
-  grid-column: 1;
-  grid-row: 1;
+  grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
 }
 
 .playlist-cover-mosaic {
@@ -5275,14 +5280,6 @@ html[data-bright-wallpaper='true'] .adaptive-text-outline-soft {
 }
 
 @media (max-width: 760px) {
-  .local-playlist-page .editorial-detail-hero,
-  .sc-playlist-page .editorial-detail-hero {
-    grid-template-columns: minmax(0, 1fr) 112px;
-  }
-
-  .local-playlist-page .editorial-detail-art,
-  .sc-playlist-page .editorial-detail-art { width: 112px; }
-
   .profile-page-remaster .profile-stat:last-child {
     padding-left: 0;
     border-left: 0;
@@ -5308,13 +5305,19 @@ html[data-bright-wallpaper='true'] .adaptive-text-outline-soft {
   .tl-withactions .tl-head-remove { display: none; }
 
   .local-playlist-page .editorial-detail-hero,
-  .sc-playlist-page .editorial-detail-hero { grid-template-columns: minmax(0, 1fr) 84px; }
+  .sc-playlist-page .editorial-detail-hero { grid-template-columns: 84px minmax(0, 1fr); }
 
   .local-playlist-page .editorial-detail-art,
   .sc-playlist-page .editorial-detail-art { width: 84px; }
 
   .local-playlist-page .editorial-detail-actions .btn,
   .sc-playlist-page .editorial-detail-actions .btn { padding-inline: 7px; }
+
+  .profile-layout-b .profile-recent .tl-row {
+    grid-template-columns: minmax(0, 1fr) 110px;
+  }
+
+  .profile-layout-b .profile-recent .tl-album { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

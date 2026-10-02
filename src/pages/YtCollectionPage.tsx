@@ -145,6 +145,13 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
         onSelect: () => player.playTracks(tracks, index),
       },
       {
+        id: 'cache',
+        label: t('Cache track'),
+        icon: <Download size={13} />,
+        disabled: saving?.state === 'running',
+        onSelect: () => void saveCollection(id, hit.title, [hit]),
+      },
+      {
         id: 'artist',
         label: t('Copy artist'),
         icon: <Copy size={13} />,

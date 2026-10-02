@@ -2497,6 +2497,50 @@ impl Db {
         })
     }
 
+    /// True when the artist has no saved image yet. SoundCloud avatars are
+    /// provider artwork and must never replace an image chosen by the user.
+    pub fn artist_image_is_missing(&self, artist_id: i64) -> Result<bool, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT image_path IS NULL OR trim(image_path) = '' FROM artists WHERE id = ?1",
+                params![artist_id],
+                |row| row.get(0),
+            )
+            .map_err(db_err)
+        })
+    }
+
+    /// Fills an empty image slot without racing over a manually selected image.
+    pub fn set_artist_image_if_missing(
+        &self,
+        artist_id: i64,
+        image_path: &str,
+    ) -> Result<bool, String> {
+        self.with_conn(|conn| {
+            let updated = conn
+                .execute(
+                    "UPDATE artists SET image_path = ?1 WHERE id = ?2 \
+                     AND (image_path IS NULL OR trim(image_path) = '')",
+                    params![image_path, artist_id],
+                )
+                .map_err(db_err)?;
+            if updated > 0 {
+                return Ok(true);
+            }
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM artists WHERE id = ?1)",
+                    params![artist_id],
+                    |row| row.get(0),
+                )
+                .map_err(db_err)?;
+            if !exists {
+                return Err("artist not found".to_string());
+            }
+            Ok(false)
+        })
+    }
+
     pub fn toggle_favorite_album(&self, album_id: i64) -> Result<bool, String> {
         self.with_conn(|conn| {
             let removed = conn

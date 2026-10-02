@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type MouseEvent } from 'react'
 import { Download, ExternalLink, Lock, Play, Star } from 'lucide-react'
 import { api } from '../api/client'
 import type { ScPlaylistDetail, ScTrack } from '../types/models'
@@ -12,7 +12,8 @@ import { usePlayer } from '../player'
 import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
 import { scTrackToUnified } from '../utils/unified'
-import { favoritePlaylist, requestPlaylistCache } from '../soundcloud/cacheJobs'
+import { favoritePlaylist, requestPlaylistCache, requestTrackCache } from '../soundcloud/cacheJobs'
+import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 
 /**
  * A SoundCloud playlist or release, read live.
@@ -77,6 +78,37 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
   const playFrom = (track: ScTrack): void => {
     const index = playable.findIndex((p) => p.id === track.id)
     if (index >= 0) player.playTracks(playable.map(scTrackToUnified), index)
+  }
+
+  const onTrackContextMenu = (e: MouseEvent, track: ScTrack): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    const playableHere = track.streamable && (track.hasProgressive || track.hasHls)
+    const cacheableHere = track.streamable && track.hasProgressive
+    const items: ContextMenuItem[] = [
+      {
+        id: 'play',
+        label: t('Play now'),
+        icon: <Play size={13} />,
+        disabled: !playableHere,
+        onSelect: () => playFrom(track),
+      },
+      {
+        id: 'cache',
+        label: t('Cache track'),
+        icon: <Download size={13} />,
+        disabled: !cacheableHere,
+        onSelect: () => {
+          void requestTrackCache(track)
+            .then((outcome) => {
+              if (outcome === 'started') toast.show(t('Caching started'))
+              else toast.show(t('This track cannot be cached'), 'info')
+            })
+            .catch((error: unknown) => toast.show(error instanceof Error ? error.message : String(error), 'error'))
+        },
+      },
+    ]
+    openContextMenu({ x: e.clientX, y: e.clientY, title: track.title, items })
   }
 
   const run = async (action: () => Promise<'started' | 'asked' | 'empty'>, done: string) => {
@@ -169,8 +201,13 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
               key={trk.id}
               className={playableHere ? 'sc-row' : 'sc-row is-disabled'}
               onClick={() => playFrom(trk)}
+              onContextMenu={(e) => onTrackContextMenu(e, trk)}
             >
-              <ScArtwork url={trk.artworkUrl} title={trk.title} />
+              <span style={{ width: 32, height: 32, flexShrink: 0 }}>
+                <CacheBadge kind="track" scId={trk.id}>
+                  <ScArtwork url={trk.artworkUrl} title={trk.title} />
+                </CacheBadge>
+              </span>
               <div className="sc-meta">
                 <span className="sc-title">{trk.title}</span>
                 <span className="sc-artist">{trk.artist}</span>

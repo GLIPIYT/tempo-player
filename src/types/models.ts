@@ -8,6 +8,7 @@ export interface ScTrack {
   artist: string
   durationMs: number
   artworkUrl: string | null
+  artistAvatarUrl: string | null
   permalinkUrl: string | null
   streamable: boolean
   hasProgressive: boolean

@@ -271,10 +271,14 @@ export const api = {
 
   scImportArtist: (
     name: string,
+    avatarUrl: string | null,
     tracks: ScTrack[],
     albumOf: Record<string, string>,
     mergeInto: number | null,
-  ) => invoke<number>('sc_import_artist', { name, tracks, albumOf, mergeInto }),
+  ) => invoke<number>('sc_import_artist', { name, avatarUrl, tracks, albumOf, mergeInto }),
+
+  /** Files an explicitly cached SoundCloud track under its uploader. */
+  scImportTrack: (track: ScTrack) => invoke<number>('sc_import_track', { track }),
 
   // yt-dlp. The binary path is passed in on every call rather than read in
   // Rust, so settings stay the single source of truth for it.
@@ -350,7 +354,7 @@ export const api = {
 
   /** Fire-and-forget: fetches a track into the cache ahead of it being played. */
   scPrecache: (trackId: string) => invoke<void>('sc_precache', { trackId }),
-  upsertScTrack: (track: Omit<ScTrack, 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'> & Partial<Pick<ScTrack, 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'>>) =>
+  upsertScTrack: (track: Omit<ScTrack, 'artistAvatarUrl' | 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'> & Partial<Pick<ScTrack, 'artistAvatarUrl' | 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'>>) =>
     invoke<number>('sc_upsert_track', { track }),
   fetchOnlineLyricsAll: (
     artist: string,

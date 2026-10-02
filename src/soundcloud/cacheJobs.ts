@@ -14,7 +14,7 @@ import type { ScArtist, ScPlaylist, ScTrack } from '../types/models'
  * questions that need answering along the way.
  */
 
-export type CacheKind = 'playlist' | 'artist'
+export type CacheKind = 'playlist' | 'artist' | 'track'
 
 export interface CacheJob {
   /** `${kind}:${SoundCloud id}` - stable from the moment it is requested. */
@@ -95,7 +95,7 @@ export async function initCacheJobs(): Promise<void> {
       jobs = known ? jobs.map((job) => (job.id === p.jobId ? next : job)) : [...jobs, next]
       emit()
 
-      if (p.state === 'cancelled' && next.created && next.localId !== null) {
+      if (p.state === 'cancelled' && next.kind === 'playlist' && next.created && next.localId !== null) {
         // Cancelling means "I did not want this". The playlist only exists
         // because the job was started, so it goes away with it. Whatever was
         // already downloaded stays in the cache - it will be reused if the
@@ -146,6 +146,19 @@ export function useCachePercent(kind: CacheKind, scId: string | null, localId?: 
   const job = useCacheJob(kind, scId, localId)
   if (!job || job.total === 0) return null
   return Math.min(100, Math.round((job.done / job.total) * 100))
+}
+
+/** Explicitly saves one online track, then starts the existing cache job. */
+export async function requestTrackCache(track: ScTrack): Promise<CacheRequestOutcome> {
+  const tracks = downloadable([track])
+  if (tracks.length === 0) return 'empty'
+  if (jobs.some((job) => job.id === `track:${track.id}` && job.state === 'running')) {
+    return 'started'
+  }
+  const localId = await api.scImportTrack(track)
+  bumpLibraryVersion()
+  startJob('track', track.id, localId, track.title, tracks, false)
+  return 'started'
 }
 
 /** Only tracks that can actually be downloaded: HLS never lands in the cache. */
@@ -407,12 +420,13 @@ export async function runArtistCache(
   mergeInto: number | null,
   favorite: boolean,
 ): Promise<number> {
-  const artistId = await invoke<number>('sc_import_artist', {
-    name: artist.username,
+  const artistId = await api.scImportArtist(
+    artist.username,
+    artist.avatarUrl,
     tracks,
     albumOf,
     mergeInto,
-  })
+  )
   if (favorite) {
     // `toggleFavoriteArtist` would *remove* an artist that is already there.
     const already = await api.isFavoriteArtist(artistId).catch(() => false)

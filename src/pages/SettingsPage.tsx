@@ -925,6 +925,9 @@ export default function SettingsPage() {
   const foldersApi = useFolders()
   const scan = useScanProgress()
 
+  const settingsPageRef = useRef<HTMLDivElement>(null)
+  const settingsContentRef = useRef<HTMLDivElement>(null)
+
   const [cat, setCat] = useState<Category>('general')
   const [advOpen, setAdvOpen] = useState(false)
   const [sysFonts, setSysFonts] = useState<string[] | null>(null)
@@ -932,6 +935,32 @@ export default function SettingsPage() {
   const [bgBusy, setBgBusy] = useState(false)
   const activeCategory = NAV.find((item) => item.id === cat) ?? NAV[0]
   const ActiveCategoryIcon = activeCategory.Icon
+
+  useEffect(() => {
+    const page = settingsPageRef.current
+    const content = settingsContentRef.current
+    if (!page || !content) return
+
+    const routeWheel = (event: WheelEvent) => {
+      if (content.contains(event.target as Node)) return
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
+      if (event.target instanceof Element && event.target.closest('button, input, select, textarea, [contenteditable="true"]')) return
+
+      const delta = event.deltaMode === 1
+        ? event.deltaY * 16
+        : event.deltaMode === 2
+          ? event.deltaY * content.clientHeight
+          : event.deltaY
+      const maxScroll = Math.max(0, content.scrollHeight - content.clientHeight)
+      const next = Math.max(0, Math.min(maxScroll, content.scrollTop + delta))
+      if (next === content.scrollTop) return
+      content.scrollTop = next
+      event.preventDefault()
+    }
+
+    page.addEventListener('wheel', routeWheel, { passive: false })
+    return () => page.removeEventListener('wheel', routeWheel)
+  }, [])
 
   const fontMode: FontMode =
     settings.font.importedPath !== null ? 'file' : settings.font.family !== null ? 'system' : 'default'
@@ -1110,7 +1139,7 @@ export default function SettingsPage() {
   /* eslint-enable react-hooks/exhaustive-deps */
 
   return (
-    <div className="page set-page">
+    <div ref={settingsPageRef} className="page set-page">
       <div className="set-layout">
         <div className="set-side">
           <div className="set-head">
@@ -1134,7 +1163,10 @@ export default function SettingsPage() {
           </nav>
         </div>
 
-        <div className={cat === 'appearance' ? 'set-content set-appearance-content' : 'set-content'}>
+        <div
+          ref={settingsContentRef}
+          className={cat === 'appearance' ? 'set-content set-appearance-content' : 'set-content'}
+        >
           <header className="set-category-head">
             <span className="set-category-icon"><ActiveCategoryIcon size={21} /></span>
             <span className="set-category-copy">

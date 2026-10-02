@@ -21,6 +21,10 @@ pub struct ScTrack {
     pub artist: String,
     pub duration_ms: i64,
     pub artwork_url: Option<String>,
+    /// The SoundCloud uploader's profile artwork. This is only copied into the
+    /// local artist catalog when the track is explicitly saved or cached.
+    #[serde(default)]
+    pub artist_avatar_url: Option<String>,
     #[serde(default)]
     pub permalink_url: Option<String>,
     // sent by the SoundCloud API; the player's lightweight upsert omits them
@@ -142,6 +146,10 @@ fn map_track(item: &Value) -> Option<ScTrack> {
         .to_string();
     let duration_ms = item.get("duration").and_then(|v| v.as_i64()).unwrap_or(0);
     let artwork_url = item.get("artwork_url").and_then(|v| v.as_str()).map(upscale_artwork);
+    let artist_avatar_url = item
+        .pointer("/user/avatar_url")
+        .and_then(|v| v.as_str())
+        .map(upscale_artwork);
     let permalink_url = item
         .get("permalink_url")
         .and_then(|v| v.as_str())
@@ -172,6 +180,7 @@ fn map_track(item: &Value) -> Option<ScTrack> {
         artist,
         duration_ms,
         artwork_url,
+        artist_avatar_url,
         permalink_url,
         streamable,
         has_progressive,
