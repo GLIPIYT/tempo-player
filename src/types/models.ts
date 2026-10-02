@@ -282,6 +282,8 @@ export interface UnifiedTrack {
   dbId: number | null
   title: string
   artists: string[]
+  /** SoundCloud uploader avatar, retained so cache imports can file the artist. */
+  artistAvatarUrl?: string | null
   album: string | null
   durationSec: number | null
   coverPath: string | null

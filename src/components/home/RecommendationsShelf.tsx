@@ -1,7 +1,8 @@
-import { useEffect, useRef, type MouseEvent } from 'react'
-import { Download, Play, RefreshCw } from 'lucide-react'
+import { useEffect, useRef, type MouseEvent, type PointerEvent } from 'react'
+import { ChevronLeft, ChevronRight, Download, Play, RefreshCw } from 'lucide-react'
 import type { ScTrack } from '../../types/models'
 import { useT } from '../../i18n'
+import { beginTrackDrag, consumeDragClick } from '../../dnd/trackDrag'
 
 interface RecommendationsShelfProps {
   tracks: ScTrack[]
@@ -9,8 +10,10 @@ interface RecommendationsShelfProps {
   error: string | null
   hasLoaded: boolean
   hasMore: boolean
+  cachedTrackIds: ReadonlySet<string>
   onPlay: (index: number) => void
   onCache: (track: ScTrack) => void
+  onDropToPlaylist: (playlistId: number, track: ScTrack) => void
   onRetry: () => void
   onLoadMore: () => void
   onNearViewport: () => void
@@ -23,8 +26,10 @@ export default function RecommendationsShelf({
   error,
   hasLoaded,
   hasMore,
+  cachedTrackIds,
   onPlay,
   onCache,
+  onDropToPlaylist,
   onRetry,
   onLoadMore,
   onNearViewport,
@@ -32,6 +37,8 @@ export default function RecommendationsShelf({
 }: RecommendationsShelfProps) {
   const t = useT()
   const sectionRef = useRef<HTMLElement>(null)
+  const railRef = useRef<HTMLDivElement>(null)
+  const scroll = (direction: number) => railRef.current?.scrollBy({ left: direction * 460, behavior: 'smooth' })
 
   useEffect(() => {
     const section = sectionRef.current
@@ -74,6 +81,12 @@ export default function RecommendationsShelf({
               {t('Load more')}
             </button>
           ) : null}
+          {tracks.length > 4 ? (
+            <div className="home-rail-controls home-recommendations-scroll-controls">
+              <button type="button" aria-label={t('Scroll left')} onClick={() => scroll(-1)}><ChevronLeft size={15} /></button>
+              <button type="button" aria-label={t('Scroll right')} onClick={() => scroll(1)}><ChevronRight size={15} /></button>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -82,17 +95,28 @@ export default function RecommendationsShelf({
           {Array.from({ length: 5 }, (_, index) => <span className="home-recommendation-skeleton" key={index} />)}
         </div>
       ) : tracks.length > 0 ? (
-        <div className="home-track-rail home-recommendation-rail" tabIndex={0} aria-label={t('Recommended for you')}>
+        <div className="home-track-rail home-recommendation-rail" ref={railRef} tabIndex={0} aria-label={t('Recommended for you')}>
           {tracks.map((track, index) => (
             <div className="home-recommendation-card" key={track.id}>
-              <button type="button" className="home-rail-track" onClick={() => onPlay(index)}>
+              <button
+                type="button"
+                className="home-rail-track"
+                onClick={() => { if (!consumeDragClick()) onPlay(index) }}
+                onPointerDown={(event: PointerEvent<HTMLButtonElement>) => beginTrackDrag({
+                  e: event,
+                  title: track.title,
+                  coverPath: track.artworkUrl,
+                  allowButtons: true,
+                  onDrop: (playlistId) => onDropToPlaylist(playlistId, track),
+                })}
+              >
                 <span className="home-recommendation-cover">
                   {track.artworkUrl ? <img src={track.artworkUrl} alt="" loading="lazy" /> : <span aria-hidden="true">♪</span>}
                 </span>
                 <strong title={track.title}>{track.title}</strong>
                 <small title={track.artist}>{track.artist}</small>
               </button>
-              {track.streamable && track.hasProgressive ? (
+              {track.streamable && track.hasProgressive && !cachedTrackIds.has(track.id) ? (
                 <button
                   type="button"
                   className="home-recommendation-cache"

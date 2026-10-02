@@ -1462,6 +1462,25 @@ pub async fn sc_get_playback(
     .await
 }
 
+/// Returns which requested SoundCloud IDs already exist in the local cache.
+/// This check is cache-only and never contacts SoundCloud or starts a download.
+#[tauri::command]
+pub fn sc_get_cached_track_ids(
+    state: State<'_, AppState>,
+    track_ids: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let mut cached = Vec::new();
+    for track_id in track_ids.into_iter().take(256) {
+        if track_id.is_empty() || !track_id.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        if crate::soundcloud_store::existing_cached_file(&state.db, &state.sc_cache_dir, &track_id)?.is_some() {
+            cached.push(track_id);
+        }
+    }
+    Ok(cached)
+}
+
 /// Warms the cache for a track that is about to play.
 ///
 /// With cache-before-play on, the next track in the queue is fetched while the
@@ -1471,17 +1490,38 @@ pub async fn sc_get_playback(
 pub async fn sc_precache(
     app: AppHandle,
     state: State<'_, AppState>,
-    track_id: String,
+    track: crate::soundcloud::ScTrack,
 ) -> Result<(), String> {
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
-    let _ = crate::soundcloud_store::precache(
+    crate::soundcloud_store::precache_track(
         state.db.clone(),
         root,
         state.covers_dir.clone(),
-        &track_id,
-        Some(app),
+        &track,
+        None,
     )
-    .await;
+    .await?;
+    let Some(cached_path) = crate::soundcloud_store::existing_cached_file(
+        &state.db,
+        &state.sc_cache_dir,
+        &track.id,
+    )? else {
+        return Ok(());
+    };
+    let (_, avatar) = file_sc_track_for_library(&state, &track, None, None)?;
+    let size = std::fs::metadata(&cached_path).map_err(|error| error.to_string())?.len() as i64;
+    state.db.mark_sc_cached(&track.id, size)?;
+    let _ = state.db.enrich_sc_track_from_tags(&track.id, &cached_path, &state.covers_dir);
+    if let Some((artist_id, url)) = avatar {
+        let db = state.db.clone();
+        let directory = state.avatars_dir.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = save_sc_avatar_if_missing(&db, &directory, artist_id, &url).await {
+                eprintln!("SoundCloud artist avatar could not be saved: {error}");
+            }
+        });
+    }
+    let _ = app.emit(crate::soundcloud_store::LIBRARY_CHANGED_EVENT, track.id);
     Ok(())
 }
 
@@ -2090,14 +2130,39 @@ pub async fn sc_import_artist(
 }
 
 #[tauri::command]
-pub fn sc_upsert_track(state: State<'_, AppState>, track: crate::soundcloud::ScTrack) -> Result<i64, String> {
-    state.db.upsert_sc_track(
+pub async fn sc_upsert_track(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    track: crate::soundcloud::ScTrack,
+) -> Result<i64, String> {
+    let track_id = state.db.upsert_sc_track(
         &track.id,
         &track.title,
         &track.artist,
         track.duration_ms,
         track.artwork_url.as_deref(),
-    )
+    )?;
+    if let Some(cached_path) = crate::soundcloud_store::existing_cached_file(
+        &state.db,
+        &state.sc_cache_dir,
+        &track.id,
+    )? {
+        let size = std::fs::metadata(&cached_path).map_err(|error| error.to_string())?.len() as i64;
+        state.db.mark_sc_cached(&track.id, size)?;
+        let (_, avatar) = file_sc_track_for_library(&state, &track, None, None)?;
+        let _ = state.db.enrich_sc_track_from_tags(&track.id, &cached_path, &state.covers_dir);
+        if let Some((artist_id, url)) = avatar {
+            let db = state.db.clone();
+            let directory = state.avatars_dir.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = save_sc_avatar_if_missing(&db, &directory, artist_id, &url).await {
+                    eprintln!("SoundCloud artist avatar could not be saved: {error}");
+                }
+            });
+        }
+        let _ = app.emit(crate::soundcloud_store::LIBRARY_CHANGED_EVENT, track.id);
+    }
+    Ok(track_id)
 }
 
 #[tauri::command]

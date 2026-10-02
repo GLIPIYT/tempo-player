@@ -257,6 +257,10 @@ export const api = {
   scRelatedTracks: (seedIds: string[], limit: number) =>
     invoke<ScTrack[]>('sc_related_tracks', { seedIds, limit }),
 
+  /** Cache-only status lookup; it never resolves stream URLs or starts downloads. */
+  scGetCachedTrackIds: (trackIds: string[]) =>
+    invoke<string[]>('sc_get_cached_track_ids', { trackIds }),
+
   // Read straight from SoundCloud; nothing is written to the library, which is
   // what lets a playlist or artist be browsed before deciding to keep it.
   scGetPlaylist: (id: string) => invoke<ScPlaylistDetail>('sc_get_playlist', { id }),
@@ -355,8 +359,9 @@ export const api = {
       waitForCache,
     }),
 
-  /** Fire-and-forget: fetches a track into the cache ahead of it being played. */
-  scPrecache: (trackId: string) => invoke<void>('sc_precache', { trackId }),
+  /** Fetches a track ahead of playback and files it once the cache is ready. */
+  scPrecache: (track: Pick<ScTrack, 'id' | 'title' | 'artist' | 'durationMs' | 'artworkUrl'> & Partial<Pick<ScTrack, 'artistAvatarUrl' | 'permalinkUrl'>>) =>
+    invoke<void>('sc_precache', { track }),
   upsertScTrack: (track: Omit<ScTrack, 'artistAvatarUrl' | 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'> & Partial<Pick<ScTrack, 'artistAvatarUrl' | 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'>>) =>
     invoke<number>('sc_upsert_track', { track }),
   fetchOnlineLyricsAll: (

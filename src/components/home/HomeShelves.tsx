@@ -1,4 +1,4 @@
-import { useRef, type MouseEvent, type PointerEvent } from 'react'
+import { useRef, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import { ArrowUpRight, ChevronLeft, ChevronRight, Play } from 'lucide-react'
 import type { Playlist, TopTrackItem, Track } from '../../types/models'
 import { useT } from '../../i18n'
@@ -17,6 +17,7 @@ interface HomeShelvesProps {
   likedTracks: Track[]
   likesPlaylist: Playlist | null
   featuredPlaylists: Playlist[]
+  recommendations?: ReactNode
   hasPlaylistHistory: boolean
   unknownArtist: string
   onPlay: (tracks: Track[], index: number) => void
@@ -82,7 +83,7 @@ function TrackRail({ title, id, tracks, unknownArtist, caption, onOpen, onPlay, 
   )
 }
 
-export default function HomeShelves({ topTracks, recentAdded, recentPlays, dormantTracks, likedTracks, likesPlaylist, featuredPlaylists, hasPlaylistHistory, unknownArtist, onPlay, onPlayPlaylist, onOpenPlaylist, onTrackMenu, onSectionMenu }: HomeShelvesProps) {
+export default function HomeShelves({ topTracks, recentAdded, recentPlays, dormantTracks, likedTracks, likesPlaylist, featuredPlaylists, recommendations, hasPlaylistHistory, unknownArtist, onPlay, onPlayPlaylist, onOpenPlaylist, onTrackMenu, onSectionMenu }: HomeShelvesProps) {
   const t = useT()
   const topList = topTracks.map((item) => item.track)
   const playCounts = new Map(topTracks.map((item) => [item.track.id, item.playCount]))
@@ -93,12 +94,12 @@ export default function HomeShelves({ topTracks, recentAdded, recentPlays, dorma
 
   return (
     <>
-      {playedVisible ? (
-        <TrackRail title={t('Listened recently')} id="home.played" tracks={recentPlays} unknownArtist={unknownArtist} onPlay={onPlay} onTrackMenu={onTrackMenu} onSectionMenu={onSectionMenu} />
-      ) : null}
-
+      {recommendations}
       <div className="home-content-grid">
         <div className="home-content-main">
+          {playedVisible ? (
+            <TrackRail title={t('Listened recently')} id="home.played" tracks={recentPlays} unknownArtist={unknownArtist} onPlay={onPlay} onTrackMenu={onTrackMenu} onSectionMenu={onSectionMenu} />
+          ) : null}
           <TrackRail title={t('Most played')} id="home.top" tracks={topList} caption={(track) => `${track.artistName ?? unknownArtist} · ${playCounts.get(track.id) ?? 0} ${t('plays')}`} unknownArtist={unknownArtist} onPlay={onPlay} onTrackMenu={onTrackMenu} onSectionMenu={onSectionMenu} />
           <TrackRail title={t('Long time no listen')} id="home.dormant" tracks={dormantTracks} unknownArtist={unknownArtist} onPlay={onPlay} onTrackMenu={onTrackMenu} onSectionMenu={onSectionMenu} />
           <TrackRail title={t('Likes')} id="home.likes" tracks={likedTracks} unknownArtist={unknownArtist} onOpen={likesPlaylist ? () => onOpenPlaylist(likesPlaylist) : undefined} onPlay={onPlay} onTrackMenu={onTrackMenu} onSectionMenu={onSectionMenu} />

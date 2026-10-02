@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useMemo,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -29,6 +30,7 @@ import { buildHourMixes } from '../utils/hourMixes'
 import { scTrackToUnified } from '../utils/unified'
 import { requestTrackCache } from '../soundcloud/cacheJobs'
 import { useSoundCloudRecommendations } from '../hooks/useSoundCloudRecommendations'
+import { onSoundcloudCacheReady } from '../api/events'
 import {
   anySectionHidden,
   hideSectionUntilTomorrow,
@@ -72,6 +74,45 @@ export default function HomePage() {
   const hourPicks = useAsync(() => api.getHourPicks(30), [version])
   const top = useAsync(() => api.getTopTracks(40), [version])
   const recommendations = useSoundCloudRecommendations(top.data)
+  const [cachedRecommendationIds, setCachedRecommendationIds] = useState<ReadonlySet<string>>(() => new Set())
+  useEffect(() => {
+    let cancelled = false
+    const ids = recommendations.tracks.map((track) => track.id)
+    if (ids.length === 0) {
+      setCachedRecommendationIds(new Set())
+      return
+    }
+
+    void api.scGetCachedTrackIds(ids).then((cachedIds) => {
+      if (cancelled) return
+      setCachedRecommendationIds((previous) => {
+        const next = new Set(ids.filter((id) => previous.has(id)))
+        for (const id of cachedIds) next.add(id)
+        return next
+      })
+    }).catch(() => undefined)
+
+    return () => { cancelled = true }
+  }, [recommendations.tracks])
+  useEffect(() => {
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+    void onSoundcloudCacheReady((trackId) => {
+      setCachedRecommendationIds((previous) => {
+        if (previous.has(trackId)) return previous
+        const next = new Set(previous)
+        next.add(trackId)
+        return next
+      })
+    }).then((stop) => {
+      if (cancelled) stop()
+      else unlisten = stop
+    }).catch(() => undefined)
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [])
   const played = useAsync(async () => {
     const since = Math.floor(Date.now() / 1000) - 30 * 86400
     return dedupeRecent((await api.getHistory(100, 0)).filter((entry) => entry.playedAt >= since), 16)
@@ -218,6 +259,16 @@ export default function HomePage() {
     }
   }
 
+  const addRecommendationToPlaylist = (playlistId: number, track: ScTrack) => {
+    const playlist = featuredPlaylists.find((item) => item.id === playlistId)
+    void api.addScTrackToPlaylist(playlistId, track)
+      .then(() => {
+        bumpLibraryVersion()
+        toast.show(`${t('Added to')} ${playlist?.name ?? t('playlist')}`)
+      })
+      .catch((cause: unknown) => toast.show(cause instanceof Error ? cause.message : String(cause), 'error'))
+  }
+
   return (
     <div className="page tempo-home">
       {error ? <div className="error-line">{error}</div> : null}
@@ -298,6 +349,23 @@ export default function HomePage() {
             likedTracks={playlistData.data?.likedTracks ?? []}
             likesPlaylist={playlistData.data?.likes ?? null}
             featuredPlaylists={featuredPlaylists}
+            recommendations={!hidden('home.recommendations') ? (
+              <RecommendationsShelf
+                tracks={recommendations.tracks}
+                loading={recommendations.loading}
+                error={recommendations.error}
+                hasLoaded={recommendations.hasLoaded}
+                hasMore={recommendations.hasMore}
+                cachedTrackIds={cachedRecommendationIds}
+                onPlay={playRecommendations}
+                onCache={cacheRecommendation}
+                onDropToPlaylist={addRecommendationToPlaylist}
+                onRetry={recommendations.retry}
+                onLoadMore={recommendations.loadMore}
+                onNearViewport={recommendations.activate}
+                onSectionMenu={(event) => sectionMenu(event, { title: t('Recommended for you'), id: 'home.recommendations' })}
+              />
+            ) : null}
             hasPlaylistHistory={hasPlaylistHistory}
             unknownArtist={unknownArtist}
             onPlay={playSection}
@@ -306,22 +374,6 @@ export default function HomePage() {
             onTrackMenu={trackContext}
             onSectionMenu={sectionMenu}
           />
-
-          {!hidden('home.recommendations') ? (
-            <RecommendationsShelf
-              tracks={recommendations.tracks}
-              loading={recommendations.loading}
-              error={recommendations.error}
-              hasLoaded={recommendations.hasLoaded}
-              hasMore={recommendations.hasMore}
-              onPlay={playRecommendations}
-              onCache={cacheRecommendation}
-              onRetry={recommendations.retry}
-              onLoadMore={recommendations.loadMore}
-              onNearViewport={recommendations.activate}
-              onSectionMenu={(event) => sectionMenu(event, { title: t('Recommended for you'), id: 'home.recommendations' })}
-            />
-          ) : null}
 
           {/* without this, hiding every section would leave nothing to
               right-click and no way back */}

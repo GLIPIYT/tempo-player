@@ -247,7 +247,9 @@ export function beginTrackDrag(opts: {
   e: ReactPointerEvent<HTMLElement>
   title: string
   coverPath: string | null
-  trackId: number
+  trackId?: number
+  /** External tracks are imported/cached when dropped into a local playlist. */
+  onDrop?: (playlistId: number) => void
   /** allow starting the drag from inside a <button> (home page cards are buttons) */
   allowButtons?: boolean
   /** Optional in-place sort targets; playlist drops remain copy operations. */
@@ -261,7 +263,7 @@ export function beginTrackDrag(opts: {
   }
 }): void {
   const { e, title, coverPath, trackId } = opts
-  if (!Number.isInteger(trackId) || trackId <= 0) return
+  if (!opts.onDrop && (!Number.isInteger(trackId) || (trackId ?? 0) <= 0)) return
   const el = e.currentTarget
   if (!opts.allowButtons && (e.target as HTMLElement).closest('button')) return
   e.preventDefault()
@@ -288,7 +290,9 @@ export function beginTrackDrag(opts: {
     activated: false,
     targetId: null,
     trackId,
-    onTrackDrop: (playlistId, tid) => playlistDropper?.(playlistId, tid),
+    onTrackDrop: opts.onDrop
+      ? (playlistId) => opts.onDrop?.(playlistId)
+      : (playlistId, tid) => playlistDropper?.(playlistId, tid),
     sortGroup: opts.sort?.group,
     sortPosition: opts.sort?.position,
     onSortDrop: opts.sort?.onDrop,

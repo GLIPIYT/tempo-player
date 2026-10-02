@@ -476,7 +476,7 @@ html.theme-gradient .home-mix-art::after {
 }
 .hour-mix-page .editorial-detail-title { color: #fff; }
 
-.home-content-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr); align-items: start; gap: 30px; }
+.home-content-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr); align-items: stretch; gap: 30px; }
 .home-content-main, .home-content-side { min-width: 0; }
 .home-section-tools, .home-rail-controls { display: flex; align-items: center; gap: 6px; }
 .home-rail-controls button {
@@ -534,7 +534,8 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
 .home-rail-track strong { margin-top: 7px; font-size: 11px; }
 .home-rail-track small { margin-top: 2px; color: var(--text-muted); font-size: 10px; }
 .home-rail-track:hover strong { color: var(--accent-strong); }
-.home-recommendations { margin-top: 25px; }
+.home-recommendations { margin-top: 0; }
+.home-recommendations-scroll-controls { margin-left: auto; }
 .home-recommendations-title { display: grid; gap: 3px; }
 .home-recommendations-title small { color: var(--text-muted); font-size: 10px; }
 .home-recommendations-play { gap: 6px; }

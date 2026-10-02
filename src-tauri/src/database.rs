@@ -1075,14 +1075,22 @@ impl Db {
                  file_size, modified_at, added_at, source, external_id, search_text) \
                  VALUES(?1, NULL, ?2, ?3, ?4, ?5, 0, 0, ?6, 'soundcloud', ?7, ?8) \
                  ON CONFLICT(path) DO UPDATE SET \
-                 title = excluded.title, artist_name = excluded.artist_name, \
-                 duration_sec = excluded.duration_sec, cover_path = excluded.cover_path, \
-                 search_text = excluded.search_text \
-                 RETURNING id",
+                 title = CASE WHEN trim(excluded.title) <> '' THEN excluded.title ELSE tracks.title END, \
+                 artist_name = CASE WHEN trim(excluded.artist_name) <> '' AND lower(trim(excluded.artist_name)) <> 'unknown' \
+                                    THEN excluded.artist_name ELSE tracks.artist_name END, \
+                 duration_sec = CASE WHEN excluded.duration_sec > 0 THEN excluded.duration_sec ELSE tracks.duration_sec END, \
+                 cover_path = COALESCE(NULLIF(trim(excluded.cover_path), ''), tracks.cover_path) \
+                 RETURNING id, title, artist_name",
                 params![path, title, artist, duration_sec, artwork_url, now(), sc_id, search_text],
-                |row| row.get(0),
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?)),
             )
             .map_err(db_err)
+            .and_then(|(id, saved_title, saved_artist)| {
+                let search_text = build_search_text(&saved_title, saved_artist.as_deref().unwrap_or(""), "", "");
+                conn.execute("UPDATE tracks SET search_text = ?1 WHERE id = ?2", params![search_text, id])
+                    .map_err(db_err)?;
+                Ok(id)
+            })
         })
     }
 
@@ -2370,7 +2378,48 @@ impl Db {
         for (external_id, file) in &cached_files {
             let _ = self.enrich_sc_track_from_tags(external_id, file, covers_dir);
         }
+        self.link_cached_sc_tracks_to_artists()?;
         Ok(cached)
+    }
+
+    /// Older stream-playback rows kept the SoundCloud uploader only in
+    /// `artist_name`. Once a cache file exists, make those artists discoverable
+    /// on the Artists page without overriding artist links from file tags.
+    fn link_cached_sc_tracks_to_artists(&self) -> Result<(), String> {
+        self.with_conn(|conn| {
+            let unlinked = {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT id, title, artist_name FROM tracks \
+                         WHERE source = 'soundcloud' AND cached_at IS NOT NULL \
+                           AND artist_id IS NULL AND trim(COALESCE(artist_name, '')) <> '' \
+                           AND lower(trim(artist_name)) <> 'unknown'",
+                    )
+                    .map_err(db_err)?;
+                let rows = stmt
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    })
+                    .map_err(db_err)?;
+                rows.collect::<Result<Vec<_>, _>>().map_err(db_err)?
+            };
+
+            for (track_id, title, artist_name) in unlinked {
+                let artist_id = get_or_create_artist(conn, &artist_name)?;
+                let search_text = build_search_text(&title, &artist_name, "", "");
+                conn.execute(
+                    "UPDATE tracks SET artist_id = ?1, search_text = ?2 \
+                     WHERE id = ?3 AND artist_id IS NULL",
+                    params![artist_id, search_text, track_id],
+                )
+                .map_err(db_err)?;
+            }
+            Ok(())
+        })
     }
 
     pub fn get_artist_tracks(&self, artist_id: i64) -> Result<Vec<Track>, String> {
@@ -5456,7 +5505,7 @@ mod tests {
         assert_eq!(title, "Updated Title");
         assert_eq!(artist_name.as_deref(), Some("SC Artist Two"));
         assert!((duration_sec.unwrap() - 201.5).abs() < 1e-9);
-        assert_eq!(cover_path, None);
+        assert_eq!(cover_path.as_deref(), Some("https://art/1.jpg"));
         let (source, external_id, folder_is_null): (String, Option<String>, i64) = db
             .with_conn(|c| {
                 c.query_row(

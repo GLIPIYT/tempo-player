@@ -9,6 +9,7 @@ export function scTrackToUnified(t: ScTrack): UnifiedTrack {
     dbId: null,
     title: t.title,
     artists: [t.artist],
+    artistAvatarUrl: t.artistAvatarUrl,
     album: null,
     durationSec: t.durationMs / 1000,
     coverPath: t.artworkUrl,

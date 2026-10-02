@@ -194,6 +194,7 @@ pub async fn get_playback(
             track_id,
             Some(info.clone()),
             app.clone(),
+            None,
         )
         .await
         .is_ok()
@@ -212,6 +213,7 @@ pub async fn get_playback(
             &background_track_id,
             Some(background_info),
             app,
+            None,
         )
         .await;
     });
@@ -239,7 +241,24 @@ pub async fn precache(
     app: Option<AppHandle>,
 ) -> Result<(), String> {
     let dir = cache_dir(&db, &default_root);
-    ensure_cached_file(db, dir, covers_dir, track_id, None, app).await
+    ensure_cached_file(db, dir, covers_dir, track_id, None, app, None).await
+}
+
+/// Downloads a queued SoundCloud track and creates its library row only after
+/// the file exists. This prevents an ahead-of-play download from being exposed
+/// as an uncached, metadata-free library item if the download fails.
+pub async fn precache_track(
+    db: Arc<Db>,
+    default_root: PathBuf,
+    covers_dir: PathBuf,
+    track: &crate::soundcloud::ScTrack,
+    app: Option<AppHandle>,
+) -> Result<(), String> {
+    if track.id.is_empty() || track.id.len() > 32 || !track.id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("invalid SoundCloud track ID".into());
+    }
+    let dir = cache_dir(&db, &default_root);
+    ensure_cached_file(db, dir, covers_dir, &track.id, None, app, Some(track)).await
 }
 
 /// Downloads one ID once even when playback and queue prefetch reach it at the
@@ -252,11 +271,21 @@ async fn ensure_cached_file(
     track_id: &str,
     known_info: Option<crate::soundcloud::StreamInfo>,
     app: Option<AppHandle>,
+    library_track: Option<&crate::soundcloud::ScTrack>,
 ) -> Result<(), String> {
     let dest = cached_file_path(&dir, track_id);
     let lock = cache_download_lock(&dest);
     let _guard = lock.lock().await;
     if dest.is_file() {
+        if let Some(track) = library_track {
+            db.upsert_sc_track(
+                &track.id,
+                &track.title,
+                &track.artist,
+                track.duration_ms,
+                track.artwork_url.as_deref(),
+            )?;
+        }
         finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
         return Ok(());
     }
@@ -269,6 +298,15 @@ async fn ensure_cached_file(
         return Err("hls cannot be cached".to_string());
     }
     download_to_cache(&info.url, &dest).await?;
+    if let Some(track) = library_track {
+        db.upsert_sc_track(
+            &track.id,
+            &track.title,
+            &track.artist,
+            track.duration_ms,
+            track.artwork_url.as_deref(),
+        )?;
+    }
     finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
     enforce_cache_limit(&db, &dir, cache_limit(&db));
     Ok(())

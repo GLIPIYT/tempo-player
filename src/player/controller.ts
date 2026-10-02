@@ -760,7 +760,15 @@ export class PlayerController {
         this.prefetchActiveKey = item.key
         try {
           if (item.source === 'soundcloud') {
-            await api.scPrecache(item.track.sourceId)
+            await api.scPrecache({
+              id: item.track.sourceId,
+              title: item.track.title,
+              artist: item.track.artists[0] ?? '',
+              durationMs: Math.round((item.track.durationSec ?? 0) * 1000),
+              artworkUrl: /^https?:\/\//.test(item.track.coverPath ?? '') ? item.track.coverPath : null,
+              artistAvatarUrl: item.track.artistAvatarUrl ?? null,
+              permalinkUrl: item.track.externalUrl,
+            })
           } else {
             await api.ytdlpCache(
               getSettings().ytdlp.path,

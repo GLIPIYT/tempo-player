@@ -186,6 +186,7 @@ pub fn run() {
             commands::fetch_online_lyrics,
             commands::fetch_online_lyrics_all,
             commands::sc_get_playback,
+            commands::sc_get_cached_track_ids,
             commands::sc_precache,
             commands::sc_upsert_track,
             commands::add_sc_track_to_playlist,
