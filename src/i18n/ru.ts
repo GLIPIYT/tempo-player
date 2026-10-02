@@ -395,6 +395,7 @@ export const ru: Record<string, string> = {
   'Edit lyrics': 'Редактировать текст',
   'Lyrics timing': 'Тайминг текста',
   'Lyrics speed': 'Скорость лирики',
+  'Online lyrics': 'Онлайн-текст',
   'Shifting the timing pins these lyrics to the track.':
     'Сдвиг тайминга закрепит этот текст за треком.',
   'Lyrics earlier by 0.5s': 'Текст раньше на 0,5 с',

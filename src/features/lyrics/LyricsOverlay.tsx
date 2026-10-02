@@ -144,6 +144,7 @@ function sameExactPin(c: LyricsCandidate | null, pinned: LyricsOverride | null):
 
 function providerLabel(provider: string, t: (k: string) => string): string {
   if (provider === 'embedded') return t('Embedded')
+  if (provider === 'online') return t('Online lyrics')
   if (provider === 'lrclib') return 'LRCLib'
   if (provider === 'textyl') return 'Textyl'
   if (provider === 'musixmatch') return 'Musixmatch'
@@ -927,6 +928,21 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   // Only tracks with a database row can pin - there is nothing to pin to otherwise,
   // so SoundCloud results that were never cached keep the session-only dropdown.
   const canPin = track?.dbId != null
+  const sharedLyrics = lyricsService.getCurrent()
+  const activeLyrics = sharedLyrics?.trackId === track?.sourceId ? sharedLyrics : null
+  const activeServiceCandidate = useMemo((): LyricsCandidate | null => {
+    const result = activeLyrics?.sourceResult ?? activeLyrics?.result
+    if (!result) return null
+    return {
+      provider: activeLyrics?.provider || 'online',
+      result,
+      plain: result.kind === 'plain' ? result.text : null,
+      syncedLrc: result.kind === 'synced' ? formatLrc(result.lines) : null,
+    }
+  }, [activeLyrics?.generation, activeLyrics?.provider, activeLyrics?.sourceResult, activeLyrics?.result])
+  const selectionCandidates = candidates.length > 0
+    ? candidates
+    : activeServiceCandidate ? [activeServiceCandidate] : []
 
   useEffect(() => {
     let cancelled = false
@@ -1123,8 +1139,8 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   }, [onClose])
 
   const pinnedIndex = useMemo(
-    () => (pinned ? candidates.findIndex((c) => samePin(c, pinned)) : -1),
-    [candidates, pinned],
+    () => (pinned ? selectionCandidates.findIndex((c) => samePin(c, pinned)) : -1),
+    [selectionCandidates, pinned],
   )
   const offsetMs = pinned?.offsetMs ?? 0
 
@@ -1160,8 +1176,8 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
     [editedCandidate, pinned, pinnedIndex],
   )
   const baseCandidates = useMemo(
-    () => (pinnedExtra ? [pinnedExtra, ...candidates] : candidates),
-    [pinnedExtra, candidates],
+    () => (pinnedExtra ? [pinnedExtra, ...selectionCandidates] : selectionCandidates),
+    [pinnedExtra, selectionCandidates],
   )
   const rawViewCandidates = useMemo(
     () => editedCandidate ? [...baseCandidates, editedCandidate] : baseCandidates,
@@ -1188,10 +1204,9 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
     const result = pinned ? overridePlaybackResult(pinned) : sourceSelected?.result ?? null
     if (!result) return
     lyricsService.setActiveCandidate(track.sourceId, result, track.durationSec ?? null,
-      lyricSourceKey(result, pinned?.provider ?? sourceSelected?.provider ?? ''), pinned?.offsetMs ?? 0)
+      lyricSourceKey(result, pinned?.provider ?? sourceSelected?.provider ?? ''), pinned?.offsetMs ?? 0,
+      pinned?.provider ?? sourceSelected?.provider ?? '')
   }, [track, trackKey, candidatesTrackKey, pinnedLoaded, pinned, sourceSelected])
-  const sharedLyrics = lyricsService.getCurrent()
-  const activeLyrics = sharedLyrics?.trackId === track?.sourceId ? sharedLyrics : null
   const lyricsRateKey = activeLyrics?.result?.kind === 'synced'
     ? lyricsRateStorageKey(track, activeLyrics.sourceLyricKey)
     : ''
@@ -1304,19 +1319,20 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       const candidate = rawViewCandidates[viewIdx]
       if (!candidate) return
       const idx = viewIdx - (pinnedExtra ? 1 : 0)
-      if (idx >= 0 && idx < candidates.length) {
+      if (idx >= 0 && idx < selectionCandidates.length) {
         setSelectedIndex(idx)
+        if (candidates.length === 0) setCandidates(selectionCandidates)
         const tr = p.currentTrack
         const key = tr ? `${tr.source}|${tr.sourceId}|${tr.title}|${tr.artists.join(',')}` : ''
-        if (key && candidates.length > 0) {
-          overlayCache.set(key, { candidates, selectedIndex: idx })
+        if (key) {
+          overlayCache.set(key, { candidates: selectionCandidates, selectedIndex: idx })
         }
       }
       // Choosing a provider is the pin gesture - there is no separate confirm.
       // The offset is dropped, since it was tuned against the previous lines.
       void persistPin(candidate, (candidate as OverlayCandidate).savedOffsetMs ?? 0)
     },
-    [p.currentTrack, candidates, persistPin, pinnedExtra, rawViewCandidates],
+    [p.currentTrack, candidates, persistPin, pinnedExtra, rawViewCandidates, selectionCandidates],
   )
 
   /** Back to automatic: drops the row and lets the normal chain resolve again. */
@@ -1605,17 +1621,19 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
             />
           ) : (
             <>
-              {viewCandidates.length > 0 && (!canPin || pinnedLoaded) && (
+              {(viewCandidates.length > 0 || mode !== 'empty') && (!canPin || pinnedLoaded) && (
                 <div className="lyr-head">
                   {canPin && pinned !== null && <PinnedBadge />}
-                  <ProviderDropdown
-                    candidates={viewCandidates}
-                    selectedIndex={viewSelectedIndex}
-                    onSelect={handleSelect}
-                    onReset={handleResetPin}
-                    pinnedIndex={viewPinnedIndex}
-                    canPin={canPin}
-                  />
+                  {viewCandidates.length > 0 ? (
+                    <ProviderDropdown
+                      candidates={viewCandidates}
+                      selectedIndex={viewSelectedIndex}
+                      onSelect={handleSelect}
+                      onReset={handleResetPin}
+                      pinnedIndex={viewPinnedIndex}
+                      canPin={canPin}
+                    />
+                  ) : null}
                   <button className="lyr-manual-toggle" onClick={() => setShowManual((v) => !v)}>
                     {showManual ? t('Hide') : t('Search manually')}
                   </button>

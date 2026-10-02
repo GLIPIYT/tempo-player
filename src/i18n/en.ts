@@ -7,6 +7,7 @@ export const en: Record<string, string> = {
   'Cache track': 'Cache track',
   'This track cannot be cached': 'This track cannot be cached',
   'Lyrics speed': 'Lyrics speed',
+  'Online lyrics': 'Online lyrics',
   'Deep lyrics analysis': 'Deep lyrics analysis',
   'On repeat': 'On repeat',
   'New to you': 'New to you',

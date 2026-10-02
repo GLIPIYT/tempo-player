@@ -8,6 +8,7 @@ import type { LyricsResult } from './types'
 
 export interface CurrentLyrics {
   trackId: string
+  provider: string
   result: LyricsResult | null
   sourceResult: LyricsResult | null
   lyricKey: string
@@ -41,7 +42,7 @@ let pass = createPlaybackTiming()
 const listeners = new Set<() => void>()
 function emit(): void { version++; listeners.forEach(listener => listener()) }
 function activate(trackId: string, sourceResult: LyricsResult | null, durationSec: number | null,
-  sourceLyricKey: string, offsetMs: number): void {
+  sourceLyricKey: string, offsetMs: number, provider: string): void {
   durationSec = mediaDurationSec ?? durationSec
   const lyricKey = JSON.stringify([sourceLyricKey, offsetMs])
   if (current?.trackId === trackId && current.lyricKey === lyricKey && current.durationSec === durationSec) return
@@ -51,7 +52,7 @@ function activate(trackId: string, sourceResult: LyricsResult | null, durationSe
     ? { kind: 'synced', lines: shiftLyricsLines(sourceResult.lines, offsetMs) } : sourceResult
   resolved = resolveLyricTiming(result?.kind === 'synced' ? result.lines : [], durationSec)
   pass = createPlaybackTiming()
-  current = { trackId, result, sourceResult, sourceLyricKey, lyricKey, offsetMs, durationSec, generation,
+  current = { trackId, provider, result, sourceResult, sourceLyricKey, lyricKey, offsetMs, durationSec, generation,
     timing: pass.update(resolved, position, durationSec) }
   emit()
 }
@@ -77,9 +78,9 @@ export const lyricsService = {
     if (timing !== current.timing) { current = { ...current, timing }; emit() }
   },
   setActiveCandidate(trackId: string, result: LyricsResult | null, durationSec: number | null,
-    sourceLyricKey: string, offsetMs = 0): void {
+    sourceLyricKey: string, offsetMs = 0, provider = ''): void {
     if (requestedId !== trackId) return
-    activate(trackId, result, durationSec, sourceLyricKey, offsetMs)
+    activate(trackId, result, durationSec, sourceLyricKey, offsetMs, provider)
   },
   publishAnalysis(trackId: string, lyricKey: string, expectedGeneration: number, analysis: LyricTimingAnalysis): boolean {
     if (!current || current.trackId !== trackId || current.lyricKey !== lyricKey || generation !== expectedGeneration) return false
@@ -100,7 +101,7 @@ export const lyricsService = {
     void fetchLyrics(track, cacheOnline).then(candidate => {
       if (job !== generation || key !== currentKey) return
       activate(track.sourceId, candidate.result, track.durationSec ?? null,
-        lyricSourceKey(candidate.result, candidate.provider), candidate.offsetMs)
+        lyricSourceKey(candidate.result, candidate.provider), candidate.offsetMs, candidate.provider)
     }).catch(() => {})
   },
   invalidate(sourceId?: string): void {
