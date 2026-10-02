@@ -534,6 +534,21 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
 .home-rail-track strong { margin-top: 7px; font-size: 11px; }
 .home-rail-track small { margin-top: 2px; color: var(--text-muted); font-size: 10px; }
 .home-rail-track:hover strong { color: var(--accent-strong); }
+.home-recommendations { margin-top: 25px; }
+.home-recommendations-title { display: grid; gap: 3px; }
+.home-recommendations-title small { color: var(--text-muted); font-size: 10px; }
+.home-recommendations-play { gap: 6px; }
+.home-recommendation-rail { padding-bottom: 7px; }
+.home-recommendation-card { position: relative; flex: 0 0 118px; min-width: 0; }
+.home-recommendation-card .home-rail-track { width: 100%; }
+.home-recommendation-cover { display: grid; width: 118px; height: 118px; place-items: center; overflow: hidden; border-radius: 9px; background: var(--surface); color: var(--text-muted); font-size: 34px; }
+.home-recommendation-cover img { width: 100%; height: 100%; object-fit: cover; }
+.home-recommendation-cache { position: absolute; top: 7px; right: 7px; display: grid; width: 29px; height: 29px; place-items: center; border: 1px solid color-mix(in srgb, white 26%, transparent); border-radius: 50%; background: color-mix(in srgb, #090b10 72%, transparent); color: #fff; backdrop-filter: blur(8px); }
+.home-recommendation-cache:hover { background: var(--accent); }
+.home-recommendation-empty { display: flex; min-height: 82px; align-items: center; padding: 18px; border: 1px dashed var(--border); border-radius: 10px; color: var(--text-muted); font-size: 12px; }
+.home-recommendation-skeletons { display: flex; gap: 12px; overflow: hidden; padding-bottom: 7px; }
+.home-recommendation-skeleton { flex: 0 0 118px; aspect-ratio: 1; border-radius: 9px; background: linear-gradient(100deg, var(--surface) 24%, var(--surface-hover) 38%, var(--surface) 62%); background-size: 300% 100%; animation: home-recommendation-shimmer 1.4s ease-in-out infinite; }
+@keyframes home-recommendation-shimmer { to { background-position-x: -150%; } }
 .home-playlist-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .home-playlist-card { display: flex; align-items: center; min-width: 0; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
 .home-playlist-card:hover { border-color: var(--accent); background: var(--surface-hover); }
@@ -609,4 +624,5 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
   .home-mix-stage.is-picker-open .home-mix-picker,
   .home-mix-dots button::before,
   .home-mix-picker-button > svg { transition: none; }
+  .home-recommendation-skeleton { animation: none; }
 }

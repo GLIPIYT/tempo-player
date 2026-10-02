@@ -1,4 +1,8 @@
 export const ru: Record<string, string> = {
+  'Recommended for you': 'Рекомендации для вас',
+  'Based on what you listen to': 'На основе ваших прослушиваний',
+  'SoundCloud recommendations will appear here.': 'Здесь появятся рекомендации SoundCloud.',
+  'Could not load recommendations': 'Не удалось загрузить рекомендации',
   'Deep lyrics analysis': 'Углубленное анализирование лирики',
   'Not downloaded': 'Не загружено',
   'Ready': 'Готово',

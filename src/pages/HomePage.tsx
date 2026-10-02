@@ -20,6 +20,7 @@ import { toast } from '../components/common/Toast'
 import { trackToUnified } from '../utils/unified'
 import HomeMixFeature from '../components/home/HomeMixFeature'
 import HomeShelves from '../components/home/HomeShelves'
+import RecommendationsShelf from '../components/home/RecommendationsShelf'
 import EmptyState from '../components/common/EmptyState'
 import ScanLine from '../components/common/ScanLine'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
@@ -288,6 +289,20 @@ export default function HomePage() {
             onTrackMenu={trackContext}
             onSectionMenu={sectionMenu}
           />
+
+          {!hidden('home.recommendations') ? (
+            <RecommendationsShelf
+              tracks={[]}
+              loading={false}
+              error={null}
+              hasMore={false}
+              onPlay={() => undefined}
+              onCache={() => undefined}
+              onRetry={() => undefined}
+              onLoadMore={() => undefined}
+              onSectionMenu={(event) => sectionMenu(event, { title: t('Recommended for you'), id: 'home.recommendations' })}
+            />
+          ) : null}
 
           {/* without this, hiding every section would leave nothing to
               right-click and no way back */}

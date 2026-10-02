@@ -1,4 +1,8 @@
 export const en: Record<string, string> = {
+  'Recommended for you': 'Recommended for you',
+  'Based on what you listen to': 'Based on what you listen to',
+  'SoundCloud recommendations will appear here.': 'SoundCloud recommendations will appear here.',
+  'Could not load recommendations': 'Could not load recommendations',
   'Cache track': 'Cache track',
   'This track cannot be cached': 'This track cannot be cached',
   'Lyrics speed': 'Lyrics speed',
