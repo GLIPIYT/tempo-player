@@ -44,6 +44,10 @@ export type TrackKey = `${SourceId}:${string}`
 export type ListeningStartReason = 'manual' | 'queue' | 'autoplay' | 'repeat' | 'restore'
 export type ListeningEndReason = 'select' | 'next' | 'previous' | 'clear' | 'end' | 'error' | 'exit' | 'remove' | 'stop'
 export interface RecommendationProvenance {
+  recommendationId?: string
+  recordingKey?: string
+  seedIds?: string[]
+  placement?: 'home' | 'radio'
   origin: 'home' | 'radio' | 'search' | 'library'
   seedTrackKey?: string
   recordingGroup?: string
@@ -51,6 +55,7 @@ export interface RecommendationProvenance {
   selection?: 'manual' | 'queue' | 'autoplay'
 }
 export interface RecommendationTrack {
+  traits?: { genre?: string | null; tags?: string[] | null; bpm?: number | null; version?: string | null }
   trackKey: string
   source: SourceId
   sourceId: string
@@ -89,6 +94,9 @@ export interface ListeningEvent {
   generation: number
 }
 export interface RecommendationSeed {
+  /** Sparse likes/clip-only evidence gets a finite exploration allowance. */
+  limitedEvidence?: boolean
+  bucket?: 'steady' | 'recent' | 'discovery'
   track: RecommendationTrack
   evidence: 'like' | 'playlist' | 'listening' | 'legacy' | 'aggregate'
   confidence: number
@@ -119,6 +127,10 @@ export interface RecommendationProviderPage {
   data: Record<string, unknown>
 }
 export interface RecommendationContext {
+  explicitActions?: ExplicitAction[]
+  tasteDays?: { trackKey: string; day: number; weight: number; at: number }[]
+  /** Runtime resolved canonical identities, including targeted DB resolutions. */
+  canonicalGroups?: Record<string, string>
   generation: number
   seedTracks: RecommendationSeed[]
   likedTrackKeys: string[]
@@ -132,11 +144,25 @@ export interface RecommendationContext {
   recordingGroupsTruncated?: boolean
   groupAliasesTruncated?: boolean
 }
+export type ExplicitActionKind = 'like' | 'unlike' | 'playlist-add' | 'collection-save' | 'cache'
+export interface ExplicitAction {
+  id: string; trackKey: string; track: RecommendationTrack; action: ExplicitActionKind
+  intent: 'manual'; at: number; generation: number
+}
+export interface FeatureSectionUpdate {
+  trackKey: string; section: 'catalog' | 'language' | 'audio'; data: Record<string, unknown>; updatedAt: number
+}
+export interface LanguageEvidence {
+  distribution: Record<string, number>; confidence: number; textHash: string
+  evidence: { source: string; translated?: boolean; instrumental?: boolean; algorithm: 'franc-min-6.2.0-blocks-v1'; blocks: number }
+  unknownShare: number
+}
 export function recommendationTrack(track: UnifiedTrack): RecommendationTrack {
   return {
     trackKey: `${track.source}:${track.source === 'local' ? track.dbId ?? track.sourceId : track.sourceId}`,
     source: track.source, sourceId: track.sourceId, dbId: track.dbId, title: track.title,
     artists: track.artists.slice(), album: track.album, durationSec: track.durationSec,
     coverPath: track.coverPath, externalUrl: track.externalUrl, provenance: track.provenance,
+    traits: track.traits,
   }
 }

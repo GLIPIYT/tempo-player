@@ -25,6 +25,7 @@ export interface SeedFrontier {
   retryAt: number | null
   pages: number
   updatedAt: number
+  limitedAccepted?: number
 }
 export interface StoredRecommendationState {
   version: 1
@@ -37,6 +38,7 @@ export interface StoredRecommendationState {
   receipts?: { home: ReceiptState; radio: ReceiptState }
   cooldownReceipts?: { home: { state: ReceiptState; until: number }; skip: { state: ReceiptState; until: number } }
   groups: { key: string; groupKey: string }[]
+  radioRecent?: FeedCandidate[]
   createdAt: number
   updatedAt: number
   retryAt: number | null
@@ -53,6 +55,8 @@ export function compactScTrack(track: ScTrack): ScTrack {
     streamable: track.streamable, hasProgressive: track.hasProgressive, hasHls: track.hasHls,
     uploaderId: text(track.uploaderId, 64), uploaderName: text(track.uploaderName, 128),
     metadataArtist: text(track.metadataArtist, 128), genre: text(track.genre, 96), isrc: text(track.isrc, 32),
+    tags: track.tags?.slice(0, 16).map(tag => tag.slice(0, 64)) ?? null,
+    bpm: Number.isFinite(track.bpm) && track.bpm! >= 30 && track.bpm! <= 300 ? track.bpm : null,
   }
 }
 
@@ -85,6 +89,7 @@ export function hydrateRecommendationState(context: RecommendationContext): Stor
     && ['related', 'station', 'search'].includes(frontier.source)
     && (frontier.cursor === null || typeof frontier.cursor === 'string')
     && (frontier.seedId === null || /^\d+$/u.test(frontier.seedId)))) return null
+  if (data.radioRecent && (!Array.isArray(data.radioRecent) || data.radioRecent.length > 9 || !data.radioRecent.every(validCandidate))) return null
   return { ...data, revision: stored.revision }
 }
 
@@ -92,7 +97,7 @@ function encode(state: StoredRecommendationState): Record<string, unknown> {
   const candidate = (item: FeedCandidate): FeedCandidate => ({ ...item,
     track: compactScTrack(item.track), alternates: item.alternates.slice(0, 3).map(compactScTrack),
   })
-  const data = { ...state, candidates: state.candidates.map(candidate), published: state.published.map(candidate) }
+  const data = { ...state, candidates: state.candidates.map(candidate), published: state.published.map(candidate), radioRecent: state.radioRecent?.map(candidate) }
   const size = () => new TextEncoder().encode(JSON.stringify(data)).byteLength
   if (size() > 500 * 1024) {
     // Keep identity, source progress and fallback playback flags ahead of artwork.

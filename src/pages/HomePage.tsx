@@ -313,6 +313,7 @@ export default function HomePage() {
                 tracks={recommendations.tracks}
                 loading={recommendations.loading}
                 error={recommendations.error}
+                persistenceError={recommendations.persistenceError}
                 hasLoaded={recommendations.hasLoaded}
                 hasMore={recommendations.hasMore}
                 cachedTrackIds={recommendations.cachedTrackIds}

@@ -8,6 +8,7 @@ interface RecommendationsShelfProps {
   tracks: ScTrack[]
   loading: boolean
   error: string | null
+  persistenceError: string | null
   hasLoaded: boolean
   hasMore: boolean
   exhausted: boolean
@@ -29,6 +30,7 @@ export default function RecommendationsShelf({
   tracks,
   loading,
   error,
+  persistenceError,
   hasLoaded,
   hasMore,
   exhausted,
@@ -162,13 +164,11 @@ export default function RecommendationsShelf({
           <small>{t('Based on what you listen to')}</small>
         </div>
         <div className="home-section-tools">
-          {tracks.length > 0 ? (
-            <button type="button" className="btn btn-ghost home-recommendations-play" onClick={() => onPlay(0)}>
+            <button type="button" className="btn btn-ghost home-recommendations-play" onClick={() => onPlay(0)} disabled={tracks.length === 0}>
               <Play size={14} fill="currentColor" />
               {t('Play all')}
             </button>
-          ) : null}
-          {error ? (
+          {error || persistenceError ? (
             <button type="button" className="btn btn-ghost" onClick={onRetry} disabled={coolingDown || loading}>
               <RefreshCw size={14} />
               {t(coolingDown ? 'Retry after cooldown' : 'Try again')}
@@ -236,8 +236,14 @@ export default function RecommendationsShelf({
           {t(exhausted ? 'No more recommendations' : hasLoaded ? 'No recommendations yet' : 'SoundCloud recommendations will appear here.')}
         </div>
       )}
-      {tracks.length > 0 && (loading || error || exhausted || coolingDown) ? (
-        <small className="muted" role="status">{t(coolingDown ? 'Retry after cooldown' : loading ? 'Loading…' : error ? 'Could not load recommendations' : 'No more recommendations')}</small>
+      {error || persistenceError ? (
+        <small className="home-recommendation-error" role="status">
+          {error ? <span>{tracks.length > 0 ? `${t('Could not load recommendations')}: ` : ''}{error}</span> : null}
+          {persistenceError ? <span>{t('Could not save recommendations')}: {persistenceError}</span> : null}
+        </small>
+      ) : null}
+      {tracks.length > 0 && (loading || exhausted || coolingDown) ? (
+        <small className="muted" role="status">{t(coolingDown ? 'Retry after cooldown' : loading ? 'Loading…' : 'No more recommendations')}</small>
       ) : null}
     </section>
   )

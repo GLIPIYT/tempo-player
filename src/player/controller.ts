@@ -13,6 +13,7 @@ import { dbToLinear } from '../audio/loudness'
 import type { EqualizerSettings } from '../audio/equalizer'
 import { QueueController } from './queue'
 import { ListeningAccumulator } from './listeningSession'
+import { recommendationService, type RadioReservation } from '../features/recommendations/service'
 import type { ListeningEvent, ListeningEndReason, ListeningStartReason } from '../features/recommendations/types'
 
 export interface PlayerSnapshot {
@@ -276,6 +277,11 @@ export class PlayerController {
   private preparing = false
   private playedSourceIds = new Set<string>()
   private autoPickBusy = false
+  private radioFetch: AbortController | null = null
+  private radioReservation: RadioReservation | null = null
+  private radioSessionId: string | null = null
+  private playedTrackKeys = new Set<string>()
+  private attemptedRadioUploads = new Set<string>()
   private saveTimer: number | null = null
   private snapshot: PlayerSnapshot = {
     currentTrack: null,
@@ -303,7 +309,13 @@ export class PlayerController {
     this.engine.onFadeComplete = () => {
       this.crossfading = false
     }
-    this.engine.onPlaybackSample = sample => this.listening.get(sample.sessionId)?.accumulator.sample(sample)
+    this.engine.onPlaybackSample = sample => {
+      const session = this.listening.get(sample.sessionId)
+      session?.accumulator.sample(sample)
+      if (sample.sessionId === this.radioSessionId && session?.accumulator.hasActualListening()) {
+        this.radioReservation?.commit(); this.radioReservation = null; this.radioSessionId = null
+      }
+    }
     this.engine.onMediaFinished = (id, reason) => this.finishSession(id, reason)
     window.setInterval(() => this.checkpointListening(), 15_000)
     void listen('listening://exit-request', () => { void this.flushListeningExit() }).catch(() => {})
@@ -332,6 +344,14 @@ export class PlayerController {
       this.isPlaying = false
       this.loadedSourceId = null
       this.emit()
+      const current = this.queueCtl.current(), seq = this.startSeq
+      if (current?.provenance?.origin === 'radio' && !this.exiting) {
+        void this.resolveRadioPlayback(current, seq).then(resolved => {
+          if (seq !== this.startSeq || this.exiting) return
+          if (resolved) this.startTrack(current, resolved)
+          else this.cancelRadio()
+        })
+      } else this.cancelRadio()
     }
     void onSoundcloudCacheReady(sourceId => {
       void this.handleSoundcloudCacheReady(sourceId)
@@ -350,6 +370,7 @@ export class PlayerController {
   getSnapshot = (): PlayerSnapshot => this.snapshot
 
   playTracks(tracks: UnifiedTrack[], startIndex = 0): void {
+    this.cancelRadio()
     // switching tracks manually counts as a skip for the track that was playing
     this.finishListening('select')
     this.nextStartReason = 'manual'
@@ -357,6 +378,7 @@ export class PlayerController {
     this.crossfading = false
     this.engine.stop()
     this.playedSourceIds.clear()
+    this.playedTrackKeys.clear()
     this.queueCtl.setQueue(tracks, startIndex)
     this.preloadNext()
     void this.startPlayableFromCurrent()
@@ -379,8 +401,9 @@ export class PlayerController {
       this.engine.stop()
       this.beginTransition(cur)
       const seq = ++this.startSeq
+      this.attemptedRadioUploads.clear()
       this.crossfading = false
-      const resolved = await this.resolveTrackUrl(cur)
+      const resolved = cur.provenance?.origin === 'radio' ? await this.resolveRadioPlayback(cur, seq) : await this.resolveTrackUrl(cur)
       if (seq !== this.startSeq) return
       if (!resolved) return
       this.startTrack(cur, resolved)
@@ -392,6 +415,7 @@ export class PlayerController {
   }
 
   async next(): Promise<void> {
+    this.cancelRadio()
     this.finishListening('next')
     this.nextStartReason = 'queue'
     this.startSeq += 1
@@ -413,6 +437,7 @@ export class PlayerController {
   }
 
   async previous(): Promise<void> {
+    this.cancelRadio()
     const cur = this.queueCtl.current()
     if (cur && this.position > 3) {
       this.finishListening('previous')
@@ -494,6 +519,7 @@ export class PlayerController {
   }
 
   addToQueue(t: UnifiedTrack): void {
+    this.cancelRadio()
     this.queueCtl.append(t)
     this.preloadNext()
     this.emit()
@@ -516,6 +542,7 @@ export class PlayerController {
   }
 
   removeFromQueue(index: number): void {
+    this.cancelRadio()
     if (index === this.queueCtl.getIndex()) {
       // A removal changes queue.current immediately; terminate the actual media
       // identity first, then start the replacement at the resulting index.
@@ -535,12 +562,14 @@ export class PlayerController {
   }
 
   moveInQueue(from: number, to: number): void {
+    this.cancelRadio()
     this.queueCtl.move(from, to)
     this.preloadNext()
     this.emit()
   }
 
   clearQueue(): void {
+    this.cancelRadio()
     this.finishListening('clear')
     this.startSeq += 1
     this.crossfading = false
@@ -693,6 +722,7 @@ export class PlayerController {
 
   private async startPlayableFromCurrent(): Promise<void> {
     const seq = ++this.startSeq
+    this.attemptedRadioUploads.clear()
     this.crossfading = false
     this.preloadNext()
     this.engine.stop()
@@ -707,12 +737,13 @@ export class PlayerController {
       const cur = this.queueCtl.current()
       if (!cur) break
       if (cur.sourceId !== this.loadedSourceId) this.beginTransition(cur)
-      const resolved = await this.resolveTrackUrl(cur)
+      const resolved = cur.provenance?.origin === 'radio' ? await this.resolveRadioPlayback(cur, seq) : await this.resolveTrackUrl(cur)
       if (seq !== this.startSeq) return
       if (resolved) {
         this.startTrack(cur, resolved)
         return
       }
+      if (cur.provenance?.origin === 'radio') this.cancelRadio()
       if (!this.queueCtl.next(this.repeat)) break
       this.preloadNext()
     }
@@ -726,10 +757,12 @@ export class PlayerController {
     const reason = this.nextStartReason === 'manual' || this.nextStartReason === 'repeat' || this.nextStartReason === 'restore'
       ? this.nextStartReason : track.selectionReason ?? (track.auto ? 'autoplay' : 'queue')
     const session = this.createListeningSession(track, reason)
+    if (track.provenance?.origin === 'radio' && this.radioReservation) this.radioSessionId = session.id
     this.nextStartReason = 'queue'
     const playbackSeq = ++this.startSeq
     this.loadedSourceId = track.sourceId
     this.playedSourceIds.add(track.sourceId)
+    this.playedTrackKeys.add(`${track.source}:${track.sourceId}`)
     this.position = 0
     this.duration = track.durationSec ?? 0
     this.bufferPct = null
@@ -960,9 +993,9 @@ export class PlayerController {
   private crossfading = false
 
   /**
-   * Auto-extend: when the queue runs dry, continue with the rest of the same
-   * album, then with tracks by the same artists. Returns null when nothing is
-   * left and playback should stop.
+   * Auto-extend from the shared recommendation pool when the queue runs dry.
+   * Repeat still controls replaying the existing queue. Exhaustion/cooldown
+   * returns null so the player stops without polling an unavailable source.
    */
   private async autoPick(): Promise<UnifiedTrack | null> {
     if (this.autoPickBusy) return null
@@ -971,36 +1004,22 @@ export class PlayerController {
     const stillCurrent = () => expectedSeq === this.startSeq && !this.exiting
     try {
       const cur = this.queueCtl.current()
-      const inQueue = new Set(this.queueCtl.getItems().map((t) => t.sourceId))
-      const skip = (t: UnifiedTrack) =>
-        inQueue.has(t.sourceId) ||
-        this.playedSourceIds.has(t.sourceId) ||
-        (cur !== null && t.sourceId === cur.sourceId)
-      if (cur?.album) {
-        try {
-          const albums = await api.listAlbums(cur.album)
-          const exact = albums.find((a) => a.title.toLowerCase() === cur.album!.toLowerCase())
-          if (exact) {
-            const detail = await api.getAlbum(exact.id)
-            const pick = detail.tracks.map(trackToUnified).find((t) => !skip(t))
-            if (pick && stillCurrent()) return this.appendAuto(pick)
-          }
-        } catch {}
+      const request = new AbortController()
+      this.radioFetch = request
+      try {
+        const reservation = await recommendationService.takeForAutoplay({ currentTrack: cur,
+          excludedTrackKeys: [...this.playedTrackKeys, ...this.queueCtl.getItems().map(track => `${track.source}:${track.sourceId}`)], signal: request.signal })
+        if (!stillCurrent() || request.signal.aborted) { reservation?.release(); return null }
+        if (!reservation) return null
+        this.radioReservation = reservation
+        this.attemptedRadioUploads.clear()
+        return this.appendAuto(reservation.track)
+      } catch (cause) {
+        console.warn('[tempo radio] continuation unavailable', cause)
+        return null
+      } finally {
+        if (this.radioFetch === request) this.radioFetch = null
       }
-      if (cur) {
-        for (const artistName of cur.artists) {
-          if (!artistName.trim()) continue
-          try {
-            const artists = await api.listArtists(artistName)
-            const exact = artists.find((a) => a.name.toLowerCase() === artistName.toLowerCase())
-            if (!exact) continue
-            const rows = await api.getArtistTracks(exact.id)
-            const pick = rows.map(trackToUnified).find((t) => !skip(t))
-            if (pick && stillCurrent()) return this.appendAuto(pick)
-          } catch {}
-        }
-      }
-      return null
     } finally {
       this.autoPickBusy = false
     }
@@ -1015,6 +1034,27 @@ export class PlayerController {
     this.preloadNext()
     this.emit()
     return marked
+  }
+
+  private cancelRadio(): void {
+    this.radioFetch?.abort(); this.radioFetch = null
+    this.radioReservation?.release(); this.radioReservation = null; this.radioSessionId = null
+  }
+  private async resolveRadioPlayback(track: UnifiedTrack, seq: number): Promise<ResolvedTrack | null> {
+    const originalProvenance = track.provenance
+    const choices = [track, ...recommendationService.getPlayableAlternates(`${track.source}:${track.sourceId}`)]
+    for (const choice of choices) {
+      if (seq !== this.startSeq || this.exiting) return null
+      const key = `${choice.source}:${choice.sourceId}`
+      if (this.attemptedRadioUploads.has(key)) continue
+      this.attemptedRadioUploads.add(key)
+      const resolved = await this.resolveTrackUrl(choice)
+      if (seq !== this.startSeq || this.exiting) return null
+      if (!resolved) continue
+      if (choice !== track) Object.assign(track, choice, { provenance: originalProvenance, selectionReason: 'autoplay', auto: true })
+      return resolved
+    }
+    return null
   }
 
   private async handleEnded(): Promise<void> {
@@ -1119,7 +1159,9 @@ export class PlayerController {
       }
     }).catch(error => console.warn('[tempo listening] write failed', error)).finally(() => {
       this.listeningWriteScheduled = false
-      if (this.listeningWritesDirty && this.pendingListening.size) this.scheduleListeningWrites()
+      const dirty = this.listeningWritesDirty
+      this.listeningWritesDirty = false
+      if (dirty && this.pendingListening.size && !this.exiting) this.scheduleListeningWrites()
     })
   }
 
@@ -1177,18 +1219,31 @@ export class PlayerController {
   private async flushListeningExit(): Promise<void> {
     if (this.exiting) return
     this.exiting = true
+    this.cancelRadio()
+    this.startSeq += 1
     this.finishListening('exit')
     this.engine.pause()
     const drain = async () => {
-      this.scheduleListeningWrites()
-      await this.writeChain
-      await this.writeChain
+      await Promise.all([recommendationService.prepareExit(), (async () => {
+        // Wait for real submitted work, never a dirty notification on a settled
+        // promise. A second pass captures a terminal revision that replaced an
+        // already-submitted checkpoint. Failed writes cannot spin this drain.
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          if (this.pendingListening.size) this.scheduleListeningWrites()
+          await this.writeChain
+          if (!this.pendingListening.size) break
+        }
+        if (this.pendingListening.size) throw new Error('Listening exit has unpersisted feedback')
+      })()])
     }
-    await Promise.race([drain(), new Promise<void>(resolve => window.setTimeout(resolve, 1200))])
+    try {
+      await Promise.race([drain(), new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('Feedback exit persistence timed out')), 4500))])
+    } catch (cause) { console.error('[tempo exit] feedback persistence incomplete', cause) }
     await api.completeListeningExit().catch(() => {})
   }
 
   private stop(): void {
+    this.cancelRadio()
     this.finishListening('stop')
     this.startSeq += 1
     this.crossfading = false

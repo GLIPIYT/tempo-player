@@ -466,6 +466,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_20, crate::recommendation_store::MIGRATION,
     crate::recommendation_store::RETIREMENT_MIGRATION,
     crate::recommendation_store::IDENTITY_MIGRATION,
+    crate::recommendation_store::PERSONALIZATION_MIGRATION,
 ];
 
 pub struct Db {
@@ -2959,6 +2960,12 @@ impl Db {
     }
 
     pub fn playlist_add_track(&self, playlist_id: i64, track_id: i64) -> Result<(), String> {
+        self.playlist_add_track_with_intent(playlist_id,track_id,false)
+    }
+    pub fn playlist_add_track_manual(&self, playlist_id: i64, track_id: i64) -> Result<(), String> {
+        self.playlist_add_track_with_intent(playlist_id,track_id,true)
+    }
+    fn playlist_add_track_with_intent(&self, playlist_id: i64, track_id: i64, manual: bool) -> Result<(), String> {
         let conn = self.lock_conn()?;
         let tx = conn.unchecked_transaction().map_err(db_err)?;
         tx.execute(
@@ -2967,6 +2974,9 @@ impl Db {
             params![playlist_id, track_id, now()],
         )
         .map_err(db_err)?;
+        if manual {
+            tx.execute("INSERT OR IGNORE INTO recommendation_manual_memberships(playlist_id,track_id) VALUES(?1,?2)",params![playlist_id,track_id]).map_err(db_err)?;
+        }
         tx.execute("UPDATE playlists SET updated_at = ?1 WHERE id = ?2", params![now(), playlist_id])
             .map_err(db_err)?;
         tx.commit().map_err(db_err)?;
@@ -2985,6 +2995,7 @@ impl Db {
             )
             .map_err(db_err)?;
         if deleted > 0 {
+            tx.execute("DELETE FROM recommendation_manual_memberships WHERE playlist_id=?1 AND track_id=?2 AND NOT EXISTS(SELECT 1 FROM playlist_tracks WHERE playlist_id=?1 AND track_id=?2)",params![playlist_id,track_id]).map_err(db_err)?;
             renumber_playlist(&tx, playlist_id)?;
             tx.execute(
                 "UPDATE playlists SET updated_at = ?1 WHERE id = ?2",

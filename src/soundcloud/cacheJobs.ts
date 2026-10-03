@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { api } from '../api/client'
+import { withExplicitFeedback } from '../features/recommendations/feedbackBridge'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import type { ScArtist, ScPlaylist, ScTrack } from '../types/models'
 
@@ -207,7 +208,8 @@ export async function requestTrackCache(track: ScTrack): Promise<CacheRequestOut
   if (jobs.some((job) => job.id === `track:${track.id}` && job.state === 'running')) {
     return 'started'
   }
-  const localId = await api.scImportTrack(track)
+  const localId = await withExplicitFeedback(() => api.scImportTrack(track),
+    dbId => ({ trackKey: `soundcloud:${track.id}`, dbId, action: 'cache', intent: 'manual' }))
   bumpLibraryVersion()
   startJob('track', track.id, localId, track.title, tracks, false)
   return 'started'
@@ -324,11 +326,15 @@ export async function runPlaylistCache(
   tracks: ScTrack[],
   into: 'new' | number,
 ): Promise<number> {
-  const playlistId = await invoke<number>('sc_import_playlist', {
+  const playlistId = await withExplicitFeedback(() => invoke<number>('sc_import_playlist', {
     name: playlist.title,
     tracks,
     playlistId: into === 'new' ? null : into,
-  })
+    manualIntent: true,
+  }), playlistId => tracks.flatMap(track => [
+    { trackKey: `soundcloud:${track.id}`, playlistId, action: 'playlist-add', intent: 'manual' },
+    { trackKey: `soundcloud:${track.id}`, action: 'cache', intent: 'manual' },
+  ]))
   // The playlist exists from here on, so the lists that show playlists need to
   // know before the download has finished.
   bumpLibraryVersion()
@@ -476,13 +482,16 @@ export async function runArtistCache(
   mergeInto: number | null,
   favorite: boolean,
 ): Promise<number> {
-  const artistId = await api.scImportArtist(
+  const artistId = await withExplicitFeedback(() => api.scImportArtist(
     artist.username,
     artist.avatarUrl,
     tracks,
     albumOf,
     mergeInto,
-  )
+  ), tracks.flatMap(track => [
+    { trackKey: `soundcloud:${track.id}`, action: 'collection-save', intent: 'manual' },
+    { trackKey: `soundcloud:${track.id}`, action: 'cache', intent: 'manual' },
+  ]))
   if (favorite) {
     // `toggleFavoriteArtist` would *remove* an artist that is already there.
     const already = await api.isFavoriteArtist(artistId).catch(() => false)

@@ -6,6 +6,7 @@ export function localTrackToUnified(t: Track): UnifiedTrack {
   if (t.source === 'soundcloud') {
     return {
       source: 'soundcloud',
+      traits: { genre: t.genre?.slice(0, 96) ?? null },
       sourceId: t.externalId ?? String(t.id),
       dbId: t.id,
       title: t.title,
@@ -22,6 +23,7 @@ export function localTrackToUnified(t: Track): UnifiedTrack {
   if (t.source === 'youtube') {
     return {
       source: 'youtube',
+      traits: { genre: t.genre?.slice(0, 96) ?? null },
       sourceId: t.externalId ?? String(t.id),
       dbId: t.id,
       title: t.title,
@@ -45,6 +47,7 @@ export function localTrackToUnified(t: Track): UnifiedTrack {
   }
   return {
     source: 'local',
+    traits: { genre: t.genre?.slice(0, 96) ?? null },
     sourceId: String(t.id),
     dbId: t.id,
     title: t.title,

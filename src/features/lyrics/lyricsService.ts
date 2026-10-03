@@ -32,6 +32,8 @@ export function lyricSourceKey(result: LyricsResult | null, provider: string): s
 let current: CurrentLyrics | null = null
 let currentKey = ''
 let requestedId = ''
+let requestedTrackKey = ''
+const languageSourceHashes = new Map<string, string>()
 let generation = 0
 let version = 0
 let position = 0
@@ -54,6 +56,15 @@ function activate(trackId: string, sourceResult: LyricsResult | null, durationSe
   pass = createPlaybackTiming()
   current = { trackId, provider, result, sourceResult, sourceLyricKey, lyricKey, offsetMs, durationSec, generation,
     timing: pass.update(resolved, position, durationSec) }
+  const original = sourceResult?.kind === 'synced' ? sourceResult.lines.map(line => line.text).join('\n')
+    : sourceResult?.kind === 'plain' ? sourceResult.text : ''
+  const hash = sha256Hex(`${provider}|${original}`)
+  if (original && requestedTrackKey && languageSourceHashes.get(requestedTrackKey) !== hash) {
+    languageSourceHashes.set(requestedTrackKey, hash)
+    if (languageSourceHashes.size > 4096) languageSourceHashes.delete(languageSourceHashes.keys().next().value!)
+    window.dispatchEvent(new CustomEvent('tempo:original-lyrics', { detail: { trackKey: requestedTrackKey, text: original,
+      evidence: { source: provider || 'manual', translated: /translation|translated|перевод/iu.test(provider) } } }))
+  }
   emit()
 }
 
@@ -95,6 +106,7 @@ export const lyricsService = {
     if (currentKey === key) return
     const job = ++generation
     currentKey = key; requestedId = track.sourceId; current = null
+    requestedTrackKey = `${track.source ?? 'local'}:${track.source === 'local' ? track.dbId ?? track.sourceId : track.sourceId}`
     mediaDurationSec = null; latestAnalysis = null
     pass = createPlaybackTiming()
     emit()
@@ -107,7 +119,7 @@ export const lyricsService = {
   invalidate(sourceId?: string): void {
     if (sourceId !== undefined && requestedId !== sourceId) return
     if (!currentKey && !current) return
-    generation++; currentKey = ''; current = null; requestedId = ''
+    generation++; currentKey = ''; current = null; requestedId = ''; requestedTrackKey = ''
     mediaDurationSec = null; latestAnalysis = null
     emit()
   },

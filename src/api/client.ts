@@ -1,4 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
+import { withExplicitFeedback } from '../features/recommendations/feedbackBridge'
+import type { ExplicitAction, FeatureSectionUpdate, RecommendationProvenance } from '../features/recommendations/types'
 import type { ListeningEvent, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationProviderPage, RecommendationStoredState, RecordingGroup, RecordingGroupResolution, ScRelatedPage, ScRecommendationSource } from '../features/recommendations/types'
 import type {
   Album,
@@ -86,7 +88,8 @@ export const api = {
   recordPlaylistStart: (playlistId: number) => invoke<void>('record_playlist_start', { playlistId }),
   getPlaylist: (playlistId: number) => invoke<PlaylistTrack[]>('get_playlist', { playlistId }),
   playlistAddTrack: (playlistId: number, trackId: number) =>
-    invoke<void>('playlist_add_track', { playlistId, trackId }),
+    withExplicitFeedback(() => invoke<void>('playlist_add_track', { playlistId, trackId }),
+      { trackKey: `local:${trackId}`, dbId: trackId, playlistId, action: 'playlist-add', intent: 'manual' }),
   playlistRemoveTrack: (playlistId: number, trackId: number) =>
     invoke<void>('playlist_remove_track', { playlistId, trackId }),
   playlistMoveTrack: (playlistId: number, fromPos: number, toPos: number) =>
@@ -96,8 +99,10 @@ export const api = {
   recordHistory: (trackId: number, listenedSec: number | null, completed: boolean, skipped: boolean) =>
     invoke<void>('record_history', { trackId, listenedSec, completed, skipped }),
 
-  likeTrack: (trackId: number) => invoke<void>('like_track', { trackId }),
-  unlikeTrack: (trackId: number) => invoke<void>('unlike_track', { trackId }),
+  likeTrack: (trackId: number) => withExplicitFeedback(() => invoke<void>('like_track', { trackId }),
+    { trackKey: `local:${trackId}`, dbId: trackId, action: 'like', intent: 'manual' }),
+  unlikeTrack: (trackId: number) => withExplicitFeedback(() => invoke<void>('unlike_track', { trackId }),
+    { trackKey: `local:${trackId}`, dbId: trackId, action: 'unlike', intent: 'manual' }),
   listLikedTrackIds: () => invoke<number[]>('list_liked_track_ids'),
 
   getTopTracks: (limit: number) =>
@@ -196,7 +201,12 @@ export const api = {
   exportTracksM3u8: (trackIds: number[], path: string) =>
     invoke<number>('export_tracks_m3u8', { trackIds, path }),
   importPlaylistM3u8: (path: string, name: string) =>
-    invoke<Playlist>('import_playlist_m3u8', { path, name }),
+    withExplicitFeedback(async () => {
+      const playlist = await invoke<Playlist>('import_playlist_m3u8', { path, name, manualIntent: true })
+      const tracks = await invoke<PlaylistTrack[]>('get_playlist', { playlistId: playlist.id })
+      return { playlist, tracks }
+    }, result => result.tracks.map(({ track }) => ({ trackKey: `local:${track.id}`, dbId: track.id,
+      playlistId: result.playlist.id, action: 'playlist-add', intent: 'manual' }))).then(result => result.playlist),
 
   importFont: (path: string) => invoke<string>('import_font', { path }),
   importBackground: (path: string) => invoke<string>('import_background', { path }),
@@ -222,7 +232,13 @@ export const api = {
     await invoke<void>('clear_history')
     window.dispatchEvent(new Event('tempo:listening-history-cleared'))
   },
-  recordListeningSession: (event: ListeningEvent) => invoke<void>('record_listening_session', { event }),
+  recordListeningSession: async (event: ListeningEvent) => {
+    await invoke<void>('record_listening_session', { event })
+    window.dispatchEvent(new CustomEvent('tempo:listening-feedback', { detail: event }))
+  },
+  mergeRecommendationFeatureSections: (updates: FeatureSectionUpdate[]) => invoke<RecommendationFeature[]>('merge_recommendation_feature_sections', { updates }),
+  recordRecommendationAction: (action: { id: string; trackKey: string; dbId?: number; action: string; intent: string; at: number; generation: number; playlistId?: number; provenance?: RecommendationProvenance }) =>
+    invoke<ExplicitAction>('record_recommendation_action', action),
   getRecommendationContext: () => invoke<RecommendationContext>('get_recommendation_context'),
   recordRecommendationImpressions: (impressions: RecommendationImpression[], generation: number) => invoke<void>('record_recommendation_impressions', { impressions, generation }),
   saveRecommendationFeatures: (features: RecommendationFeature[]) => invoke<void>('save_recommendation_features', { features }),
@@ -390,7 +406,8 @@ export const api = {
     durationSec: number | null = null,
   ) => invoke<OnlineLyricsCandidateData[]>('fetch_online_lyrics_all', { artist, title, album, durationSec }),
   addScTrackToPlaylist: (playlistId: number, track: ScTrack) =>
-    invoke<number>('add_sc_track_to_playlist', { playlistId, track }),
+    withExplicitFeedback(() => invoke<number>('add_sc_track_to_playlist', { playlistId, track }),
+      dbId => ({ trackKey: `soundcloud:${track.id}`, dbId, playlistId, action: 'playlist-add', intent: 'manual' })),
   scCacheInfo: () =>
     invoke<{ path: string; totalBytes: number; fileCount: number; limitBytes: number }>('sc_cache_info'),
   setScCacheDir: (path: string) => invoke<void>('set_sc_cache_dir', { path }),

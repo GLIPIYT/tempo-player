@@ -5,6 +5,8 @@ import type { MusicProvider, SearchHit } from './provider'
 export function scTrackToUnified(t: ScTrack): UnifiedTrack {
   return {
     source: 'soundcloud',
+    traits: { genre: t.genre?.slice(0, 96) ?? null, tags: t.tags?.slice(0, 16).map(tag => tag.slice(0, 64)) ?? null,
+      bpm: Number.isFinite(t.bpm) && t.bpm! >= 30 && t.bpm! <= 300 ? t.bpm : null },
     sourceId: t.id,
     dbId: null,
     title: t.title,

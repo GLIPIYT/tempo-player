@@ -60,6 +60,19 @@ CREATE TABLE recommendation_group_members (
 CREATE INDEX idx_recommendation_group_members ON recommendation_group_members(group_key);
 "#;
 
+/// New migration; applied listening/identity migrations are immutable.
+pub const PERSONALIZATION_MIGRATION: &str = r#"
+CREATE TABLE recommendation_actions (
+ id TEXT PRIMARY KEY, track_key TEXT NOT NULL, at INTEGER NOT NULL, action_json TEXT NOT NULL
+);
+CREATE INDEX idx_recommendation_actions_at ON recommendation_actions(at);
+CREATE TABLE recommendation_manual_memberships (
+ playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+ track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+ PRIMARY KEY(playlist_id,track_id)
+);
+"#;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingGroup {
@@ -96,6 +109,14 @@ const SESSION_RETENTION_MS: i64 = 180 * 86_400_000;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Provenance {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommendation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seed_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement: Option<String>,
     pub origin: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed_track_key: Option<String>,
@@ -109,6 +130,8 @@ pub struct Provenance {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RecommendationTrack {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traits: Option<Value>,
     pub track_key: String,
     pub source: String,
     pub source_id: String,
@@ -182,6 +205,8 @@ pub struct Seed {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecommendationContext {
+    pub explicit_actions: Vec<ExplicitAction>,
+    pub taste_days: Vec<TasteDay>,
     pub generation: i64,
     pub seed_tracks: Vec<Seed>,
     pub liked_track_keys: Vec<String>,
@@ -195,6 +220,19 @@ pub struct RecommendationContext {
     pub recording_groups_truncated: bool,
     pub group_aliases_truncated: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExplicitAction {
+    pub id: String, pub track_key: String, pub track: RecommendationTrack,
+    pub action: String, pub intent: String, pub at: i64, pub generation: i64,
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TasteDay { pub track_key: String, pub day: i64, pub weight: f64, pub at: i64 }
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FeatureSectionUpdate { pub track_key: String, pub section: String, pub data: Value, pub updated_at: i64 }
 
 fn err(e: rusqlite::Error) -> String {
     format!("recommendation database: {e}")
@@ -278,6 +316,7 @@ fn validate(event: &ListeningEvent) -> Result<(), String> {
     }
     key(&event.track_key)?;
     let track = &event.track;
+    if let Some(traits)=&track.traits { json(traits,2048)?; }
     if event.track_key != track.track_key
         || track.track_key != format!("{}:{}", track.source, track.source_id)
         || track.db_id.is_some_and(|id| id <= 0)
@@ -299,6 +338,10 @@ fn validate(event: &ListeningEvent) -> Result<(), String> {
         text(value, 2048)?;
     }
     if let Some(p) = &track.provenance {
+        for value in [&p.recommendation_id, &p.recording_key].into_iter().flatten() { text(value, 256)?; }
+        if p.seed_ids.len() > 40 { return Err("Too many recommendation seeds".into()); }
+        for value in &p.seed_ids { key(value)?; }
+        if p.placement.as_ref().is_some_and(|value| !matches!(value.as_str(),"home"|"radio")) { return Err("Invalid recommendation placement".into()); }
         if !matches!(p.origin.as_str(), "home" | "radio" | "search" | "library") {
             return Err("Invalid recommendation origin".into());
         }
@@ -360,6 +403,7 @@ fn validate(event: &ListeningEvent) -> Result<(), String> {
 }
 
 pub fn clear_feedback(conn: &Connection) -> Result<(), String> {
+    conn.execute("DELETE FROM recommendation_actions", []).map_err(err)?;
     conn.execute_batch("DELETE FROM listening_sessions; DELETE FROM listening_session_tombstones; DELETE FROM recommendation_taste; DELETE FROM recommendation_taste_days; DELETE FROM recommendation_impressions; DELETE FROM recommendation_state; UPDATE recommendation_meta SET generation = generation + 1,write_floor_at = 0 WHERE id = 1;").map_err(err)
 }
 
@@ -372,7 +416,7 @@ fn prune(conn: &Connection) -> Result<(), String> {
     // Clamp each recording/day before adding its aggregate; daily guards survive
     // incremental retention sweeps, so repeats cannot gain weight on each sweep.
     conn.execute_batch("CREATE TEMP TABLE IF NOT EXISTS recommendation_prune_days(track_key TEXT,day INTEGER,track_json TEXT,weight REAL,updated_at INTEGER,PRIMARY KEY(track_key,day)); DELETE FROM recommendation_prune_days;").map_err(err)?;
-    conn.execute("INSERT INTO recommendation_prune_days SELECT track_key,CAST(started_at/86400000 AS INTEGER),json_extract(event_json,'$.track'),MIN(1.0,SUM(MIN(1.0,covered_sec/duration_sec) * CASE WHEN json_extract(event_json,'$.startReason')='autoplay' THEN 0.7 ELSE 1.0 END)),MAX(started_at) FROM listening_sessions WHERE id IN (SELECT id FROM recommendation_prune_ids) AND duration_sec>=15 AND elapsed_sec>=MIN(30.0,duration_sec*0.8) AND covered_sec/duration_sec>=0.5 AND json_extract(event_json,'$.startReason')<>'restore' AND COALESCE(json_extract(event_json,'$.endReason'),'')<>'error' GROUP BY track_key,CAST(started_at/86400000 AS INTEGER)", []).map_err(err)?;
+    conn.execute("INSERT INTO recommendation_prune_days SELECT track_key,CAST(started_at/86400000 AS INTEGER),json_extract(event_json,'$.track'),MIN(1.0,SUM(MIN(1.0,covered_sec/duration_sec) * CASE WHEN json_extract(event_json,'$.startReason')='autoplay' THEN 0.7 ELSE 1.0 END)),MAX(started_at) FROM listening_sessions WHERE id IN (SELECT id FROM recommendation_prune_ids) AND duration_sec>=15 AND elapsed_sec>=MIN(30.0,duration_sec*0.8) AND covered_sec/duration_sec>=0.5 AND COALESCE(json_extract(event_json,'$.endReason'),'')<>'error' GROUP BY track_key,CAST(started_at/86400000 AS INTEGER)", []).map_err(err)?;
     conn.execute("INSERT INTO recommendation_taste(track_key,track_json,weight,updated_at) SELECT p.track_key,p.track_json,SUM(MAX(0.0,MIN(1.0,COALESCE(d.weight,0.0)+p.weight)-COALESCE(d.weight,0.0))),MAX(p.updated_at) FROM recommendation_prune_days p LEFT JOIN recommendation_taste_days d ON p.track_key=d.track_key AND p.day=d.day WHERE 1 GROUP BY p.track_key ON CONFLICT(track_key) DO UPDATE SET weight=MIN(365.0,recommendation_taste.weight+excluded.weight),updated_at=MAX(recommendation_taste.updated_at,excluded.updated_at)", []).map_err(err)?;
     conn.execute("INSERT INTO recommendation_taste_days(track_key,day,weight,updated_at) SELECT track_key,day,weight,updated_at FROM recommendation_prune_days WHERE 1 ON CONFLICT(track_key,day) DO UPDATE SET weight=MIN(1.0,recommendation_taste_days.weight+excluded.weight),updated_at=MAX(recommendation_taste_days.updated_at,excluded.updated_at)", []).map_err(err)?;
     // Retire identities before deleting payloads. Older rows from migration 21
@@ -502,11 +546,11 @@ pub fn context(db: &Db) -> Result<RecommendationContext, String> {
         let generation = tx.query_row("SELECT generation FROM recommendation_meta WHERE id=1", [], |r| r.get(0)).map_err(err)?;
         let sessions: Vec<ListeningEvent> = read_json(&tx,"SELECT event_json FROM listening_sessions ORDER BY started_at DESC LIMIT 1000",4*1024*1024)?;
         let mut seed_tracks = Vec::new(); let mut liked_track_keys = Vec::new(); let mut manually_saved_track_keys = Vec::new();
-        let mut stmt = tx.prepare("SELECT t.id,t.source,t.external_id,t.title,COALESCE(a.name,t.artist_name),al.title,t.duration_sec,t.cover_path,MAX(p.is_likes),MAX(pt.added_at) FROM playlist_tracks pt JOIN playlists p ON p.id=pt.playlist_id JOIN tracks t ON t.id=pt.track_id LEFT JOIN artists a ON a.id=t.artist_id LEFT JOIN albums al ON al.id=t.album_id GROUP BY t.id ORDER BY MAX(p.is_likes) DESC,MAX(pt.added_at) DESC LIMIT 512").map_err(err)?;
+        let mut stmt = tx.prepare("SELECT t.id,t.source,t.external_id,t.title,COALESCE(a.name,t.artist_name),al.title,t.duration_sec,t.cover_path,MAX(p.is_likes),MAX(pt.added_at),t.genre FROM playlist_tracks pt JOIN playlists p ON p.id=pt.playlist_id JOIN tracks t ON t.id=pt.track_id LEFT JOIN artists a ON a.id=t.artist_id LEFT JOIN albums al ON al.id=t.album_id WHERE p.is_likes=1 OR EXISTS(SELECT 1 FROM recommendation_manual_memberships m WHERE m.playlist_id=pt.playlist_id AND m.track_id=t.id) GROUP BY t.id ORDER BY MAX(p.is_likes) DESC,MAX(pt.added_at) DESC LIMIT 512").map_err(err)?;
         let rows = stmt.query_map([], |r| {
             let id: i64=r.get(0)?; let source: String=r.get(1)?; let external: Option<String>=r.get(2)?;
             let source_id=if source=="local" { id.to_string() } else { external.unwrap_or_default() };
-            Ok((RecommendationTrack{track_key:format!("{source}:{source_id}"),source,source_id,db_id:Some(id),title:r.get(3)?,artists:r.get::<_,Option<String>>(4)?.into_iter().collect(),album:r.get(5)?,duration_sec:r.get(6)?,cover_path:r.get(7)?,external_url:None,provenance:None},r.get::<_,bool>(8)?,r.get::<_,i64>(9)?*1000))
+            Ok((RecommendationTrack{traits:Some(serde_json::json!({"genre":r.get::<_,Option<String>>(10)?})),track_key:format!("{source}:{source_id}"),source,source_id,db_id:Some(id),title:r.get(3)?,artists:r.get::<_,Option<String>>(4)?.into_iter().collect(),album:r.get(5)?,duration_sec:r.get(6)?,cover_path:r.get(7)?,external_url:None,provenance:None},r.get::<_,bool>(8)?,r.get::<_,i64>(9)?*1000))
         }).map_err(err)?;
         for row in rows {
             let (track, liked, at)=row.map_err(err)?; if key(&track.track_key).is_err() { continue; }
@@ -521,7 +565,7 @@ pub fn context(db: &Db) -> Result<RecommendationContext, String> {
         drop(stmt);
         for event in &sessions {
             let duration=event.duration_sec.unwrap_or(0.0);
-            if duration < 15.0 || event.start_reason=="restore" || event.end_reason.as_deref()==Some("error") || event.covered_sec/duration < 0.5 || event.elapsed_sec < 30.0_f64.min(duration*0.8) { continue; }
+            if duration < 15.0 || event.end_reason.as_deref()==Some("error") || event.covered_sec/duration < 0.5 || event.elapsed_sec < 30.0_f64.min(duration*0.8) { continue; }
             let day=per_day.entry((event.track_key.clone(),event.started_at/86_400_000)).or_default();
             let contribution=(event.covered_sec/duration).min(1.0) * if event.start_reason=="autoplay" {0.7} else {1.0};
             let weight=contribution.min((1.0-*day).max(0.0)); if weight <= 0.0 { continue; } *day += weight;
@@ -532,20 +576,22 @@ pub fn context(db: &Db) -> Result<RecommendationContext, String> {
         for row in rows { let (track,weight,at)=row.map_err(err)?; if let Ok(track)=serde_json::from_str(&track) {seed_tracks.push(Seed{track,evidence:"aggregate".into(),confidence:0.7,weight,at});} }
         drop(stmt);
         // Legacy history gives weak bootstrap evidence, never raw play_count or cache status.
-        let mut stmt=tx.prepare("SELECT t.id,t.source,t.external_id,t.title,COALESCE(a.name,t.artist_name),al.title,t.duration_sec,t.cover_path,MAX(h.played_at) FROM listening_history h JOIN tracks t ON t.id=h.track_id LEFT JOIN artists a ON a.id=t.artist_id LEFT JOIN albums al ON al.id=t.album_id WHERE h.session_id IS NULL AND h.completed=1 AND h.skipped=0 AND t.duration_sec >= 15 GROUP BY t.id ORDER BY MAX(h.played_at) DESC LIMIT 64").map_err(err)?;
+        let mut stmt=tx.prepare("SELECT t.id,t.source,t.external_id,t.title,COALESCE(a.name,t.artist_name),al.title,t.duration_sec,t.cover_path,MAX(h.played_at),t.genre FROM listening_history h JOIN tracks t ON t.id=h.track_id LEFT JOIN artists a ON a.id=t.artist_id LEFT JOIN albums al ON al.id=t.album_id WHERE h.session_id IS NULL AND h.completed=1 AND h.skipped=0 AND t.duration_sec >= 15 GROUP BY t.id ORDER BY MAX(h.played_at) DESC LIMIT 64").map_err(err)?;
         let rows=stmt.query_map([],|r|{
             let id:i64=r.get(0)?;let source:String=r.get(1)?;let external:Option<String>=r.get(2)?;let source_id=if source=="local"{id.to_string()}else{external.unwrap_or_default()};
-            Ok(Seed{track:RecommendationTrack{track_key:format!("{source}:{source_id}"),source,source_id,db_id:Some(id),title:r.get(3)?,artists:r.get::<_,Option<String>>(4)?.into_iter().collect(),album:r.get(5)?,duration_sec:r.get(6)?,cover_path:r.get(7)?,external_url:None,provenance:None},evidence:"legacy".into(),confidence:0.25,weight:0.25,at:r.get::<_,i64>(8)?*1000})
+            Ok(Seed{track:RecommendationTrack{traits:Some(serde_json::json!({"genre":r.get::<_,Option<String>>(9)?})),track_key:format!("{source}:{source_id}"),source,source_id,db_id:Some(id),title:r.get(3)?,artists:r.get::<_,Option<String>>(4)?.into_iter().collect(),album:r.get(5)?,duration_sec:r.get(6)?,cover_path:r.get(7)?,external_url:None,provenance:None},evidence:"legacy".into(),confidence:0.25,weight:0.25,at:r.get::<_,i64>(8)?*1000})
         }).map_err(err)?;
         for row in rows {let seed=row.map_err(err)?; if key(&seed.track.track_key).is_ok(){seed_tracks.push(seed);}}
         drop(stmt);
         seed_tracks.truncate(1024);
+        let explicit_actions=read_json(&tx,"SELECT action_json FROM recommendation_actions ORDER BY at DESC LIMIT 5000",2*1024*1024)?;
+        let taste_days=read_json(&tx,"SELECT json_object('trackKey',track_key,'day',day,'weight',weight,'at',updated_at) FROM recommendation_taste_days ORDER BY updated_at DESC LIMIT 50000",4*1024*1024)?;
         let impressions=read_json(&tx,"SELECT json_object('id',id,'trackKey',track_key,'recordingGroup',recording_group,'shownAt',shown_at,'surface',surface) FROM recommendation_impressions ORDER BY shown_at DESC LIMIT 10000",2*1024*1024)?;
         let features=read_json(&tx,"SELECT json_object('trackKey',track_key,'revision',revision,'updatedAt',updated_at,'data',json(data_json)) FROM recommendation_features ORDER BY updated_at DESC LIMIT 5000",4*1024*1024)?;
         let stored_state=read_json(&tx,"SELECT json_object('revision',revision,'data',json(data_json)) FROM recommendation_state WHERE id=1",512*1024+256)?.pop();
         let (recording_groups,group_aliases,recording_groups_truncated,group_aliases_truncated)=groups(&tx)?;
         tx.commit().map_err(err)?;
-        Ok(RecommendationContext{generation,seed_tracks,liked_track_keys,manually_saved_track_keys,sessions,impressions,features,stored_state,recording_groups,group_aliases,recording_groups_truncated,group_aliases_truncated})
+        Ok(RecommendationContext{explicit_actions,taste_days,generation,seed_tracks,liked_track_keys,manually_saved_track_keys,sessions,impressions,features,stored_state,recording_groups,group_aliases,recording_groups_truncated,group_aliases_truncated})
     })
 }
 
@@ -616,6 +662,10 @@ pub fn save_recommendation_features(
         for (feature,data) in features.iter().zip(encoded.iter()) {
             let previous:Option<i64>=tx.query_row("SELECT revision FROM recommendation_features WHERE track_key=?1",[&feature.track_key],|r|r.get(0)).optional().map_err(err)?;
             if previous.is_some_and(|r|r>feature.revision){return Err("Stale feature revision".into());}
+            if previous==Some(feature.revision) {
+                let old:String=tx.query_row("SELECT data_json FROM recommendation_features WHERE track_key=?1",[&feature.track_key],|r|r.get(0)).map_err(err)?;
+                if old!=*data { return Err("Conflicting feature revision".into()); }
+            }
             tx.execute("INSERT INTO recommendation_features(track_key,revision,updated_at,data_json) VALUES(?1,?2,?3,?4) ON CONFLICT(track_key) DO UPDATE SET revision=excluded.revision,updated_at=excluded.updated_at,data_json=excluded.data_json WHERE excluded.revision>recommendation_features.revision",params![feature.track_key,feature.revision,feature.updated_at,data]).map_err(err)?;
         }
         prune(&tx)?;tx.commit().map_err(err)
@@ -663,6 +713,78 @@ pub fn save_recommendation_state(
         tx.execute("INSERT INTO recommendation_state(id,revision,data_json) VALUES(1,?1,?2) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,data_json=excluded.data_json WHERE excluded.revision>recommendation_state.revision",params![stored_state.revision,encoded]).map_err(err)?;
         tx.commit().map_err(err)
     })
+}
+
+/// Atomically merges one owned factual section against the current row, incrementing
+/// the DB revision. Language/catalog/audio writers never replace each other's data.
+#[tauri::command]
+pub fn merge_recommendation_feature_sections(state: State<'_, AppState>, updates: Vec<FeatureSectionUpdate>) -> Result<Vec<Feature>, String> {
+    if updates.len()>100 { return Err("Feature section batch exceeds 100".into()); }
+    for update in &updates {
+        key(&update.track_key)?; stamp(update.updated_at)?;
+        if !matches!(update.section.as_str(),"catalog"|"language"|"audio") || !update.data.is_object() { return Err("Invalid factual feature section".into()); }
+        json(&update.data, 15*1024)?;
+    }
+    state.db.with_conn(|conn| {
+        let tx=conn.unchecked_transaction().map_err(err)?;
+        let mut result=Vec::new();
+        for update in updates {
+            let previous:Option<(i64,i64,String)>=tx.query_row("SELECT revision,updated_at,data_json FROM recommendation_features WHERE track_key=?1",[&update.track_key],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(err)?;
+            let (revision, at, mut data)=match previous { Some((r,at,value)) => (r,at,serde_json::from_str::<Value>(&value).map_err(|e|e.to_string())?),None => (0,0,serde_json::json!({})) };
+            let old_at=data.get("sectionUpdatedAt").and_then(|v|v.get(&update.section)).and_then(Value::as_i64).unwrap_or(0);
+            if old_at>update.updated_at { return Err("Stale factual feature section".into()); }
+            if old_at==update.updated_at && data.get(&update.section).is_some_and(|v|v!=&update.data) { return Err("Conflicting factual feature section".into()); }
+            let unchanged=old_at==update.updated_at && data.get(&update.section)==Some(&update.data);
+            if !unchanged {
+                let object=data.as_object_mut().ok_or("Invalid persisted feature object")?;
+                object.insert(update.section.clone(),update.data);
+                let stamps=object.entry("sectionUpdatedAt").or_insert_with(||serde_json::json!({}));
+                stamps.as_object_mut().ok_or("Invalid section clock")?.insert(update.section,Value::from(update.updated_at));
+            }
+            let encoded=json(&data,16*1024)?;
+            let feature=Feature{track_key:update.track_key,revision:revision+if unchanged {0}else{1},updated_at:at.max(update.updated_at),data};
+            tx.execute("INSERT INTO recommendation_features(track_key,revision,updated_at,data_json) VALUES(?1,?2,?3,?4) ON CONFLICT(track_key) DO UPDATE SET revision=excluded.revision,updated_at=excluded.updated_at,data_json=excluded.data_json",params![feature.track_key,feature.revision,feature.updated_at,encoded]).map_err(err)?;
+            result.push(feature);
+        }
+        prune(&tx)?; tx.commit().map_err(err)?; Ok(result)
+    })
+}
+
+#[tauri::command]
+pub fn record_recommendation_action(state: State<'_, AppState>, id: String, track_key: String, db_id: Option<i64>, action: String,
+    intent: String, at: i64, generation: i64, playlist_id: Option<i64>, provenance: Option<Provenance>) -> Result<ExplicitAction,String> {
+    key(&track_key)?; text(&id,128)?; stamp(at)?;
+    if id.is_empty() || intent!="manual" || !matches!(action.as_str(),"like"|"unlike"|"playlist-add"|"collection-save"|"cache") { return Err("Invalid explicit action".into()); }
+    state.db.with_conn(|conn| {
+        let tx=conn.unchecked_transaction().map_err(err)?;
+        let current:i64=tx.query_row("SELECT generation FROM recommendation_meta WHERE id=1",[],|r|r.get(0)).map_err(err)?;
+        if current!=generation { return Err("Recommendation feedback was cleared".into()); }
+        let (source,source_id)=track_key.split_once(':').ok_or("Invalid action track")?;
+        let mut track=tx.query_row("SELECT t.id,t.source,t.external_id,t.title,COALESCE(a.name,t.artist_name),al.title,t.duration_sec,t.cover_path,t.genre FROM tracks t LEFT JOIN artists a ON a.id=t.artist_id LEFT JOIN albums al ON al.id=t.album_id WHERE (?1 IS NOT NULL AND t.id=?1) OR (?1 IS NULL AND t.source=?2 AND (t.external_id=?3 OR (t.source='local' AND CAST(t.id AS TEXT)=?3))) LIMIT 1",params![db_id,source,source_id],|r| {
+            let db_id:i64=r.get(0)?;let source:String=r.get(1)?;let external:Option<String>=r.get(2)?;
+            let source_id=if source=="local" {db_id.to_string()} else {external.unwrap_or_default()};
+            Ok(RecommendationTrack{traits:Some(serde_json::json!({"genre":r.get::<_,Option<String>>(8)?})),track_key:format!("{source}:{source_id}"),source,source_id,db_id:Some(db_id),title:r.get(3)?,artists:r.get::<_,Option<String>>(4)?.into_iter().collect(),album:r.get(5)?,duration_sec:r.get(6)?,cover_path:r.get(7)?,external_url:None,provenance:None})
+        }).map_err(err)?;
+        track.provenance=provenance;
+        key(&track.track_key)?;
+        if action=="playlist-add" {
+            let playlist=playlist_id.ok_or("Missing explicit playlist")?;
+            tx.execute("INSERT OR IGNORE INTO recommendation_manual_memberships(playlist_id,track_id) SELECT ?1,?2 WHERE EXISTS(SELECT 1 FROM playlist_tracks WHERE playlist_id=?1 AND track_id=?2)",params![playlist,track.db_id]).map_err(err)?;
+        }
+        let item=ExplicitAction{id,track_key:track.track_key.clone(),track,action,intent,at,generation};
+        let encoded=json(&serde_json::to_value(&item).map_err(|e|e.to_string())?,16*1024)?;
+        let previous:Option<String>=tx.query_row("SELECT action_json FROM recommendation_actions WHERE id=?1",[&item.id],|r|r.get(0)).optional().map_err(err)?;
+        if previous.as_ref().is_some_and(|value|value!=&encoded) { return Err("Conflicting explicit action identity".into()); }
+        tx.execute("INSERT OR IGNORE INTO recommendation_actions(id,track_key,at,action_json) VALUES(?1,?2,?3,?4)",params![item.id,item.track_key,item.at,encoded]).map_err(err)?;
+        tx.execute("DELETE FROM recommendation_actions WHERE at<?1",[millis()-SESSION_RETENTION_MS]).map_err(err)?;
+        tx.execute("DELETE FROM recommendation_actions WHERE id IN (SELECT id FROM recommendation_actions ORDER BY at DESC,id DESC LIMIT -1 OFFSET 50000)",[]).map_err(err)?;
+        tx.commit().map_err(err)?; Ok(item)
+    })
+}
+
+#[tauri::command]
+pub fn get_recommendation_generation(state: State<'_,AppState>) -> Result<i64,String> {
+    state.db.with_conn(|conn|conn.query_row("SELECT generation FROM recommendation_meta WHERE id=1",[],|r|r.get(0)).map_err(err))
 }
 #[tauri::command]
 pub fn get_recommendation_page(

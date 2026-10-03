@@ -1,10 +1,12 @@
 export const ru: Record<string, string> = {
+  'Continue with recommendations': 'Продолжать рекомендациями',
   'No more recommendations': 'Больше рекомендаций нет',
   'Retry after cooldown': 'Повторить после паузы',
   'Recommended for you': 'Рекомендации для вас',
   'Based on what you listen to': 'На основе ваших прослушиваний',
   'SoundCloud recommendations will appear here.': 'Здесь появятся рекомендации SoundCloud.',
   'Could not load recommendations': 'Не удалось загрузить рекомендации',
+  'Could not save recommendations': 'Не удалось сохранить рекомендации',
   'No recommendations yet': 'Пока нет рекомендаций',
   'Deep lyrics analysis': 'Углубленное анализирование лирики',
   'Not downloaded': 'Не загружено',

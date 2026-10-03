@@ -479,6 +479,7 @@ html.theme-gradient .home-mix-art::after {
 .home-content-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr); align-items: stretch; gap: 30px; }
 .home-content-main, .home-content-side { min-width: 0; }
 .home-section-tools, .home-rail-controls { display: flex; align-items: center; gap: 6px; }
+.home-recommendation-error { display: flex; flex-direction: column; gap: 4px; color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
 .home-rail-controls button {
   display: grid;
   width: 25px;

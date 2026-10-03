@@ -286,6 +286,7 @@ export interface ScanSummary {
 }
 
 export interface UnifiedTrack {
+  traits?: { genre?: string | null; tags?: string[] | null; bpm?: number | null; version?: string | null }
   provenance?: RecommendationProvenance
   selectionReason?: ListeningStartReason
   source: SourceId

@@ -8,6 +8,10 @@ import { compactScTrack, FEED_CACHE_TTL_MS, FEED_LIMITS, hydrateRecommendationSt
   type FeedCandidate, type SeedFrontier, type StoredRecommendationState } from './storage'
 import type { RecordingIdentity, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationSeed } from './types'
 import { RecommendationReceipts } from './receipts'
+import { buildTasteProfile, rankCandidates, type TasteProfile } from './profile'
+import { detectLyricLanguages, type LyricEvidenceSource } from './language'
+import { flushFeedbackOperations, stopFeedbackOperations, type ExplicitActionIntent } from './feedbackBridge'
+import type { ExplicitActionKind, FeatureSectionUpdate, LanguageEvidence } from './types'
 
 const DAY = 86400_000
 const PUBLISH_SIZE = 20
@@ -16,7 +20,12 @@ const PAGE_BUDGET = 6
 const CACHE_FLAG_TTL = 60_000
 const keyOf = (track: ScTrack) => `soundcloud:${track.id}`
 const playable = (track: ScTrack) => track.streamable && (track.hasProgressive || track.hasHls)
-const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause)
+const message = (cause: unknown): string => {
+  if (cause instanceof Error) return cause.message
+  if (typeof cause === 'string') return cause
+  try { return JSON.stringify(cause) ?? String(cause) } catch { return String(cause) }
+}
+const catalogOf = (feature: RecommendationFeature) => (feature.data.catalog ?? feature.data) as Record<string, unknown>
 // Fixed-size cursor signatures keep active frontier history inside the state budget.
 function signature(input: string): string {
   let a = 2166136261, b = 5381
@@ -31,6 +40,7 @@ export interface RecommendationSnapshot {
   tracks: ScTrack[]
   loading: boolean
   error: string | null
+  persistenceError: string | null
   hasLoaded: boolean
   hasMore: boolean
   exhausted: boolean
@@ -49,7 +59,7 @@ export type CandidateRanker = (candidate: Readonly<FeedCandidate>) => number
 
 class RecommendationService {
   private listeners = new Set<() => void>()
-  private snapshot: RecommendationSnapshot = { tracks: [], loading: false, error: null, hasLoaded: false,
+  private snapshot: RecommendationSnapshot = { tracks: [], loading: false, error: null, persistenceError: null, hasLoaded: false,
     hasMore: true, exhausted: false, retryAt: null, revision: 0, cachedTrackIds: new Set() }
   private candidates: FeedCandidate[] = []
   private published: FeedCandidate[] = []
@@ -57,6 +67,8 @@ class RecommendationService {
   private usedCursors = new Set<string>()
   private sessionSeen = new RecommendationReceipts()
   private radioSeen = new RecommendationReceipts()
+  private radioRecent: FeedCandidate[] = []
+  private seedBucketCounts = [0, 0, 0]
   private reservations = new Map<string, symbol>()
   private aliases = new Map<string, string>()
   private cooldowns = new Map<string, number>()
@@ -92,10 +104,41 @@ class RecommendationService {
   private impressionsFailed = false
   private pendingFeatures = new Map<string, FeedCandidate>()
   private featureTimer: ReturnType<typeof setTimeout> | null = null
-  private storage = new RecommendationStorage(error => this.emit({ error }))
+  private storage = new RecommendationStorage(error => this.reportPersistenceError('State', error))
+  private persistenceErrors = new Map<string, string>()
+  private context: RecommendationContext | null = null
+  private profile: TasteProfile | null = null
+  private readonly sessionStartedAt = Date.now()
+  private closing = false
+  private feedbackTimer: ReturnType<typeof setTimeout> | null = null
+  private pendingSections = new Map<string, FeatureSectionUpdate>()
+  private sectionFlight: Promise<void> | null = null
+  private sectionFailed = false
+  private actionJobs = new Set<Promise<void>>()
+  private pendingActions: Parameters<typeof api.recordRecommendationAction>[0][] = []
+  private actionFlight: Promise<void> | null = null
+  private languageJobs = new Set<Promise<void>>()
+  private languageSequences = new Map<string, number>()
+  private languageHashes = new Map<string, string>()
+  private sectionClocks = new Map<string, number>()
 
   constructor() {
     if (typeof window === 'undefined') return
+    window.addEventListener('tempo:explicit-action', event => {
+      const detail = (event as CustomEvent<ExplicitActionIntent>).detail
+      void this.recordExplicitAction(detail.trackKey, detail.action, detail.intent, detail).catch(cause => this.reportPersistenceError('Actions', cause))
+    })
+    window.addEventListener('tempo:original-lyrics', event => {
+      if (this.closing) return
+      const detail = (event as CustomEvent<{ trackKey: string; text: string; evidence: LyricEvidenceSource }>).detail
+      this.observeLyrics(detail.trackKey, detail.text, detail.evidence)
+    })
+    window.addEventListener('tempo:listening-feedback', event => {
+      if (this.closing) return
+      const detail = (event as CustomEvent<{ generation: number }>).detail
+      if (this.initialized && detail.generation !== this.generation) return
+      this.scheduleFeedbackRefresh()
+    })
     // One app-owned listener; flags stay bounded by the current metadata window.
     void onSoundcloudCacheReady(id => {
       if (!this.published.some(item => item.track.id === id) && !this.visibleIds.has(id)) return
@@ -107,7 +150,7 @@ class RecommendationService {
       this.cacheFlags.clear()
       this.emitCacheFlags()
       void this.queryCacheFlags()
-      if (this.active && this.initialized) void this.refreshContext()
+      if (!this.closing && this.active && this.initialized) void this.refreshContext()
     })
     window.addEventListener('tempo:soundcloud-cache-invalidated', () => {
       this.cacheEpoch += 1
@@ -127,6 +170,8 @@ class RecommendationService {
       this.impressions = []
       this.sessionSeen.clear()
       this.radioSeen.clear()
+      this.radioRecent = []
+      this.seedBucketCounts = [0, 0, 0]
       this.skipCooldowns.clear()
       this.homeCooldownOverflow.clear()
       this.skipCooldownOverflow.clear()
@@ -135,6 +180,11 @@ class RecommendationService {
       this.aliases.clear()
       for (const item of this.published) { this.sessionSeen.add(item.groupKey); this.sessionSeen.add(keyOf(item.track)) }
       this.pendingFeatures.clear()
+      this.pendingActions = []
+      this.context = null
+      this.profile = null
+      // Lyrics are factual metadata, retained by history clear. An in-flight
+      // detector still belongs to its track/text sequence after feedback resets.
       this.featuresFailed = false
       this.impressionsFailed = false
       this.emit({ error: null, hasMore: true, exhausted: false })
@@ -149,6 +199,10 @@ class RecommendationService {
     this.snapshot = { ...this.snapshot, ...change, revision: Math.max(this.snapshot.revision + 1, change.revision ?? 0) }
     this.listeners.forEach(listener => listener())
   }
+  private reportPersistenceError(source: string, cause: unknown) {
+    this.persistenceErrors.set(source, message(cause))
+    this.emit({ persistenceError: [...this.persistenceErrors].map(([name, error]) => `${name}: ${error}`).join('\n') })
+  }
   private save(immediate = false) {
     if (!this.initialized) return
     const relevant = new Set([...this.published, ...this.candidates].flatMap(item => [item.groupKey, keyOf(item.track)]))
@@ -162,13 +216,14 @@ class RecommendationService {
       },
       groups: [...this.aliases].filter(([key, group]) => relevant.has(key) || relevant.has(group))
         .slice(0, FEED_LIMITS.groups).map(([key, groupKey]) => ({ key, groupKey })),
-      createdAt: this.createdAt, updatedAt: Date.now(), retryAt: this.snapshot.retryAt, contextKey: this.contextKey }
+      radioRecent: this.radioRecent.slice(-9), createdAt: this.createdAt, updatedAt: Date.now(), retryAt: this.snapshot.retryAt, contextKey: this.contextKey }
     this.storage.schedule(state, this.generation)
     if (immediate) void this.storage.flush().catch(() => undefined)
   }
   private hasPendingWrites() {
     return this.impressions.length > 0 || this.pendingFeatures.size > 0 || this.impressionFlight !== null
-      || this.featuresFlight !== null || this.storage.hasPendingWrites()
+      || this.featuresFlight !== null || this.storage.hasPendingWrites() || this.pendingSections.size > 0
+      || this.sectionFlight !== null || this.pendingActions.length > 0 || this.actionFlight !== null || this.actionJobs.size > 0 || this.languageJobs.size > 0
   }
   flush = async (): Promise<void> => {
     if (this.drainFlight) {
@@ -178,10 +233,15 @@ class RecommendationService {
     }
     const flight = (async () => {
       do {
+        await Promise.all([...this.actionJobs, ...this.languageJobs])
+        await this.flushActions()
+        await this.flushSections()
         await this.flushImpressions()
         await this.flushFeatures()
         await this.storage.flush()
       } while (this.hasPendingWrites())
+      this.persistenceErrors.clear()
+      this.emit({ persistenceError: null })
     })().finally(() => { if (this.drainFlight === flight) this.drainFlight = null })
     this.drainFlight = flight
     await flight
@@ -219,15 +279,21 @@ class RecommendationService {
       this.aliases.set(key, group.groupKey)
     }
     await this.resolveKeys([...context.seedTracks.map(seed => seed.track.trackKey), ...context.sessions.map(event => event.trackKey),
+      ...(context.explicitActions ?? []).map(action => action.trackKey),
       ...context.impressions.map(impression => impression.trackKey), ...context.features.map(feature => feature.trackKey),
       ...this.published.map(item => keyOf(item.track)), ...this.candidates.map(item => keyOf(item.track))],
     [...context.impressions.flatMap(impression => impression.recordingGroup ? [impression.recordingGroup] : []),
       ...this.sessionSeen.keys(), ...this.radioSeen.keys(), ...this.published.map(item => item.groupKey), ...this.candidates.map(item => item.groupKey),
-      ...context.features.flatMap(feature => typeof feature.data.recordingGroup === 'string' ? [feature.data.recordingGroup] : [])])
+      ...context.features.flatMap(feature => typeof catalogOf(feature).recordingGroup === 'string' ? [catalogOf(feature).recordingGroup as string] : [])])
     if (epoch !== this.epoch) return
     for (const key of this.sessionSeen.keys()) this.sessionSeen.add(this.group(key))
     for (const key of this.radioSeen.keys()) this.radioSeen.add(this.group(key))
-    this.features = new Map(context.features.map(feature => [feature.trackKey, feature]))
+    const latest = new Map(context.features.map(feature => [feature.trackKey, feature]))
+    for (const [key, feature] of this.features) if (feature.revision > (latest.get(key)?.revision ?? -1)) latest.set(key, feature)
+    this.features = latest
+    context.features = [...latest.values()]
+    this.context = { ...context, canonicalGroups: Object.fromEntries(this.aliases) }
+    this.profile = buildTasteProfile({ ...this.context, sessionStartedAt: this.sessionStartedAt }, Date.now())
     for (const [key, until] of this.cooldowns) if (until > Date.now()) {
       this.homeCooldownOverflow.add(key)
       this.homeCooldownOverflowUntil = Math.max(this.homeCooldownOverflowUntil, until)
@@ -255,7 +321,7 @@ class RecommendationService {
       this.cooldowns.set(group, Math.max(this.cooldowns.get(group) ?? 0, until))
     }
     for (const item of [...this.published, ...this.candidates]) item.groupKey = this.group(keyOf(item.track))
-    this.setSeedPlan(context.seedTracks)
+    this.setSeedPlan(this.profile.seeds)
     this.pruneMetadata()
   }
   private async initialize() {
@@ -276,6 +342,7 @@ class RecommendationService {
         this.usedCursors = new Set(stored.usedCursors)
         this.contextKey = stored.contextKey
         this.createdAt = stored.createdAt
+        this.radioRecent = stored.radioRecent ?? []
         if (Date.now() - stored.createdAt < FEED_CACHE_TTL_MS && stored.receipts) {
           this.sessionSeen.restore(stored.receipts.home)
           this.radioSeen.restore(stored.receipts.radio)
@@ -296,20 +363,20 @@ class RecommendationService {
       this.published = this.published.filter(item => this.cooldownUntil(this.group(item.groupKey)) <= Date.now())
       for (const item of this.published) { this.sessionSeen.add(this.group(item.groupKey)); this.sessionSeen.add(keyOf(item.track)) }
       this.initialized = true
-      this.emit({ tracks: this.published.map(item => item.track), hasLoaded: this.published.length > 0 })
+      this.emit({ tracks: this.published.map(item => item.track), hasLoaded: this.published.length > 0, error: null })
       void this.queryCacheFlags()
     })().finally(() => { if (epoch === this.epoch) this.initializeFlight = null })
     return this.initializeFlight
   }
   refreshContext = async () => {
-    if (!this.initialized || this.contextFlight) return this.contextFlight
+    if (this.closing || !this.initialized || this.contextFlight) return this.contextFlight
     const epoch = this.epoch
     this.contextFlight = (async () => {
       const context = await api.getRecommendationContext()
       if (epoch !== this.epoch) return
       await this.applyContext(context)
       this.save()
-      if (!this.snapshot.error && this.candidates.length < LOW_WATER) void this.fill()
+      if (this.candidates.length < LOW_WATER) void this.fill()
     })().catch(cause => this.emit({ error: message(cause) })).finally(() => { this.contextFlight = null })
     return this.contextFlight
   }
@@ -321,7 +388,7 @@ class RecommendationService {
       const previous = unique.get(group)
       if (!previous || seed.weight * seed.confidence > previous.weight * previous.confidence) unique.set(group, seed)
     }
-    const sorted = [...unique.values()].sort((a, b) => b.weight * b.confidence - a.weight * a.confidence || b.at - a.at)
+    const sorted = [...unique.values()]
     const artists = new Map<string, number>()
     const selected = sorted.filter(seed => {
       const artist = normalizeRecordingText(seed.track.artists[0] ?? '')
@@ -333,30 +400,186 @@ class RecommendationService {
     const contextKey = selected.map(seed => seed.track.trackKey).sort().join('|')
     this.contextKey = contextKey
     const previous = new Map(this.frontier.map(seed => [seed.seed.track.trackKey, seed]))
+    // Keep minority confirmed languages inside the capped frontier even when the artist limit creates a deficit.
+    for (const seed of seeds) if (!selected.some(item => item.track.trackKey === seed.track.trackKey)) {
+      const language = this.features.get(seed.track.trackKey)?.data.language as unknown as LanguageEvidence | undefined
+      if (!language || !Object.keys(language.distribution).some(code => (this.profile?.languages[code] ?? 0) > 0 && !selected.some(item => {
+        const known = this.features.get(item.track.trackKey)?.data.language as unknown as LanguageEvidence | undefined
+        return known && (known.distribution[code] ?? 0) >= 0.2
+      }))) continue
+      if (selected.length >= FEED_LIMITS.seeds) selected.pop()
+      selected.push(seed)
+    }
     this.frontier = selected.map(seed => {
       const old = previous.get(seed.track.trackKey)
-      if (old && Date.now() - old.updatedAt < FEED_CACHE_TTL_MS) { old.seed = seed; return old }
+      if (old && Date.now() - old.updatedAt < FEED_CACHE_TTL_MS) {
+        if (old.seed.limitedEvidence && !seed.limitedEvidence && (old.limitedAccepted ?? 0) >= 4) old.exhausted = false
+        if (seed.limitedEvidence) {
+          const known = new Set([...this.candidates, ...this.published, ...this.radioRecent]
+            .filter(item => item.seedTrackKey === seed.track.trackKey).map(item => this.group(item.groupKey)))
+          old.limitedAccepted = Math.max(old.limitedAccepted ?? 0, known.size)
+          if (old.limitedAccepted >= 4) old.exhausted = true
+        }
+        old.seed = seed; return old
+      }
       return { seed, seedId: null, resolved: false, source: 'related', cursor: null,
         emptyPages: 0, exhausted: false, retryAt: null, pages: 0, updatedAt: Date.now() }
+    })
+    if (!this.initialized) {
+      // Apply the new policy before showing a pre-policy cached rail.
+      let weakShown = 0
+      this.published = this.published.filter(item => !this.frontier.find(seed => seed.seed.track.trackKey === item.seedTrackKey)?.seed.limitedEvidence
+        || ++weakShown <= 4)
+    }
+    // Older cached pools predate sparse-evidence limits. Preserve displayed
+    // cards, but retire their excess unpublished suggestions before delivery.
+    const weakCounts = new Map<string, number>()
+    for (const item of this.published) weakCounts.set(item.seedTrackKey, (weakCounts.get(item.seedTrackKey) ?? 0) + 1)
+    this.candidates = this.candidates.filter(item => {
+      if (!this.frontier.find(seed => seed.seed.track.trackKey === item.seedTrackKey)?.seed.limitedEvidence) return true
+      const count = weakCounts.get(item.seedTrackKey) ?? 0
+      weakCounts.set(item.seedTrackKey, count + 1)
+      return count < 4
     })
     const scopes = new Set(this.frontier.filter(frontier => previous.get(frontier.seed.track.trackKey) === frontier)
       .flatMap(frontier => ['related', 'station', 'search'].map(source => signature(`${frontier.seed.track.trackKey}:${frontier.seedId}:${source}`))))
     this.usedCursors = new Set([...this.usedCursors].filter(key => scopes.has(key.slice(0, 16))))
-    if (this.initialized) { this.emit({ exhausted: false, hasMore: true }); this.save() }
+    if (this.initialized) {
+      const exhausted = !this.frontier.some(seed => !seed.exhausted)
+      this.emit({ exhausted: exhausted && this.candidates.length === 0, hasMore: this.candidates.length > 0 || !exhausted })
+      this.save()
+    }
   }
   setCandidateRanker = (ranker: CandidateRanker) => { this.ranker = ranker }
 
+  private scheduleFeedbackRefresh() {
+    if (this.closing || this.feedbackTimer) return
+    this.feedbackTimer = setTimeout(() => {
+      this.feedbackTimer = null
+      if (!this.initialized) void this.initialize().catch(cause => this.emit({ error: message(cause) }))
+      else void this.refreshContext()
+    }, 250)
+  }
+  private observeLyrics(trackKey: string, text: string, evidence: LyricEvidenceSource) {
+    const sequence = (this.languageSequences.get(trackKey) ?? 0) + 1
+    this.languageSequences.set(trackKey, sequence)
+    const job = detectLyricLanguages(text, evidence).then(result => {
+      if (this.closing || this.languageSequences.get(trackKey) !== sequence) return
+      this.recordLanguage(trackKey, result)
+    }).catch(cause => { this.reportPersistenceError('Language', cause) }).finally(() => {
+      this.languageJobs.delete(job)
+      if (this.languageSequences.size > 5000) {
+        const oldest = this.languageSequences.keys().next().value
+        if (oldest) { this.languageSequences.delete(oldest); this.languageHashes.delete(oldest) }
+      }
+    })
+    this.languageJobs.add(job)
+  }
+  private nextSectionTime(trackKey: string, section: string): number {
+    const key = `${trackKey}|${section}`
+    const persisted = this.features.get(trackKey)?.data.sectionUpdatedAt as Record<string, number> | undefined
+    const at = Math.max(Date.now(), (persisted?.[section] ?? 0) + 1, (this.sectionClocks.get(key) ?? 0) + 1)
+    this.sectionClocks.set(key, at)
+    if (this.sectionClocks.size > 15_000) this.sectionClocks.delete(this.sectionClocks.keys().next().value!)
+    return at
+  }
+  recordLanguage = (trackKey: string, evidence: LanguageEvidence) => {
+    if (this.closing) return
+    const hash = `${evidence.textHash}|${JSON.stringify(evidence.evidence)}`
+    if (this.languageHashes.get(trackKey) === hash) return
+    this.languageHashes.set(trackKey, hash)
+    this.pendingSections.set(`${trackKey}|language`, { trackKey, section: 'language', data: evidence as unknown as Record<string, unknown>, updatedAt: this.nextSectionTime(trackKey, 'language') })
+    if (!this.sectionFailed) void this.flushSections().catch(() => undefined)
+  }
+  private async flushSections(): Promise<void> {
+    if (this.sectionFlight) { await this.sectionFlight; return this.flushSections() }
+    if (!this.pendingSections.size) return
+    this.sectionFailed = false
+    const flight = (async () => {
+      while (this.pendingSections.size) {
+        const entries = [...this.pendingSections.entries()].slice(0, 100)
+        for (const [key, update] of entries) if (this.pendingSections.get(key) === update) this.pendingSections.delete(key)
+        try {
+          const features = await api.mergeRecommendationFeatureSections(entries.map(([, update]) => update))
+          for (const feature of features) if (feature.revision >= (this.features.get(feature.trackKey)?.revision ?? -1)) this.features.set(feature.trackKey, feature)
+          if (this.context) {
+            this.context.features = [...this.features.values()]
+            this.profile = buildTasteProfile({ ...this.context, sessionStartedAt: this.sessionStartedAt }, Date.now())
+            if (!this.closing) this.setSeedPlan(this.profile.seeds)
+          }
+        } catch (cause) {
+          for (const [key, update] of entries) if (!this.pendingSections.has(key)) this.pendingSections.set(key, update)
+          this.sectionFailed = true; this.reportPersistenceError('Features', cause); throw cause
+        }
+      }
+    })().finally(() => { if (this.sectionFlight === flight) this.sectionFlight = null })
+    this.sectionFlight = flight; await flight
+  }
+  recordExplicitAction = (trackKey: string, action: ExplicitActionKind, intent: 'manual' | 'automatic',
+    detail?: Partial<ExplicitActionIntent>): Promise<void> => {
+    if (intent !== 'manual' || (this.closing && detail?.generation === undefined)) return Promise.resolve()
+    const epoch = this.epoch, id = crypto.randomUUID(), at = detail?.at ?? Date.now()
+    const job = (async () => {
+      await this.initialize()
+      if (epoch !== this.epoch) return
+      const known = this.context?.sessions.find(event => event.trackKey === trackKey || event.track.dbId === detail?.dbId)?.track
+      const candidate = [...this.published, ...this.candidates].find(item => keyOf(item.track) === trackKey)
+      const provenance = known?.provenance ?? (candidate ? this.toUnified(candidate.track).provenance : undefined)
+      if (this.pendingActions.length >= 5000) throw new Error('Explicit feedback retry queue exceeds limit')
+      this.pendingActions.push({ id, trackKey, action, intent, at, generation: detail?.generation ?? this.generation, dbId: detail?.dbId, playlistId: detail?.playlistId, provenance })
+      await this.flushActions()
+    })().finally(() => { this.actionJobs.delete(job) })
+    this.actionJobs.add(job); return job
+  }
+  private async flushActions(): Promise<void> {
+    if (this.actionFlight) { await this.actionFlight; return this.flushActions() }
+    if (!this.pendingActions.length) return
+    const flight = (async () => {
+      while (this.pendingActions.length) {
+        const action = this.pendingActions[0], epoch = this.epoch
+        try {
+          await api.recordRecommendationAction(action)
+          if (this.pendingActions[0] === action) this.pendingActions.shift()
+          this.scheduleFeedbackRefresh()
+        } catch (cause) {
+          if (epoch !== this.epoch || action.generation !== this.generation || message(cause).includes('feedback was cleared')) {
+            if (this.pendingActions[0] === action) this.pendingActions.shift()
+            continue
+          }
+          this.reportPersistenceError('Actions', cause); throw cause
+        }
+      }
+    })().finally(() => { if (this.actionFlight === flight) this.actionFlight = null })
+    this.actionFlight = flight; await flight
+  }
+  takeForAutoplay = async ({ currentTrack, excludedTrackKeys, signal }: {
+    currentTrack: UnifiedTrack | null; excludedTrackKeys: Iterable<string>; signal?: AbortSignal
+  }): Promise<RadioReservation | null> => {
+    if (this.closing || signal?.aborted) return null
+    return this.reserveForRadio([...excludedTrackKeys, ...(currentTrack ? [`${currentTrack.source}:${currentTrack.sourceId}`] : [])], signal)
+  }
+  /** Stop future producers, await previously authorized actions, then drain captured-generation writes. */
+  prepareExit = async (): Promise<void> => {
+    this.closing = true; this.active = false; stopFeedbackOperations()
+    if (this.cycleTimer) clearTimeout(this.cycleTimer)
+    if (this.feedbackTimer) clearTimeout(this.feedbackTimer)
+    this.cycleTimer = null; this.feedbackTimer = null
+    await flushFeedbackOperations()
+    await this.flush()
+  }
+
   activate = async () => {
+    if (this.closing) return
     this.active = true
     try {
       await this.initialize()
       this.wantsPublish ||= this.published.length === 0
       this.publish()
-      if (!this.snapshot.error && this.candidates.length < LOW_WATER) await this.fill()
+      if (this.candidates.length < LOW_WATER) await this.fill()
     } catch (cause) { this.emit({ error: message(cause), hasLoaded: true }) }
   }
   loadMore = async () => {
-    if (this.snapshot.loading || this.snapshot.error || (this.snapshot.retryAt ?? 0) > Date.now()) return
+    if (this.closing || this.snapshot.loading || (this.snapshot.retryAt ?? 0) > Date.now()) return
     this.active = true
     try { await this.initialize() } catch (cause) { this.emit({ error: message(cause), hasLoaded: true }); return }
     if (this.published.length >= FEED_LIMITS.published) return
@@ -367,18 +590,32 @@ class RecommendationService {
   retry = async () => {
     if ((this.snapshot.retryAt ?? 0) > Date.now() || this.snapshot.loading) return
     this.emit({ error: null, retryAt: null })
-    try { await this.flush() } catch { return }
+    // Retain failed writes for a later drain, but do not make fetching depend on them.
+    void this.flush().catch(() => undefined)
     this.wantsPublish = this.published.length === 0 || this.wantsPublish
     await this.activate()
   }
   private nextFrontier(): SeedFrontier | undefined {
     const now = Date.now()
     const primaryRemaining = this.frontier.some(seed => !seed.exhausted && seed.source !== 'search')
+    const bucketNames = ['steady', 'recent', 'discovery'] as const, weights = [0.6, 0.25, 0.15]
+    const ready = this.frontier.filter(seed => !seed.exhausted && (!primaryRemaining || seed.source !== 'search') && (seed.retryAt ?? 0) <= now)
+    const active = bucketNames.map((name, index) => ready.some(seed => (seed.seed.bucket ?? 'steady') === name) ? index : -1).filter(index => index >= 0)
+    if (!active.length) return
+    const total = active.reduce((sum, index) => sum + weights[index], 0), count = this.seedBucketCounts.reduce((sum, value) => sum + value, 0)
+    const selected = active.reduce((best, next) => weights[next] / total * (count + 1) - this.seedBucketCounts[next]
+      > weights[best] / total * (count + 1) - this.seedBucketCounts[best] ? next : best, active[0])
     for (let offset = 0; offset < this.frontier.length; offset += 1) {
       const index = (this.nextSeed + offset) % this.frontier.length
       const frontier = this.frontier[index]
-      if (!frontier.exhausted && (!primaryRemaining || frontier.source !== 'search') && (frontier.retryAt ?? 0) <= now) { this.nextSeed = (index + 1) % this.frontier.length; return frontier }
+      if (ready.includes(frontier) && (frontier.seed.bucket ?? 'steady') === bucketNames[selected]) {
+        this.seedBucketCounts[selected] += 1; this.nextSeed = (index + 1) % this.frontier.length; return frontier
+      }
     }
+  }
+  private hasReadyFrontier() {
+    const primaryRemaining = this.frontier.some(seed => !seed.exhausted && seed.source !== 'search')
+    return this.frontier.some(seed => !seed.exhausted && (!primaryRemaining || seed.source !== 'search') && (seed.retryAt ?? 0) <= Date.now())
   }
   private async resolveSeed(frontier: SeedFrontier): Promise<string | null> {
     const track = frontier.seed.track
@@ -406,18 +643,18 @@ class RecommendationService {
     else frontier.exhausted = true
   }
   private fill = async (): Promise<void> => {
-    if (!this.initialized || this.snapshot.error || (this.snapshot.retryAt ?? 0) > Date.now()) return
+    if (this.closing || !this.initialized || (this.snapshot.retryAt ?? 0) > Date.now()) return
     if (this.fillFlight) return this.fillFlight
     const epoch = this.epoch
     this.emit({ loading: true })
     this.fillFlight = (async () => {
-      for (let page = 0; page < PAGE_BUDGET && this.candidates.length < FEED_LIMITS.candidates && !this.snapshot.error; page += 1) {
+      for (let page = 0; page < PAGE_BUDGET && this.candidates.length < FEED_LIMITS.candidates; page += 1) {
         const frontier = this.nextFrontier()
         if (!frontier) break
         try {
           if (!frontier.resolved) {
             frontier.seedId = await this.resolveSeed(frontier)
-            if (epoch !== this.epoch) return
+            if (this.closing || epoch !== this.epoch) return
             if (!this.frontier.includes(frontier)) continue
             frontier.resolved = true
             if (!frontier.seedId) { frontier.exhausted = true; continue }
@@ -430,7 +667,7 @@ class RecommendationService {
           const result = frontier.source === 'search'
             ? await api.scRecommendationSearch(frontier.seed.track.artists[0].slice(0, 128), 20)
             : await api.scRecommendationPage(frontier.seedId!, inputCursor, 30, frontier.source)
-          if (epoch !== this.epoch) return
+          if (this.closing || epoch !== this.epoch) return
           if (!this.frontier.includes(frontier)) continue
           const knownArtists = this.frontier.flatMap(seed => seed.seed.track.artists)
           const tracks = frontier.source === 'search' ? result.tracks.filter(track => {
@@ -438,9 +675,10 @@ class RecommendationService {
             return identity.artist !== null && frontier.seed.track.artists.some(artist => normalizeRecordingText(artist) === identity.artist)
           }) : result.tracks
           const accepted = await this.accept(tracks, frontier, inputCursor, epoch)
-          if (epoch !== this.epoch) return
+          if (this.closing || epoch !== this.epoch) return
           if (!this.frontier.includes(frontier)) continue
           frontier.updatedAt = Date.now()
+          if (frontier.seed.limitedEvidence && (frontier.limitedAccepted ?? 0) >= 4) frontier.exhausted = true
           if (result.error) {
             // Partial tracks are useful; failed pages retain the INPUT cursor.
             frontier.retryAt = result.retryAt ?? Date.now() + 30_000
@@ -458,13 +696,14 @@ class RecommendationService {
           while (this.usedCursors.size > FEED_LIMITS.cursors) this.usedCursors.delete(this.usedCursors.values().next().value!)
           frontier.pages += 1
           frontier.retryAt = null
+          this.emit({ error: null, retryAt: null })
           frontier.emptyPages = accepted ? 0 : frontier.emptyPages + 1
           frontier.cursor = result.nextCursor
           if (!result.nextCursor || frontier.emptyPages >= 3) this.fallback(frontier)
           if (this.wantsPublish && page >= 1) this.publish()
           this.save()
         } catch (cause) {
-          if (epoch !== this.epoch) return
+          if (this.closing || epoch !== this.epoch) return
           if (!this.frontier.includes(frontier)) continue
           const retryAt = typeof cause === 'object' && cause !== null && 'retryAt' in cause ? Number(cause.retryAt) : 0
           frontier.retryAt = Math.max(Number.isFinite(retryAt) ? retryAt : 0, this.snapshot.retryAt ?? 0, Date.now() + 30_000)
@@ -483,7 +722,7 @@ class RecommendationService {
       this.fillFlight = null
       if (epoch !== this.epoch) { this.emit({ loading: false }); if (this.active) void this.activate(); return }
       // A successful bounded cycle can continue filling; failures require retry.
-      if (!this.snapshot.error && this.candidates.length < FEED_LIMITS.candidates && this.frontier.some(seed => !seed.exhausted)) {
+      if (!this.closing && !this.snapshot.error && this.candidates.length < FEED_LIMITS.candidates && this.hasReadyFrontier()) {
         if (this.cycleTimer) clearTimeout(this.cycleTimer)
         this.cycleTimer = setTimeout(() => { this.cycleTimer = null; void this.fill() }, 800)
       }
@@ -493,23 +732,24 @@ class RecommendationService {
   private async accept(tracks: ScTrack[], frontier: SeedFrontier, cursor: string | null, epoch: number): Promise<number> {
     const incoming = tracks.filter(playable)
     await this.resolveKeys(incoming.map(keyOf))
-    if (epoch !== this.epoch || !this.frontier.includes(frontier)) return 0
+    if (this.closing || epoch !== this.epoch || !this.frontier.includes(frontier)) return 0
     let accepted = 0
     const knownArtists = this.frontier.flatMap(seed => seed.seed.track.artists)
     for (const track of incoming) {
-      if (epoch !== this.epoch || !this.frontier.includes(frontier)) return accepted
+      if (frontier.seed.limitedEvidence && (frontier.limitedAccepted ?? 0) >= 4) break
+      if (this.closing || epoch !== this.epoch || !this.frontier.includes(frontier)) return accepted
       const identity = recordingIdentity(track, knownArtists)
       let groupKey = this.group(identity.trackKey)
       const currentDuplicate = [...this.published, ...this.candidates].find(item => this.group(item.groupKey) === groupKey || duplicateConfidence(item.identity, identity) >= 0.95)
       const feature = !currentDuplicate ? [...this.features.values()].find(item => {
-        const previous = item.data.identity as RecordingIdentity | undefined
+        const previous = catalogOf(item).identity as RecordingIdentity | undefined
         return previous?.featureVersion === 1 && duplicateConfidence(previous, identity) >= 0.95
       }) : undefined
-      const savedTrack = feature?.data.playable as ScTrack | undefined
+      const savedTrack = feature ? catalogOf(feature).playable as ScTrack | undefined : undefined
       const historicalDuplicate: FeedCandidate | undefined = feature && savedTrack?.id && playable(savedTrack) ? {
-        track: savedTrack, identity: feature.data.identity as RecordingIdentity,
+        track: savedTrack, identity: catalogOf(feature).identity as RecordingIdentity,
         groupKey: this.group(feature.trackKey), seedTrackKey: frontier.seed.track.trackKey, cursor,
-        alternates: (feature.data.alternates as ScTrack[] | undefined)?.slice(0, 3) ?? [], addedAt: Date.now(),
+        alternates: (catalogOf(feature).alternates as ScTrack[] | undefined)?.slice(0, 3) ?? [], addedAt: Date.now(),
       } : undefined
       const duplicate = currentDuplicate ?? historicalDuplicate
       if (duplicate) {
@@ -517,14 +757,14 @@ class RecommendationService {
           try {
             const roots = [duplicate.groupKey, this.group(duplicate.groupKey), groupKey, this.group(identity.trackKey)]
             const group = await api.mergeRecommendationGroups([duplicate.groupKey, groupKey], [keyOf(duplicate.track), identity.trackKey], this.generation)
-            if (epoch !== this.epoch || !this.frontier.includes(frontier)) return accepted
+            if (this.closing || epoch !== this.epoch || !this.frontier.includes(frontier)) return accepted
             groupKey = group.groupKey
             this.migrateGroups(roots, groupKey)
             this.aliases.set(identity.trackKey, groupKey)
             this.aliases.set(keyOf(duplicate.track), groupKey)
             duplicate.groupKey = groupKey
           } catch (cause) {
-            if (epoch !== this.epoch || !this.frontier.includes(frontier)) return accepted
+            if (this.closing || epoch !== this.epoch || !this.frontier.includes(frontier)) return accepted
             if (!message(cause).includes('catalog capacity')) throw cause
             // Capacity keeps upload-local durable identity; strong duplicates still stay off Home.
             groupKey = duplicate.groupKey
@@ -544,6 +784,7 @@ class RecommendationService {
           && this.cooldownUntil(this.group(duplicate.groupKey)) <= Date.now() && this.candidates.length < FEED_LIMITS.candidates) {
           this.candidates.push(duplicate)
           accepted += 1
+          frontier.limitedAccepted = (frontier.limitedAccepted ?? 0) + 1
         }
         continue
       }
@@ -552,13 +793,14 @@ class RecommendationService {
       const item: FeedCandidate = { track, identity, groupKey, seedTrackKey: frontier.seed.track.trackKey, cursor, alternates: [], addedAt: Date.now() }
       this.candidates.push(item)
       accepted += 1
+      frontier.limitedAccepted = (frontier.limitedAccepted ?? 0) + 1
       this.persistFeature(item)
     }
     this.pruneMetadata()
     return accepted
   }
   private persistFeature(candidate: FeedCandidate) {
-    this.pendingFeatures.set(keyOf(candidate.track), structuredClone(candidate))
+    this.pendingFeatures.set(keyOf(candidate.track), { ...structuredClone(candidate), addedAt: this.nextSectionTime(keyOf(candidate.track), 'catalog') })
     if (this.featureTimer || this.featuresFailed) return
     this.featureTimer = setTimeout(() => { this.featureTimer = null; void this.flushFeatures().catch(() => undefined) }, 400)
   }
@@ -572,26 +814,27 @@ class RecommendationService {
       while (this.pendingFeatures.size) {
         const entries = [...this.pendingFeatures.entries()].slice(0, 100)
         for (const [key, candidate] of entries) if (this.pendingFeatures.get(key) === candidate) this.pendingFeatures.delete(key)
-        const epoch = this.epoch, generation = this.generation
+        const epoch = this.epoch
         try {
-          const context = await api.getRecommendationContext()
-          if (epoch !== this.epoch || context.generation !== generation) continue
-          const features: RecommendationFeature[] = entries.map(([key, candidate]) => {
-            const previous = context.features.find(feature => feature.trackKey === key)
-            const data = { ...previous?.data, identity: candidate.identity, recordingGroup: candidate.groupKey,
-              playable: compactScTrack(candidate.track), alternates: candidate.alternates.map(compactScTrack) }
-            if (new TextEncoder().encode(JSON.stringify(data)).byteLength > 16 * 1024) throw new Error('Recommendation feature exceeds storage budget')
-            return { trackKey: key, revision: (previous?.revision ?? 0) + 1, updatedAt: Date.now(), data }
-          })
-          await api.saveRecommendationFeatures(features)
-          if (epoch === this.epoch) for (const feature of features) this.features.set(feature.trackKey, feature)
+          const updates: FeatureSectionUpdate[] = entries.map(([key, candidate]) => ({
+            trackKey: key, section: 'catalog', updatedAt: candidate.addedAt,
+            data: { identity: candidate.identity, recordingGroup: candidate.groupKey,
+              playable: compactScTrack(candidate.track), alternates: candidate.alternates.map(compactScTrack),
+              traits: { genre: candidate.track.genre ?? null, tags: candidate.track.tags?.slice(0, 16) ?? [],
+                bpm: candidate.track.bpm ?? null, version: candidate.identity.version } },
+          }))
+          const features = await api.mergeRecommendationFeatureSections(updates)
+          if (epoch === this.epoch) {
+            for (const feature of features) if (feature.revision >= (this.features.get(feature.trackKey)?.revision ?? -1)) this.features.set(feature.trackKey, feature)
+            if (!this.closing) this.scheduleFeedbackRefresh()
+          }
         } catch (cause) {
           if (epoch !== this.epoch) continue
           for (const [key, candidate] of entries) if (!this.pendingFeatures.has(key)) this.pendingFeatures.set(key, candidate)
           this.featuresFailed = true
           if (this.featureTimer) clearTimeout(this.featureTimer)
           this.featureTimer = null
-          this.emit({ error: message(cause) })
+          this.reportPersistenceError('Catalog', cause)
           throw cause
         }
       }
@@ -601,7 +844,7 @@ class RecommendationService {
     await this.flushFeatures()
   }
   private publish() {
-    if (!this.wantsPublish || this.published.length >= FEED_LIMITS.published) return
+    if (this.closing || !this.wantsPublish || this.published.length >= FEED_LIMITS.published) return
     const retained = new Set<string>()
     this.candidates = this.candidates.filter(item => {
       const group = this.group(item.groupKey)
@@ -616,6 +859,16 @@ class RecommendationService {
     const available = this.candidates.filter(item => !this.isReserved(this.group(item.groupKey))
       && !this.sessionSeen.has(this.group(item.groupKey)) && !this.sessionSeen.has(keyOf(item.track)) && this.cooldownUntil(this.group(item.groupKey)) <= Date.now())
       .sort((a, b) => this.ranker(b) - this.ranker(a))
+    if (this.profile) {
+      const ranked = rankCandidates(available, this.profile, this.published)
+      const kept = new Set(ranked)
+      const rejectedWeak = new Set(available.filter(item => !kept.has(item)
+        && this.profile!.seeds.find(seed => seed.track.trackKey === item.seedTrackKey)?.limitedEvidence))
+      // Retire excess speculative suggestions; they remain factual features,
+      // but must not leave the rail sentinel loading an undeliverable pool.
+      this.candidates = this.candidates.filter(item => !rejectedWeak.has(item))
+      available.splice(0, available.length, ...ranked)
+    }
     while (selected.length < room && available.length) {
       const lastSeed = selected.at(-1)?.seedTrackKey ?? this.published.at(-1)?.seedTrackKey
       const diverseArtist = (item: FeedCandidate) => !item.identity.artist || artistWindow.slice(-9).filter(artist => artist === item.identity.artist).length < 2
@@ -653,6 +906,8 @@ class RecommendationService {
   toUnified = (track: ScTrack, origin: 'home' | 'radio' = 'home'): UnifiedTrack => {
     const item = [...this.published, ...this.candidates].find(candidate => candidate.track.id === track.id)
     return { ...scTrackToUnified(track), selectionReason: origin === 'radio' ? 'autoplay' : 'queue', provenance: {
+      recommendationId: `sc:${track.id}:${item?.addedAt ?? this.createdAt}`,
+      recordingKey: this.group(item?.groupKey ?? keyOf(track)), seedIds: item ? [item.seedTrackKey] : [], placement: origin,
       origin, seedTrackKey: item?.seedTrackKey, recordingGroup: this.group(item?.groupKey ?? keyOf(track)),
       cursor: item?.cursor ?? undefined, selection: origin === 'radio' ? 'autoplay' : 'queue',
     } }
@@ -663,30 +918,40 @@ class RecommendationService {
     const item = [...this.published, ...this.candidates].find(candidate => this.group(candidate.groupKey) === group || keyOf(candidate.track) === trackKey)
     const matchingFeatures = [...this.features.values()].filter(feature => feature.trackKey === trackKey || this.group(feature.trackKey) === group)
     const raw = [...(item ? [item.track, ...item.alternates] : []), ...matchingFeatures.flatMap(feature =>
-      [feature.data.playable, ...((feature.data.alternates as ScTrack[] | undefined) ?? [])])]
+      [catalogOf(feature).playable, ...((catalogOf(feature).alternates as ScTrack[] | undefined) ?? [])])]
     const ids = new Set<string>()
     return raw.filter((track): track is ScTrack => !!track && typeof (track as ScTrack).id === 'string' && playable(track as ScTrack))
       .filter(track => { if (keyOf(track) === trackKey || ids.has(track.id)) return false; ids.add(track.id); return true })
-      .slice(0, 3).map(track => ({ ...this.toUnified(track), provenance: { origin: 'radio', recordingGroup: group, seedTrackKey: item?.seedTrackKey, cursor: item?.cursor ?? undefined } }))
+      .slice(0, 3).map(track => ({ ...this.toUnified(track, 'radio'), provenance: { ...this.toUnified(track, 'radio').provenance,
+        origin: 'radio', placement: 'radio', recordingKey: group, recordingGroup: group, seedTrackKey: item?.seedTrackKey, cursor: item?.cursor ?? undefined } }))
   }
   reserveForRadio = async (excludedKeys: Iterable<string>, signal?: AbortSignal): Promise<RadioReservation | null> => {
-    if (signal?.aborted) return null
+    if (this.closing || signal?.aborted) return null
     this.active = true
     try { await this.initialize() } catch (cause) { this.emit({ error: message(cause) }); return null }
     const excluded = [...excludedKeys]
     await this.resolveKeys(excluded.filter(key => /^(soundcloud|youtube|local):/u.test(key)), excluded.filter(key => !/^(soundcloud|youtube|local):/u.test(key)))
     const excludedGroups = new Set(excluded.map(key => this.group(key)))
-    const pick = () => [...this.candidates, ...this.published].find(item => {
+    const pick = () => {
+      const eligible = (this.profile ? rankCandidates([...this.candidates, ...this.published], this.profile, this.radioRecent) : [...this.candidates, ...this.published]).filter(item => {
       const group = this.group(item.groupKey)
       return !excludedGroups.has(group) && !this.radioSeen.has(group) && !this.radioSeen.has(keyOf(item.track)) && !this.isReserved(group)
         && this.skipCooldownUntil(group) <= Date.now() && playable(item.track)
-    })
+      })
+      const diverseArtist = (item: FeedCandidate) => !item.identity.artist || this.radioRecent.filter(previous => previous.identity.artist === item.identity.artist).length < 2
+      const diverseFamily = (item: FeedCandidate) => !this.radioRecent.some(previous => previous.identity.artist === item.identity.artist && previous.identity.title === item.identity.title)
+      return eligible.find(item => diverseArtist(item) && diverseFamily(item) && item.seedTrackKey !== this.radioRecent.at(-1)?.seedTrackKey)
+        ?? eligible.find(item => diverseArtist(item) && diverseFamily(item)) ?? eligible.find(diverseFamily) ?? eligible[0]
+    }
     let candidate = pick()
-    if (!candidate && !this.snapshot.error) {
+    // Continue beyond one prefetch cycle when its pages contain only previously
+    // delivered recordings. Each queue extension is bounded to 8 x 6 pages.
+    for (let cycle = 0; !candidate && cycle < 8 && !this.closing && !signal?.aborted; cycle += 1) {
       this.candidates = this.candidates.filter(item => !this.radioSeen.has(this.group(item.groupKey)) && !excludedGroups.has(this.group(item.groupKey)))
+      if ((this.snapshot.retryAt ?? 0) > Date.now() || !this.hasReadyFrontier()) break
       await this.fill(); candidate = pick()
     }
-    if (!candidate || signal?.aborted) return null
+    if (this.closing || !candidate || signal?.aborted || this.reservations.size >= 32) return null
     const group = this.group(candidate.groupKey), token = Symbol(group), reservedTrackKey = keyOf(candidate.track)
     this.reservations.set(group, token)
     let settled = false
@@ -694,21 +959,25 @@ class RecommendationService {
       if (settled) return
       settled = true
       if (this.reservations.get(group) === token) this.reservations.delete(group)
+      clearTimeout(timer)
       signal?.removeEventListener('abort', release)
     }
     signal?.addEventListener('abort', release, { once: true })
-    if (!this.snapshot.error && this.candidates.length < LOW_WATER) void this.fill()
+    const timer = setTimeout(release, 120_000)
+    if (this.candidates.length < LOW_WATER) void this.fill()
     return { track: this.toUnified(candidate.track, 'radio'), trackKey: reservedTrackKey, recordingGroup: group,
       commit: () => {
         if (settled || signal?.aborted) { release(); return }
         this.radioSeen.add(this.group(group))
         this.radioSeen.add(reservedTrackKey)
+        this.radioRecent = [...this.radioRecent, structuredClone(candidate!)].slice(-9)
         release()
         this.save()
         if (this.candidates.filter(item => !this.radioSeen.has(this.group(item.groupKey))).length < LOW_WATER) {
-          this.candidates = this.candidates.filter(item => !this.radioSeen.has(this.group(item.groupKey)))
+          // Home may still consume radio-delivered tracks until bounded pool pressure requires retirement.
+          if (this.candidates.length >= FEED_LIMITS.candidates) this.candidates = this.candidates.filter(item => !this.radioSeen.has(this.group(item.groupKey)))
           this.save()
-          if (!this.snapshot.error) void this.fill()
+          void this.fill()
         }
       }, release }
   }
@@ -760,6 +1029,7 @@ class RecommendationService {
     for (const candidate of [...this.candidates, ...this.published]) if (roots.has(candidate.groupKey)) candidate.groupKey = canonical
   }
   recordImpression = (trackKey: string) => {
+    if (this.closing) return
     const candidate = this.published.find(item => keyOf(item.track) === trackKey)
     if (!candidate || !this.initialized) return
     const group = this.group(candidate.groupKey)
@@ -789,7 +1059,7 @@ class RecommendationService {
           this.impressionsFailed = true
           if (this.impressionTimer) clearTimeout(this.impressionTimer)
           this.impressionTimer = null
-          this.emit({ error: message(cause) })
+          this.reportPersistenceError('Impressions', cause)
           throw cause
         }
       }
@@ -843,7 +1113,7 @@ class RecommendationService {
     for (const key of [...this.sessionSeen.keys(), ...this.radioSeen.keys(), ...this.reservations.keys()]) { keys.add(key); keys.add(this.group(key)) }
     for (const feature of this.features.values()) {
       keys.add(feature.trackKey)
-      if (typeof feature.data.recordingGroup === 'string') keys.add(feature.data.recordingGroup)
+      if (typeof catalogOf(feature).recordingGroup === 'string') keys.add(catalogOf(feature).recordingGroup as string)
     }
     for (const impression of this.impressions) { keys.add(impression.trackKey); if (impression.recordingGroup) keys.add(impression.recordingGroup) }
     // Receipts in the fixed summary do not pin aliases. Relevant missing keys are

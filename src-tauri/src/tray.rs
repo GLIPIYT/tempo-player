@@ -31,7 +31,7 @@ pub fn request_exit<R: Runtime>(app: &AppHandle<R>) {
     let _ = app.emit("listening://exit-request", ());
     let app = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(1500));
+        std::thread::sleep(std::time::Duration::from_millis(5000));
         EXIT_READY.store(true, Ordering::Release);
         app.exit(0);
     });

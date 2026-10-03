@@ -44,6 +44,7 @@ export class ListeningAccumulator {
   setGeneration(generation: number): void {
     if (this.event) this.event.generation = generation
   }
+  hasActualListening(): boolean { return (this.event?.elapsedSec ?? 0) > 0 }
 
   private addInterval(start: number, end: number): void {
     const duration = this.event?.durationSec

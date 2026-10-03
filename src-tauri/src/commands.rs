@@ -1124,7 +1124,7 @@ pub fn get_playlist(state: State<'_, AppState>, playlist_id: i64) -> Result<Vec<
 
 #[tauri::command]
 pub fn playlist_add_track(state: State<'_, AppState>, playlist_id: i64, track_id: i64) -> Result<(), String> {
-    state.db.playlist_add_track(playlist_id, track_id)
+    state.db.playlist_add_track_manual(playlist_id, track_id)
 }
 
 #[tauri::command]
@@ -1533,7 +1533,7 @@ pub async fn add_sc_track_to_playlist(
     track: crate::soundcloud::ScTrack,
 ) -> Result<i64, String> {
     let track_id = import_sc_track_for_library(&state, &track, None, None).await?;
-    state.db.playlist_add_track(playlist_id, track_id)?;
+    state.db.playlist_add_track_manual(playlist_id, track_id)?;
     let db = state.db.clone();
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
     let covers = state.covers_dir.clone();
@@ -1557,6 +1557,7 @@ pub async fn sc_import_playlist(
     name: String,
     tracks: Vec<crate::soundcloud::ScTrack>,
     playlist_id: Option<i64>,
+    manual_intent: Option<bool>,
 ) -> Result<i64, String> {
     let target = match playlist_id {
         Some(id) => id,
@@ -1571,7 +1572,8 @@ pub async fn sc_import_playlist(
         if let Some((artist_id, url)) = avatar {
             avatars.entry(artist_id).or_insert(url);
         }
-        state.db.playlist_add_track(target, track_id)?;
+        if manual_intent.unwrap_or(false) { state.db.playlist_add_track_manual(target, track_id)?; }
+        else { state.db.playlist_add_track(target, track_id)?; }
     }
     save_sc_avatars_bounded(&state, avatars).await;
     Ok(target)
@@ -2719,6 +2721,7 @@ pub fn import_playlist_m3u8(
     state: State<'_, AppState>,
     path: String,
     name: String,
+    manual_intent: Option<bool>,
 ) -> Result<Playlist, String> {
     let content = std::fs::read_to_string(&path).map_err(|e| format!("failed to read m3u8: {e}"))?;
     let mut track_ids: Vec<i64> = Vec::new();
@@ -2737,7 +2740,8 @@ pub fn import_playlist_m3u8(
     }
     let playlist = state.db.create_playlist(&name)?;
     for id in &track_ids {
-        state.db.playlist_add_track(playlist.id, *id)?;
+        if manual_intent.unwrap_or(false) { state.db.playlist_add_track_manual(playlist.id, *id)?; }
+        else { state.db.playlist_add_track(playlist.id, *id)?; }
     }
     Ok(playlist)
 }
