@@ -465,6 +465,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_17, MIGRATION_18, MIGRATION_19,
     MIGRATION_20, crate::recommendation_store::MIGRATION,
     crate::recommendation_store::RETIREMENT_MIGRATION,
+    crate::recommendation_store::IDENTITY_MIGRATION,
 ];
 
 pub struct Db {

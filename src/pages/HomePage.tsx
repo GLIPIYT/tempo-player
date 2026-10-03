@@ -1,5 +1,4 @@
 import {
-  useEffect,
   useMemo,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -27,10 +26,9 @@ import ScanLine from '../components/common/ScanLine'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import TrackContextMenu, { type TrackContextRequest } from '../components/common/TrackContextMenu'
 import { buildHourMixes } from '../utils/hourMixes'
-import { scTrackToUnified } from '../utils/unified'
 import { requestTrackCache } from '../soundcloud/cacheJobs'
 import { useSoundCloudRecommendations } from '../hooks/useSoundCloudRecommendations'
-import { onSoundcloudCacheReady } from '../api/events'
+import { recommendationService } from '../features/recommendations/service'
 import {
   anySectionHidden,
   hideSectionUntilTomorrow,
@@ -74,45 +72,6 @@ export default function HomePage() {
   const hourPicks = useAsync(() => api.getHourPicks(30), [version])
   const top = useAsync(() => api.getTopTracks(40), [version])
   const recommendations = useSoundCloudRecommendations(top.data)
-  const [cachedRecommendationIds, setCachedRecommendationIds] = useState<ReadonlySet<string>>(() => new Set())
-  useEffect(() => {
-    let cancelled = false
-    const ids = recommendations.tracks.map((track) => track.id)
-    if (ids.length === 0) {
-      setCachedRecommendationIds(new Set())
-      return
-    }
-
-    void api.scGetCachedTrackIds(ids).then((cachedIds) => {
-      if (cancelled) return
-      setCachedRecommendationIds((previous) => {
-        const next = new Set(ids.filter((id) => previous.has(id)))
-        for (const id of cachedIds) next.add(id)
-        return next
-      })
-    }).catch(() => undefined)
-
-    return () => { cancelled = true }
-  }, [recommendations.tracks])
-  useEffect(() => {
-    let cancelled = false
-    let unlisten: (() => void) | undefined
-    void onSoundcloudCacheReady((trackId) => {
-      setCachedRecommendationIds((previous) => {
-        if (previous.has(trackId)) return previous
-        const next = new Set(previous)
-        next.add(trackId)
-        return next
-      })
-    }).then((stop) => {
-      if (cancelled) stop()
-      else unlisten = stop
-    }).catch(() => undefined)
-    return () => {
-      cancelled = true
-      unlisten?.()
-    }
-  }, [])
   const played = useAsync(async () => {
     const since = Math.floor(Date.now() / 1000) - 30 * 86400
     return dedupeRecent((await api.getHistory(100, 0)).filter((entry) => entry.playedAt >= since), 16)
@@ -184,7 +143,7 @@ export default function HomePage() {
   }
 
   const playRecommendations = (index: number) => {
-    player.playTracks(recommendations.tracks.map(scTrackToUnified), index)
+    player.playTracks(recommendations.tracks.map(track => recommendationService.toUnified(track)), index)
   }
 
   const cacheRecommendation = (track: ScTrack) => {
@@ -356,13 +315,18 @@ export default function HomePage() {
                 error={recommendations.error}
                 hasLoaded={recommendations.hasLoaded}
                 hasMore={recommendations.hasMore}
-                cachedTrackIds={cachedRecommendationIds}
+                cachedTrackIds={recommendations.cachedTrackIds}
+                exhausted={recommendations.exhausted}
+                retryAt={recommendations.retryAt}
                 onPlay={playRecommendations}
                 onCache={cacheRecommendation}
                 onDropToPlaylist={addRecommendationToPlaylist}
                 onRetry={recommendations.retry}
                 onLoadMore={recommendations.loadMore}
                 onNearViewport={recommendations.activate}
+                onImpression={recommendations.recordImpression}
+                onVisibleIds={recommendations.reportVisibleIds}
+                onTrimPassed={recommendations.trimPassed}
                 onSectionMenu={(event) => sectionMenu(event, { title: t('Recommended for you'), id: 'home.recommendations' })}
               />
             ) : null}

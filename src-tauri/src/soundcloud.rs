@@ -6,7 +6,7 @@ use futures_util::StreamExt;
 use regex::Regex;
 use reqwest::Client;
 use serde_json::Value;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock, Semaphore};
 
 const SITE: &str = "https://soundcloud.com";
 const API: &str = "https://api-v2.soundcloud.com";
@@ -35,6 +35,22 @@ pub struct ScTrack {
     pub has_progressive: bool,
     #[serde(default)]
     pub has_hls: bool,
+    #[serde(default)]
+    pub uploader_id: Option<String>,
+    #[serde(default)]
+    pub uploader_name: Option<String>,
+    #[serde(default)]
+    pub metadata_artist: Option<String>,
+    #[serde(default)]
+    pub genre: Option<String>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub bpm: Option<f64>,
+    #[serde(default)]
+    pub isrc: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -111,7 +127,7 @@ async fn get_json(url: &str) -> Result<Value, String> {
 async fn get_json_with_fresh_client(url: &str) -> Result<Value, String> {
     let cid = get_client_id().await?;
     match get_json(&format!("{url}{cid}")).await {
-        Err(e) if e.starts_with("SC_CLIENT_ERROR") => {
+        Err(e) if e.starts_with("SC_CLIENT_ERROR 401 ") || e.starts_with("SC_CLIENT_ERROR 403 ") => {
             fetch_client_id().await?;
             get_json(&format!("{url}{}", get_client_id().await?)).await
         }
@@ -156,14 +172,15 @@ fn map_track(item: &Value) -> Option<ScTrack> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let streamable = item.get("streamable").and_then(|v| v.as_bool()).unwrap_or(false);
+    let full_access = item.get("policy").and_then(Value::as_str) != Some("SNIP");
     let has_progressive = item
         .pointer("/media/transcodings")
         .and_then(|v| v.as_array())
         .map(|list| {
-            list.iter()
-                .any(|t| t.pointer("/format/protocol").and_then(|p| p.as_str()) == Some("progressive"))
+            list.iter().any(|t| t.pointer("/format/protocol").and_then(|p| p.as_str()) == Some("progressive")
+                && !t.get("snipped").and_then(Value::as_bool).unwrap_or(false))
         })
-        .unwrap_or(false);
+        .unwrap_or(false) && full_access;
     let has_hls = item
         .pointer("/media/transcodings")
         .and_then(|v| v.as_array())
@@ -171,7 +188,7 @@ fn map_track(item: &Value) -> Option<ScTrack> {
             list.iter()
                 .any(|t| t.pointer("/format/protocol").and_then(|p| p.as_str()) == Some("hls") && !is_encrypted(t))
         })
-        .unwrap_or(false);
+        .unwrap_or(false) && full_access;
     if !streamable {
         return None;
     }
@@ -186,6 +203,21 @@ fn map_track(item: &Value) -> Option<ScTrack> {
         streamable,
         has_progressive,
         has_hls,
+        uploader_id: item.pointer("/user/id").and_then(Value::as_i64).map(|id| id.to_string()),
+        uploader_name: item.pointer("/user/username").and_then(Value::as_str).map(str::to_string),
+        metadata_artist: item.get("metadata_artist").and_then(Value::as_str)
+            .or_else(|| item.pointer("/publisher_metadata/artist").and_then(Value::as_str))
+            .filter(|s| !s.trim().is_empty()).map(str::to_string),
+        genre: item.get("genre").and_then(Value::as_str).map(str::to_string),
+        tags: item.get("tag_list").and_then(Value::as_str).map(|tags| {
+            Regex::new(r#""([^"]+)"|(\S+)"#).expect("tag regex").captures_iter(tags)
+                .filter_map(|c| c.get(1).or_else(|| c.get(2)).map(|m| m.as_str().to_string()))
+                .take(64).collect()
+        }),
+        description: item.get("description").and_then(Value::as_str).map(|s| s.chars().take(4096).collect()),
+        bpm: item.get("bpm").and_then(Value::as_f64).filter(|bpm| *bpm > 0.0 && bpm.is_finite()),
+        isrc: item.get("isrc").and_then(Value::as_str)
+            .or_else(|| item.pointer("/publisher_metadata/isrc").and_then(Value::as_str)).map(str::to_string),
     })
 }
 
@@ -311,6 +343,322 @@ pub async fn search_artists(query: &str, limit: u32, offset: u32) -> Result<Vec<
     collection_map("/search/users", Some(query), limit, offset, map_artist).await
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScRelatedPage {
+    pub tracks: Vec<ScTrack>,
+    pub next_cursor: Option<String>,
+    pub source: String,
+    pub retry_at: Option<i64>,
+    pub error: Option<String>,
+}
+
+#[derive(Default)]
+struct RecommendationBudget {
+    last_start: Option<Instant>,
+    retry_at: i64,
+    failures: usize,
+}
+fn recommendation_budget() -> &'static Mutex<RecommendationBudget> {
+    static BUDGET: OnceLock<Mutex<RecommendationBudget>> = OnceLock::new();
+    BUDGET.get_or_init(|| Mutex::new(RecommendationBudget::default()))
+}
+fn recommendation_slots() -> &'static Semaphore {
+    static SLOTS: OnceLock<Semaphore> = OnceLock::new();
+    SLOTS.get_or_init(|| Semaphore::new(2))
+}
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+struct RecommendationFailure {
+    error: String,
+    retry_at: Option<i64>,
+    status: Option<u16>,
+}
+impl RecommendationFailure {
+    fn new(error: impl Into<String>) -> Self {
+        Self { error: error.into(), retry_at: None, status: None }
+    }
+}
+fn server_retry_at(headers: &reqwest::header::HeaderMap, now: i64) -> Option<i64> {
+    let retry = headers.get(reqwest::header::RETRY_AFTER).and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            v.trim().parse::<f64>().ok().filter(|s| s.is_finite() && *s >= 0.0)
+                .map(|s| now.saturating_add((s * 1000.0) as i64))
+                .or_else(|| chrono::DateTime::parse_from_rfc2822(v).ok().map(|d| d.timestamp_millis()))
+        });
+    let reset = ["x-ratelimit-reset", "ratelimit-reset", "x-rate-limit-reset"]
+        .iter().filter_map(|name| headers.get(*name)?.to_str().ok()?.parse::<f64>().ok())
+        .filter(|s| s.is_finite() && *s >= 0.0)
+        .map(|s| {
+            if s >= 1_000_000_000_000.0 { s as i64 }
+            else if s >= 1_000_000_000.0 { (s * 1000.0) as i64 }
+            else { now.saturating_add((s * 1000.0) as i64) }
+        }).max();
+    retry.into_iter().chain(reset).filter(|at| *at > now).max()
+}
+
+/// Recommendation traffic alone shares both limits, including auth and stub hydration.
+async fn recommendation_body(url: &reqwest::Url) -> Result<String, RecommendationFailure> {
+    let _permit = recommendation_slots().acquire().await
+        .map_err(|_| RecommendationFailure::new("Recommendation request gate closed"))?;
+    loop {
+        let wait = {
+            let mut budget = recommendation_budget().lock().await;
+            if budget.retry_at > now_ms() {
+                return Err(RecommendationFailure { error: "SoundCloud cooldown".into(), retry_at: Some(budget.retry_at), status: Some(429) });
+            }
+            let wait = budget.last_start.map(|last| Duration::from_millis(800).saturating_sub(last.elapsed()))
+                .unwrap_or_default();
+            if wait.is_zero() {
+                budget.last_start = Some(Instant::now());
+                break;
+            }
+            wait
+        };
+        // A 429 response can publish cooldown while this request waits for spacing.
+        // Reacquire and recheck both cooldown and the latest reservation on wake.
+        tokio::time::sleep(wait).await;
+    }
+    // Never follow provider redirects to a different endpoint/host with credentials.
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    let response = CLIENT.get_or_init(|| Client::builder().user_agent(DESKTOP_UA)
+        .timeout(Duration::from_secs(15)).redirect(reqwest::redirect::Policy::none())
+        .build().expect("recommendation HTTP client"))
+        .get(url.clone()).send().await
+        .map_err(|_| RecommendationFailure::new("SoundCloud recommendation request failed"))?;
+    let status = response.status();
+    if status.as_u16() == 429 {
+        let now = now_ms();
+        let mut budget = recommendation_budget().lock().await;
+        let base = [30_000_i64, 60_000, 120_000, 300_000][budget.failures.min(3)];
+        budget.failures = budget.failures.saturating_add(1);
+        let jittered = base + (now % 401 - 200) * base / 1000;
+        budget.retry_at = budget.retry_at.max(server_retry_at(response.headers(), now).unwrap_or(now + jittered));
+        return Err(RecommendationFailure { error: "SoundCloud rate limit".into(), retry_at: Some(budget.retry_at), status: Some(429) });
+    }
+    if !status.is_success() {
+        return Err(RecommendationFailure { error: format!("SoundCloud recommendation HTTP {}", status.as_u16()), retry_at: None, status: Some(status.as_u16()) });
+    }
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(part) = stream.next().await {
+        let part = part.map_err(|_| RecommendationFailure::new("SoundCloud response interrupted"))?;
+        if bytes.len() + part.len() > 2 * 1024 * 1024 {
+            return Err(RecommendationFailure::new("SoundCloud response exceeds 2 MiB"));
+        }
+        bytes.extend_from_slice(&part);
+    }
+    recommendation_budget().lock().await.failures = 0;
+    String::from_utf8(bytes).map_err(|_| RecommendationFailure::new("Invalid SoundCloud response encoding"))
+}
+
+async fn recommendation_client_id(refresh: bool) -> Result<String, RecommendationFailure> {
+    static AUTH: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = AUTH.get_or_init(|| Mutex::new(())).lock().await;
+    if !refresh {
+        if let Some(id) = client_id_slot().read().await.clone() { return Ok(id); }
+    }
+    let html = recommendation_body(&reqwest::Url::parse(SITE).expect("site URL")).await?;
+    let re = Regex::new(r#""hydratable":"apiClient","data":\{"id":"([^"]+)""#).expect("client regex");
+    let id = re.captures(&html).and_then(|c| c.get(1)).map(|m| m.as_str().to_string())
+        .ok_or_else(|| RecommendationFailure::new("SoundCloud web client ID unavailable"))?;
+    *client_id_slot().write().await = Some(id.clone());
+    Ok(id)
+}
+async fn recommendation_json(mut url: reqwest::Url) -> Result<Value, RecommendationFailure> {
+    let cid = recommendation_client_id(false).await?;
+    url.query_pairs_mut().append_pair("client_id", &cid);
+    let body = match recommendation_body(&url).await {
+        Err(failure) if matches!(failure.status, Some(401 | 403)) => {
+            let fresh = recommendation_client_id(true).await?;
+            let pairs: Vec<_> = url.query_pairs().filter(|(k, _)| k != "client_id")
+                .map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+            url.set_query(None);
+            url.query_pairs_mut().extend_pairs(pairs).append_pair("client_id", &fresh);
+            recommendation_body(&url).await?
+        }
+        other => other?,
+    };
+    serde_json::from_str(&body).map_err(|_| RecommendationFailure::new("Invalid SoundCloud recommendation JSON"))
+}
+
+fn recommendation_cursor(raw: &str, expected_path: &str) -> Result<reqwest::Url, String> {
+    if raw.len() > 2048 { return Err("Oversized SoundCloud cursor".into()); }
+    let mut url = reqwest::Url::parse(raw).map_err(|_| "Invalid SoundCloud cursor")?;
+    if url.scheme() != "https" || url.host_str() != Some("api-v2.soundcloud.com")
+        || url.port().is_some() || !url.username().is_empty() || url.password().is_some()
+        || url.fragment().is_some() || url.path() != expected_path {
+        return Err("Unexpected SoundCloud cursor endpoint".into());
+    }
+    let mut pairs = Vec::new();
+    let mut keys = HashSet::new();
+    for (key, value) in url.query_pairs() {
+        if key == "client_id" { continue; }
+        if !matches!(key.as_ref(), "cursor" | "offset" | "limit" | "linked_partitioning" | "tempo_station_offset")
+            || !keys.insert(key.to_string()) {
+            return Err("Unexpected SoundCloud cursor parameter".into());
+        }
+        pairs.push((key.into_owned(), value.into_owned()));
+    }
+    pairs.sort();
+    url.set_query(None);
+    if !pairs.is_empty() { url.query_pairs_mut().extend_pairs(pairs); }
+    Ok(url)
+}
+
+#[tauri::command]
+pub async fn sc_recommendation_search(
+    state: tauri::State<'_, crate::commands::AppState>, query: String, limit: u32,
+) -> Result<ScRelatedPage, String> {
+    if query.trim().is_empty() || query.len() > 1024 {return Err("Invalid recommendation search query".into());}
+    let saved=state.db.get_app_setting("recommendation_provider_retry_at")?
+        .and_then(|value|value.parse::<i64>().ok()).unwrap_or(0);
+    if saved>now_ms() {
+        return Ok(ScRelatedPage{tracks:Vec::new(),next_cursor:None,source:"related".into(),retry_at:Some(saved),error:Some("SoundCloud cooldown".into())});
+    }
+    let mut url=reqwest::Url::parse(&format!("{API}/search/tracks")).expect("search URL");
+    url.query_pairs_mut().append_pair("q",query.trim()).append_pair("limit",&limit.clamp(1,20).to_string());
+    let mut result=ScRelatedPage{tracks:Vec::new(),next_cursor:None,source:"related".into(),retry_at:None,error:None};
+    match recommendation_json(url).await {
+        Ok(value)=>match value.get("collection").and_then(Value::as_array) {
+            Some(items)=>result.tracks=items.iter().take(limit.clamp(1,20) as usize).filter_map(map_track).collect(),
+            None=>result.error=Some("Unexpected recommendation search response".into()),
+        },
+        Err(failure)=>{result.retry_at=failure.retry_at;result.error=Some(failure.error);}
+    }
+    if let Some(retry_at)=result.retry_at {state.db.set_app_setting("recommendation_provider_retry_at",&retry_at.to_string())?;}
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn sc_recommendation_page(
+    state: tauri::State<'_, crate::commands::AppState>, seed_id: String,
+    cursor: Option<String>, limit: u32, source: String,
+) -> Result<ScRelatedPage, String> {
+    let saved=state.db.get_app_setting("recommendation_provider_retry_at")?
+        .and_then(|value|value.parse::<i64>().ok()).unwrap_or(0);
+    if saved>now_ms() {
+        return Ok(ScRelatedPage{tracks:Vec::new(),next_cursor:None,source:source.clone(),retry_at:Some(saved),error:Some("SoundCloud cooldown".into())});
+    }
+    if seed_id.is_empty() || seed_id.len() > 32 || !seed_id.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("Invalid SoundCloud recommendation seed".into());
+    }
+    let path = match source.as_str() {
+        "related" => format!("/tracks/{seed_id}/related"),
+        "station" => format!("/system-playlists/track-stations:{seed_id}"),
+        _ => return Err("Invalid recommendation source".into()),
+    };
+    let limit = limit.clamp(1, 50);
+    let initial = format!("{API}{path}?limit={limit}&linked_partitioning=1");
+    let url = recommendation_cursor(cursor.as_deref().unwrap_or(&initial), &path)?;
+    let station_offset = url.query_pairs().find(|(k, _)| k == "tempo_station_offset")
+        .map(|(_, v)| v.parse::<usize>().map_err(|_| "Invalid station slice cursor"))
+        .transpose()?.unwrap_or(0);
+    if station_offset > 5000 || (source == "related" && station_offset != 0) {
+        return Err("Invalid station slice cursor".into());
+    }
+    let cache_key = format!("sc-page:v1:{source}:{seed_id}:{limit}:{url}");
+    if let Some(cached) = crate::recommendation_store::page(&state.db, &cache_key)? {
+        if let Ok(page) = serde_json::from_value::<ScRelatedPage>(cached.data) {
+            if page.error.is_none() && page.retry_at.is_none() && page.source == source
+                && page.next_cursor.as_ref().is_none_or(|next| recommendation_cursor(next, &path).is_ok()) {
+                return Ok(page);
+            }
+        }
+    }
+    let mut result = ScRelatedPage { tracks: Vec::new(), next_cursor: None, source: source.clone(), retry_at: None, error: None };
+    let mut request = url.clone();
+    let pairs: Vec<_> = request.query_pairs().filter(|(k, _)| k != "tempo_station_offset")
+        .map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+    request.set_query(None);
+    request.query_pairs_mut().extend_pairs(pairs);
+    let value = match recommendation_json(request).await {
+        Ok(value) => value,
+        Err(failure) => {
+            result.retry_at = failure.retry_at; result.error = Some(failure.error);
+            if let Some(retry_at)=result.retry_at {state.db.set_app_setting("recommendation_provider_retry_at",&retry_at.to_string())?;}
+            return Ok(result);
+        }
+    };
+    let Some(entries) = value.get("collection").or_else(|| value.get("tracks")).and_then(Value::as_array) else {
+        result.error = Some("Unexpected SoundCloud recommendation response".into());
+        return Ok(result);
+    };
+    // Station offset is our slicing cursor, not a claimed provider paging parameter.
+    let items: Vec<_> = if source == "station" {
+        entries.iter().take(5000).skip(station_offset).take(limit as usize).collect()
+    } else { entries.iter().take(limit as usize).collect() };
+    let mut ordered = Vec::new();
+    let mut tracks = HashMap::new();
+    let mut stubs = Vec::new();
+    for item in items {
+        let Some(id) = item.get("id").and_then(Value::as_i64).filter(|id| *id > 0).map(|id| id.to_string()) else { continue; };
+        if ordered.contains(&id) { continue; }
+        ordered.push(id.clone());
+        if let Some(track) = map_track(item) { tracks.insert(id, track); }
+        else if item.get("title").is_none() { stubs.push(id); }
+    }
+    // One batch of at most fifty; no unbounded single-track retry waterfall.
+    if !stubs.is_empty() {
+        let mut batch = reqwest::Url::parse(&format!("{API}/tracks")).expect("batch URL");
+        batch.query_pairs_mut().append_pair("ids", &stubs.join(","));
+        match recommendation_json(batch).await {
+            Ok(value) => {
+                if let Some(items) = value.as_array() {
+                    for track in items.iter().filter_map(map_track) {
+                        if stubs.contains(&track.id) { tracks.insert(track.id.clone(), track); }
+                    }
+                } else { result.error = Some("Unexpected SoundCloud stub response".into()); }
+            }
+            Err(failure) => {
+                result.retry_at = failure.retry_at; result.error = Some(failure.error);
+                if let Some(retry_at)=result.retry_at {state.db.set_app_setting("recommendation_provider_retry_at",&retry_at.to_string())?;}
+            }
+        }
+    }
+    result.tracks = ordered.into_iter().filter_map(|id| tracks.remove(&id))
+        .filter(|track| track.id != seed_id && (track.has_progressive || track.has_hls)).collect();
+    if source == "station" && station_offset + (limit as usize) < entries.len().min(5000) {
+        let mut next = url.clone();
+        let pairs: Vec<_> = next.query_pairs().filter(|(k, _)| k != "tempo_station_offset")
+            .map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+        next.set_query(None);
+        next.query_pairs_mut().extend_pairs(pairs).append_pair("tempo_station_offset", &(station_offset + limit as usize).to_string());
+        result.next_cursor = Some(recommendation_cursor(next.as_str(), &path)?.to_string());
+    } else if let Some(next) = value.get("next_href").and_then(Value::as_str) {
+        match recommendation_cursor(next, &path) {
+            Ok(next) if next != url => result.next_cursor = Some(next.to_string()),
+            Ok(_) => result.error = Some("SoundCloud cursor loop".into()),
+            Err(error) => result.error = Some(error),
+        }
+    }
+    // Cached continuation edges detect A -> B -> A without requesting A again.
+    let mut visited = HashSet::from([url.to_string()]);
+    let mut next = result.next_cursor.clone();
+    for _ in 0..200 {
+        let Some(cursor) = next else { break; };
+        if !visited.insert(cursor.clone()) {
+            result.error = Some("SoundCloud cursor loop".into());
+            break;
+        }
+        let key = format!("sc-page:v1:{source}:{seed_id}:{limit}:{cursor}");
+        next = crate::recommendation_store::page(&state.db, &key)?
+            .and_then(|page| serde_json::from_value::<ScRelatedPage>(page.data).ok())
+            .and_then(|page| page.next_cursor);
+    }
+    if result.error.is_none() {
+        crate::recommendation_store::save_page(&state.db, crate::recommendation_store::ProviderPage {
+            key: cache_key, fetched_at: now_ms(), data: serde_json::to_value(&result).map_err(|e| e.to_string())?,
+        })?;
+    } else {
+        // A hydration failure must retry the same page, never skip unresolved uploads.
+        result.next_cursor = None;
+    }
+    Ok(result)
+}
+
 fn tracks_from_response(value: &Value) -> Vec<ScTrack> {
     value
         .get("collection")
@@ -331,8 +679,9 @@ async fn related_for_seed(track_id: &str, limit: u32) -> Result<Vec<ScTrack>, St
         return Err("invalid SoundCloud seed track id".to_string());
     }
 
-    let related_url = format!("{API}/tracks/{track_id}/related?limit={limit}&client_id=");
-    let primary_error = match get_json_with_fresh_client(&related_url).await {
+    let related_url = reqwest::Url::parse(&format!("{API}/tracks/{track_id}/related?limit={limit}"))
+        .map_err(|e| e.to_string())?;
+    let primary_error = match recommendation_json(related_url).await {
         Ok(json) => {
             let tracks: Vec<_> = tracks_from_response(&json)
                 .into_iter()
@@ -343,13 +692,17 @@ async fn related_for_seed(track_id: &str, limit: u32) -> Result<Vec<ScTrack>, St
             }
             "SoundCloud returned no playable related tracks".to_string()
         }
-        Err(error) => error,
+        Err(error) => {
+            if error.retry_at.is_some() { return Err(error.error); }
+            error.error
+        },
     };
 
     // Track stations provide a second SoundCloud-generated source when the
     // related endpoint is empty or unavailable for a seed.
-    let station_url = format!("{API}/system-playlists/track-stations:{track_id}?client_id=");
-    match get_json_with_fresh_client(&station_url).await {
+    let station_url = reqwest::Url::parse(&format!("{API}/system-playlists/track-stations:{track_id}"))
+        .map_err(|e| e.to_string())?;
+    match recommendation_json(station_url).await {
         Ok(json) => {
             let tracks: Vec<_> = tracks_from_response(&json)
                 .into_iter()
@@ -361,7 +714,7 @@ async fn related_for_seed(track_id: &str, limit: u32) -> Result<Vec<ScTrack>, St
                 Ok(tracks)
             }
         }
-        Err(error) => Err(format!("{primary_error}; station fallback failed: {error}")),
+        Err(error) => Err(format!("{primary_error}; station fallback failed: {}", error.error)),
     }
 }
 
@@ -383,7 +736,7 @@ pub async fn related_tracks(track_ids: &[String], limit: u32) -> Result<Vec<ScTr
 
     // Resolve once before fanning out so a cold start does not fetch the
     // SoundCloud homepage separately for each seed request.
-    get_client_id().await?;
+    recommendation_client_id(false).await.map_err(|e| e.error)?;
     let per_seed = limit.clamp(1, 24);
     let responses = futures_util::stream::iter(seeds.clone())
         .map(|seed| async move {

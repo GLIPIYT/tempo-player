@@ -14,6 +14,14 @@ export interface ScTrack {
   streamable: boolean
   hasProgressive: boolean
   hasHls: boolean
+  uploaderId?: string | null
+  uploaderName?: string | null
+  metadataArtist?: string | null
+  genre?: string | null
+  tags?: string[] | null
+  description?: string | null
+  bpm?: number | null
+  isrc?: string | null
 }
 
 export interface ScPlaylist {

@@ -1,4 +1,6 @@
 export const ru: Record<string, string> = {
+  'No more recommendations': 'Больше рекомендаций нет',
+  'Retry after cooldown': 'Повторить после паузы',
   'Recommended for you': 'Рекомендации для вас',
   'Based on what you listen to': 'На основе ваших прослушиваний',
   'SoundCloud recommendations will appear here.': 'Здесь появятся рекомендации SoundCloud.',

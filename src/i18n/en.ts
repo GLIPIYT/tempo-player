@@ -1,4 +1,6 @@
 export const en: Record<string, string> = {
+  'No more recommendations': 'No more recommendations',
+  'Retry after cooldown': 'Retry after cooldown',
   'Recommended for you': 'Recommended for you',
   'Based on what you listen to': 'Based on what you listen to',
   'SoundCloud recommendations will appear here.': 'SoundCloud recommendations will appear here.',

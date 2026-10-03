@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MouseEvent, type PointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react'
 import { ChevronLeft, ChevronRight, Download, Play, RefreshCw } from 'lucide-react'
 import type { ScTrack } from '../../types/models'
 import { useT } from '../../i18n'
@@ -10,6 +10,8 @@ interface RecommendationsShelfProps {
   error: string | null
   hasLoaded: boolean
   hasMore: boolean
+  exhausted: boolean
+  retryAt: number | null
   cachedTrackIds: ReadonlySet<string>
   onPlay: (index: number) => void
   onCache: (track: ScTrack) => void
@@ -17,6 +19,9 @@ interface RecommendationsShelfProps {
   onRetry: () => void
   onLoadMore: () => void
   onNearViewport: () => void
+  onImpression: (trackKey: string) => void
+  onVisibleIds: (ids: string[]) => void
+  onTrimPassed: (trackKeys: string[]) => void
   onSectionMenu: (event: MouseEvent) => void
 }
 
@@ -26,6 +31,8 @@ export default function RecommendationsShelf({
   error,
   hasLoaded,
   hasMore,
+  exhausted,
+  retryAt,
   cachedTrackIds,
   onPlay,
   onCache,
@@ -33,11 +40,18 @@ export default function RecommendationsShelf({
   onRetry,
   onLoadMore,
   onNearViewport,
+  onImpression,
+  onVisibleIds,
+  onTrimPassed,
   onSectionMenu,
 }: RecommendationsShelfProps) {
   const t = useT()
   const sectionRef = useRef<HTMLElement>(null)
   const railRef = useRef<HTMLDivElement>(null)
+  const endRef = useRef<HTMLSpanElement>(null)
+  const trimAnchor = useRef<{ id: string; left: number; scroll: number } | null>(null)
+  const [now, setNow] = useState(Date.now)
+  const coolingDown = retryAt !== null && retryAt > now
   const scroll = (direction: number) => railRef.current?.scrollBy({ left: direction * 460, behavior: 'smooth' })
 
   useEffect(() => {
@@ -56,6 +70,90 @@ export default function RecommendationsShelf({
     return () => observer.disconnect()
   }, [onNearViewport])
 
+  useEffect(() => {
+    if (!retryAt || retryAt <= Date.now()) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [retryAt])
+
+  useEffect(() => {
+    const rail = railRef.current, end = endRef.current
+    if (!rail || !end || !hasMore || loading || error || coolingDown) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) onLoadMore()
+    }, { root: rail, rootMargin: '0px 300px', threshold: 0 })
+    observer.observe(end)
+    return () => observer.disconnect()
+  }, [tracks, hasMore, loading, error, coolingDown, onLoadMore])
+
+  useEffect(() => {
+    const section = sectionRef.current, rail = railRef.current
+    if (!section || !rail || typeof IntersectionObserver === 'undefined') return
+    const timers = new Map<string, ReturnType<typeof setTimeout>>()
+    const visible = new Set<string>()
+    const recorded = new Set<string>()
+    let sectionVisible = false
+    const stop = (id: string) => { const timer = timers.get(id); if (timer) clearTimeout(timer); timers.delete(id) }
+    const sync = () => {
+      const allowed = sectionVisible && document.visibilityState === 'visible'
+      onVisibleIds(allowed ? [...visible] : [])
+      for (const id of timers.keys()) if (!allowed || !visible.has(id)) stop(id)
+      if (!allowed) return
+      for (const id of visible) {
+        if (timers.has(id) || recorded.has(id)) continue
+        timers.set(id, setTimeout(() => {
+          timers.delete(id)
+          if (!sectionVisible || document.visibilityState !== 'visible' || !visible.has(id)) return
+          recorded.add(id)
+          onImpression(`soundcloud:${id}`)
+        }, 750))
+      }
+    }
+    // Viewport root includes overflow clipping and page scrolling; no prefetch margin.
+    const cardsObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const id = (entry.target as HTMLElement).dataset.trackId!
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.5) visible.add(id)
+        else { visible.delete(id); stop(id) }
+      }
+      sync()
+    }, { threshold: [0, 0.5, 1] })
+    const sectionObserver = new IntersectionObserver(entries => {
+      sectionVisible = entries.some(entry => entry.isIntersecting)
+      sync()
+    }, { threshold: 0 })
+    sectionObserver.observe(section)
+    rail.querySelectorAll('[data-track-id]').forEach(card => cardsObserver.observe(card))
+    document.addEventListener('visibilitychange', sync)
+    const cacheTimer = setInterval(sync, 60_000)
+    return () => {
+      cardsObserver.disconnect(); sectionObserver.disconnect()
+      document.removeEventListener('visibilitychange', sync)
+      clearInterval(cacheTimer)
+      for (const id of timers.keys()) stop(id)
+      onVisibleIds([])
+    }
+  }, [tracks, onImpression, onVisibleIds])
+
+  const trimPassed = () => {
+    const rail = railRef.current
+    if (!rail || tracks.length < 280 || trimAnchor.current) return
+    const cards = Array.from(rail.querySelectorAll<HTMLElement>('[data-track-id]'))
+    const edge = rail.getBoundingClientRect().left
+    const passed = cards.filter(card => card.getBoundingClientRect().right <= edge)
+    const count = Math.min(20, passed.length)
+    if (!count || !cards[count]) return
+    trimAnchor.current = { id: cards[count].dataset.trackId!, left: cards[count].getBoundingClientRect().left, scroll: rail.scrollLeft }
+    onTrimPassed(tracks.slice(0, count).map(track => `soundcloud:${track.id}`))
+  }
+  useLayoutEffect(() => {
+    const rail = railRef.current, anchor = trimAnchor.current
+    if (!rail || !anchor) return
+    const card = Array.from(rail.querySelectorAll<HTMLElement>('[data-track-id]')).find(item => item.dataset.trackId === anchor.id)
+    if (card) rail.scrollLeft += card.getBoundingClientRect().left - anchor.left
+    trimAnchor.current = null
+  }, [tracks])
+
   return (
     <section className="home-section home-recommendations" ref={sectionRef}>
       <div className="home-section-head" onContextMenu={onSectionMenu}>
@@ -71,14 +169,14 @@ export default function RecommendationsShelf({
             </button>
           ) : null}
           {error ? (
-            <button type="button" className="btn btn-ghost" onClick={onRetry}>
+            <button type="button" className="btn btn-ghost" onClick={onRetry} disabled={coolingDown || loading}>
               <RefreshCw size={14} />
-              {t('Try again')}
+              {t(coolingDown ? 'Retry after cooldown' : 'Try again')}
             </button>
           ) : hasMore ? (
-            <button type="button" className="btn btn-ghost" onClick={onLoadMore} disabled={loading}>
+            <button type="button" className="btn btn-ghost" onClick={onLoadMore} disabled={loading || coolingDown}>
               <RefreshCw size={14} className={loading ? 'spin' : undefined} />
-              {t('Load more')}
+              {t(coolingDown ? 'Retry after cooldown' : 'Load more')}
             </button>
           ) : null}
           {tracks.length > 4 ? (
@@ -95,9 +193,9 @@ export default function RecommendationsShelf({
           {Array.from({ length: 5 }, (_, index) => <span className="home-recommendation-skeleton" key={index} />)}
         </div>
       ) : tracks.length > 0 ? (
-        <div className="home-track-rail home-recommendation-rail" ref={railRef} tabIndex={0} aria-label={t('Recommended for you')}>
+        <div className="home-track-rail home-recommendation-rail" ref={railRef} onScroll={trimPassed} tabIndex={0} aria-label={t('Recommended for you')}>
           {tracks.map((track, index) => (
-            <div className="home-recommendation-card" key={track.id}>
+            <div className="home-recommendation-card" key={track.id} data-track-id={track.id}>
               <button
                 type="button"
                 className="home-rail-track"
@@ -129,14 +227,18 @@ export default function RecommendationsShelf({
               ) : null}
             </div>
           ))}
+          <span ref={endRef} aria-hidden="true" style={{ flex: '0 0 1px', alignSelf: 'stretch' }} />
         </div>
       ) : error ? (
         <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}</div>
       ) : (
         <div className="home-recommendation-empty" role="status">
-          {t(hasLoaded ? 'No recommendations yet' : 'SoundCloud recommendations will appear here.')}
+          {t(exhausted ? 'No more recommendations' : hasLoaded ? 'No recommendations yet' : 'SoundCloud recommendations will appear here.')}
         </div>
       )}
+      {tracks.length > 0 && (loading || error || exhausted || coolingDown) ? (
+        <small className="muted" role="status">{t(coolingDown ? 'Retry after cooldown' : loading ? 'Loading…' : error ? 'Could not load recommendations' : 'No more recommendations')}</small>
+      ) : null}
     </section>
   )
 }

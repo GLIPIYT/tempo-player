@@ -46,6 +46,51 @@ CREATE TABLE listening_session_tombstones (
 CREATE INDEX idx_session_tombstones_started ON listening_session_tombstones(started_at);
 "#;
 
+/// Migration 23: aliases survive feedback clearing and preserve recording membership.
+pub const IDENTITY_MIGRATION: &str = r#"
+CREATE TABLE recommendation_recording_groups (
+ group_key TEXT PRIMARY KEY, feature_version INTEGER NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE TABLE recommendation_group_aliases (
+ alias TEXT PRIMARY KEY, group_key TEXT NOT NULL REFERENCES recommendation_recording_groups(group_key)
+);
+CREATE TABLE recommendation_group_members (
+ track_key TEXT PRIMARY KEY, group_key TEXT NOT NULL REFERENCES recommendation_recording_groups(group_key)
+);
+CREATE INDEX idx_recommendation_group_members ON recommendation_group_members(group_key);
+"#;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingGroup {
+    pub group_key: String,
+    pub feature_version: i64,
+    pub created_at: i64,
+    pub track_keys: Vec<String>,
+    pub track_count: i64,
+    pub track_keys_truncated: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupAlias {
+    pub alias: String,
+    pub group_key: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupResolution {
+    pub key: String,
+    pub group_key: Option<String>,
+    pub feature_version: Option<i64>,
+}
+
+const IDENTITY_GROUP_CAP: i64 = 50_000;
+const IDENTITY_MEMBER_CAP: i64 = 50_000;
+const IDENTITY_ALIAS_CAP: i64 = 100_000;
+const IDENTITY_KEY_BYTES_CAP: i64 = 32 * 1024 * 1024;
+const IDENTITY_CONTEXT_BYTES: usize = 256 * 1024;
+const IDENTITY_UNUSED_RETENTION_MS: i64 = 30 * 86_400_000;
+
 const SESSION_RETENTION_MS: i64 = 180 * 86_400_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +190,10 @@ pub struct RecommendationContext {
     pub impressions: Vec<Impression>,
     pub features: Vec<Feature>,
     pub stored_state: Option<StoredState>,
+    pub recording_groups: Vec<RecordingGroup>,
+    pub group_aliases: Vec<GroupAlias>,
+    pub recording_groups_truncated: bool,
+    pub group_aliases_truncated: bool,
 }
 
 fn err(e: rusqlite::Error) -> String {
@@ -371,6 +420,7 @@ fn prune(conn: &Connection) -> Result<(), String> {
         "DELETE FROM recommendation_prune_ids; DELETE FROM recommendation_prune_days;",
     )
     .map_err(err)?;
+    prune_identities(conn, &[], false)?;
     Ok(())
 }
 
@@ -493,8 +543,9 @@ pub fn context(db: &Db) -> Result<RecommendationContext, String> {
         let impressions=read_json(&tx,"SELECT json_object('id',id,'trackKey',track_key,'recordingGroup',recording_group,'shownAt',shown_at,'surface',surface) FROM recommendation_impressions ORDER BY shown_at DESC LIMIT 10000",2*1024*1024)?;
         let features=read_json(&tx,"SELECT json_object('trackKey',track_key,'revision',revision,'updatedAt',updated_at,'data',json(data_json)) FROM recommendation_features ORDER BY updated_at DESC LIMIT 5000",4*1024*1024)?;
         let stored_state=read_json(&tx,"SELECT json_object('revision',revision,'data',json(data_json)) FROM recommendation_state WHERE id=1",512*1024+256)?.pop();
+        let (recording_groups,group_aliases,recording_groups_truncated,group_aliases_truncated)=groups(&tx)?;
         tx.commit().map_err(err)?;
-        Ok(RecommendationContext{generation,seed_tracks,liked_track_keys,manually_saved_track_keys,sessions,impressions,features,stored_state})
+        Ok(RecommendationContext{generation,seed_tracks,liked_track_keys,manually_saved_track_keys,sessions,impressions,features,stored_state,recording_groups,group_aliases,recording_groups_truncated,group_aliases_truncated})
     })
 }
 
@@ -535,7 +586,11 @@ pub fn record_recommendation_impressions(
         let tx=conn.unchecked_transaction().map_err(err)?;
         let current:i64=tx.query_row("SELECT generation FROM recommendation_meta WHERE id=1",[],|r|r.get(0)).map_err(err)?;
         if current!=generation{return Err("Recommendation feedback was cleared".into());}
-        for item in &impressions {tx.execute("INSERT OR IGNORE INTO recommendation_impressions(id,track_key,recording_group,shown_at,surface) VALUES(?1,?2,?3,?4,?5)",params![item.id,item.track_key,item.recording_group,item.shown_at,item.surface]).map_err(err)?;}
+        for item in &impressions {
+            let member:Option<String>=tx.query_row("SELECT group_key FROM recommendation_group_members WHERE track_key=?1",[&item.track_key],|r|r.get(0)).optional().map_err(err)?;
+            let group=match member {Some(group)=>Some(group),None=>item.recording_group.as_ref().map(|group|resolve_group(&tx,group)).transpose()?};
+            tx.execute("INSERT OR IGNORE INTO recommendation_impressions(id,track_key,recording_group,shown_at,surface) VALUES(?1,?2,?3,?4,?5)",params![item.id,item.track_key,group,item.shown_at,item.surface]).map_err(err)?;
+        }
         prune(&tx)?;tx.commit().map_err(err)
     })
 }
@@ -571,16 +626,39 @@ pub fn save_recommendation_state(
     state: State<'_, AppState>,
     stored_state: StoredState,
     generation: i64,
+    expected_revision: Option<i64>,
 ) -> Result<(), String> {
     if stored_state.revision <= 0 {
         return Err("Invalid feed revision".into());
     }
     let encoded = json(&stored_state.data, 512 * 1024)?;
+    if stored_state.data.get("version").and_then(Value::as_u64) == Some(1) {
+        for (field, limit) in [("candidates",100),("published",300),("seedFrontier",40),("usedCursors",2560),("sessionSeen",5000),("groups",400)] {
+            let values=stored_state.data.get(field).and_then(Value::as_array).ok_or_else(||format!("Missing feed field {field}"))?;
+            if values.len()>limit {return Err(format!("Feed field {field} exceeds limit"));}
+        }
+        for (field, names, bytes) in [("receipts",["home","radio"],32768_usize),("cooldownReceipts",["home","skip"],8192_usize)] {
+            if let Some(receipts)=stored_state.data.get(field) {
+                for name in names {
+                    let item=receipts.get(name).ok_or_else(||format!("Missing receipt {field}.{name}"))?;
+                    let payload=if field=="cooldownReceipts" {
+                        if !item.get("until").and_then(Value::as_f64).is_some_and(|value|value.is_finite()&&value>=0.0) {return Err("Invalid cooldown receipt expiry".into());}
+                        item.get("state").ok_or("Missing cooldown receipt state")?
+                    } else {item};
+                    let recent=payload.get("recent").and_then(Value::as_array).ok_or("Missing receipt keys")?;
+                    if recent.len()>512||recent.iter().any(|key|!key.as_str().is_some_and(|value|!value.is_empty()&&value.len()<=256)) {return Err("Invalid receipt keys".into());}
+                    let summary=payload.get("summary").and_then(Value::as_str).ok_or("Missing receipt summary")?;
+                    if summary.len()!=bytes.div_ceil(3)*4||!summary.bytes().all(|value|value.is_ascii_alphanumeric()||matches!(value,b'+'|b'/'|b'=')) {return Err("Invalid receipt summary".into());}
+                }
+            }
+        }
+    }
     state.db.with_conn(|conn|{
         let tx=conn.unchecked_transaction().map_err(err)?;
         let current:i64=tx.query_row("SELECT generation FROM recommendation_meta WHERE id=1",[],|r|r.get(0)).map_err(err)?;
         if generation!=current{return Err("Recommendation feedback was cleared".into());}
         let previous:Option<i64>=tx.query_row("SELECT revision FROM recommendation_state WHERE id=1",[],|r|r.get(0)).optional().map_err(err)?;
+        if expected_revision.is_some_and(|expected| expected != previous.unwrap_or(0)) {return Err("Feed revision conflict".into());}
         if previous.is_some_and(|r|r>stored_state.revision){return Err("Stale feed revision".into());}
         tx.execute("INSERT INTO recommendation_state(id,revision,data_json) VALUES(1,?1,?2) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,data_json=excluded.data_json WHERE excluded.revision>recommendation_state.revision",params![stored_state.revision,encoded]).map_err(err)?;
         tx.commit().map_err(err)
@@ -591,20 +669,194 @@ pub fn get_recommendation_page(
     state: State<'_, AppState>,
     key: String,
 ) -> Result<Option<ProviderPage>, String> {
+    page(&state.db, &key)
+}
+
+pub fn page(db: &Db, key: &str) -> Result<Option<ProviderPage>, String> {
     text(&key, 2048)?;
-    state.db.with_conn(|conn|conn.query_row("SELECT fetched_at,data_json FROM recommendation_pages WHERE page_key=?1 AND fetched_at>=?2",params![key,millis()-86_400_000],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).optional().map_err(err)?.map(|(fetched_at,data)|serde_json::from_str(&data).map(|data|ProviderPage{key,fetched_at,data}).map_err(|e|e.to_string())).transpose())
+    db.with_conn(|conn|conn.query_row("SELECT fetched_at,data_json FROM recommendation_pages WHERE page_key=?1 AND fetched_at>=?2",params![key,millis()-86_400_000],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).optional().map_err(err)?.map(|(fetched_at,data)|serde_json::from_str(&data).map(|data|ProviderPage{key:key.to_string(),fetched_at,data}).map_err(|e|e.to_string())).transpose())
 }
 #[tauri::command]
 pub fn save_recommendation_page(
     state: State<'_, AppState>,
     page: ProviderPage,
 ) -> Result<(), String> {
+    save_page(&state.db, page)
+}
+pub fn save_page(db: &Db, page: ProviderPage) -> Result<(), String> {
     text(&page.key, 2048)?;
     stamp(page.fetched_at)?;
     let encoded = json(&page.data, 512 * 1024)?;
-    state.db.with_conn(|conn|{
+    db.with_conn(|conn|{
         let tx=conn.unchecked_transaction().map_err(err)?;
         tx.execute("INSERT INTO recommendation_pages(page_key,fetched_at,data_json) VALUES(?1,?2,?3) ON CONFLICT(page_key) DO UPDATE SET fetched_at=excluded.fetched_at,data_json=excluded.data_json WHERE excluded.fetched_at>=recommendation_pages.fetched_at",params![page.key,page.fetched_at,encoded]).map_err(err)?;
         prune(&tx)?;tx.commit().map_err(err)
+    })
+}
+
+fn resolve_group(conn: &Connection, group: &str) -> Result<String, String> {
+    // Every write flattens aliases; one lookup resolves arbitrary transitive merges.
+    Ok(conn.query_row("SELECT group_key FROM recommendation_group_aliases WHERE alias=?1", [group], |r|r.get(0))
+        .optional().map_err(err)?.unwrap_or_else(||group.to_string()))
+}
+fn bounded_group(conn: &Connection, group_key: &str) -> Result<RecordingGroup, String> {
+    let (feature_version,created_at)=conn.query_row("SELECT feature_version,created_at FROM recommendation_recording_groups WHERE group_key=?1",[group_key],|r|Ok((r.get(0)?,r.get(1)?))).map_err(err)?;
+    let track_count:i64=conn.query_row("SELECT COUNT(*) FROM recommendation_group_members WHERE group_key=?1",[group_key],|r|r.get(0)).map_err(err)?;
+    let track_keys=conn.prepare("SELECT track_key FROM recommendation_group_members WHERE group_key=?1 ORDER BY track_key LIMIT 100").map_err(err)?
+        .query_map([group_key],|r|r.get(0)).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+    Ok(RecordingGroup{group_key:group_key.to_string(),feature_version,created_at,track_keys,track_count,track_keys_truncated:track_count>100})
+}
+fn groups(conn: &Connection) -> Result<(Vec<RecordingGroup>, Vec<GroupAlias>, bool, bool), String> {
+    let total_groups:i64=conn.query_row("SELECT COUNT(*) FROM recommendation_recording_groups",[],|r|r.get(0)).map_err(err)?;
+    let total_aliases:i64=conn.query_row("SELECT COUNT(*) FROM recommendation_group_aliases",[],|r|r.get(0)).map_err(err)?;
+    let mut stmt=conn.prepare("SELECT group_key FROM recommendation_recording_groups ORDER BY created_at DESC,group_key LIMIT 500").map_err(err)?;
+    let rows=stmt.query_map([],|r|r.get::<_,String>(0)).map_err(err)?;
+    let mut groups=Vec::new();let mut bytes=2;let mut member_count=0;
+    for row in rows {
+        let group=bounded_group(conn,&row.map_err(err)?)?;
+        let size=serde_json::to_vec(&group).map_err(|e|e.to_string())?.len()+1;
+        if bytes+size>IDENTITY_CONTEXT_BYTES || member_count+group.track_keys.len()>5000 {break;}
+        bytes+=size;member_count+=group.track_keys.len();groups.push(group);
+    }
+    let mut stmt=conn.prepare("SELECT alias,group_key FROM recommendation_group_aliases ORDER BY alias LIMIT 1000").map_err(err)?;
+    let rows=stmt.query_map([],|r|Ok(GroupAlias{alias:r.get(0)?,group_key:r.get(1)?})).map_err(err)?;
+    let mut aliases=Vec::new();let mut bytes=2;
+    for row in rows {
+        let alias=row.map_err(err)?;
+        let size=serde_json::to_vec(&alias).map_err(|e|e.to_string())?.len()+1;
+        if bytes+size>IDENTITY_CONTEXT_BYTES {break;}
+        bytes+=size;aliases.push(alias);
+    }
+    let groups_truncated=total_groups>groups.len() as i64;
+    let aliases_truncated=total_aliases>aliases.len() as i64;
+    Ok((groups,aliases,groups_truncated,aliases_truncated))
+}
+
+/// Targeted lookup is authoritative even when the context's membership window is truncated.
+#[tauri::command]
+pub fn resolve_recommendation_groups(
+    state:State<'_,AppState>,track_keys:Vec<String>,group_keys:Vec<String>,
+) -> Result<Vec<GroupResolution>,String> {
+    if track_keys.len()+group_keys.len()>100 {return Err("Identity resolution batch exceeds 100".into());}
+    for track in &track_keys {key(track)?;}
+    for group in &group_keys {text(group,256)?;if group.is_empty(){return Err("Empty recording group".into());}}
+    let payload=serde_json::to_vec(&(&track_keys,&group_keys)).map_err(|e|e.to_string())?;
+    if payload.len()>32*1024 {return Err("Identity resolution input exceeds 32 KiB".into());}
+    state.db.with_conn(|conn|{
+        let mut results=Vec::new();let mut seen=std::collections::HashSet::new();
+        for input in track_keys.iter().chain(group_keys.iter()) {
+            if !seen.insert(input.clone()){continue;}
+            let member:Option<String>=conn.query_row("SELECT group_key FROM recommendation_group_members WHERE track_key=?1",[input],|r|r.get(0)).optional().map_err(err)?;
+            let root=match member{Some(group)=>group,None=>resolve_group(conn,input)?};
+            let version:Option<i64>=conn.query_row("SELECT feature_version FROM recommendation_recording_groups WHERE group_key=?1",[&root],|r|r.get(0)).optional().map_err(err)?;
+            results.push(GroupResolution{key:input.clone(),group_key:version.map(|_|root),feature_version:version});
+        }
+        if serde_json::to_vec(&results).map_err(|e|e.to_string())?.len()>128*1024 {return Err("Identity resolution output exceeds 128 KiB".into());}
+        Ok(results)
+    })
+}
+
+fn identity_catalog_within_bounds(conn:&Connection)->Result<bool,String>{
+    let (groups,members,aliases,bytes):(i64,i64,i64,i64)=conn.query_row("SELECT (SELECT COUNT(*) FROM recommendation_recording_groups),(SELECT COUNT(*) FROM recommendation_group_members),(SELECT COUNT(*) FROM recommendation_group_aliases),COALESCE((SELECT SUM(length(CAST(group_key AS BLOB))) FROM recommendation_recording_groups),0)+COALESCE((SELECT SUM(length(CAST(track_key AS BLOB))+length(CAST(group_key AS BLOB))) FROM recommendation_group_members),0)+COALESCE((SELECT SUM(length(CAST(alias AS BLOB))+length(CAST(group_key AS BLOB))) FROM recommendation_group_aliases),0)",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(err)?;
+    Ok(groups<=IDENTITY_GROUP_CAP && members<=IDENTITY_MEMBER_CAP && aliases<=IDENTITY_ALIAS_CAP && bytes<=IDENTITY_KEY_BYTES_CAP)
+}
+
+fn prune_identities(conn:&Connection,protected:&[String],pressure:bool)->Result<(),String>{
+    // Avoid rescanning bounded JSON catalogs on every listening checkpoint.
+    static LAST_PRUNE:std::sync::atomic::AtomicI64=std::sync::atomic::AtomicI64::new(0);
+    let now=millis();
+    if !pressure && now-LAST_PRUNE.load(std::sync::atomic::Ordering::Relaxed)<60_000 {return Ok(());}
+    conn.execute_batch("CREATE TEMP TABLE IF NOT EXISTS recommendation_identity_refs(identity_key TEXT PRIMARY KEY); DELETE FROM recommendation_identity_refs; CREATE TEMP TABLE IF NOT EXISTS recommendation_identity_keep(group_key TEXT PRIMARY KEY); DELETE FROM recommendation_identity_keep; CREATE TEMP TABLE IF NOT EXISTS recommendation_identity_keys(identity_key TEXT PRIMARY KEY); DELETE FROM recommendation_identity_keys; INSERT OR IGNORE INTO recommendation_identity_keys SELECT group_key FROM recommendation_recording_groups; INSERT OR IGNORE INTO recommendation_identity_keys SELECT track_key FROM recommendation_group_members; INSERT OR IGNORE INTO recommendation_identity_keys SELECT alias FROM recommendation_group_aliases;").map_err(err)?;
+    // Store only keys already in the bounded identity catalog, even for large libraries.
+    for query in [
+        "SELECT track_key AS identity_key FROM recommendation_features",
+        "SELECT track_key AS identity_key FROM listening_sessions",
+        "SELECT track_key AS identity_key FROM listening_session_tombstones",
+        "SELECT track_key AS identity_key FROM recommendation_taste",
+        "SELECT track_key AS identity_key FROM recommendation_taste_days",
+        "SELECT track_key AS identity_key FROM recommendation_impressions",
+        "SELECT recording_group AS identity_key FROM recommendation_impressions WHERE recording_group IS NOT NULL",
+        "SELECT json_extract(event_json,'$.track.provenance.recordingGroup') AS identity_key FROM listening_sessions",
+        "SELECT CASE WHEN t.source='local' THEN 'local:'||t.id ELSE t.source||':'||t.external_id END AS identity_key FROM playlist_tracks p JOIN tracks t ON t.id=p.track_id WHERE t.source IN ('local','soundcloud','youtube') AND (t.source='local' OR t.external_id IS NOT NULL)",
+        "SELECT j.atom AS identity_key FROM recommendation_features f,json_tree(f.data_json) j WHERE j.type='text' AND length(CAST(j.atom AS BLOB))<=256",
+        "SELECT j.key AS identity_key FROM recommendation_features f,json_tree(f.data_json) j WHERE typeof(j.key)='text' AND length(CAST(j.key AS BLOB))<=256",
+        "SELECT j.atom AS identity_key FROM recommendation_state s,json_tree(s.data_json) j WHERE j.type='text' AND length(CAST(j.atom AS BLOB))<=256",
+        "SELECT j.key AS identity_key FROM recommendation_state s,json_tree(s.data_json) j WHERE typeof(j.key)='text' AND length(CAST(j.key AS BLOB))<=256",
+        "SELECT 'soundcloud:'||json_extract(CASE WHEN j.type='object' THEN j.value ELSE '{}' END,'$.id') AS identity_key FROM recommendation_pages p,json_each(p.data_json,'$.tracks') j WHERE p.fetched_at>=CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)-86400000",
+    ] {
+        conn.execute(&format!("INSERT OR IGNORE INTO recommendation_identity_refs SELECT r.identity_key FROM ({query}) r JOIN recommendation_identity_keys k ON k.identity_key=r.identity_key"),[]).map_err(err)?;
+    }
+    for identity in protected {conn.execute("INSERT OR IGNORE INTO recommendation_identity_refs(identity_key) VALUES(?1)",[identity]).map_err(err)?;}
+    conn.execute_batch(r#"
+INSERT OR IGNORE INTO recommendation_identity_keep SELECT a.group_key FROM recommendation_group_aliases a JOIN recommendation_identity_refs r ON r.identity_key=a.alias;
+INSERT OR IGNORE INTO recommendation_identity_keep SELECT m.group_key FROM recommendation_group_members m JOIN recommendation_identity_refs r ON r.identity_key=m.track_key;
+INSERT OR IGNORE INTO recommendation_identity_keep SELECT g.group_key FROM recommendation_recording_groups g JOIN recommendation_identity_refs r ON r.identity_key=g.group_key;
+"#).map_err(err)?;
+    let floor=if pressure {now+1}else{now-IDENTITY_UNUSED_RETENTION_MS};
+    for table in ["recommendation_group_aliases","recommendation_group_members"]{
+        conn.execute(&format!("DELETE FROM {table} WHERE group_key IN (SELECT group_key FROM recommendation_recording_groups WHERE created_at<?1 AND group_key NOT IN (SELECT group_key FROM recommendation_identity_keep))"),[floor]).map_err(err)?;
+    }
+    conn.execute("DELETE FROM recommendation_recording_groups WHERE created_at<?1 AND group_key NOT IN (SELECT group_key FROM recommendation_identity_keep)",[floor]).map_err(err)?;
+    conn.execute_batch("DELETE FROM recommendation_identity_refs; DELETE FROM recommendation_identity_keep; DELETE FROM recommendation_identity_keys;").map_err(err)?;
+    if !pressure {LAST_PRUNE.store(now,std::sync::atomic::Ordering::Relaxed);}
+    Ok(())
+}
+
+/// Caller supplies only groups supported by strong identity/audio evidence.
+/// Original listening/like/playlist rows remain intact; membership propagates feedback.
+#[tauri::command]
+pub fn merge_recommendation_groups(
+    state: State<'_, AppState>, group_keys: Vec<String>, track_keys: Vec<String>, generation: i64,
+) -> Result<RecordingGroup, String> {
+    if group_keys.len()>100 || track_keys.is_empty() || track_keys.len()>100 {
+        return Err("Recording group merge requires 1..100 tracks and at most 100 groups".into());
+    }
+    for group in &group_keys {text(group,256)?;if group.is_empty(){return Err("Empty recording group".into());}}
+    for track in &track_keys {key(track)?;}
+    state.db.with_conn(|conn|{
+        let tx=conn.unchecked_transaction().map_err(err)?;
+        let current:i64=tx.query_row("SELECT generation FROM recommendation_meta WHERE id=1",[],|r|r.get(0)).map_err(err)?;
+        if current!=generation{return Err("Recommendation feedback was cleared".into());}
+        let mut roots=std::collections::BTreeSet::new();
+        for group in &group_keys {roots.insert(resolve_group(&tx,group)?);}
+        for track in &track_keys {
+            let root:Option<String>=tx.query_row("SELECT group_key FROM recommendation_group_members WHERE track_key=?1",[track],|r|r.get(0)).optional().map_err(err)?;
+            roots.insert(root.unwrap_or(resolve_group(&tx,track)?));
+        }
+        let mut existing=Vec::new();
+        for root in &roots {
+            let created:Option<i64>=tx.query_row("SELECT created_at FROM recommendation_recording_groups WHERE group_key=?1",[root],|r|r.get(0)).optional().map_err(err)?;
+            if let Some(at)=created {existing.push((at,root.clone()));}
+        }
+        existing.sort();
+        // Preserve the oldest persisted root; adding uploads cannot rename it.
+        let (created_at,group_key)=existing.into_iter().next().unwrap_or_else(||(millis(),roots.iter().next().expect("nonempty roots").clone()));
+        tx.execute("INSERT OR IGNORE INTO recommendation_recording_groups(group_key,feature_version,created_at) VALUES(?1,1,?2)",params![group_key,created_at]).map_err(err)?;
+        for root in &roots {
+            tx.execute("UPDATE recommendation_group_aliases SET group_key=?1 WHERE group_key=?2",params![group_key,root]).map_err(err)?;
+            tx.execute("UPDATE recommendation_group_members SET group_key=?1 WHERE group_key=?2",params![group_key,root]).map_err(err)?;
+            tx.execute("UPDATE recommendation_impressions SET recording_group=?1 WHERE recording_group=?2",params![group_key,root]).map_err(err)?;
+            tx.execute("INSERT INTO recommendation_group_aliases(alias,group_key) VALUES(?1,?2) ON CONFLICT(alias) DO UPDATE SET group_key=excluded.group_key",params![root,group_key]).map_err(err)?;
+        }
+        for alias in group_keys.iter().chain(track_keys.iter()) {
+            tx.execute("INSERT INTO recommendation_group_aliases(alias,group_key) VALUES(?1,?2) ON CONFLICT(alias) DO UPDATE SET group_key=excluded.group_key",params![alias,group_key]).map_err(err)?;
+        }
+        for track in &track_keys {
+            tx.execute("INSERT INTO recommendation_group_members(track_key,group_key) VALUES(?1,?2) ON CONFLICT(track_key) DO UPDATE SET group_key=excluded.group_key",params![track,group_key]).map_err(err)?;
+        }
+        tx.execute("UPDATE recommendation_impressions SET recording_group=?1 WHERE track_key IN (SELECT track_key FROM recommendation_group_members WHERE group_key=?1)",[&group_key]).map_err(err)?;
+        for root in &roots {if root!=&group_key{tx.execute("DELETE FROM recommendation_recording_groups WHERE group_key=?1",[root]).map_err(err)?;}}
+        let mut protected:Vec<String>=group_keys.iter().chain(track_keys.iter()).cloned().collect();
+        protected.push(group_key.clone());
+        if !identity_catalog_within_bounds(&tx)? {
+            prune_identities(&tx,&protected,true)?;
+            if !identity_catalog_within_bounds(&tx)? {
+                // Recoverable: caller retains upload-local identity and existing feedback.
+                return Err("Recording identity catalog capacity reached; keep upload-local identity".into());
+            }
+        } else {prune_identities(&tx,&protected,false)?;}
+        let group=bounded_group(&tx,&group_key)?;
+        tx.commit().map_err(err)?;
+        Ok(group)
     })
 }

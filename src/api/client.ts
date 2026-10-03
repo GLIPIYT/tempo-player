@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { ListeningEvent, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationProviderPage, RecommendationStoredState } from '../features/recommendations/types'
+import type { ListeningEvent, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationProviderPage, RecommendationStoredState, RecordingGroup, RecordingGroupResolution, ScRelatedPage, ScRecommendationSource } from '../features/recommendations/types'
 import type {
   Album,
   AlbumDetail,
@@ -226,9 +226,13 @@ export const api = {
   getRecommendationContext: () => invoke<RecommendationContext>('get_recommendation_context'),
   recordRecommendationImpressions: (impressions: RecommendationImpression[], generation: number) => invoke<void>('record_recommendation_impressions', { impressions, generation }),
   saveRecommendationFeatures: (features: RecommendationFeature[]) => invoke<void>('save_recommendation_features', { features }),
-  saveRecommendationState: (storedState: RecommendationStoredState, generation: number) => invoke<void>('save_recommendation_state', { storedState, generation }),
+  saveRecommendationState: (storedState: RecommendationStoredState, generation: number, expectedRevision?: number) => invoke<void>('save_recommendation_state', { storedState, generation, expectedRevision }),
   getRecommendationPage: (key: string) => invoke<RecommendationProviderPage | null>('get_recommendation_page', { key }),
   saveRecommendationPage: (page: RecommendationProviderPage) => invoke<void>('save_recommendation_page', { page }),
+  mergeRecommendationGroups: (groupKeys: string[], trackKeys: string[], generation: number) =>
+    invoke<RecordingGroup>('merge_recommendation_groups', { groupKeys, trackKeys, generation }),
+  resolveRecommendationGroups: (trackKeys: string[], groupKeys: string[]) =>
+    invoke<RecordingGroupResolution[]>('resolve_recommendation_groups', { trackKeys, groupKeys }),
   completeListeningExit: () => invoke<void>('complete_listening_exit'),
 
   getCoversCacheInfo: () => invoke<CoversCacheInfo>('get_covers_cache_info'),
@@ -268,6 +272,9 @@ export const api = {
 
   scRelatedTracks: (seedIds: string[], limit: number) =>
     invoke<ScTrack[]>('sc_related_tracks', { seedIds, limit }),
+  scRecommendationPage: (seedId: string, cursor: string | null, limit: number, source: ScRecommendationSource) =>
+    invoke<ScRelatedPage>('sc_recommendation_page', { seedId, cursor, limit, source }),
+  scRecommendationSearch: (query: string, limit: number) => invoke<ScRelatedPage>('sc_recommendation_search', { query, limit }),
 
   /** Cache-only status lookup; it never resolves stream URLs or starts downloads. */
   scGetCachedTrackIds: (trackIds: string[]) =>
@@ -387,7 +394,10 @@ export const api = {
   scCacheInfo: () =>
     invoke<{ path: string; totalBytes: number; fileCount: number; limitBytes: number }>('sc_cache_info'),
   setScCacheDir: (path: string) => invoke<void>('set_sc_cache_dir', { path }),
-  clearScCache: () => invoke<void>('clear_sc_cache'),
+  clearScCache: async () => {
+    await invoke<void>('clear_sc_cache')
+    window.dispatchEvent(new Event('tempo:soundcloud-cache-invalidated'))
+  },
   setScCacheLimit: (bytes: number) => invoke<void>('sc_set_cache_limit', { bytes }),
 
   fetchOnlineLyrics: (

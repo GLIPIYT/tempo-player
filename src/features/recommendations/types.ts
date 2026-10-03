@@ -1,4 +1,44 @@
-import type { SourceId, UnifiedTrack } from '../../types/models'
+import type { ScTrack, SourceId, UnifiedTrack } from '../../types/models'
+
+export type ScRecommendationSource = 'related' | 'station'
+export interface ScRelatedPage {
+  tracks: ScTrack[]
+  nextCursor: string | null
+  source: ScRecommendationSource
+  retryAt: number | null
+  error: string | null
+}
+export interface RecordingIdentity {
+  featureVersion: number
+  trackKey: string
+  originalTitle: string
+  title: string
+  artist: string | null
+  artistConfidence: number
+  confidence: number
+  uploaderId: string | null
+  uploaderName: string | null
+  durationSec: number | null
+  version: string
+  isrc: string | null
+  specificTitle: boolean
+  familyKey: string
+  groupKey: string
+}
+export interface RecordingGroup {
+  groupKey: string
+  featureVersion: number
+  createdAt: number
+  trackKeys: string[]
+  trackCount: number
+  trackKeysTruncated: boolean
+}
+export interface RecordingGroupAlias { alias: string; groupKey: string }
+export interface RecordingGroupResolution {
+  key: string
+  groupKey: string | null
+  featureVersion: number | null
+}
 
 export type TrackKey = `${SourceId}:${string}`
 export type ListeningStartReason = 'manual' | 'queue' | 'autoplay' | 'repeat' | 'restore'
@@ -87,6 +127,10 @@ export interface RecommendationContext {
   impressions: RecommendationImpression[]
   features: RecommendationFeature[]
   storedState: RecommendationStoredState | null
+  recordingGroups?: RecordingGroup[]
+  groupAliases?: RecordingGroupAlias[]
+  recordingGroupsTruncated?: boolean
+  groupAliasesTruncated?: boolean
 }
 export function recommendationTrack(track: UnifiedTrack): RecommendationTrack {
   return {
