@@ -7,6 +7,8 @@ export interface ScRelatedPage {
   source: ScRecommendationSource
   retryAt: number | null
   error: string | null
+  status?: number | null
+  failedEndpoint?: 'related' | 'station' | 'search' | 'track-hydration' | 'client-id' | 'other' | null
 }
 export interface RecordingIdentity {
   featureVersion: number

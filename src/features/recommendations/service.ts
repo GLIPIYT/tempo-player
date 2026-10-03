@@ -83,6 +83,7 @@ class RecommendationService {
   private epoch = 0
   private createdAt = Date.now()
   private contextKey = ''
+  private lastBadRequest: string | null = null
   private initialized = false
   private active = false
   private wantsPublish = false
@@ -398,6 +399,7 @@ class RecommendationService {
       return true
     }).slice(0, FEED_LIMITS.seeds)
     const contextKey = selected.map(seed => seed.track.trackKey).sort().join('|')
+    if (contextKey !== this.contextKey) this.lastBadRequest = null
     this.contextKey = contextKey
     const previous = new Map(this.frontier.map(seed => [seed.seed.track.trackKey, seed]))
     // Keep minority confirmed languages inside the capped frontier even when the artist limit creates a deficit.
@@ -590,6 +592,16 @@ class RecommendationService {
   retry = async () => {
     if ((this.snapshot.retryAt ?? 0) > Date.now() || this.snapshot.loading) return
     this.emit({ error: null, retryAt: null })
+    if (this.lastBadRequest) {
+      // Explicit retry may recheck sources that previously rejected a request;
+      // they are not marked exhausted forever by one HTTP 400.
+      for (const frontier of this.frontier) if (frontier.exhausted) {
+        frontier.exhausted = false; frontier.source = 'related'; frontier.cursor = null
+        frontier.emptyPages = 0; frontier.pages = 0; frontier.retryAt = null
+        frontier.resolved = !!frontier.seedId
+      }
+      this.lastBadRequest = null
+    }
     // Retain failed writes for a later drain, but do not make fetching depend on them.
     void this.flush().catch(() => undefined)
     this.wantsPublish = this.published.length === 0 || this.wantsPublish
@@ -624,7 +636,8 @@ class RecommendationService {
     if (!artist || !track.durationSec || track.durationSec <= 0) return null
     const result = await api.scRecommendationSearch(`${artist} ${track.title}`.slice(0, 256), 8)
     if (result.error) {
-      throw Object.assign(new Error(result.error), { retryAt: result.retryAt })
+      throw Object.assign(new Error(result.error), { retryAt: result.retryAt,
+        status: result.status, failedEndpoint: result.failedEndpoint })
     }
     const hits = result.tracks
     const reference: ScTrack = { id: '0', title: track.title, artist, metadataArtist: artist,
@@ -680,6 +693,17 @@ class RecommendationService {
           frontier.updatedAt = Date.now()
           if (frontier.seed.limitedEvidence && (frontier.limitedAccepted ?? 0) >= 4) frontier.exhausted = true
           if (result.error) {
+            if (result.status === 400 && ['related', 'station', 'search', 'track-hydration'].includes(result.failedEndpoint ?? '')) {
+              // A permanent bad request for one seed/source should not block
+              // the other SoundCloud fallbacks or unrelated listening seeds.
+              this.lastBadRequest = result.error
+              frontier.retryAt = null
+              this.fallback(frontier)
+              this.emit({ error: null, retryAt: null })
+              this.publish()
+              this.save(true)
+              continue
+            }
             // Partial tracks are useful; failed pages retain the INPUT cursor.
             frontier.retryAt = result.retryAt ?? Date.now() + 30_000
             this.emit({ error: result.error, retryAt: frontier.retryAt })
@@ -688,6 +712,7 @@ class RecommendationService {
             break
           }
           this.usedCursors.add(signature)
+          this.lastBadRequest = null
           // Remember recent cursors per source, retaining valid continuation beyond
           // this window. Old cycles still encounter canonical/session exclusions.
           const scope = signature.slice(0, 17)
@@ -705,6 +730,19 @@ class RecommendationService {
         } catch (cause) {
           if (this.closing || epoch !== this.epoch) return
           if (!this.frontier.includes(frontier)) continue
+          const providerFailure = typeof cause === 'object' && cause !== null
+            ? cause as { status?: unknown; failedEndpoint?: unknown } : null
+          if (Number(providerFailure?.status) === 400 && providerFailure?.failedEndpoint === 'search') {
+            // A rejected lookup means this non-SoundCloud listening-history
+            // seed has no provider ID; retire it and continue with other seeds.
+            this.lastBadRequest = message(cause)
+            frontier.exhausted = true
+            frontier.retryAt = null
+            this.emit({ error: null, retryAt: null })
+            this.publish()
+            this.save(true)
+            continue
+          }
           const retryAt = typeof cause === 'object' && cause !== null && 'retryAt' in cause ? Number(cause.retryAt) : 0
           frontier.retryAt = Math.max(Number.isFinite(retryAt) ? retryAt : 0, this.snapshot.retryAt ?? 0, Date.now() + 30_000)
           this.emit({ error: message(cause), retryAt: frontier.retryAt })
@@ -715,6 +753,8 @@ class RecommendationService {
       if (epoch !== this.epoch) return
       this.publish()
       const exhausted = !this.frontier.some(seed => !seed.exhausted)
+      const terminalBadRequest = exhausted && this.candidates.length === 0 ? this.lastBadRequest : null
+      if (terminalBadRequest) this.emit({ error: terminalBadRequest })
       this.emit({ loading: false, hasLoaded: true, exhausted: exhausted && this.candidates.length === 0,
         hasMore: this.candidates.length > 0 || !exhausted })
       this.save()

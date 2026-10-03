@@ -351,6 +351,10 @@ pub struct ScRelatedPage {
     pub source: String,
     pub retry_at: Option<i64>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub status: Option<u16>,
+    #[serde(default)]
+    pub failed_endpoint: Option<String>,
 }
 
 #[derive(Default)]
@@ -375,10 +379,27 @@ struct RecommendationFailure {
     error: String,
     retry_at: Option<i64>,
     status: Option<u16>,
+    endpoint: Option<String>,
 }
 impl RecommendationFailure {
     fn new(error: impl Into<String>) -> Self {
-        Self { error: error.into(), retry_at: None, status: None }
+        Self { error: error.into(), retry_at: None, status: None, endpoint: None }
+    }
+}
+fn recommendation_endpoint(url: &reqwest::Url) -> String {
+    let path = url.path();
+    if url.host_str() == Some("soundcloud.com") {
+        "client-id".into()
+    } else if path == "/search/tracks" {
+        "search".into()
+    } else if path == "/tracks" {
+        "track-hydration".into()
+    } else if path.starts_with("/tracks/") && path.ends_with("/related") {
+        "related".into()
+    } else if path.starts_with("/system-playlists/track-stations:") {
+        "station".into()
+    } else {
+        "other".into()
     }
 }
 fn server_retry_at(headers: &reqwest::header::HeaderMap, now: i64) -> Option<i64> {
@@ -407,7 +428,7 @@ async fn recommendation_body(url: &reqwest::Url) -> Result<String, Recommendatio
         let wait = {
             let mut budget = recommendation_budget().lock().await;
             if budget.retry_at > now_ms() {
-                return Err(RecommendationFailure { error: "SoundCloud cooldown".into(), retry_at: Some(budget.retry_at), status: Some(429) });
+                return Err(RecommendationFailure { error: "SoundCloud cooldown".into(), retry_at: Some(budget.retry_at), status: Some(429), endpoint: Some(recommendation_endpoint(url)) });
             }
             let wait = budget.last_start.map(|last| Duration::from_millis(800).saturating_sub(last.elapsed()))
                 .unwrap_or_default();
@@ -436,10 +457,14 @@ async fn recommendation_body(url: &reqwest::Url) -> Result<String, Recommendatio
         budget.failures = budget.failures.saturating_add(1);
         let jittered = base + (now % 401 - 200) * base / 1000;
         budget.retry_at = budget.retry_at.max(server_retry_at(response.headers(), now).unwrap_or(now + jittered));
-        return Err(RecommendationFailure { error: "SoundCloud rate limit".into(), retry_at: Some(budget.retry_at), status: Some(429) });
+        return Err(RecommendationFailure { error: "SoundCloud rate limit".into(), retry_at: Some(budget.retry_at), status: Some(429), endpoint: Some(recommendation_endpoint(url)) });
     }
     if !status.is_success() {
-        return Err(RecommendationFailure { error: format!("SoundCloud recommendation HTTP {}", status.as_u16()), retry_at: None, status: Some(status.as_u16()) });
+        let endpoint = recommendation_endpoint(url);
+        return Err(RecommendationFailure {
+            error: format!("SoundCloud recommendation HTTP {} at {} endpoint", status.as_u16(), endpoint),
+            retry_at: None, status: Some(status.as_u16()), endpoint: Some(endpoint),
+        });
     }
     let mut bytes = Vec::new();
     let mut stream = response.bytes_stream();
@@ -516,17 +541,17 @@ pub async fn sc_recommendation_search(
     let saved=state.db.get_app_setting("recommendation_provider_retry_at")?
         .and_then(|value|value.parse::<i64>().ok()).unwrap_or(0);
     if saved>now_ms() {
-        return Ok(ScRelatedPage{tracks:Vec::new(),next_cursor:None,source:"related".into(),retry_at:Some(saved),error:Some("SoundCloud cooldown".into())});
+        return Ok(ScRelatedPage{tracks:Vec::new(),next_cursor:None,source:"related".into(),retry_at:Some(saved),error:Some("SoundCloud cooldown".into()),status:Some(429),failed_endpoint:None});
     }
     let mut url=reqwest::Url::parse(&format!("{API}/search/tracks")).expect("search URL");
     url.query_pairs_mut().append_pair("q",query.trim()).append_pair("limit",&limit.clamp(1,20).to_string());
-    let mut result=ScRelatedPage{tracks:Vec::new(),next_cursor:None,source:"related".into(),retry_at:None,error:None};
+    let mut result=ScRelatedPage{tracks:Vec::new(),next_cursor:None,source:"related".into(),retry_at:None,error:None,status:None,failed_endpoint:None};
     match recommendation_json(url).await {
         Ok(value)=>match value.get("collection").and_then(Value::as_array) {
             Some(items)=>result.tracks=items.iter().take(limit.clamp(1,20) as usize).filter_map(map_track).collect(),
             None=>result.error=Some("Unexpected recommendation search response".into()),
         },
-        Err(failure)=>{result.retry_at=failure.retry_at;result.error=Some(failure.error);}
+        Err(failure)=>{result.retry_at=failure.retry_at;result.status=failure.status;result.failed_endpoint=failure.endpoint;result.error=Some(failure.error);}
     }
     if let Some(retry_at)=result.retry_at {state.db.set_app_setting("recommendation_provider_retry_at",&retry_at.to_string())?;}
     Ok(result)
@@ -540,7 +565,7 @@ pub async fn sc_recommendation_page(
     let saved=state.db.get_app_setting("recommendation_provider_retry_at")?
         .and_then(|value|value.parse::<i64>().ok()).unwrap_or(0);
     if saved>now_ms() {
-        return Ok(ScRelatedPage{tracks:Vec::new(),next_cursor:None,source:source.clone(),retry_at:Some(saved),error:Some("SoundCloud cooldown".into())});
+        return Ok(ScRelatedPage{tracks:Vec::new(),next_cursor:None,source:source.clone(),retry_at:Some(saved),error:Some("SoundCloud cooldown".into()),status:Some(429),failed_endpoint:None});
     }
     if seed_id.is_empty() || seed_id.len() > 32 || !seed_id.bytes().all(|b| b.is_ascii_digit()) {
         return Err("Invalid SoundCloud recommendation seed".into());
@@ -551,7 +576,9 @@ pub async fn sc_recommendation_page(
         _ => return Err("Invalid recommendation source".into()),
     };
     let limit = limit.clamp(1, 50);
-    let initial = format!("{API}{path}?limit={limit}&linked_partitioning=1");
+    // Match the previously working api-v2 request shape; the endpoint returns
+    // next_href when pagination is available, while stations use our own offset.
+    let initial = format!("{API}{path}?limit={limit}");
     let url = recommendation_cursor(cursor.as_deref().unwrap_or(&initial), &path)?;
     let station_offset = url.query_pairs().find(|(k, _)| k == "tempo_station_offset")
         .map(|(_, v)| v.parse::<usize>().map_err(|_| "Invalid station slice cursor"))
@@ -568,7 +595,7 @@ pub async fn sc_recommendation_page(
             }
         }
     }
-    let mut result = ScRelatedPage { tracks: Vec::new(), next_cursor: None, source: source.clone(), retry_at: None, error: None };
+    let mut result = ScRelatedPage { tracks: Vec::new(), next_cursor: None, source: source.clone(), retry_at: None, error: None, status: None, failed_endpoint: None };
     let mut request = url.clone();
     let pairs: Vec<_> = request.query_pairs().filter(|(k, _)| k != "tempo_station_offset")
         .map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
@@ -577,7 +604,8 @@ pub async fn sc_recommendation_page(
     let value = match recommendation_json(request).await {
         Ok(value) => value,
         Err(failure) => {
-            result.retry_at = failure.retry_at; result.error = Some(failure.error);
+            result.retry_at = failure.retry_at; result.status = failure.status;
+            result.failed_endpoint = failure.endpoint; result.error = Some(failure.error);
             if let Some(retry_at)=result.retry_at {state.db.set_app_setting("recommendation_provider_retry_at",&retry_at.to_string())?;}
             return Ok(result);
         }
@@ -613,7 +641,8 @@ pub async fn sc_recommendation_page(
                 } else { result.error = Some("Unexpected SoundCloud stub response".into()); }
             }
             Err(failure) => {
-                result.retry_at = failure.retry_at; result.error = Some(failure.error);
+                result.retry_at = failure.retry_at; result.status = failure.status;
+                result.failed_endpoint = failure.endpoint; result.error = Some(failure.error);
                 if let Some(retry_at)=result.retry_at {state.db.set_app_setting("recommendation_provider_retry_at",&retry_at.to_string())?;}
             }
         }
