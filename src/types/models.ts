@@ -1,4 +1,5 @@
 import type { LyricsEditorDocument } from '../features/lyrics/editorDocument'
+import type { RecommendationProvenance, ListeningStartReason } from '../features/recommendations/types'
 
 export type SourceId = 'local' | 'soundcloud' | 'youtube'
 
@@ -277,6 +278,8 @@ export interface ScanSummary {
 }
 
 export interface UnifiedTrack {
+  provenance?: RecommendationProvenance
+  selectionReason?: ListeningStartReason
   source: SourceId
   sourceId: string
   dbId: number | null

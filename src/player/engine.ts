@@ -1,4 +1,5 @@
 import { DEFAULT_EQUALIZER_SETTINGS, EQUALIZER_BANDS, type EqualizerSettings } from '../audio/equalizer'
+import type { PlaybackSample } from '../features/recommendations/types'
 
 const SEEK_SETTLE_MS = 250
 const RESYNC_GAP_SEC = 1.5
@@ -50,6 +51,54 @@ export function getEngine(): AudioEngine | null {
 }
 
 export class AudioEngine {
+  private mediaSessions = new WeakMap<HTMLAudioElement, { id: string; epoch: number; state: PlaybackSample['state'] }>()
+  onPlaybackSample: (sample: PlaybackSample) => void = () => {}
+  onMediaFinished: (sessionId: string, reason: 'end' | 'error' | 'stop') => void = () => {}
+  private sampleTimer: number | null = null
+
+  /** Snapshot the real active and fading media before a controller transition. */
+  samplePlayback(): void {
+    const active = this.active()
+    if (active) this.sampleMedia(active)
+    if (this.fading && this.fading.el !== active) this.sampleMedia(this.fading.el)
+  }
+
+  private bindSession(el: HTMLAudioElement, id?: string): void {
+    if (!id) return
+    this.mediaSessions.set(el, { id, epoch: ++this.epoch, state: 'waiting' })
+    if (this.sampleTimer === null) this.sampleTimer = window.setInterval(() => this.samplePlayback(), 250)
+  }
+
+  private sampleMedia(el: HTMLAudioElement, state?: PlaybackSample['state']): void {
+    const session = this.mediaSessions.get(el)
+    if (!session) return
+    if (state) session.state = state
+    const actual = el.seeking ? 'seeking' : el.ended ? 'stopped' : el.paused ? 'paused'
+      : el.readyState < HTMLMediaElement.HAVE_FUTURE_DATA ? 'waiting' : session.state
+    this.onPlaybackSample({ sessionId: session.id, positionSec: el.currentTime, atMs: performance.now(),
+      epoch: session.epoch, state: actual, playbackRate: el.playbackRate,
+      durationSec: Number.isFinite(el.duration) ? el.duration : undefined })
+  }
+
+  private finishMedia(el: HTMLAudioElement, reason: 'end' | 'error' | 'stop'): void {
+    const session = this.mediaSessions.get(el)
+    if (!session) return
+    this.sampleMedia(el, 'stopped')
+    this.mediaSessions.delete(el)
+    this.onMediaFinished(session.id, reason)
+    if (!this.mediaSessions.get(this.active() as HTMLAudioElement) && (!this.fading || !this.mediaSessions.get(this.fading.el))) {
+      if (this.sampleTimer !== null) window.clearInterval(this.sampleTimer)
+      this.sampleTimer = null
+    }
+  }
+
+  /** Clear-history starts a new identity without interrupting the actual media. */
+  rebindActiveSession(id: string): void {
+    const el = this.active()
+    if (!el) return
+    this.bindSession(el, id)
+    this.sampleMedia(el, !el.paused && el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA ? 'playing' : 'paused')
+  }
   private channels: Record<AudioChannel, HTMLAudioElement | null> = { local: null, stream: null }
   private activeChannel: AudioChannel = 'local'
   private hls: unknown = null
@@ -74,6 +123,10 @@ export class AudioEngine {
     eqFilters: BiquadFilterNode[]
   } | null = null
   private fadeTimer = 0
+  private fadeDurationMs = 0
+  private fadeElapsedMs = 0
+  private fadeLastAt: number | null = null
+  private playbackPaused = true
   /** 0..1 ramp applied on top of the volume, so the fade never fights applyGain. */
   private fadeLevel = 1
   private volumeLevel = 1
@@ -144,6 +197,7 @@ export class AudioEngine {
     url: string,
     format: string | null,
     channel: AudioChannel = 'local',
+    sessionId?: string,
   ): Promise<void> {
     // Invalidate an older async load before touching the channels. In
     // particular, ensure() can fail before the media element exists.
@@ -153,6 +207,7 @@ export class AudioEngine {
     this.activeChannel = channel
     this.lastLoad = { url, format, channel }
     const el = this.ensure(channel)
+    this.bindSession(el, sessionId)
     this.applyPlaybackOptions(el)
     el.muted = false
     this.epoch += 1
@@ -190,6 +245,8 @@ export class AudioEngine {
   }
 
   stop(): void {
+    this.samplePlayback()
+    this.playbackPaused = true
     this.loadGeneration += 1
     this.destroyHls()
     const wasFading = this.fading !== null
@@ -198,6 +255,7 @@ export class AudioEngine {
     if (wasFading) this.onFadeComplete()
     const el = this.active()
     if (!el) return
+    this.finishMedia(el, 'stop')
     if (this.swappingStream && this.activeChannel === 'stream') {
       const prepared = this.channels.local
       prepared?.pause()
@@ -216,15 +274,31 @@ export class AudioEngine {
 
   play(): void {
     const el = this.ensure(this.activeChannel)
+    const fade = this.fading
+    const generation = this.loadGeneration
+    this.playbackPaused = false
     // autoplay policy: the context starts suspended until a gesture reaches it
     if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume().catch(() => {})
-    void el.play().catch(() => {})
+    const plays = [el.play()]
+    if (fade && !fade.el.ended) plays.push(fade.el.play())
+    void Promise.all(plays).then(() => {
+      if (this.active() === el && generation === this.loadGeneration && this.fading === fade && !this.playbackPaused) this.resumeFade()
+    }).catch(error => {
+      if (this.active() !== el || generation !== this.loadGeneration || this.playbackPaused) return
+      if (this.fading === fade && fade) { this.failFade(error instanceof Error ? error.message : 'Could not resume the audio transition'); return }
+      this.finishMedia(el, 'error')
+      this.onError(error instanceof Error ? error.message : 'Could not play audio')
+    })
     this.startTicker(el)
   }
 
   pause(): void {
+    this.samplePlayback()
+    this.freezeFade()
+    this.playbackPaused = true
     this.stopTicker()
     this.active()?.pause()
+    this.fading?.el.pause()
   }
 
   getCurrentTime(): number {
@@ -250,6 +324,9 @@ export class AudioEngine {
   setCurrentTime(sec: number): void {
     const el = this.active()
     if (!el) return
+    this.sampleMedia(el)
+    const session = this.mediaSessions.get(el)
+    if (session) { session.epoch += 1; this.sampleMedia(el, 'seeking') }
     this.epoch += 1
     const target = Math.max(0, sec)
     if (el.readyState < HTMLMediaElement.HAVE_METADATA) {
@@ -265,11 +342,13 @@ export class AudioEngine {
   }
 
   setPlaybackRate(rate: number): void {
+    this.samplePlayback()
     const safeRate = Number.isFinite(rate) ? rate : 1
     this.playbackRate = Math.round(Math.min(2, Math.max(0.5, safeRate)) * 20) / 20
     this.applyPlaybackOptions(this.channels.local)
     this.applyPlaybackOptions(this.channels.stream)
     this.applyPlaybackOptions(this.fading?.el ?? null)
+    this.samplePlayback()
   }
 
   setPreservePitch(preserve: boolean): void {
@@ -337,13 +416,15 @@ export class AudioEngine {
     format: string | null,
     channel: AudioChannel,
     seconds: number,
+    sessionId?: string,
   ): Promise<void> {
     const outgoing = this.active()
     if (!outgoing || outgoing.paused || seconds <= 0) {
-      const loading = this.loadWithFormat(url, format, channel)
+      const loading = this.loadWithFormat(url, format, channel, sessionId)
       const generation = this.loadGeneration
       try {
         await loading
+        if (generation === this.loadGeneration) this.play()
       } catch (error) {
         if (generation === this.loadGeneration) {
           this.onError(error instanceof Error ? error.message : 'Could not load the next track')
@@ -371,7 +452,7 @@ export class AudioEngine {
     this.activeChannel = channel
     this.fadeLevel = 0
 
-    const loading = this.loadWithFormat(url, format, channel)
+    const loading = this.loadWithFormat(url, format, channel, sessionId)
     const generation = this.loadGeneration
     try {
       await loading
@@ -381,19 +462,20 @@ export class AudioEngine {
         this.failFade('Could not load the next track')
         return
       }
-      await el.play()
+      if (!this.playbackPaused) await el.play()
       if (
         generation !== this.loadGeneration ||
         this.active() !== el ||
         this.fading !== transition
       ) return
-      this.startTicker(el)
+      if (!this.playbackPaused) this.startTicker(el)
       this.rampFade(seconds)
     } catch (error) {
       // An old load/play promise may reject after a newer track transition
       // replaced this fade. Never tear down the newer transition as cleanup.
       if (generation === this.loadGeneration && this.fading === transition) {
-        this.failFade(error instanceof Error ? error.message : 'Could not start the next track')
+        if (this.playbackPaused) this.rampFade(seconds)
+        else this.failFade(error instanceof Error ? error.message : 'Could not start the next track')
       }
     }
   }
@@ -493,6 +575,11 @@ export class AudioEngine {
         }
       }
 
+      // The overlap is a decoder handoff for the same recording: count once.
+      this.sampleMedia(outgoing)
+      const session = this.mediaSessions.get(outgoing)
+      this.mediaSessions.delete(outgoing)
+      if (session) this.bindSession(incoming, session.id)
       this.channels.stream = null
       this.activeChannel = 'local'
       this.lastLoad = { url, format: null, channel: 'local' }
@@ -506,6 +593,7 @@ export class AudioEngine {
         : null
       this.fadeLevel = shouldPlay ? 0 : 1
       incoming.muted = false
+      this.sampleMedia(incoming, shouldPlay ? 'playing' : 'paused')
       this.applyGain()
 
       if (shouldPlay) {
@@ -554,19 +642,40 @@ export class AudioEngine {
   }
 
   private rampFade(seconds: number): void {
-    const started = performance.now()
-    const total = Math.max(120, seconds * 1000)
+    this.fadeDurationMs = Math.max(120, seconds * 1000)
+    this.fadeElapsedMs = 0
+    this.fadeLastAt = null
+    this.resumeFade()
+  }
+
+  private freezeFade(): void {
+    if (this.fadeLastAt !== null) this.fadeElapsedMs = Math.min(this.fadeDurationMs, this.fadeElapsedMs + performance.now() - this.fadeLastAt)
+    this.fadeLastAt = null
+    if (this.fadeTimer !== 0) window.clearTimeout(this.fadeTimer)
+    this.fadeTimer = 0
+    if (this.fading && this.fadeDurationMs > 0) this.applyFadeLevel(this.fadeElapsedMs / this.fadeDurationMs)
+  }
+
+  private applyFadeLevel(level: number): void {
+    this.fadeLevel = level
+    this.applyGain()
+    const fade = this.fading
+    if (fade?.gain) fade.gain.gain.value = this.volumeLevel * this.trackGain * (1 - level)
+    else if (fade) fade.el.volume = Math.max(0, Math.min(1, this.volumeLevel * (1 - level)))
+  }
+
+  private resumeFade(): void {
+    if (!this.fading || this.playbackPaused || this.fadeDurationMs <= 0 || this.fadeLastAt !== null) return
+    this.fadeLastAt = performance.now()
     const step = (): void => {
       try {
-        const t = Math.min(1, (performance.now() - started) / total)
-        this.fadeLevel = t
-        this.applyGain()
-        const fade = this.fading
-        if (fade) {
-          const level = 1 - t
-          if (fade.gain) fade.gain.gain.value = this.volumeLevel * this.trackGain * level
-          else fade.el.volume = Math.max(0, Math.min(1, this.volumeLevel * level))
-        }
+        this.fadeTimer = 0
+        if (!this.fading || this.playbackPaused || this.fadeLastAt === null) return
+        const now = performance.now()
+        this.fadeElapsedMs = Math.min(this.fadeDurationMs, this.fadeElapsedMs + now - this.fadeLastAt)
+        this.fadeLastAt = now
+        const t = this.fadeElapsedMs / this.fadeDurationMs
+        this.applyFadeLevel(t)
         if (t < 1) {
           this.fadeTimer = window.setTimeout(step, 40)
         } else {
@@ -618,6 +727,10 @@ export class AudioEngine {
     }
     const fade = this.fading
     if (!fade) return
+    this.fadeLastAt = null
+    this.fadeDurationMs = 0
+    this.fadeElapsedMs = 0
+    this.finishMedia(fade.el, 'end')
     this.fading = null
     fade.el.pause()
     fade.el.removeAttribute('src')
@@ -793,15 +906,20 @@ export class AudioEngine {
       if (isActive()) this.reportBuffer(el)
     })
     el.addEventListener('waiting', () => {
+      this.sampleMedia(el, 'waiting')
       if (isActive()) this.reportBuffer(el)
     })
     el.addEventListener('playing', () => {
+      this.sampleMedia(el, 'playing')
+      if (isActive()) this.startTicker(el)
       if (isActive()) this.reportBuffer(el)
     })
     el.addEventListener('canplay', () => {
       if (isActive()) this.reportBuffer(el)
     })
     el.addEventListener('ended', () => {
+      if (!el.ended) return
+      this.finishMedia(el, 'end')
       if (!isActive()) return
       this.destroyHls()
       this.stopTicker()
@@ -815,6 +933,8 @@ export class AudioEngine {
       this.reportBuffer(el)
     })
     el.addEventListener('error', () => {
+      if (!el.error) return
+      if (el.src) this.finishMedia(el, 'error')
       if (!isActive()) return
       if (!el.src && !this.hls) return
       this.destroyHls()
@@ -824,6 +944,15 @@ export class AudioEngine {
       else this.onError(message)
     })
     this.channels[channel] = el
+    el.addEventListener('pause', () => this.sampleMedia(el, 'paused'))
+    el.addEventListener('seeking', () => {
+      const session = this.mediaSessions.get(el)
+      if (session) session.epoch += 1
+      this.sampleMedia(el, 'seeking')
+    })
+    el.addEventListener('seeked', () => this.sampleMedia(el, el.paused ? 'paused' : el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA ? 'playing' : 'waiting'))
+    el.addEventListener('timeupdate', () => this.sampleMedia(el))
+    el.addEventListener('stalled', () => this.sampleMedia(el, 'waiting'))
     // A crossfade replaces the channel's element while the graph is already
     // running, so the replacement has to be routed as well - otherwise the
     // incoming track would play outside the graph and ignore the fade.
@@ -884,6 +1013,9 @@ export class AudioEngine {
     const el = this.channels.local
     if (!el) return
     const resumeAt = el.currentTime
+    this.sampleMedia(el)
+    const sessionId = this.mediaSessions.get(el)?.id
+    this.mediaSessions.delete(el)
     const load = this.lastLoad
     // a routed element can never be un-routed, so it has to be replaced
     this.channels.local = null
@@ -892,7 +1024,7 @@ export class AudioEngine {
     el.load()
 
     if (this.activeChannel !== 'local' || !load) return
-    void this.loadWithFormat(load.url, load.format, 'local')
+    void this.loadWithFormat(load.url, load.format, 'local', sessionId)
       .then(() => {
         this.setCurrentTime(resumeAt)
         this.play()

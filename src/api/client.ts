@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { ListeningEvent, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationProviderPage, RecommendationStoredState } from '../features/recommendations/types'
 import type {
   Album,
   AlbumDetail,
@@ -217,7 +218,18 @@ export const api = {
 
   getAnalytics: (period: AnalyticsPeriod) =>
     invoke<AnalyticsData>('get_analytics', { sinceSecs: periodSinceSecs(period) }),
-  clearHistory: () => invoke<void>('clear_history'),
+  clearHistory: async () => {
+    await invoke<void>('clear_history')
+    window.dispatchEvent(new Event('tempo:listening-history-cleared'))
+  },
+  recordListeningSession: (event: ListeningEvent) => invoke<void>('record_listening_session', { event }),
+  getRecommendationContext: () => invoke<RecommendationContext>('get_recommendation_context'),
+  recordRecommendationImpressions: (impressions: RecommendationImpression[], generation: number) => invoke<void>('record_recommendation_impressions', { impressions, generation }),
+  saveRecommendationFeatures: (features: RecommendationFeature[]) => invoke<void>('save_recommendation_features', { features }),
+  saveRecommendationState: (storedState: RecommendationStoredState, generation: number) => invoke<void>('save_recommendation_state', { storedState, generation }),
+  getRecommendationPage: (key: string) => invoke<RecommendationProviderPage | null>('get_recommendation_page', { key }),
+  saveRecommendationPage: (page: RecommendationProviderPage) => invoke<void>('save_recommendation_page', { page }),
+  completeListeningExit: () => invoke<void>('complete_listening_exit'),
 
   getCoversCacheInfo: () => invoke<CoversCacheInfo>('get_covers_cache_info'),
   clearCoversCache: () => invoke<void>('clear_covers_cache'),

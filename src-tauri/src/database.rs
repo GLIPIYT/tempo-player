@@ -463,7 +463,8 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
     MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_13,
     MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_17, MIGRATION_18, MIGRATION_19,
-    MIGRATION_20,
+    MIGRATION_20, crate::recommendation_store::MIGRATION,
+    crate::recommendation_store::RETIREMENT_MIGRATION,
 ];
 
 pub struct Db {
@@ -3169,7 +3170,10 @@ impl Db {
 
     pub fn clear_history(&self) -> Result<u32, String> {
         self.with_conn(|conn| {
-            let deleted = conn.execute("DELETE FROM listening_history", []).map_err(db_err)?;
+            let tx = conn.unchecked_transaction().map_err(db_err)?;
+            let deleted = tx.execute("DELETE FROM listening_history", []).map_err(db_err)?;
+            crate::recommendation_store::clear_feedback(&tx)?;
+            tx.commit().map_err(db_err)?;
             Ok(deleted as u32)
         })
     }
@@ -3880,7 +3884,7 @@ fn fetch_stats_summary(conn: &Connection, since_secs: Option<i64>) -> Result<Sta
     let mut sql = format!(
         "SELECT COALESCE(SUM(h.listened_sec), 0) / 60.0, COUNT(*), COUNT(DISTINCT t.artist_id), \
          COALESCE(AVG(CASE WHEN t.duration_sec > 0 \
-         THEN 100.0 * MIN(h.listened_sec, t.duration_sec) / t.duration_sec ELSE NULL END), 0) \
+         THEN 100.0 * MIN(COALESCE(h.covered_sec,h.listened_sec), t.duration_sec) / t.duration_sec ELSE NULL END), 0) \
          FROM {}",
         HISTORY_TRACKS_FROM
     );

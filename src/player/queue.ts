@@ -37,6 +37,8 @@ export class QueueController {
         ...updated,
         auto: track.auto,
         resolving: track.resolving,
+        provenance: track.provenance,
+        selectionReason: track.selectionReason,
       }
       replacements.set(track, replacement)
       changed = true

@@ -1,4 +1,5 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { api } from '../api/client'
 import { getSettings } from '../state/settings'
 import { toast } from '../components/common/Toast'
@@ -11,6 +12,8 @@ import { AudioEngine, type AudioChannel } from './engine'
 import { dbToLinear } from '../audio/loudness'
 import type { EqualizerSettings } from '../audio/equalizer'
 import { QueueController } from './queue'
+import { ListeningAccumulator } from './listeningSession'
+import type { ListeningEvent, ListeningEndReason, ListeningStartReason } from '../features/recommendations/types'
 
 export interface PlayerSnapshot {
   currentTrack: UnifiedTrack | null
@@ -242,6 +245,19 @@ function readStoredRepeat(): RepeatMode {
 }
 
 export class PlayerController {
+  private listening = new Map<string, { accumulator: ListeningAccumulator; track: UnifiedTrack }>()
+  private activeSessionId: string | null = null
+  private nextStartReason: ListeningStartReason = 'restore'
+  private feedbackGeneration = 0
+  private generationReady: Promise<void> | null = null
+  private feedbackBoundary = 0
+  private resolvedFeedbackBoundary = -1
+  private sessionBoundaries = new Map<string, number>()
+  private writeChain: Promise<void> = Promise.resolve()
+  private pendingListening = new Map<string, ListeningEvent>()
+  private listeningWriteScheduled = false
+  private listeningWritesDirty = false
+  private exiting = false
   private queueCtl = new QueueController()
   private engine = new AudioEngine()
   private listeners = new Set<() => void>()
@@ -279,6 +295,7 @@ export class PlayerController {
   }
 
   constructor() {
+    void this.ensureFeedbackGeneration().catch(error => { console.warn('[tempo listening] context unavailable', error) })
     this.loadSnapshot()
     this.engine.setPlaybackRate(this.playbackRate)
     this.engine.setPreservePitch(this.preservePitch)
@@ -286,6 +303,11 @@ export class PlayerController {
     this.engine.onFadeComplete = () => {
       this.crossfading = false
     }
+    this.engine.onPlaybackSample = sample => this.listening.get(sample.sessionId)?.accumulator.sample(sample)
+    this.engine.onMediaFinished = (id, reason) => this.finishSession(id, reason)
+    window.setInterval(() => this.checkpointListening(), 15_000)
+    void listen('listening://exit-request', () => { void this.flushListeningExit() }).catch(() => {})
+    window.addEventListener('tempo:listening-history-cleared', () => { void this.resetListeningFeedback() })
     this.engine.onTime = t => {
       this.position = t
       this.maybeCrossfade()
@@ -303,10 +325,12 @@ export class PlayerController {
     }
     this.engine.onEnded = () => this.handleEnded()
     this.engine.onError = msg => {
+      this.finishListening('error')
       console.error('[tempo player]', msg)
       this.crossfading = false
       this.engine.pause()
       this.isPlaying = false
+      this.loadedSourceId = null
       this.emit()
     }
     void onSoundcloudCacheReady(sourceId => {
@@ -327,7 +351,8 @@ export class PlayerController {
 
   playTracks(tracks: UnifiedTrack[], startIndex = 0): void {
     // switching tracks manually counts as a skip for the track that was playing
-    this.recordSkip()
+    this.finishListening('select')
+    this.nextStartReason = 'manual'
     this.startSeq += 1
     this.crossfading = false
     this.engine.stop()
@@ -349,7 +374,8 @@ export class PlayerController {
       this.emit()
       return
     }
-    if (this.loadedSourceId !== cur.sourceId) {
+    if (this.loadedSourceId !== cur.sourceId || !this.activeSessionId) {
+      this.finishListening('select')
       this.engine.stop()
       this.beginTransition(cur)
       const seq = ++this.startSeq
@@ -358,6 +384,7 @@ export class PlayerController {
       if (seq !== this.startSeq) return
       if (!resolved) return
       this.startTrack(cur, resolved)
+      return
     }
     this.engine.play()
     this.isPlaying = true
@@ -365,13 +392,16 @@ export class PlayerController {
   }
 
   async next(): Promise<void> {
+    this.finishListening('next')
+    this.nextStartReason = 'queue'
     this.startSeq += 1
     this.crossfading = false
     this.engine.stop()
-    this.recordSkip()
+    const expectedSeq = this.startSeq
     const advanced = this.queueCtl.next(this.repeat)
     if (!advanced) {
       const picked = await this.autoPick()
+      if (expectedSeq !== this.startSeq) return
       if (!picked) {
         this.stop()
         return
@@ -385,13 +415,17 @@ export class PlayerController {
   async previous(): Promise<void> {
     const cur = this.queueCtl.current()
     if (cur && this.position > 3) {
+      this.finishListening('previous')
+      const event = this.createListeningSession(cur, 'manual')
+      this.engine.rebindActiveSession(event.id)
       this.seek(0)
       return
     }
+    this.finishListening('previous')
+    this.nextStartReason = 'queue'
     this.startSeq += 1
     this.crossfading = false
     this.engine.stop()
-    this.recordSkip()
     const prev = this.queueCtl.previous(this.repeat)
     if (!prev) return
     this.preloadNext()
@@ -482,6 +516,19 @@ export class PlayerController {
   }
 
   removeFromQueue(index: number): void {
+    if (index === this.queueCtl.getIndex()) {
+      // A removal changes queue.current immediately; terminate the actual media
+      // identity first, then start the replacement at the resulting index.
+      this.finishListening('remove')
+      this.startSeq += 1
+      this.engine.stop()
+      this.loadedSourceId = null
+      this.queueCtl.removeAt(index)
+      this.nextStartReason = 'queue'
+      if (this.queueCtl.current()) void this.startPlayableFromCurrent()
+      else this.stop()
+      return
+    }
     this.queueCtl.removeAt(index)
     this.preloadNext()
     this.emit()
@@ -494,6 +541,7 @@ export class PlayerController {
   }
 
   clearQueue(): void {
+    this.finishListening('clear')
     this.startSeq += 1
     this.crossfading = false
     this.queueCtl.clear()
@@ -515,7 +563,7 @@ export class PlayerController {
     if (this.saveTimer !== null) return
     this.saveTimer = window.setTimeout(() => {
       this.saveTimer = null
-      const q = this.queueCtl.getItems().map(({ auto: _auto, ...rest }) => rest)
+      const q = this.queueCtl.getItems()
       try {
         localStorage.setItem(QUEUE_SNAPSHOT_KEY, JSON.stringify({ q, i: this.queueCtl.getIndex() }))
       } catch {}
@@ -673,6 +721,13 @@ export class PlayerController {
   }
 
   private startTrack(track: UnifiedTrack, resolved: ResolvedTrack, fadeSec = 0): void {
+    if (this.exiting) return
+    if (fadeSec <= 0) this.finishListening('stop')
+    const reason = this.nextStartReason === 'manual' || this.nextStartReason === 'repeat' || this.nextStartReason === 'restore'
+      ? this.nextStartReason : track.selectionReason ?? (track.auto ? 'autoplay' : 'queue')
+    const session = this.createListeningSession(track, reason)
+    this.nextStartReason = 'queue'
+    const playbackSeq = ++this.startSeq
     this.loadedSourceId = track.sourceId
     this.playedSourceIds.add(track.sourceId)
     this.position = 0
@@ -689,13 +744,13 @@ export class PlayerController {
       // starts the incoming track without stopping the outgoing one; the engine
       // ramps between them
       void this.engine
-        .crossfadeTo(resolved.url, resolved.format, resolved.channel, fadeSec)
-        .catch(() => {})
+        .crossfadeTo(resolved.url, resolved.format, resolved.channel, fadeSec, session.id)
+        .catch(() => { this.finishSession(session.id, 'error') })
     } else {
       void this.engine
-        .loadWithFormat(resolved.url, resolved.format, resolved.channel)
-        .catch(() => {})
-      this.engine.play()
+        .loadWithFormat(resolved.url, resolved.format, resolved.channel, session.id)
+        .then(() => { if (playbackSeq === this.startSeq && !this.exiting) this.engine.play() })
+        .catch(() => { this.finishSession(session.id, 'error') })
     }
     this.isPlaying = true
     if (track.dbId !== null) {
@@ -889,20 +944,12 @@ export class PlayerController {
       const remainingWallSeconds = (duration - this.engine.getCurrentTime()) / this.playbackRate
       if (safeFade < 0.2 || remainingWallSeconds > safeFade + 0.3 || !this.isPlaying) return
 
-      if (outgoing.dbId !== null) {
-        const listened = this.duration > 0 ? this.position : duration
-        api.recordHistory(
-          outgoing.dbId,
-          Math.max(0, Math.round(listened)),
-          duration > 0 && listened / duration >= 0.9,
-          false,
-        ).catch(() => {})
-      }
       if (this.repeat !== 'one') {
         const advanced = this.queueCtl.next(this.repeat)
         if (!advanced || advanced.sourceId !== incoming.sourceId) return
       }
       this.beginTransition(incoming)
+      this.nextStartReason = this.repeat === 'one' ? 'repeat' : 'queue'
       this.startTrack(incoming, resolved, safeFade)
       rampStarted = true
     } finally {
@@ -920,6 +967,8 @@ export class PlayerController {
   private async autoPick(): Promise<UnifiedTrack | null> {
     if (this.autoPickBusy) return null
     this.autoPickBusy = true
+    const expectedSeq = this.startSeq
+    const stillCurrent = () => expectedSeq === this.startSeq && !this.exiting
     try {
       const cur = this.queueCtl.current()
       const inQueue = new Set(this.queueCtl.getItems().map((t) => t.sourceId))
@@ -934,7 +983,7 @@ export class PlayerController {
           if (exact) {
             const detail = await api.getAlbum(exact.id)
             const pick = detail.tracks.map(trackToUnified).find((t) => !skip(t))
-            if (pick) return this.appendAuto(pick)
+            if (pick && stillCurrent()) return this.appendAuto(pick)
           }
         } catch {}
       }
@@ -947,7 +996,7 @@ export class PlayerController {
             if (!exact) continue
             const rows = await api.getArtistTracks(exact.id)
             const pick = rows.map(trackToUnified).find((t) => !skip(t))
-            if (pick) return this.appendAuto(pick)
+            if (pick && stillCurrent()) return this.appendAuto(pick)
           } catch {}
         }
       }
@@ -958,7 +1007,7 @@ export class PlayerController {
   }
 
   private appendAuto(t: UnifiedTrack): UnifiedTrack {
-    const marked: UnifiedTrack = { ...t, auto: true }
+    const marked: UnifiedTrack = { ...t, auto: true, selectionReason: 'autoplay' }
     this.queueCtl.append(marked)
     // move playback to the newly appended track; otherwise current() still
     // points at the track that just ended and it would simply replay
@@ -969,12 +1018,12 @@ export class PlayerController {
   }
 
   private async handleEnded(): Promise<void> {
+    if (this.exiting) return
+    this.finishSession(this.activeSessionId, 'end')
+    const expectedSeq = this.startSeq
     const cur = this.queueCtl.current()
-    if (cur && cur.dbId !== null) {
-      const dur = this.duration > 0 ? this.duration : cur.durationSec ?? 0
-      api.recordHistory(cur.dbId, Math.round(dur), true, false).catch(() => {})
-    }
     if (this.repeat === 'one' && cur) {
+      this.nextStartReason = 'repeat'
       this.engine.stop()
       const seq = ++this.startSeq
       const resolved = await this.resolveTrackUrl(cur)
@@ -987,6 +1036,7 @@ export class PlayerController {
     const advanced = this.queueCtl.next(this.repeat)
     if (!advanced) {
       const picked = await this.autoPick()
+      if (expectedSeq !== this.startSeq) return
       if (!picked) {
         this.stop()
         return
@@ -998,15 +1048,148 @@ export class PlayerController {
     await this.startPlayableFromCurrent()
   }
 
-  private recordSkip(): void {
-    const cur = this.queueCtl.current()
-    if (!cur || cur.dbId === null) return
-    if (this.position >= 10) {
-      api.recordHistory(cur.dbId, Math.round(this.position), false, true).catch(() => {})
+  private finishSession(id: string | null, reason: ListeningEndReason): void {
+    if (!id) return
+    const session = this.listening.get(id)
+    if (!session) return
+    const event = session.accumulator.finish(reason)
+    this.listening.delete(id)
+    if (this.activeSessionId === id) this.activeSessionId = null
+    if (event) this.persistListening(event)
+  }
+
+  private finishListening(reason: ListeningEndReason): void {
+    this.engine.samplePlayback()
+    for (const id of this.listening.keys()) this.finishSession(id, reason)
+  }
+
+  private checkpointListening(): void {
+    if (this.exiting) return
+    this.engine.samplePlayback()
+    for (const session of this.listening.values()) {
+      const event = session.accumulator.checkpoint()
+      if (event) this.persistListening(event)
+    }
+    if (this.pendingListening.size) this.scheduleListeningWrites()
+  }
+
+  private persistListening(event: ListeningEvent): void {
+    this.pendingListening.set(event.id, event)
+    // A failing backend may remain unavailable for hours; keep the retry queue
+    // bounded while retaining current sessions and the newest terminal records.
+    if (this.pendingListening.size > 1000) {
+      const oldest = [...this.pendingListening.keys()].find(id => !this.listening.has(id))
+      if (oldest) { this.pendingListening.delete(oldest); this.sessionBoundaries.delete(oldest) }
+    }
+    this.scheduleListeningWrites()
+  }
+
+  private scheduleListeningWrites(): void {
+    if (this.listeningWriteScheduled) { this.listeningWritesDirty = true; return }
+    this.listeningWriteScheduled = true
+    this.listeningWritesDirty = false
+    this.writeChain = this.writeChain.then(async () => {
+      for (const id of this.pendingListening.keys()) {
+        // The Map can receive a post-clear terminal while an older IPC awaits.
+        // Resolve readiness for every submission, then reread its latest value.
+        await this.ensureFeedbackGeneration()
+        const event = this.pendingListening.get(id)
+        const boundary = this.sessionBoundaries.get(id)
+        if (!event) continue
+        if (boundary !== this.feedbackBoundary || this.resolvedFeedbackBoundary !== boundary || event.generation !== this.feedbackGeneration) {
+          this.listeningWritesDirty = true
+          continue
+        }
+        try {
+          await api.recordListeningSession(event)
+          if (this.pendingListening.get(id) === event) {
+            this.pendingListening.delete(id)
+            if (!this.listening.has(id)) this.sessionBoundaries.delete(id)
+          }
+        } catch (error) {
+          const failure = String(error)
+          const obsolete = ['Stale', 'Expired', 'retired'].some(reason => failure.includes(reason))
+            || (failure.includes('cleared') && boundary !== this.feedbackBoundary)
+          if (obsolete && this.pendingListening.get(id) === event) {
+            this.pendingListening.delete(id)
+            if (!this.listening.has(id)) this.sessionBoundaries.delete(id)
+          }
+          else console.warn('[tempo listening] checkpoint could not be stored', error)
+        }
+      }
+    }).catch(error => console.warn('[tempo listening] write failed', error)).finally(() => {
+      this.listeningWriteScheduled = false
+      if (this.listeningWritesDirty && this.pendingListening.size) this.scheduleListeningWrites()
+    })
+  }
+
+  private async resetListeningFeedback(): Promise<void> {
+    this.feedbackBoundary += 1
+    this.generationReady = null
+    this.pendingListening.clear()
+    this.listening.clear()
+    this.sessionBoundaries.clear()
+    this.activeSessionId = null
+    // Start measuring at the clear boundary. Only these new identities may be
+    // rebased when the asynchronous generation read completes.
+    const track = this.queueCtl.current()
+    if (!this.exiting && track && this.loadedSourceId === track.sourceId) {
+      const event = this.createListeningSession(track, 'queue')
+      this.engine.rebindActiveSession(event.id)
+    }
+    try { await this.ensureFeedbackGeneration() } catch (error) {
+      console.warn('[tempo listening] history reset could not be initialized', error)
     }
   }
 
+  private createListeningSession(track: UnifiedTrack, reason: ListeningStartReason): ListeningEvent {
+    const accumulator = new ListeningAccumulator()
+    const event = accumulator.begin(track, reason, this.feedbackGeneration)
+    this.listening.set(event.id, { accumulator, track: { ...track, artists: [...track.artists] } })
+    this.sessionBoundaries.set(event.id, this.feedbackBoundary)
+    this.activeSessionId = event.id
+    return event
+  }
+
+  private async ensureFeedbackGeneration(): Promise<void> {
+    while (this.resolvedFeedbackBoundary !== this.feedbackBoundary) {
+      if (!this.generationReady) {
+        const boundary = this.feedbackBoundary
+        const request = api.getRecommendationContext().then(context => {
+          if (boundary !== this.feedbackBoundary) return
+          this.feedbackGeneration = context.generation
+          this.resolvedFeedbackBoundary = boundary
+          for (const [id, session] of this.listening) {
+            if (this.sessionBoundaries.get(id) === boundary) session.accumulator.setGeneration(context.generation)
+          }
+          for (const [id, event] of this.pendingListening) {
+            if (this.sessionBoundaries.get(id) === boundary) this.pendingListening.set(id, { ...event, generation: context.generation })
+          }
+        })
+        const ready = request.finally(() => { if (this.generationReady === ready) this.generationReady = null })
+        this.generationReady = ready
+      }
+      // A rejected request is cleared in finally; a later checkpoint retries.
+      await this.generationReady
+    }
+  }
+
+  private async flushListeningExit(): Promise<void> {
+    if (this.exiting) return
+    this.exiting = true
+    this.finishListening('exit')
+    this.engine.pause()
+    const drain = async () => {
+      this.scheduleListeningWrites()
+      await this.writeChain
+      await this.writeChain
+    }
+    await Promise.race([drain(), new Promise<void>(resolve => window.setTimeout(resolve, 1200))])
+    await api.completeListeningExit().catch(() => {})
+  }
+
   private stop(): void {
+    this.finishListening('stop')
     this.startSeq += 1
     this.crossfading = false
     this.engine.stop()

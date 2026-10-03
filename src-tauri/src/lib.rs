@@ -13,6 +13,7 @@ mod models;
 mod scanner;
 mod soundcloud;
 mod soundcloud_store;
+mod recommendation_store;
 mod artist_artwork;
 mod tray;
 mod updater;
@@ -98,6 +99,14 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            recommendation_store::record_listening_session,
+            recommendation_store::get_recommendation_context,
+            recommendation_store::record_recommendation_impressions,
+            recommendation_store::save_recommendation_features,
+            recommendation_store::save_recommendation_state,
+            recommendation_store::get_recommendation_page,
+            recommendation_store::save_recommendation_page,
+            tray::complete_listening_exit,
             hardware::get_lyrics_analysis_hardware,
             lyric_analysis::lyrics_analysis_status,
             lyric_analysis::lyrics_analysis_set_enabled,
@@ -246,9 +255,20 @@ pub fn run() {
                 if window.label() == "main" && tray::close_to_tray() {
                     api.prevent_close();
                     let _ = window.hide();
+                } else if window.label() == "main" {
+                    api.prevent_close();
+                    tray::request_exit(window.app_handle());
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if !tray::exit_ready() {
+                    api.prevent_exit();
+                    tray::request_exit(app);
+                }
+            }
+        });
 }

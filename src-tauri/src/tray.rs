@@ -20,6 +20,30 @@ const TRAY_ID: &str = "tempo-tray";
 /// When true, closing the main window hides it instead of quitting. Written by
 /// the frontend, read by the window-event hook below.
 static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
+static EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+static EXIT_READY: AtomicBool = AtomicBool::new(false);
+
+pub fn exit_ready() -> bool { EXIT_READY.load(Ordering::Acquire) }
+
+/// Let the webview finalize actual media, with a bounded native fallback.
+pub fn request_exit<R: Runtime>(app: &AppHandle<R>) {
+    if EXIT_REQUESTED.swap(true, Ordering::AcqRel) { return; }
+    let _ = app.emit("listening://exit-request", ());
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        EXIT_READY.store(true, Ordering::Release);
+        app.exit(0);
+    });
+}
+
+#[tauri::command]
+pub fn complete_listening_exit(app: AppHandle) {
+    if EXIT_REQUESTED.load(Ordering::Acquire) {
+        EXIT_READY.store(true, Ordering::Release);
+        app.exit(0);
+    }
+}
 
 /// Menu labels, kept so the menu can be rebuilt when the language changes.
 #[derive(Clone, Default)]
@@ -94,7 +118,7 @@ fn on_menu<R: Runtime>(app: &AppHandle<R>, id: &str) {
         "quit" => {
             // bypass the close-to-tray hook, otherwise quitting just hides
             set_close_to_tray(false);
-            app.exit(0);
+            request_exit(app);
         }
         // everything else is playback, which only the webview can do
         other => {
