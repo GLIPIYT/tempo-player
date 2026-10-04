@@ -22,8 +22,11 @@ const CACHE_FLAG_TTL = 60_000
 const WRITE_BATCH = 100
 const MAX_PENDING_ACTIONS = 5000
 const MAX_LANGUAGE_JOBS = 5000
+const RECOMMENDATION_ENDPOINTS = new Set(['related', 'station', 'search', 'track-hydration'])
 const keyOf = (track: ScTrack) => `soundcloud:${track.id}`
 const playable = (track: ScTrack) => track.streamable && (track.hasProgressive || track.hasHls)
+const isUnavailableRecommendationSource = (status: unknown, endpoint: unknown) =>
+  (status === 400 || status === 404) && typeof endpoint === 'string' && RECOMMENDATION_ENDPOINTS.has(endpoint)
 const message = (cause: unknown): string => {
   if (cause instanceof Error) return cause.message
   if (typeof cause === 'string') return cause
@@ -813,10 +816,11 @@ class RecommendationService {
           frontier.updatedAt = Date.now()
           if (frontier.seed.limitedEvidence && (frontier.limitedAccepted ?? 0) >= 4) frontier.exhausted = true
           if (result.error) {
-            if (result.status === 400 && ['related', 'station', 'search', 'track-hydration'].includes(result.failedEndpoint ?? '')) {
-              // A permanent bad request for one seed/source should not block
-              // the other SoundCloud fallbacks or unrelated listening seeds.
-              this.lastBadRequest = result.error
+            if (isUnavailableRecommendationSource(result.status, result.failedEndpoint)) {
+              // A missing or rejected endpoint for one seed/source must not
+              // block the remaining fallbacks or unrelated listening seeds.
+              // 404 is an unavailable source, not a user-visible feed failure.
+              this.lastBadRequest = result.status === 400 ? result.error : null
               frontier.retryAt = null
               this.fallback(frontier)
               this.emit({ error: null, retryAt: null })
@@ -852,10 +856,11 @@ class RecommendationService {
           if (!this.frontier.includes(frontier)) continue
           const providerFailure = typeof cause === 'object' && cause !== null
             ? cause as { status?: unknown; failedEndpoint?: unknown } : null
-          if (Number(providerFailure?.status) === 400 && providerFailure?.failedEndpoint === 'search') {
-            // A rejected lookup means this non-SoundCloud listening-history
-            // seed has no provider ID; retire it and continue with other seeds.
-            this.lastBadRequest = message(cause)
+          if (isUnavailableRecommendationSource(Number(providerFailure?.status), providerFailure?.failedEndpoint)
+            && providerFailure?.failedEndpoint === 'search') {
+            // A rejected/missing lookup means this non-SoundCloud listening-
+            // history seed has no provider ID; continue with other seeds.
+            this.lastBadRequest = Number(providerFailure?.status) === 400 ? message(cause) : null
             frontier.exhausted = true
             frontier.retryAt = null
             this.emit({ error: null, retryAt: null })
