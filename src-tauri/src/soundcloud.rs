@@ -135,9 +135,22 @@ async fn get_json_with_fresh_client(url: &str) -> Result<Value, String> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TranscodingProtocol {
+    Progressive,
+    Hls,
+}
+
 fn is_encrypted(t: &Value) -> bool {
-    if t.pointer("/format/protocol").and_then(|p| p.as_str()) != Some("hls") {
+    let protocol = t.pointer("/format/protocol").and_then(Value::as_str).unwrap_or_default();
+    let url = t.get("url").and_then(Value::as_str).unwrap_or_default();
+    let is_hls = protocol == "hls" || protocol.contains("hls") || url.to_ascii_lowercase().contains("/hls");
+    if !is_hls {
         return false;
+    }
+    if protocol.contains("encrypted") || protocol.starts_with("ctr-") || protocol.starts_with("cbc-")
+        || url.to_ascii_lowercase().contains("/encrypted-hls") {
+        return true;
     }
     let preset = t.get("preset").and_then(|v| v.as_str()).unwrap_or_default();
     if preset.contains("encrypted") {
@@ -148,6 +161,24 @@ fn is_encrypted(t: &Value) -> bool {
     }
     let mime = t.pointer("/format/mime_type").and_then(|v| v.as_str()).unwrap_or_default();
     mime.contains("encrypted")
+}
+
+/// SoundCloud clients sometimes label the HLS URL as `http`; yt-dlp handles
+/// the same API inconsistency by identifying the protocol from the stream URL.
+fn transcoding_protocol(t: &Value) -> Option<TranscodingProtocol> {
+    let protocol = t.pointer("/format/protocol").and_then(Value::as_str).unwrap_or_default();
+    if protocol == "progressive" {
+        return Some(TranscodingProtocol::Progressive);
+    }
+    if is_encrypted(t) {
+        return None;
+    }
+    let url = t.get("url").and_then(Value::as_str).unwrap_or_default();
+    if protocol == "hls" || url.to_ascii_lowercase().contains("/hls") {
+        Some(TranscodingProtocol::Hls)
+    } else {
+        None
+    }
 }
 
 fn map_track(item: &Value) -> Option<ScTrack> {
@@ -177,7 +208,7 @@ fn map_track(item: &Value) -> Option<ScTrack> {
         .pointer("/media/transcodings")
         .and_then(|v| v.as_array())
         .map(|list| {
-            list.iter().any(|t| t.pointer("/format/protocol").and_then(|p| p.as_str()) == Some("progressive")
+            list.iter().any(|t| transcoding_protocol(t) == Some(TranscodingProtocol::Progressive)
                 && !t.get("snipped").and_then(Value::as_bool).unwrap_or(false))
         })
         .unwrap_or(false) && full_access;
@@ -186,7 +217,7 @@ fn map_track(item: &Value) -> Option<ScTrack> {
         .and_then(|v| v.as_array())
         .map(|list| {
             list.iter()
-                .any(|t| t.pointer("/format/protocol").and_then(|p| p.as_str()) == Some("hls") && !is_encrypted(t))
+                .any(|t| transcoding_protocol(t) == Some(TranscodingProtocol::Hls))
         })
         .unwrap_or(false) && full_access;
     if !streamable {
@@ -933,34 +964,49 @@ async fn resolve_stream_info(track_id: &str) -> Result<StreamInfo, String> {
         .pointer("/media/transcodings")
         .and_then(|v| v.as_array())
         .ok_or_else(|| "no stream for this track".to_string())?;
-    let chosen = transcodings
-        .iter()
-        .find(|t| t.pointer("/format/protocol").and_then(|p| p.as_str()) == Some("progressive"))
-        .or_else(|| {
-            transcodings.iter().find(|t| {
-                t.pointer("/format/protocol").and_then(|p| p.as_str()) == Some("hls") && !is_encrypted(t)
-            })
-        })
-        .ok_or_else(|| "no stream for this track".to_string())?;
-    let protocol = chosen
-        .pointer("/format/protocol")
-        .and_then(|p| p.as_str())
-        .unwrap_or("progressive");
-    let format = if protocol == "hls" { "hls" } else { "progressive" }.to_string();
-    let turl = chosen
-        .get("url")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| "transcoding url missing".to_string())?;
-    let final_url = get_json(&format!(
-        "{turl}?client_id={}&track_authorization={auth}",
-        get_client_id().await?
-    ))
-    .await?
-    .get("url")
-    .and_then(|v| v.as_str())
-    .ok_or_else(|| "media url missing".to_string())?
-    .to_string();
-    Ok(StreamInfo { url: final_url, format })
+    let mut candidates: Vec<_> = transcodings.iter().filter_map(|transcoding| {
+        transcoding_protocol(transcoding).map(|protocol| (transcoding, protocol))
+    }).collect();
+    candidates.sort_by_key(|(_, protocol)| match protocol {
+        TranscodingProtocol::Progressive => 0,
+        TranscodingProtocol::Hls => 1,
+    });
+    if candidates.is_empty() {
+        return Err("no stream for this track".to_string());
+    }
+    let client_id = get_client_id().await?;
+    let mut last_error = None;
+    for (transcoding, protocol) in candidates {
+        let Some(transcoding_url) = transcoding.get("url").and_then(Value::as_str) else {
+            last_error = Some("transcoding url missing".to_string());
+            continue;
+        };
+        let mut url = reqwest::Url::parse(transcoding_url).map_err(|error| error.to_string())?;
+        url.query_pairs_mut()
+            .append_pair("client_id", &client_id)
+            .append_pair("track_authorization", auth);
+        match get_json(url.as_str()).await {
+            Ok(value) => {
+                if let Some(final_url) = value.get("url").and_then(Value::as_str) {
+                    return Ok(StreamInfo {
+                        url: final_url.to_string(),
+                        format: match protocol {
+                            TranscodingProtocol::Hls => "hls",
+                            TranscodingProtocol::Progressive => "progressive",
+                        }.to_string(),
+                    });
+                }
+                last_error = Some("media url missing".to_string());
+            }
+            // A per-format 404 does not necessarily mean the track is unavailable:
+            // another transcoding may still be playable, so try it next.
+            Err(error) if error.starts_with("SC_CLIENT_ERROR 403 ") || error.starts_with("SC_CLIENT_ERROR 404 ") => {
+                last_error = Some(error)
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "no stream for this track".to_string()))
 }
 
 pub async fn get_stream_info(track_id: &str) -> Result<StreamInfo, String> {
@@ -1020,5 +1066,37 @@ mod tests {
     fn queryencode_encodes_spaces_and_cyrillic() {
         assert_eq!(queryencode("a b"), "a%20b");
         assert_eq!(queryencode("эпп"), "%D1%8D%D0%BF%D0%BF");
+    }
+
+    #[test]
+    fn recognizes_hls_transcoding_when_protocol_is_missing_but_url_is_hls() {
+        let value = serde_json::json!({
+            "kind": "track", "id": 42, "title": "AAC HLS", "duration": 180_000,
+            "streamable": true,
+            "user": { "username": "artist" },
+            "media": { "transcodings": [{
+                "url": "https://api-v2.soundcloud.com/media/track/stream/hls",
+                "format": { "protocol": "http", "mime_type": "audio/mp4; codecs=\"mp4a.40.2\"" },
+                "preset": "hls_aac_160"
+            }] }
+        });
+
+        assert!(map_track(&value).unwrap().has_hls);
+    }
+
+    #[test]
+    fn rejects_encrypted_hls_even_when_its_url_is_the_only_protocol_hint() {
+        let value = serde_json::json!({
+            "kind": "track", "id": 42, "title": "Restricted HLS", "duration": 180_000,
+            "streamable": true,
+            "user": { "username": "artist" },
+            "media": { "transcodings": [{
+                "url": "https://api-v2.soundcloud.com/media/track/stream/encrypted-hls",
+                "format": { "protocol": "http", "mime_type": "audio/mp4" },
+                "preset": "encrypted_hls_aac_160"
+            }] }
+        });
+
+        assert!(!map_track(&value).unwrap().has_hls);
     }
 }
