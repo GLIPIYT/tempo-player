@@ -728,26 +728,45 @@ pub fn merge_recommendation_feature_sections(state: State<'_, AppState>, updates
     state.db.with_conn(|conn| {
         let tx=conn.unchecked_transaction().map_err(err)?;
         let mut result=Vec::new();
-        for update in updates {
-            let previous:Option<(i64,i64,String)>=tx.query_row("SELECT revision,updated_at,data_json FROM recommendation_features WHERE track_key=?1",[&update.track_key],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(err)?;
-            let (revision, at, mut data)=match previous { Some((r,at,value)) => (r,at,serde_json::from_str::<Value>(&value).map_err(|e|e.to_string())?),None => (0,0,serde_json::json!({})) };
-            let old_at=data.get("sectionUpdatedAt").and_then(|v|v.get(&update.section)).and_then(Value::as_i64).unwrap_or(0);
-            if old_at>update.updated_at { return Err("Stale factual feature section".into()); }
-            if old_at==update.updated_at && data.get(&update.section).is_some_and(|v|v!=&update.data) { return Err("Conflicting factual feature section".into()); }
-            let unchanged=old_at==update.updated_at && data.get(&update.section)==Some(&update.data);
-            if !unchanged {
-                let object=data.as_object_mut().ok_or("Invalid persisted feature object")?;
-                object.insert(update.section.clone(),update.data);
-                let stamps=object.entry("sectionUpdatedAt").or_insert_with(||serde_json::json!({}));
-                stamps.as_object_mut().ok_or("Invalid section clock")?.insert(update.section,Value::from(update.updated_at));
-            }
-            let encoded=json(&data,16*1024)?;
-            let feature=Feature{track_key:update.track_key,revision:revision+if unchanged {0}else{1},updated_at:at.max(update.updated_at),data};
-            tx.execute("INSERT INTO recommendation_features(track_key,revision,updated_at,data_json) VALUES(?1,?2,?3,?4) ON CONFLICT(track_key) DO UPDATE SET revision=excluded.revision,updated_at=excluded.updated_at,data_json=excluded.data_json",params![feature.track_key,feature.revision,feature.updated_at,encoded]).map_err(err)?;
-            result.push(feature);
-        }
+        for update in updates { result.push(merge_feature_section_conn(&tx, update)?); }
         prune(&tx)?; tx.commit().map_err(err)?; Ok(result)
     })
+}
+
+/// Merges exactly one owned section against the current DB row. Audio fingerprint
+/// writes use this inside the same transaction as their bounded signature cache.
+pub(crate) fn merge_feature_section_conn(conn: &Connection, update: FeatureSectionUpdate) -> Result<Feature, String> {
+    key(&update.track_key)?;
+    stamp(update.updated_at)?;
+    if !matches!(update.section.as_str(), "catalog" | "language" | "audio") || !update.data.is_object() {
+        return Err("Invalid factual feature section".into());
+    }
+    json(&update.data, 15 * 1024)?;
+    let previous: Option<(i64, i64, String)> = conn
+        .query_row("SELECT revision,updated_at,data_json FROM recommendation_features WHERE track_key=?1", [&update.track_key], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .optional()
+        .map_err(err)?;
+    let (revision, at, mut data) = match previous {
+        Some((revision, at, value)) => (revision, at, serde_json::from_str::<Value>(&value).map_err(|e| e.to_string())?),
+        None => (0, 0, serde_json::json!({})),
+    };
+    let old_at = data.get("sectionUpdatedAt").and_then(|v| v.get(&update.section)).and_then(Value::as_i64).unwrap_or(0);
+    if old_at > update.updated_at { return Err("Stale factual feature section".into()); }
+    if old_at == update.updated_at && data.get(&update.section).is_some_and(|v| v != &update.data) {
+        return Err("Conflicting factual feature section".into());
+    }
+    let unchanged = old_at == update.updated_at && data.get(&update.section) == Some(&update.data);
+    if !unchanged {
+        let object = data.as_object_mut().ok_or("Invalid persisted feature object")?;
+        object.insert(update.section.clone(), update.data);
+        object.entry("sectionUpdatedAt").or_insert_with(|| serde_json::json!({}))
+            .as_object_mut().ok_or("Invalid section clock")?
+            .insert(update.section, Value::from(update.updated_at));
+    }
+    let encoded = json(&data, 16 * 1024)?;
+    let feature = Feature { track_key: update.track_key, revision: revision + if unchanged { 0 } else { 1 }, updated_at: at.max(update.updated_at), data };
+    conn.execute("INSERT INTO recommendation_features(track_key,revision,updated_at,data_json) VALUES(?1,?2,?3,?4) ON CONFLICT(track_key) DO UPDATE SET revision=excluded.revision,updated_at=excluded.updated_at,data_json=excluded.data_json", params![feature.track_key, feature.revision, feature.updated_at, encoded]).map_err(err)?;
+    Ok(feature)
 }
 
 #[tauri::command]

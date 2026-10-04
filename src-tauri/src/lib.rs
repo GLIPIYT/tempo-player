@@ -14,6 +14,7 @@ mod scanner;
 mod soundcloud;
 mod soundcloud_store;
 mod recommendation_store;
+mod recommendation_audio;
 mod artist_artwork;
 mod tray;
 mod updater;
@@ -83,6 +84,9 @@ pub fn run() {
                 app.manage(Arc::new(lyric_analysis::AudioAnalysisStore::new(
                     state.db.clone(), state.sc_cache_dir.clone(), state.yt_cache_dir.clone(),
                 )));
+                app.manage(Arc::new(recommendation_audio::RecommendationAudioStore::new(
+                    state.db.clone(), state.sc_cache_dir.clone(), state.yt_cache_dir.clone(),
+                )));
             }
             // The frontend resolves the persisted hardware/manual choice. No
             // model is fetched until an enabled analysis explicitly asks for it.
@@ -111,6 +115,8 @@ pub fn run() {
             recommendation_store::save_recommendation_page,
             recommendation_store::merge_recommendation_groups,
             recommendation_store::resolve_recommendation_groups,
+            recommendation_audio::recommendation_audio_feature,
+            recommendation_audio::cancel_recommendation_audio_feature,
             tray::complete_listening_exit,
             hardware::get_lyrics_analysis_hardware,
             lyric_analysis::lyrics_analysis_status,

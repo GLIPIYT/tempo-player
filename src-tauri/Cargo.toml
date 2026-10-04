@@ -40,6 +40,8 @@ tokio = { version = "1", features = ["time", "macros", "rt", "fs", "net", "sync"
 futures-util = "0.3"
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+rusty-chromaprint = "=0.3.0"
+symphonia = { version = "=0.5.5", default-features = false, features = ["aac", "alac", "flac", "isomp4", "mkv", "mp3", "ogg", "pcm", "vorbis", "wav"] }
 # covers are downscaled before upload so discord's media proxy can fetch them reliably
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 tauri-plugin-autostart = "2.5.1"

@@ -120,13 +120,20 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
     item.discovery ||= discovery; days.set(dayKey, item)
   }
   const currentLikes = new Set(context.likedTrackKeys.map(key => canonical(context, key)))
+  const detailedTasteDays = new Set((context.tasteDays ?? []).map(day => `${canonical(context, day.trackKey)}|${Math.floor(day.at / DAY)}`))
   for (const seed of context.seedTracks) {
     if (seed.evidence === 'like' || seed.evidence === 'playlist') {
       // Current likes/manual membership survive history reset; imported membership is not provided as manual.
       if (seed.evidence === 'like') addLike(seed.track, seed.at, false)
       else addDay(seed.track, seed.at, 2, seed.confidence, 'action', false)
     } else if (seed.evidence === 'legacy') addDay(seed.track, seed.at, 0.2, 0.25, 'listen', false)
-    else if (seed.evidence === 'aggregate' && !context.tasteDays) addDay(seed.track, seed.at, Math.min(1, seed.weight), 0.5, 'listen', false)
+    // Archived taste contains positive history older than the per-day retention
+    // window. The context always supplies tasteDays (often for other tracks),
+    // so compare the same canonical track/day to avoid dropping or double-counting it.
+    else if (seed.evidence === 'aggregate'
+      && !detailedTasteDays.has(`${canonical(context, seed.track.trackKey)}|${Math.floor(seed.at / DAY)}`)) {
+      addDay(seed.track, seed.at, Math.min(1, seed.weight), 0.5, 'listen', false)
+    }
   }
   const tracks = new Map([...context.seedTracks.map(seed => [seed.track.trackKey, seed.track] as const),
     ...context.sessions.map(event => [event.trackKey, event.track] as const)])

@@ -5,6 +5,7 @@ import type { ReceiptState } from './receipts'
 
 export const FEED_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 export const FEED_LIMITS = { candidates: 100, published: 300, seeds: 40, cursors: 2560, seen: 5000, groups: 400 } as const
+export const MAX_PENDING_RECOMMENDATION_WRITES = 4900
 export interface FeedCandidate {
   track: ScTrack
   identity: RecordingIdentity
@@ -95,15 +96,41 @@ export function hydrateRecommendationState(context: RecommendationContext): Stor
 
 function encode(state: StoredRecommendationState): Record<string, unknown> {
   const candidate = (item: FeedCandidate): FeedCandidate => ({ ...item,
+    // Keep ISRC: later pages use it to confirm generic titles after restart.
+    // The original title, uploader details, and familyKey are derivable or unused.
+    identity: { ...item.identity, originalTitle: '', uploaderId: null, uploaderName: null, familyKey: '' },
     track: compactScTrack(item.track), alternates: item.alternates.slice(0, 3).map(compactScTrack),
   })
   const data = { ...state, candidates: state.candidates.map(candidate), published: state.published.map(candidate), radioRecent: state.radioRecent?.map(candidate) }
+  // `receipts.home.recent` plus its Bloom summary supersede this legacy list.
+  // Omitting the duplicate list keeps old snapshots readable and saves space.
+  if (data.receipts) data.sessionSeen = []
   const size = () => new TextEncoder().encode(JSON.stringify(data)).byteLength
+  const allCandidates = () => [...data.candidates, ...data.published, ...(data.radioRecent ?? [])]
+  // Radio history only affects short-term diversity and is less important than
+  // preserving the active candidate frontier and current Home cards.
+  while (size() > 500 * 1024 && (data.radioRecent?.length ?? 0) > 3) data.radioRecent!.shift()
+  // Unpublished candidates can be fetched again from the persisted frontier.
+  while (size() > 500 * 1024 && data.candidates.length > 20) data.candidates.shift()
+  // Remove optional fallback metadata before sacrificing artwork on visible cards.
+  if (size() > 500 * 1024) for (const item of allCandidates()) item.alternates = []
   if (size() > 500 * 1024) {
-    // Keep identity, source progress and fallback playback flags ahead of artwork.
-    for (const item of [...data.candidates, ...data.published]) {
+    for (const item of [...data.candidates, ...(data.radioRecent ?? [])]) {
       item.track = { ...item.track, artworkUrl: null, artistAvatarUrl: null, permalinkUrl: null }
-      item.alternates = item.alternates.map(track => ({ ...track, artworkUrl: null, artistAvatarUrl: null, permalinkUrl: null }))
+    }
+  }
+  // Keep published IDs/order for no-repeat behavior. Drop secondary artwork
+  // metadata first, then covers on the oldest cards only if the payload is full.
+  if (size() > 500 * 1024) {
+    for (const item of data.published) {
+      item.track = { ...item.track, artistAvatarUrl: null, permalinkUrl: null }
+    }
+  }
+  if (size() > 500 * 1024) {
+    for (let start = 0; start < data.published.length && size() > 500 * 1024; start += 12) {
+      for (const item of data.published.slice(start, start + 12)) {
+        item.track = { ...item.track, artworkUrl: null }
+      }
     }
   }
   if (size() > 512 * 1024) throw new Error('Recommendation state exceeds storage budget')

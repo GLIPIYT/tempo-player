@@ -467,6 +467,7 @@ const MIGRATIONS: &[&str] = &[
     crate::recommendation_store::RETIREMENT_MIGRATION,
     crate::recommendation_store::IDENTITY_MIGRATION,
     crate::recommendation_store::PERSONALIZATION_MIGRATION,
+    crate::recommendation_audio::AUDIO_MIGRATION,
 ];
 
 pub struct Db {

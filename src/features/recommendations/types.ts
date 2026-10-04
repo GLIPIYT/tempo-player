@@ -154,6 +154,15 @@ export interface ExplicitAction {
 export interface FeatureSectionUpdate {
   trackKey: string; section: 'catalog' | 'language' | 'audio'; data: Record<string, unknown>; updatedAt: number
 }
+export interface AudioRecordingFeature {
+  fileIdentity: string
+  algorithmVersion: string
+  sampledSec: number
+  durationSec: number | null
+  versionKey: string
+  supported: boolean
+  matchGroup: string | null
+}
 export interface LanguageEvidence {
   distribution: Record<string, number>; confidence: number; textHash: string
   evidence: { source: string; translated?: boolean; instrumental?: boolean; algorithm: 'franc-min-6.2.0-blocks-v1'; blocks: number }

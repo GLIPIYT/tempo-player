@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { withExplicitFeedback } from '../features/recommendations/feedbackBridge'
-import type { ExplicitAction, FeatureSectionUpdate, RecommendationProvenance } from '../features/recommendations/types'
+import type { AudioRecordingFeature, ExplicitAction, FeatureSectionUpdate, RecommendationProvenance } from '../features/recommendations/types'
 import type { ListeningEvent, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationProviderPage, RecommendationStoredState, RecordingGroup, RecordingGroupResolution, ScRelatedPage, ScRecommendationSource } from '../features/recommendations/types'
 import type {
   Album,
@@ -237,6 +237,9 @@ export const api = {
     window.dispatchEvent(new CustomEvent('tempo:listening-feedback', { detail: event }))
   },
   mergeRecommendationFeatureSections: (updates: FeatureSectionUpdate[]) => invoke<RecommendationFeature[]>('merge_recommendation_feature_sections', { updates }),
+  getRecommendationAudioFeature: (request: { jobId: string; trackId: number | null; source: string; sourceId: string; durationSec: number | null; versionKey: string }) =>
+    invoke<AudioRecordingFeature | null>('recommendation_audio_feature', request),
+  cancelRecommendationAudioFeature: (jobId: string) => invoke<void>('cancel_recommendation_audio_feature', { jobId }),
   recordRecommendationAction: (action: { id: string; trackKey: string; dbId?: number; action: string; intent: string; at: number; generation: number; playlistId?: number; provenance?: RecommendationProvenance }) =>
     invoke<ExplicitAction>('record_recommendation_action', action),
   getRecommendationContext: () => invoke<RecommendationContext>('get_recommendation_context'),

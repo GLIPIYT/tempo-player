@@ -802,7 +802,7 @@ impl AudioAnalysisStore {
     }
 }
 
-fn validate_source_id(source: &str, id: &str) -> Result<(), String> {
+pub(crate) fn validate_source_id(source: &str, id: &str) -> Result<(), String> {
     let valid = match source {
         "soundcloud" => !id.is_empty() && id.len() <= 32 && id.bytes().all(|b| b.is_ascii_digit()),
         "youtube" => {
@@ -820,7 +820,10 @@ fn validate_source_id(source: &str, id: &str) -> Result<(), String> {
     }
 }
 
-fn existing_youtube_file(root: &Path, source_id: &str) -> Result<Option<PathBuf>, String> {
+pub(crate) fn existing_youtube_file(
+    root: &Path,
+    source_id: &str,
+) -> Result<Option<PathBuf>, String> {
     validate_source_id("youtube", source_id)?;
     let root = match fs::canonicalize(root) {
         Ok(root) => root,
@@ -904,6 +907,35 @@ fn audio_stamp(path: &Path) -> Result<AudioStamp, String> {
         created_ns,
         file_key,
     })
+}
+
+/// File stamp for a path already resolved by trusted backend code. Unlike the
+/// lyrics identity, this does not require a supported codec or parsed duration,
+/// so unsupported audio can be cached as a neutral recommendation result.
+pub(crate) fn trusted_file_identity(path: &Path) -> Result<Option<(String, String)>, String> {
+    let canonical = match fs::canonicalize(path) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let stamp = audio_stamp(&canonical)?;
+    if stamp.size == 0 || stamp.size > MAX_AUDIO_FILE_BYTES {
+        return Ok(None);
+    }
+    let absolute_path = canonical.to_string_lossy().into_owned();
+    let mut hash = Sha256::new();
+    hash.update(
+        serde_json::to_vec(&(
+            &absolute_path,
+            stamp.size,
+            stamp.modified_ns.to_string(),
+            stamp.created_ns.map(|value| value.to_string()),
+            &stamp.file_key,
+            "recommendation-file-stamp-v1",
+        ))
+        .map_err(|error| error.to_string())?,
+    );
+    Ok(Some((absolute_path, format!("{:x}", hash.finalize()))))
 }
 
 fn audio_properties_within_limits(duration: f64, rate: Option<u32>, channels: Option<u8>) -> bool {

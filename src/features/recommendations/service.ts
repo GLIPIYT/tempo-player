@@ -4,20 +4,24 @@ import { libraryVersion } from '../../utils/libraryVersion'
 import { scTrackToUnified } from '../../utils/unified'
 import type { ScTrack, UnifiedTrack } from '../../types/models'
 import { chooseRepresentative, duplicateConfidence, normalizeRecordingText, recordingIdentity } from './identity'
-import { compactScTrack, FEED_CACHE_TTL_MS, FEED_LIMITS, hydrateRecommendationState, RecommendationStorage,
+import { compactScTrack, FEED_CACHE_TTL_MS, FEED_LIMITS, MAX_PENDING_RECOMMENDATION_WRITES, hydrateRecommendationState, RecommendationStorage,
   type FeedCandidate, type SeedFrontier, type StoredRecommendationState } from './storage'
 import type { RecordingIdentity, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationSeed } from './types'
 import { RecommendationReceipts } from './receipts'
 import { buildTasteProfile, rankCandidates, type TasteProfile } from './profile'
 import { detectLyricLanguages, type LyricEvidenceSource } from './language'
+import { analyzeCachedRecommendationTrack } from './audio'
 import { flushFeedbackOperations, stopFeedbackOperations, type ExplicitActionIntent } from './feedbackBridge'
-import type { ExplicitActionKind, FeatureSectionUpdate, LanguageEvidence } from './types'
+import { recommendationTrack, type ExplicitActionKind, type FeatureSectionUpdate, type LanguageEvidence, type ListeningEvent, type RecommendationTrack } from './types'
 
 const DAY = 86400_000
 const PUBLISH_SIZE = 20
 const LOW_WATER = 30
 const PAGE_BUDGET = 6
 const CACHE_FLAG_TTL = 60_000
+const WRITE_BATCH = 100
+const MAX_PENDING_ACTIONS = 5000
+const MAX_LANGUAGE_JOBS = 5000
 const keyOf = (track: ScTrack) => `soundcloud:${track.id}`
 const playable = (track: ScTrack) => track.streamable && (track.hasProgressive || track.hasHls)
 const message = (cause: unknown): string => {
@@ -122,6 +126,13 @@ class RecommendationService {
   private languageSequences = new Map<string, number>()
   private languageHashes = new Map<string, string>()
   private sectionClocks = new Map<string, number>()
+  private audioQueue = new Map<string, RecommendationTrack>()
+  private audioAttempted = new Set<string>()
+  private audioTimer: ReturnType<typeof setTimeout> | null = null
+  private audioController: AbortController | null = null
+  private audioFlight: Promise<void> | null = null
+  private audioActiveKey: string | null = null
+  private lastAudioStartedAt = 0
 
   constructor() {
     if (typeof window === 'undefined') return
@@ -136,8 +147,9 @@ class RecommendationService {
     })
     window.addEventListener('tempo:listening-feedback', event => {
       if (this.closing) return
-      const detail = (event as CustomEvent<{ generation: number }>).detail
+      const detail = (event as CustomEvent<ListeningEvent>).detail
       if (this.initialized && detail.generation !== this.generation) return
+      if (this.audioEligible(detail)) this.queueAudioAnalysis(detail.track)
       this.scheduleFeedbackRefresh()
     })
     // One app-owned listener; flags stay bounded by the current metadata window.
@@ -294,6 +306,7 @@ class RecommendationService {
     this.features = latest
     context.features = [...latest.values()]
     this.context = { ...context, canonicalGroups: Object.fromEntries(this.aliases) }
+    this.scheduleContextAudioAnalysis(context)
     this.profile = buildTasteProfile({ ...this.context, sessionStartedAt: this.sessionStartedAt }, Date.now())
     for (const [key, until] of this.cooldowns) if (until > Date.now()) {
       this.homeCooldownOverflow.add(key)
@@ -462,7 +475,89 @@ class RecommendationService {
       else void this.refreshContext()
     }, 250)
   }
+  private audioEligible(event: ListeningEvent): boolean {
+    const duration = event.durationSec ?? event.track.durationSec
+    if (!duration || duration < 30 || !Number.isFinite(event.coveredSec)) return false
+    return event.finished || event.coveredSec >= Math.min(45, duration * 0.5)
+  }
+  private scheduleContextAudioAnalysis(context: RecommendationContext) {
+    for (const event of context.sessions.filter(item => this.audioEligible(item)).slice(0, 8)) {
+      this.queueAudioAnalysis(event.track)
+    }
+    for (const action of (context.explicitActions ?? []).filter(item =>
+      item.action === 'cache' || item.action === 'collection-save' || item.action === 'playlist-add').slice(-4)) {
+      this.queueAudioAnalysis(action.track)
+    }
+    for (const seed of context.seedTracks.filter(item => item.evidence === 'like' || item.evidence === 'playlist').slice(0, 4)) {
+      this.queueAudioAnalysis(seed.track)
+    }
+  }
+  private queueAudioAnalysis(track: RecommendationTrack, refresh = false) {
+    if (this.closing || !track.trackKey || !track.durationSec || track.durationSec < 30) return
+    const key = track.trackKey
+    if (refresh) this.audioAttempted.delete(key)
+    if (this.audioAttempted.has(key) || this.audioQueue.has(key) || this.audioActiveKey === key || this.audioQueue.size >= 32) return
+    this.audioQueue.set(key, track)
+    this.scheduleAudioDrain()
+  }
+  private scheduleAudioDrain() {
+    if (this.closing || this.audioTimer || this.audioFlight || !this.audioQueue.size) return
+    const delay = this.lastAudioStartedAt
+      ? Math.max(10_000, 30_000 - (Date.now() - this.lastAudioStartedAt))
+      : 8_000
+    this.audioTimer = setTimeout(() => {
+      this.audioTimer = null
+      void this.drainAudioQueue()
+    }, delay)
+  }
+  private async drainAudioQueue() {
+    if (this.closing || this.audioFlight || !this.audioQueue.size) return
+    const next = this.audioQueue.entries().next().value as [string, RecommendationTrack] | undefined
+    if (!next) return
+    const [trackKey, track] = next
+    this.audioQueue.delete(trackKey)
+    this.audioActiveKey = trackKey
+    const epoch = this.epoch
+    const generation = this.generation
+    const controller = new AbortController()
+    this.audioController = controller
+    const flight = (async () => {
+      this.lastAudioStartedAt = Date.now()
+      const feature = await analyzeCachedRecommendationTrack(track, controller.signal)
+      this.audioAttempted.add(trackKey)
+      if (this.audioAttempted.size > 5000) this.audioAttempted.delete(this.audioAttempted.values().next().value!)
+      if (!feature?.matchGroup || feature.matchGroup === trackKey || controller.signal.aborted
+        || this.closing || epoch !== this.epoch || generation !== this.generation) return
+      const matchedKey = feature.matchGroup
+      const merged = await api.mergeRecommendationGroups(
+        [matchedKey, this.group(matchedKey), trackKey, this.group(trackKey)], [matchedKey, trackKey], generation,
+      )
+      if (controller.signal.aborted || this.closing || epoch !== this.epoch || generation !== this.generation) return
+      const roots = [matchedKey, this.group(matchedKey), trackKey, this.group(trackKey), merged.groupKey]
+      this.migrateGroups(roots, merged.groupKey)
+      this.aliases.set(matchedKey, merged.groupKey)
+      this.aliases.set(trackKey, merged.groupKey)
+      for (const candidate of [...this.candidates, ...this.published]) {
+        if (this.group(candidate.groupKey) === merged.groupKey) this.persistFeature(candidate)
+      }
+    })().catch(cause => {
+      if (!controller.signal.aborted && !this.closing && epoch === this.epoch && generation === this.generation) {
+        this.reportPersistenceError('Audio', cause)
+      }
+    }).finally(() => {
+      if (this.audioFlight === flight) this.audioFlight = null
+      if (this.audioController === controller) this.audioController = null
+      if (this.audioActiveKey === trackKey) this.audioActiveKey = null
+      this.scheduleAudioDrain()
+    })
+    this.audioFlight = flight
+    await flight
+  }
   private observeLyrics(trackKey: string, text: string, evidence: LyricEvidenceSource) {
+    if (this.languageJobs.size >= MAX_LANGUAGE_JOBS) {
+      this.reportPersistenceError('Language', new Error('Language analysis queue is full; this lyric update was skipped'))
+      return
+    }
     const sequence = (this.languageSequences.get(trackKey) ?? 0) + 1
     this.languageSequences.set(trackKey, sequence)
     const job = detectLyricLanguages(text, evidence).then(result => {
@@ -490,7 +585,18 @@ class RecommendationService {
     const hash = `${evidence.textHash}|${JSON.stringify(evidence.evidence)}`
     if (this.languageHashes.get(trackKey) === hash) return
     this.languageHashes.set(trackKey, hash)
-    this.pendingSections.set(`${trackKey}|language`, { trackKey, section: 'language', data: evidence as unknown as Record<string, unknown>, updatedAt: this.nextSectionTime(trackKey, 'language') })
+    const key = `${trackKey}|language`
+    if (this.pendingSections.has(key)) this.pendingSections.delete(key)
+    else if (this.pendingSections.size >= MAX_PENDING_RECOMMENDATION_WRITES) {
+      const oldest = this.pendingSections.keys().next().value
+      if (oldest) {
+        const dropped = this.pendingSections.get(oldest)
+        this.pendingSections.delete(oldest)
+        if (dropped?.section === 'language') this.languageHashes.delete(dropped.trackKey)
+        this.reportPersistenceError('Features', new Error('Feature write backlog is full; oldest unsaved feature was dropped'))
+      }
+    }
+    this.pendingSections.set(key, { trackKey, section: 'language', data: evidence as unknown as Record<string, unknown>, updatedAt: this.nextSectionTime(trackKey, 'language') })
     if (!this.sectionFailed) void this.flushSections().catch(() => undefined)
   }
   private async flushSections(): Promise<void> {
@@ -499,7 +605,7 @@ class RecommendationService {
     this.sectionFailed = false
     const flight = (async () => {
       while (this.pendingSections.size) {
-        const entries = [...this.pendingSections.entries()].slice(0, 100)
+        const entries = [...this.pendingSections.entries()].slice(0, WRITE_BATCH)
         for (const [key, update] of entries) if (this.pendingSections.get(key) === update) this.pendingSections.delete(key)
         try {
           const features = await api.mergeRecommendationFeatureSections(entries.map(([, update]) => update))
@@ -520,12 +626,21 @@ class RecommendationService {
   recordExplicitAction = (trackKey: string, action: ExplicitActionKind, intent: 'manual' | 'automatic',
     detail?: Partial<ExplicitActionIntent>): Promise<void> => {
     if (intent !== 'manual' || (this.closing && detail?.generation === undefined)) return Promise.resolve()
+    if (this.actionJobs.size + this.pendingActions.length >= MAX_PENDING_ACTIONS) {
+      const cause = new Error('Explicit feedback retry queue exceeds limit')
+      this.reportPersistenceError('Actions', cause)
+      return Promise.reject(cause)
+    }
     const epoch = this.epoch, id = crypto.randomUUID(), at = detail?.at ?? Date.now()
     const job = (async () => {
       await this.initialize()
       if (epoch !== this.epoch) return
       const known = this.context?.sessions.find(event => event.trackKey === trackKey || event.track.dbId === detail?.dbId)?.track
       const candidate = [...this.published, ...this.candidates].find(item => keyOf(item.track) === trackKey)
+      if (action === 'cache' || action === 'collection-save' || action === 'playlist-add') {
+        const audioTrack = known ?? (candidate ? recommendationTrack(this.toUnified(candidate.track)) : undefined)
+        if (audioTrack) this.queueAudioAnalysis(audioTrack, true)
+      }
       const provenance = known?.provenance ?? (candidate ? this.toUnified(candidate.track).provenance : undefined)
       if (this.pendingActions.length >= 5000) throw new Error('Explicit feedback retry queue exceeds limit')
       this.pendingActions.push({ id, trackKey, action, intent, at, generation: detail?.generation ?? this.generation, dbId: detail?.dbId, playlistId: detail?.playlistId, provenance })
@@ -566,6 +681,11 @@ class RecommendationService {
     if (this.cycleTimer) clearTimeout(this.cycleTimer)
     if (this.feedbackTimer) clearTimeout(this.feedbackTimer)
     this.cycleTimer = null; this.feedbackTimer = null
+    if (this.audioTimer) clearTimeout(this.audioTimer)
+    this.audioTimer = null
+    this.audioQueue.clear()
+    this.audioController?.abort()
+    this.audioController = null
     await flushFeedbackOperations()
     await this.flush()
   }
@@ -840,7 +960,13 @@ class RecommendationService {
     return accepted
   }
   private persistFeature(candidate: FeedCandidate) {
-    this.pendingFeatures.set(keyOf(candidate.track), { ...structuredClone(candidate), addedAt: this.nextSectionTime(keyOf(candidate.track), 'catalog') })
+    const key = keyOf(candidate.track)
+    if (this.pendingFeatures.has(key)) this.pendingFeatures.delete(key)
+    else if (this.pendingFeatures.size >= MAX_PENDING_RECOMMENDATION_WRITES) {
+      this.pendingFeatures.delete(this.pendingFeatures.keys().next().value!)
+      this.reportPersistenceError('Catalog', new Error('Catalog write backlog is full; oldest unsaved metadata was dropped'))
+    }
+    this.pendingFeatures.set(key, { ...structuredClone(candidate), addedAt: this.nextSectionTime(key, 'catalog') })
     if (this.featureTimer || this.featuresFailed) return
     this.featureTimer = setTimeout(() => { this.featureTimer = null; void this.flushFeatures().catch(() => undefined) }, 400)
   }
@@ -852,7 +978,7 @@ class RecommendationService {
     this.featuresFailed = false
     const flight = (async () => {
       while (this.pendingFeatures.size) {
-        const entries = [...this.pendingFeatures.entries()].slice(0, 100)
+        const entries = [...this.pendingFeatures.entries()].slice(0, WRITE_BATCH)
         for (const [key, candidate] of entries) if (this.pendingFeatures.get(key) === candidate) this.pendingFeatures.delete(key)
         const epoch = this.epoch
         try {
@@ -1076,6 +1202,10 @@ class RecommendationService {
     if (this.cooldownUntil(group) > Date.now()) return
     const shownAt = Date.now()
     this.cooldowns.set(group, shownAt + 7 * DAY)
+    if (this.impressions.length >= MAX_PENDING_RECOMMENDATION_WRITES) {
+      this.impressions.shift()
+      this.reportPersistenceError('Impressions', new Error('Impression write backlog is full; oldest unsaved view was dropped'))
+    }
     this.impressions.push({ id: crypto.randomUUID(), trackKey, recordingGroup: group, shownAt, surface: 'home' })
     this.pruneMetadata()
     this.save()
@@ -1091,7 +1221,7 @@ class RecommendationService {
     this.impressionsFailed = false
     const flight = (async () => {
       while (this.impressions.length) {
-        const batch = this.impressions.splice(0, 100), generation = this.generation, epoch = this.epoch
+        const batch = this.impressions.splice(0, WRITE_BATCH), generation = this.generation, epoch = this.epoch
         try { await api.recordRecommendationImpressions(batch, generation) }
         catch (cause) {
           if (epoch !== this.epoch || generation !== this.generation) continue
