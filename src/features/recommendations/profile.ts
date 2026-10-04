@@ -383,6 +383,11 @@ function interleaveLanguages(ordered: FeedCandidate[], profile: TasteProfile): F
   return mixBuckets(activePools, weights)
 }
 
+/** Rebalances a previously published batch without filtering or dropping cards. */
+export function rebalanceCandidateLanguages(candidates: FeedCandidate[], profile: TasteProfile): FeedCandidate[] {
+  return interleaveLanguages(candidates, profile)
+}
+
 export function rankCandidates(candidates: FeedCandidate[], profile: TasteProfile,
   history: { seedTrackKey: string }[] = []): FeedCandidate[] {
   const ordered = candidates.slice().sort((a, b) => candidateScore(b, profile) - candidateScore(a, profile) || a.addedAt - b.addedAt)

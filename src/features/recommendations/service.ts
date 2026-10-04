@@ -8,7 +8,7 @@ import { compactScTrack, FEED_CACHE_TTL_MS, FEED_LIMITS, MAX_PENDING_RECOMMENDAT
   type FeedCandidate, type SeedFrontier, type StoredRecommendationState } from './storage'
 import type { RecordingIdentity, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationSeed } from './types'
 import { RecommendationReceipts } from './receipts'
-import { buildTasteProfile, candidateScore, rankCandidates, type TasteProfile } from './profile'
+import { buildTasteProfile, candidateScore, rankCandidates, rebalanceCandidateLanguages, type TasteProfile } from './profile'
 import { detectLyricLanguages, type LyricEvidenceSource } from './language'
 import { analyzeCachedRecommendationTrack } from './audio'
 import { flushFeedbackOperations, stopFeedbackOperations, type ExplicitActionIntent } from './feedbackBridge'
@@ -348,6 +348,11 @@ class RecommendationService {
     }
     for (const item of [...this.published, ...this.candidates]) item.groupKey = this.group(keyOf(item.track))
     this.setSeedPlan(this.profile.seeds)
+    if (!this.initialized && this.published.length > 1) {
+      // The stored home rail may have been generated before language balancing.
+      // Reorder that first batch in place so the fix takes effect after an app update.
+      this.published = rebalanceCandidateLanguages(this.published, this.profile)
+    }
     this.pruneMetadata()
   }
   private async initialize() {
