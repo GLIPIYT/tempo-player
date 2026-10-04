@@ -31,9 +31,6 @@ export const en: Record<string, string> = {
     'Hidden files stay on disk and are skipped during scans.',
   'Downloads first and enables SoundCloud spectrum analysis.':
     'Downloads first and enables SoundCloud spectrum analysis.',
-  'SoundCloud browser session': 'SoundCloud browser session',
-  'If the normal stream fails, yt-dlp can use your login in the selected browser.':
-    'If the normal stream fails, yt-dlp can use your login in the selected browser.',
   Pulse: 'Pulse',
   Orbit: 'Orbit',
   'Not downloaded': 'Not downloaded',

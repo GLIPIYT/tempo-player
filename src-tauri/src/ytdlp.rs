@@ -762,67 +762,150 @@ pub fn resolve_one(
         .find_map(|line| parse_json_entry(line.trim(), "")))
 }
 
-/// Resolves a SoundCloud track through yt-dlp when the native stream resolver
-/// cannot return a usable URL. Browser cookies are opt-in and limited to the
-/// browser names yt-dlp itself supports; no cookie file is written by Tempo.
-pub fn resolve_soundcloud_stream(
+/// Downloads SoundCloud audio through yt-dlp when the native stream cannot play.
+/// It uses the OS default browser session when yt-dlp supports the platform,
+/// then retries without cookies. Tempo never exports or stores a cookie file.
+pub fn download_soundcloud(
     configured: &str,
     bin_dir: &Path,
     url: &str,
-    cookies_from_browser: &str,
-) -> Result<(String, String), String> {
-    const BROWSERS: &[&str] = &[
-        "brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale",
-    ];
-    let path = binary(configured, bin_dir).ok_or_else(|| "yt-dlp is not available".to_string())?;
-    let browser = cookies_from_browser.trim();
-    if !browser.is_empty() && !BROWSERS.contains(&browser) {
-        return Err("unsupported browser for SoundCloud cookies".to_string());
+    destination: &Path,
+) -> Result<PathBuf, String> {
+    let browser = default_browser_for_cookies();
+    if let Some(browser) = browser {
+        match download_with_options(configured, bin_dir, url, destination, Some(browser), 180) {
+            Ok(path) => Ok(path),
+            Err(browser_error) => match download_with_options(
+                configured,
+                bin_dir,
+                url,
+                destination,
+                None,
+                180,
+            ) {
+                Ok(path) => Ok(path),
+                Err(public_error) => Err(format!(
+                    "automatic {browser} session failed: {browser_error}; public retry failed: {public_error}"
+                )),
+            },
+        }
+    } else {
+        download_with_options(configured, bin_dir, url, destination, None, 180)
+    }
+}
+
+fn default_browser_for_cookies() -> Option<&'static str> {
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("reg.exe")
+            .args([
+                "query",
+                r"HKCU\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice",
+                "/v",
+                "ProgId",
+            ])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let prog_id = String::from_utf8_lossy(&output.stdout)
+            .split_whitespace()
+            .last()?
+            .to_ascii_lowercase();
+        return if prog_id.contains("msedgehtm") {
+            Some("edge")
+        } else if prog_id.contains("chromehtml") {
+            Some("chrome")
+        } else if prog_id.contains("bravehtml") {
+            Some("brave")
+        } else if prog_id.contains("firefoxurl") {
+            Some("firefox")
+        } else if prog_id.contains("operastable") {
+            Some("opera")
+        } else if prog_id.contains("vivaldihtm") {
+            Some("vivaldi")
+        } else {
+            None
+        };
     }
 
+    #[cfg(not(target_os = "windows"))]
+    {
+        let browser = std::env::var("BROWSER").ok()?.to_ascii_lowercase();
+        return if browser.contains("firefox") {
+            Some("firefox")
+        } else if browser.contains("brave") {
+            Some("brave")
+        } else if browser.contains("vivaldi") {
+            Some("vivaldi")
+        } else if browser.contains("opera") {
+            Some("opera")
+        } else if browser.contains("chromium") {
+            Some("chromium")
+        } else if browser.contains("chrome") {
+            Some("chrome")
+        } else if browser.contains("edge") {
+            Some("edge")
+        } else {
+            None
+        };
+    }
+}
+
+fn download_with_options(
+    configured: &str,
+    bin_dir: &Path,
+    url: &str,
+    destination: &Path,
+    browser: Option<&str>,
+    timeout_secs: u64,
+) -> Result<PathBuf, String> {
+    let path = binary(configured, bin_dir).ok_or_else(|| "yt-dlp is not available".to_string())?;
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("cache directory: {e}"))?;
+    }
+    let template = format!("{}.%(ext)s", destination.to_string_lossy());
     let mut args = vec![
+        "--no-playlist",
         "--no-warnings",
         "--no-progress",
-        "--no-playlist",
-        "--get-url",
-        "--format",
-        "bestaudio",
+        "-f",
+        "bestaudio[ext=m4a]/bestaudio",
+        "-o",
+        template.as_str(),
     ];
-    if !browser.is_empty() {
+    if let Some(browser) = browser {
         args.extend(["--cookies-from-browser", browser]);
     }
     args.push(url);
-    let out = run(&path, &args, 120)?;
+    let out = run(&path, &args, timeout_secs)?;
     if !out.status.success() {
         let detail = String::from_utf8_lossy(&out.stderr)
             .lines()
             .rev()
             .find(|line| !line.trim().is_empty())
-            .unwrap_or("no stream returned")
+            .unwrap_or("no output")
             .trim()
             .to_string();
-        return Err(format!(
-            "yt-dlp could not resolve this SoundCloud track: {detail}"
-        ));
+        return Err(format!("yt-dlp could not download SoundCloud audio: {detail}"));
     }
-    let stream_url = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(str::trim)
-        .find(|line| line.starts_with("https://") || line.starts_with("http://"))
-        .ok_or_else(|| "yt-dlp returned no SoundCloud stream URL".to_string())?
-        .to_string();
-    let parsed = reqwest::Url::parse(&stream_url)
-        .map_err(|_| "yt-dlp returned an invalid SoundCloud stream URL".to_string())?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err("yt-dlp returned an unsupported SoundCloud stream protocol".to_string());
-    }
-    let path = parsed.path().to_ascii_lowercase();
-    let format = if path.contains(".m3u8") || path.contains("/hls") {
-        "hls"
-    } else {
-        "progressive"
-    };
-    Ok((stream_url, format.to_string()))
+    find_downloaded_file(destination)
+        .ok_or_else(|| "yt-dlp reported success but wrote no audio file".to_string())
+}
+
+fn find_downloaded_file(destination: &Path) -> Option<PathBuf> {
+    let dir = destination.parent().unwrap_or(Path::new("."));
+    let stem = destination.file_name()?.to_str()?;
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.is_file()
+                && path.file_stem().and_then(|value| value.to_str()) == Some(stem)
+                && path.extension().and_then(|value| value.to_str()) != Some("part")
+        })
 }
 
 /// Searches one of YouTube Music's other sections.

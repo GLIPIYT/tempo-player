@@ -2318,8 +2318,7 @@ impl Db {
             let tx = conn.unchecked_transaction().map_err(db_err)?;
             for (id, external_id) in rows {
                 let Some(external_id) = external_id else { continue };
-                let file = cache_dir.join(format!("{}.mp3", external_id));
-                if file.exists() {
+                if let Some(file) = crate::soundcloud_store::find_cached_file(cache_dir, &external_id) {
                     let size = std::fs::metadata(&file).map(|m| m.len() as i64).unwrap_or(0);
                     tx.execute(
                         "UPDATE tracks SET cached_at = COALESCE(cached_at, ?1), file_size = ?2 WHERE id = ?3",
@@ -2351,12 +2350,15 @@ impl Db {
             let known: HashSet<String> = cached_files.iter().map(|(id, _)| id.clone()).collect();
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|ext| ext.to_str()) != Some("mp3") {
+                if !crate::soundcloud_store::is_cached_audio_file(&path) {
                     continue;
                 }
                 let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
                     continue;
                 };
+                if stem.is_empty() || !stem.bytes().all(|byte| byte.is_ascii_digit()) {
+                    continue;
+                }
                 if known.contains(stem) {
                     continue;
                 }

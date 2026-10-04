@@ -184,7 +184,7 @@ function toScPlayback(res: { url: string | null; cachedPath: string | null; form
 }
 
 async function fetchScPlayback(sourceId: string, waitForCache: boolean, permalinkUrl: string | null = null,
-  forceYtdlp = false): Promise<ScPlayback | null> {
+  forceYtdlp = false, reportError = false): Promise<ScPlayback | null> {
   // The flag changes the answer, so it is part of the key: flipping the setting
   // must not keep serving the other mode's resolution.
   const key = `${sourceId}|${waitForCache ? 'cache' : 'stream'}${forceYtdlp ? '|ytdlp' : ''}`
@@ -192,20 +192,42 @@ async function fetchScPlayback(sourceId: string, waitForCache: boolean, permalin
   if (hit && (hit.playback?.cached === true || Date.now() - hit.at < SC_PLAYBACK_TTL_MS)) {
     return hit.playback
   }
-  // one retry: the first call can lose a cold connection
-  const attempts = forceYtdlp ? 1 : 2
+  // The backend already tries yt-dlp if native stream resolution fails. A
+  // second frontend request could repeat a full, multi-minute download after
+  // that fallback has failed, so only retry the cheap background cache lookup.
+  const attempts = forceYtdlp || reportError ? 1 : 2
+  let lastError: unknown = null
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const settings = getSettings()
       const playback = toScPlayback(await api.scGetPlayback(sourceId, waitForCache, permalinkUrl,
-        settings.ytdlp.path, settings.soundcloud.cookiesFromBrowser, forceYtdlp))
+        settings.ytdlp.path, forceYtdlp))
       scPlaybackCache.set(key, { playback, at: Date.now() })
       return playback
-    } catch {
+    } catch (error) {
+      lastError = error
+      console.warn('[tempo soundcloud] local playback fallback failed', error)
       scPlaybackCache.delete(key)
     }
   }
+  if (reportError && lastError) toast.show(soundcloudPlaybackError(lastError), 'error')
   return null
+}
+
+function soundcloudPlaybackError(error: unknown): string {
+  const raw = error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : JSON.stringify(error) ?? String(error)
+  const details = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean).at(-1)?.slice(-200)
+  const isRussian = getSettings().lang === 'ru' || (
+    getSettings().lang === 'system' && typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('ru')
+  )
+  const prefix = isRussian
+    ? 'Не удалось открыть трек SoundCloud. Подготовка локального аудио через yt-dlp тоже не удалась.'
+    : 'Could not play this SoundCloud track. yt-dlp could not prepare a local audio copy either.'
+  return details ? `${prefix}\n${details}` : prefix
 }
 
 /**
@@ -637,7 +659,7 @@ export class PlayerController {
           })
         } catch {}
       }
-      const playback = await fetchScPlayback(t.sourceId, cacheScBeforePlay(), t.externalUrl)
+      const playback = await fetchScPlayback(t.sourceId, cacheScBeforePlay(), t.externalUrl, false, true)
       if (!playback) return null
       // Cached files are local; HLS reaches the element through MediaSource,
       // i.e. a blob URL, which is same-origin too. Only a progressive remote
@@ -738,7 +760,7 @@ export class PlayerController {
     this.preparing = true
     this.emit()
     try {
-      const playback = await fetchScPlayback(sourceId, false, track.externalUrl, true)
+      const playback = await fetchScPlayback(sourceId, false, track.externalUrl, true, true)
       if (!playback) return false
       if (this.exiting || failedSeq !== this.startSeq || this.queueCtl.current() !== track) return true
 

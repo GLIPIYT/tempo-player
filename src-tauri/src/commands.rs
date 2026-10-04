@@ -1450,7 +1450,6 @@ pub async fn sc_get_playback(
     track_id: String,
     permalink_url: Option<String>,
     configured: String,
-    cookies_from_browser: String,
     force_ytdlp: bool,
     wait_for_cache: bool,
 ) -> Result<crate::soundcloud_store::ScPlayback, String> {
@@ -1463,7 +1462,6 @@ pub async fn sc_get_playback(
         permalink_url.as_deref(),
         &configured,
         &state.bin_dir,
-        &cookies_from_browser,
         force_ytdlp,
         Some(app),
         wait_for_cache,
@@ -2708,10 +2706,9 @@ fn write_tracks_m3u8(
         let location = match track.source.as_str() {
             "soundcloud" => {
                 let Some(external_id) = &track.external_id else { continue };
-                let file = cache_dir.join(format!("{}.mp3", external_id));
-                if !file.exists() {
+                let Some(file) = crate::soundcloud_store::find_cached_file(cache_dir, external_id) else {
                     continue;
-                }
+                };
                 file.to_string_lossy().into_owned()
             }
             _ => track.path.clone(),
