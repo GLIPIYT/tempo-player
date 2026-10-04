@@ -15,12 +15,25 @@ export interface TasteProfile {
   seedLanguages?: Record<string, string>
   languageConfidence: number; unknownShare: number; confidence: number
   artists: Record<string, number>; genres: Record<string, number>; tags: Record<string, number>
+  genreLabels?: Record<string, string>
   versions: Record<string, number>; tempo: number | null
   features: Map<string, RecommendationContext['features'][number]>
   groups: Record<string, string>
 }
 export interface TasteContext extends RecommendationContext { sessionStartedAt?: number }
 type SeedBucket = TasteTrack['bucket']
+interface TasteRecord {
+  track: RecommendationTrack
+  long: number
+  session: number
+  longListen: number
+  sessionListen: number
+  longAction: number
+  sessionAction: number
+  confidence: number
+  at: number
+  discovery: boolean
+}
 const canonical = (context: RecommendationContext, key: string) => context.canonicalGroups?.[key]
   ?? context.recordingGroups?.find(group => group.trackKeys.includes(key))?.groupKey ?? key
 const decay = (at: number, now: number) => Math.pow(0.5, Math.max(0, now - at) / (45 * DAY))
@@ -101,7 +114,7 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
   }
   const limitedLike = (track: RecommendationTrack) => !confirmedListeningGroups.has(canonical(context, track.trackKey))
     && !track.artists.some(artist => (listeningArtistFamilies.get(norm(artist))?.size ?? 0) >= 2)
-  const records = new Map<string, { track: RecommendationTrack; long: number; session: number; confidence: number; at: number; discovery: boolean }>()
+  const records = new Map<string, TasteRecord>()
   const sessionStart = context.sessionStartedAt ?? now - 6 * 60 * 60_000
   const days = new Map<string, { track: RecommendationTrack; at: number; listen: number; listenCap: number; action: number; sessionListen: number; sessionAction: number; confidence: number; discovery: boolean }>()
   const likeFamilies = new Map<string, number>(), likeArtists = new Map<string, number>()
@@ -182,15 +195,32 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
   }
   for (const item of days.values()) {
     const group = canonical(context, item.track.trackKey)
-    const record = records.get(group) ?? { track: item.track, long: 0, session: 0, confidence: 0, at: 0, discovery: false }
+    const record = records.get(group) ?? { track: item.track, long: 0, session: 0, longListen: 0, sessionListen: 0,
+      longAction: 0, sessionAction: 0, confidence: 0, at: 0, discovery: false }
     const amount = Math.min(4, item.listen + item.action)
     record.long += amount * decay(item.at, now)
     record.session += Math.min(4, item.sessionListen + item.sessionAction)
+    record.longListen += item.listen * decay(item.at, now)
+    record.sessionListen += item.sessionListen
+    record.longAction += item.action * decay(item.at, now)
+    record.sessionAction += item.sessionAction
     record.confidence = Math.max(record.confidence, item.confidence); record.at = Math.max(record.at, item.at)
     record.discovery ||= item.discovery; records.set(group, record)
   }
   const longTotal = [...records.values()].reduce((sum, item) => sum + item.long, 0)
   const sessionTotal = [...records.values()].reduce((sum, item) => sum + item.session, 0)
+  const listenLongTotal = [...records.values()].reduce((sum, item) => sum + item.longListen, 0)
+  const listenSessionTotal = [...records.values()].reduce((sum, item) => sum + item.sessionListen, 0)
+  const actionLongTotal = [...records.values()].reduce((sum, item) => sum + item.longAction, 0)
+  const actionSessionTotal = [...records.values()].reduce((sum, item) => sum + item.sessionAction, 0)
+  const languageSignal = (item: TasteRecord | undefined) => {
+    if (!item) return 0
+    const listen = 0.7 * item.longListen / Math.max(1, listenLongTotal)
+      + 0.3 * item.sessionListen / Math.max(1, listenSessionTotal)
+    const action = 0.7 * item.longAction / Math.max(1, actionLongTotal)
+      + 0.3 * item.sessionAction / Math.max(1, actionSessionTotal)
+    return listenLongTotal + listenSessionTotal > 0 ? 0.85 * listen + 0.15 * action : action
+  }
   const tasteTracks: TasteTrack[] = []
   for (const [group, item] of records) {
     const times = (skips.get(group) ?? []).sort((a, b) => a - b)
@@ -204,7 +234,7 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
   tasteTracks.sort((a, b) => b.weight - a.weight || b.at - a.at)
   const profile: TasteProfile = { tracks: tasteTracks, seeds: [], languages: {}, languageConfidence: 0, unknownShare: 1,
     confidence: Math.min(1, [...days.values()].reduce((sum, item) => sum + Math.min(1, item.listen + item.action) * item.confidence, 0) / 12),
-    artists: {}, genres: {}, tags: {}, versions: {}, tempo: null, features, groups }
+    artists: {}, genres: {}, genreLabels: {}, tags: {}, versions: {}, tempo: null, features, groups }
   let languageTotal = 0, known = 0, tempoSum = 0, tempoWeight = 0
   const seedLanguages: Record<string, string> = {}
   const add = (map: Record<string, number>, value: string, weight: number) => { if (norm(value)) map[norm(value)] = (map[norm(value)] ?? 0) + weight }
@@ -216,11 +246,16 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
     const weight = item.weight * item.confidence
     // Language is a slow-moving preference. Square-root and cap each track's
     // vote so a few freshly liked tracks cannot rewrite the listener's profile.
-    const languageWeight = Math.min(0.08, Math.sqrt(Math.max(0, item.weight))) * item.confidence
+    const signal = languageSignal(records.get(canonical(context, item.track.trackKey)))
+    const languageWeight = Math.min(0.08, Math.sqrt(Math.max(0, signal))) * item.confidence
     languageTotal += languageWeight
     for (const artist of item.track.artists) add(profile.artists, artist, weight)
     const supported = confirmedListeningGroups.has(canonical(context, item.track.trackKey)) || item.track.artists.some(confirmedArtist)
-    if (traits?.genre && (genreFamilies.get(norm(traits.genre))?.size ?? 0) >= 2) add(profile.genres, traits.genre, weight)
+    if (traits?.genre && (genreFamilies.get(norm(traits.genre))?.size ?? 0) >= 2) {
+      const genreKey = norm(traits.genre)
+      add(profile.genres, traits.genre, signal)
+      profile.genreLabels![genreKey] ??= traits.genre.trim()
+    }
     if (supported) {
       for (const tag of traits?.tags ?? []) add(profile.tags, tag, weight)
       if (traits?.version) add(profile.versions, traits.version, weight)
@@ -323,13 +358,6 @@ export function candidateScore(candidate: Readonly<FeedCandidate>, profile: Tast
   return score
 }
 
-function languageFeature(key: string, profile: TasteProfile): LanguageEvidence | undefined {
-  const group = profile.groups[key]
-  const feature = profile.features.get(key)
-    ?? (group ? [...profile.features.values()].find(item => profile.groups[item.trackKey] === group) : undefined)
-  return feature?.data.language as unknown as LanguageEvidence | undefined
-}
-
 function candidateLanguage(candidate: Readonly<FeedCandidate>, profile: TasteProfile): string | null {
   const key = `soundcloud:${candidate.track.id}`
   const group = profile.groups[key] ?? candidate.groupKey
@@ -346,18 +374,14 @@ function candidateLanguage(candidate: Readonly<FeedCandidate>, profile: TastePro
     return learned?.[0] ?? CYRILLIC_SCRIPT_LANGUAGE
   }
 
-  const scores: Record<string, number> = {}
-  for (const seedKey of new Set([candidate.seedTrackKey, ...(candidate.supportingSeedTrackKeys ?? [])])) {
-    const evidence = languageFeature(seedKey, profile)
-    if (evidence?.evidence.translated || (evidence && evidence.confidence < 0.2)) continue
-    const seed = profile.seeds.find(item => item.track.trackKey === seedKey)
-    const weight = (seed?.weight ?? 1) * (seed?.confidence ?? 1) * (evidence?.confidence ?? 1)
-    const code = profile.seedLanguages?.[seedKey] ?? strongestLanguage(evidence)?.[0]
-    if (code) scores[code] = (scores[code] ?? 0) + weight
-  }
-  const entries = Object.entries(scores).sort((a, b) => b[1] - a[1])
-  const total = entries.reduce((sum, [, weight]) => sum + weight, 0)
-  return entries[0] && total > 0 && entries[0][1] / total >= 0.55 ? entries[0][0] : null
+  // Related tracks do not necessarily share their seed's language. Keep Latin-
+  // script titles unknown until lyrics or another direct signal classify them.
+  return null
+}
+
+export function favoriteGenre(profile: TasteProfile): { key: string; label: string } | null {
+  const key = Object.keys(profile.genres).sort((left, right) => profile.genres[right] - profile.genres[left])[0]
+  return key ? { key, label: profile.genreLabels?.[key] ?? key } : null
 }
 
 function interleaveLanguages(ordered: FeedCandidate[], profile: TasteProfile): FeedCandidate[] {

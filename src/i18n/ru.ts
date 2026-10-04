@@ -4,6 +4,7 @@ export const ru: Record<string, string> = {
   'Retry after cooldown': 'Повторить после паузы',
   'Recommended for you': 'Рекомендации для вас',
   'Based on what you listen to': 'На основе ваших прослушиваний',
+  'Your most-listened genre': 'Жанр, который вы слушаете чаще всего',
   'SoundCloud recommendations will appear here.': 'Здесь появятся рекомендации SoundCloud.',
   'Could not load recommendations': 'Не удалось загрузить рекомендации',
   'Could not save recommendations': 'Не удалось сохранить рекомендации',

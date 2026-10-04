@@ -541,6 +541,8 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
 .home-recommendations-title small { color: var(--text-muted); font-size: 10px; }
 .home-recommendations-play { gap: 6px; }
 .home-recommendation-rail { padding-bottom: 7px; }
+.home-favorite-genre { margin-top: 18px; }
+.home-favorite-genre > .home-section-head { margin-bottom: 10px; }
 .home-recommendation-card { position: relative; flex: 0 0 118px; min-width: 0; }
 .home-recommendation-card .home-rail-track { width: 100%; }
 .home-recommendation-cover { display: grid; width: 118px; height: 118px; place-items: center; overflow: hidden; border-radius: 9px; background: var(--surface); color: var(--text-muted); font-size: 34px; }

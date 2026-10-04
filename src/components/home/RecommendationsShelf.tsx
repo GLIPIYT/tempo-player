@@ -6,6 +6,8 @@ import { beginTrackDrag, consumeDragClick } from '../../dnd/trackDrag'
 
 interface RecommendationsShelfProps {
   tracks: ScTrack[]
+  favoriteGenre: { key: string; label: string } | null
+  favoriteGenreTracks: ScTrack[]
   loading: boolean
   error: string | null
   persistenceError: string | null
@@ -15,6 +17,7 @@ interface RecommendationsShelfProps {
   retryAt: number | null
   cachedTrackIds: ReadonlySet<string>
   onPlay: (index: number) => void
+  onPlayFavoriteGenre: (index: number) => void
   onCache: (track: ScTrack) => void
   onDropToPlaylist: (playlistId: number, track: ScTrack) => void
   onRetry: () => void
@@ -28,6 +31,8 @@ interface RecommendationsShelfProps {
 
 export default function RecommendationsShelf({
   tracks,
+  favoriteGenre,
+  favoriteGenreTracks,
   loading,
   error,
   persistenceError,
@@ -37,6 +42,7 @@ export default function RecommendationsShelf({
   retryAt,
   cachedTrackIds,
   onPlay,
+  onPlayFavoriteGenre,
   onCache,
   onDropToPlaylist,
   onRetry,
@@ -156,6 +162,40 @@ export default function RecommendationsShelf({
     trimAnchor.current = null
   }, [tracks])
 
+  const renderCards = (items: ScTrack[], play: (index: number) => void) => items.map((track, index) => (
+    <div className="home-recommendation-card" key={track.id} data-track-id={track.id}>
+      <button
+        type="button"
+        className="home-rail-track"
+        onClick={() => { if (!consumeDragClick()) play(index) }}
+        onPointerDown={(event: PointerEvent<HTMLButtonElement>) => beginTrackDrag({
+          e: event,
+          title: track.title,
+          coverPath: track.artworkUrl,
+          allowButtons: true,
+          onDrop: (playlistId) => onDropToPlaylist(playlistId, track),
+        })}
+      >
+        <span className="home-recommendation-cover">
+          {track.artworkUrl ? <img src={track.artworkUrl} alt="" loading="lazy" /> : <span aria-hidden="true">♪</span>}
+        </span>
+        <strong title={track.title}>{track.title}</strong>
+        <small title={track.artist}>{track.artist}</small>
+      </button>
+      {track.streamable && track.hasProgressive && !cachedTrackIds.has(track.id) ? (
+        <button
+          type="button"
+          className="home-recommendation-cache"
+          aria-label={`${t('Cache track')}: ${track.title}`}
+          title={t('Cache track')}
+          onClick={() => onCache(track)}
+        >
+          <Download size={13} />
+        </button>
+      ) : null}
+    </div>
+  ))
+
   return (
     <section className="home-section home-recommendations" ref={sectionRef}>
       <div className="home-section-head" onContextMenu={onSectionMenu}>
@@ -194,39 +234,7 @@ export default function RecommendationsShelf({
         </div>
       ) : tracks.length > 0 ? (
         <div className="home-track-rail home-recommendation-rail" ref={railRef} onScroll={trimPassed} tabIndex={0} aria-label={t('Recommended for you')}>
-          {tracks.map((track, index) => (
-            <div className="home-recommendation-card" key={track.id} data-track-id={track.id}>
-              <button
-                type="button"
-                className="home-rail-track"
-                onClick={() => { if (!consumeDragClick()) onPlay(index) }}
-                onPointerDown={(event: PointerEvent<HTMLButtonElement>) => beginTrackDrag({
-                  e: event,
-                  title: track.title,
-                  coverPath: track.artworkUrl,
-                  allowButtons: true,
-                  onDrop: (playlistId) => onDropToPlaylist(playlistId, track),
-                })}
-              >
-                <span className="home-recommendation-cover">
-                  {track.artworkUrl ? <img src={track.artworkUrl} alt="" loading="lazy" /> : <span aria-hidden="true">♪</span>}
-                </span>
-                <strong title={track.title}>{track.title}</strong>
-                <small title={track.artist}>{track.artist}</small>
-              </button>
-              {track.streamable && track.hasProgressive && !cachedTrackIds.has(track.id) ? (
-                <button
-                  type="button"
-                  className="home-recommendation-cache"
-                  aria-label={`${t('Cache track')}: ${track.title}`}
-                  title={t('Cache track')}
-                  onClick={() => onCache(track)}
-                >
-                  <Download size={13} />
-                </button>
-              ) : null}
-            </div>
-          ))}
+          {renderCards(tracks, onPlay)}
           <span ref={endRef} aria-hidden="true" style={{ flex: '0 0 1px', alignSelf: 'stretch' }} />
         </div>
       ) : error ? (
@@ -236,6 +244,23 @@ export default function RecommendationsShelf({
           {t(exhausted ? 'No more recommendations' : hasLoaded ? 'No recommendations yet' : 'SoundCloud recommendations will appear here.')}
         </div>
       )}
+      {favoriteGenre && favoriteGenreTracks.length > 0 ? (
+        <div className="home-favorite-genre">
+          <div className="home-section-head">
+            <div className="home-recommendations-title">
+              <span className="home-section-title">{favoriteGenre.label}</span>
+              <small>{t('Your most-listened genre')}</small>
+            </div>
+            <button type="button" className="btn btn-ghost home-recommendations-play" onClick={() => onPlayFavoriteGenre(0)}>
+              <Play size={14} fill="currentColor" />
+              {t('Play all')}
+            </button>
+          </div>
+          <div className="home-track-rail home-recommendation-rail" tabIndex={0} aria-label={`${favoriteGenre.label} · ${t('Recommended for you')}`}>
+            {renderCards(favoriteGenreTracks, onPlayFavoriteGenre)}
+          </div>
+        </div>
+      ) : null}
       {error || persistenceError ? (
         <small className="home-recommendation-error" role="status">
           {error ? <span>{tracks.length > 0 ? `${t('Could not load recommendations')}: ` : ''}{error}</span> : null}

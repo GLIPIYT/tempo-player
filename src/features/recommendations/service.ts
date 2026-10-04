@@ -8,7 +8,7 @@ import { compactScTrack, FEED_CACHE_TTL_MS, FEED_LIMITS, MAX_PENDING_RECOMMENDAT
   type FeedCandidate, type SeedFrontier, type StoredRecommendationState } from './storage'
 import type { RecordingIdentity, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationSeed } from './types'
 import { RecommendationReceipts } from './receipts'
-import { buildTasteProfile, candidateScore, rankCandidates, rebalanceCandidateLanguages, type TasteProfile } from './profile'
+import { buildTasteProfile, candidateScore, favoriteGenre as getFavoriteGenre, rankCandidates, rebalanceCandidateLanguages, type TasteProfile } from './profile'
 import { detectLyricLanguages, type LyricEvidenceSource } from './language'
 import { analyzeCachedRecommendationTrack } from './audio'
 import { flushFeedbackOperations, stopFeedbackOperations, type ExplicitActionIntent } from './feedbackBridge'
@@ -48,6 +48,7 @@ function cursorKey(seed: SeedFrontier): string {
 }
 export interface RecommendationSnapshot {
   tracks: ScTrack[]
+  favoriteGenre: { key: string; label: string } | null
   loading: boolean
   error: string | null
   persistenceError: string | null
@@ -69,7 +70,7 @@ export type CandidateRanker = (candidate: Readonly<FeedCandidate>) => number
 
 class RecommendationService {
   private listeners = new Set<() => void>()
-  private snapshot: RecommendationSnapshot = { tracks: [], loading: false, error: null, persistenceError: null, hasLoaded: false,
+  private snapshot: RecommendationSnapshot = { tracks: [], favoriteGenre: null, loading: false, error: null, persistenceError: null, hasLoaded: false,
     hasMore: true, exhausted: false, retryAt: null, revision: 0, cachedTrackIds: new Set() }
   private candidates: FeedCandidate[] = []
   private published: FeedCandidate[] = []
@@ -81,6 +82,8 @@ class RecommendationService {
   private radioSeen = new RecommendationReceipts()
   private radioRecent: FeedCandidate[] = []
   private seedBucketCounts = [0, 0, 0]
+  private seedLanguageCounts = new Map<string, number>()
+  private seedLanguageContextKey = ''
   private reservations = new Map<string, symbol>()
   private aliases = new Map<string, string>()
   private cooldowns = new Map<string, number>()
@@ -195,6 +198,8 @@ class RecommendationService {
       this.radioSeen.clear()
       this.radioRecent = []
       this.seedBucketCounts = [0, 0, 0]
+      this.seedLanguageCounts.clear()
+      this.seedLanguageContextKey = ''
       this.skipCooldowns.clear()
       this.homeCooldownOverflow.clear()
       this.skipCooldownOverflow.clear()
@@ -210,7 +215,7 @@ class RecommendationService {
       // detector still belongs to its track/text sequence after feedback resets.
       this.featuresFailed = false
       this.impressionsFailed = false
-      this.emit({ error: null, hasMore: true, exhausted: false })
+      this.emit({ favoriteGenre: null, error: null, hasMore: true, exhausted: false })
       if (this.active) void this.activate()
     })
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') void this.flush().catch(() => undefined) })
@@ -320,6 +325,7 @@ class RecommendationService {
     this.context = { ...context, canonicalGroups: Object.fromEntries(this.aliases) }
     this.scheduleContextAudioAnalysis(context)
     this.profile = buildTasteProfile({ ...this.context, sessionStartedAt: this.sessionStartedAt }, Date.now())
+    this.emit({ favoriteGenre: getFavoriteGenre(this.profile) })
     for (const [key, until] of this.cooldowns) if (until > Date.now()) {
       this.homeCooldownOverflow.add(key)
       this.homeCooldownOverflowUntil = Math.max(this.homeCooldownOverflowUntil, until)
@@ -443,7 +449,12 @@ class RecommendationService {
     }
     const contextKey = selected.map(seed => seed.track.trackKey).sort().join('|')
     const sameProfile = contextKey === this.contextKey
+    const languageContextKey = selected.map(seed => `${seed.track.trackKey}:${this.profile?.seedLanguages?.[seed.track.trackKey] ?? '?'}`).sort().join('|')
     if (!sameProfile) this.lastBadRequest = null
+    if (languageContextKey !== this.seedLanguageContextKey) {
+      this.seedLanguageCounts.clear(); this.seedBucketCounts = [0, 0, 0]
+    }
+    this.seedLanguageContextKey = languageContextKey
     this.contextKey = contextKey
     const discovered = sameProfile ? [...previous.values()].filter(item => item.discovered)
       .slice(0, DISCOVERY_SEED_LIMIT) : []
@@ -637,7 +648,10 @@ class RecommendationService {
           if (this.context) {
             this.context.features = [...this.features.values()]
             this.profile = buildTasteProfile({ ...this.context, sessionStartedAt: this.sessionStartedAt }, Date.now())
-            if (!this.closing) this.setSeedPlan(this.profile.seeds)
+            if (!this.closing) {
+              this.emit({ favoriteGenre: getFavoriteGenre(this.profile) })
+              this.setSeedPlan(this.profile.seeds)
+            }
           }
         } catch (cause) {
           for (const [key, update] of entries) if (!this.pendingSections.has(key)) this.pendingSections.set(key, update)
@@ -761,13 +775,71 @@ class RecommendationService {
     const total = active.reduce((sum, index) => sum + weights[index], 0), count = this.seedBucketCounts.reduce((sum, value) => sum + value, 0)
     const selected = active.reduce((best, next) => weights[next] / total * (count + 1) - this.seedBucketCounts[next]
       > weights[best] / total * (count + 1) - this.seedBucketCounts[best] ? next : best, active[0])
+    const bucket = bucketNames[selected]
+    const eligible = ready.filter(seed => (seed.seed.bucket ?? 'steady') === bucket)
+    const languagePools = new Map<string, SeedFrontier[]>()
+    for (const seed of eligible) {
+      const code = this.profile?.seedLanguages?.[seed.seed.track.trackKey] ?? '?'
+      const pool = languagePools.get(code) ?? []
+      pool.push(seed); languagePools.set(code, pool)
+    }
+    const languageEntries = [...languagePools.entries()]
+    const languageWeights = languageEntries.map(([code]) => code === '?'
+      ? Math.max(0.05, this.profile?.unknownShare ?? 1)
+      : Math.max(0.01, this.profile?.languages[code] ?? 0))
+    const languageTotal = languageWeights.reduce((sum, weight) => sum + weight, 0)
+    const languageCount = [...this.seedLanguageCounts.values()].reduce((sum, value) => sum + value, 0)
+    const languageDebt = (candidate: number) => languageWeights[candidate] / languageTotal * (languageCount + 1)
+      - (this.seedLanguageCounts.get(languageEntries[candidate][0]) ?? 0)
+    let languageIndex = 0
+    for (let index = 1; index < languageEntries.length; index += 1) {
+      if (languageDebt(index) > languageDebt(languageIndex)) languageIndex = index
+    }
+    const language = languageEntries[languageIndex]?.[0] ?? '?'
     for (let offset = 0; offset < this.frontier.length; offset += 1) {
       const index = (this.nextSeed + offset) % this.frontier.length
       const frontier = this.frontier[index]
-      if (ready.includes(frontier) && (frontier.seed.bucket ?? 'steady') === bucketNames[selected]) {
-        this.seedBucketCounts[selected] += 1; this.nextSeed = (index + 1) % this.frontier.length; return frontier
+      if (ready.includes(frontier) && (frontier.seed.bucket ?? 'steady') === bucket
+        && (this.profile?.seedLanguages?.[frontier.seed.track.trackKey] ?? '?') === language) {
+        this.seedBucketCounts[selected] += 1
+        this.seedLanguageCounts.set(language, (this.seedLanguageCounts.get(language) ?? 0) + 1)
+        this.nextSeed = (index + 1) % this.frontier.length
+        return frontier
       }
     }
+  }
+  /** Fetch up to three seed pages as one small related cohort. */
+  private nextFrontierBatch(maxSize = 3): SeedFrontier[] {
+    const first = this.nextFrontier()
+    if (!first || first.source === 'search') return first ? [first] : []
+    if (maxSize <= 1) return [first]
+    const artistKeys = new Set(first.seed.track.artists.map(normalizeRecordingText).filter(Boolean))
+    const genreKey = normalizeRecordingText(first.seed.track.traits?.genre ?? '')
+    if (!artistKeys.size && !genreKey) return [first]
+    const ready = new Set(this.frontier.filter(seed => !seed.exhausted && seed.source === first.source
+      && (seed.seed.bucket ?? 'steady') === (first.seed.bucket ?? 'steady') && (seed.retryAt ?? 0) <= Date.now()))
+    const sameCohort = (seed: SeedFrontier) => {
+      if (seed === first || !ready.has(seed)) return false
+      const sameArtist = seed.seed.track.artists.some(artist => artistKeys.has(normalizeRecordingText(artist)))
+      const sameGenre = !!genreKey && genreKey === normalizeRecordingText(seed.seed.track.traits?.genre ?? '')
+      return sameArtist || sameGenre
+    }
+    const others = this.frontier.filter(sameCohort)
+    const firstLanguage = this.profile?.seedLanguages?.[first.seed.track.trackKey] ?? '?'
+    others.sort((left, right) => Number((this.profile?.seedLanguages?.[right.seed.track.trackKey] ?? '?') === firstLanguage)
+      - Number((this.profile?.seedLanguages?.[left.seed.track.trackKey] ?? '?') === firstLanguage))
+    const batch = [first, ...others.slice(0, Math.min(2, maxSize - 1))]
+    const bucketIndex = (['steady', 'recent', 'discovery'] as const).indexOf(first.seed.bucket ?? 'steady')
+    for (const seed of batch.slice(1)) {
+      if (bucketIndex >= 0) this.seedBucketCounts[bucketIndex] += 1
+      const language = this.profile?.seedLanguages?.[seed.seed.track.trackKey] ?? '?'
+      this.seedLanguageCounts.set(language, (this.seedLanguageCounts.get(language) ?? 0) + 1)
+    }
+    if (batch.length > 1) {
+      const lastIndex = this.frontier.indexOf(batch[batch.length - 1])
+      this.nextSeed = (lastIndex + 1) % this.frontier.length
+    }
+    return batch
   }
   private hasReadyFrontier() {
     const primaryRemaining = this.frontier.some(seed => !seed.exhausted && seed.source !== 'search')
@@ -886,103 +958,122 @@ class RecommendationService {
     else if (frontier.source === 'station' && frontier.seed.confidence >= 0.65 && frontier.seed.evidence !== 'legacy' && frontier.seed.track.artists.length) frontier.source = 'search'
     else frontier.exhausted = true
   }
+  private handleFrontierFailure(frontier: SeedFrontier, cause: unknown, epoch: number): boolean {
+    if (this.closing || epoch !== this.epoch || !this.frontier.includes(frontier)) return true
+    const providerFailure = typeof cause === 'object' && cause !== null
+      ? cause as { status?: unknown; failedEndpoint?: unknown; retryAt?: unknown } : null
+    if (isUnavailableRecommendationSource(Number(providerFailure?.status), providerFailure?.failedEndpoint)
+      && providerFailure?.failedEndpoint === 'search') {
+      this.lastBadRequest = Number(providerFailure?.status) === 400 ? message(cause) : null
+      frontier.exhausted = true
+      frontier.retryAt = null
+      this.emit({ error: null, retryAt: null })
+      this.publish()
+      this.save(true)
+      return true
+    }
+    const retryAt = Number(providerFailure?.retryAt ?? 0)
+    frontier.retryAt = Math.max(Number.isFinite(retryAt) ? retryAt : 0, this.snapshot.retryAt ?? 0, Date.now() + 30_000)
+    this.emit({ error: message(cause), retryAt: frontier.retryAt })
+    this.save(true)
+    return false
+  }
+  private async fetchFrontierBatch(batch: SeedFrontier[], cycle: number, epoch: number): Promise<boolean> {
+    const requests: { frontier: SeedFrontier; signature: string; cursor: string | null; promise: Promise<Awaited<ReturnType<typeof api.scRecommendationPage>>> }[] = []
+    let canContinue = true
+    for (const frontier of batch) {
+      if (!this.frontier.includes(frontier)) continue
+      try {
+        if (!frontier.resolved) {
+          frontier.seedId = await this.resolveSeed(frontier)
+          if (this.closing || epoch !== this.epoch) break
+          if (!this.frontier.includes(frontier)) continue
+          frontier.resolved = true
+          if (!frontier.seedId) { frontier.exhausted = true; continue }
+        }
+        const signature = cursorKey(frontier)
+        if (this.usedCursors.has(signature)) { this.fallback(frontier); continue }
+        const cursor = frontier.cursor
+        const promise = frontier.source === 'search'
+          ? api.scRecommendationSearch(frontier.seed.track.artists[0].slice(0, 128), 20)
+          : api.scRecommendationPage(frontier.seedId!, cursor, 30, frontier.source)
+        requests.push({ frontier, signature, cursor, promise })
+      } catch (cause) {
+        if (!this.handleFrontierFailure(frontier, cause, epoch)) canContinue = false
+      }
+    }
+    const responses = await Promise.allSettled(requests.map(request => request.promise))
+    if (this.closing || epoch !== this.epoch) return false
+    for (let index = 0; index < responses.length; index += 1) {
+      const request = requests[index], response = responses[index]
+      const { frontier, signature, cursor } = request
+      if (!this.frontier.includes(frontier)) continue
+      if (response.status === 'rejected') {
+        if (!this.handleFrontierFailure(frontier, response.reason, epoch)) canContinue = false
+        continue
+      }
+      try {
+        const result = response.value
+        const knownArtists = this.frontier.flatMap(seed => seed.seed.track.artists)
+        const tracks = frontier.source === 'search' ? result.tracks.filter(track => {
+          const identity = recordingIdentity(track, knownArtists)
+          return identity.artist !== null && frontier.seed.track.artists.some(artist => normalizeRecordingText(artist) === identity.artist)
+        }) : result.tracks
+        const accepted = await this.accept(tracks, frontier, cursor, epoch)
+        if (this.closing || epoch !== this.epoch) return false
+        if (!this.frontier.includes(frontier)) continue
+        frontier.updatedAt = Date.now()
+        if (frontier.seed.limitedEvidence && (frontier.limitedAccepted ?? 0) >= 4) frontier.exhausted = true
+        if (result.error) {
+          if (isUnavailableRecommendationSource(result.status, result.failedEndpoint)) {
+            this.lastBadRequest = result.status === 400 ? result.error : null
+            frontier.retryAt = null
+            this.fallback(frontier)
+            this.emit({ error: null, retryAt: null })
+            this.publish()
+            this.save(true)
+            continue
+          }
+          frontier.retryAt = result.retryAt ?? Date.now() + 30_000
+          this.emit({ error: result.error, retryAt: frontier.retryAt })
+          this.publish()
+          this.save(true)
+          canContinue = false
+          continue
+        }
+        this.usedCursors.add(signature)
+        this.lastBadRequest = null
+        const scope = signature.slice(0, 17)
+        const recent = [...this.usedCursors].filter(key => key.startsWith(scope))
+        for (const old of recent.slice(0, Math.max(0, recent.length - 32))) this.usedCursors.delete(old)
+        while (this.usedCursors.size > FEED_LIMITS.cursors) this.usedCursors.delete(this.usedCursors.values().next().value!)
+        frontier.pages += 1
+        frontier.retryAt = null
+        if (canContinue) this.emit({ error: null, retryAt: null })
+        frontier.emptyPages = accepted ? 0 : frontier.emptyPages + 1
+        frontier.cursor = result.nextCursor
+        if (!result.nextCursor || frontier.emptyPages >= 3) this.fallback(frontier)
+        if (this.wantsPublish && cycle + index >= 1) this.publish()
+        this.save()
+      } catch (cause) {
+        if (!this.handleFrontierFailure(frontier, cause, epoch)) canContinue = false
+      }
+    }
+    return canContinue
+  }
   private fill = async (): Promise<void> => {
     if (this.closing || !this.initialized || (this.snapshot.retryAt ?? 0) > Date.now()) return
     if (this.fillFlight) return this.fillFlight
     const epoch = this.epoch
     this.emit({ loading: true })
     this.fillFlight = (async () => {
-      for (let page = 0; page < PAGE_BUDGET && this.candidates.length < FEED_LIMITS.candidates; page += 1) {
-        let frontier = this.nextFrontier()
-        if (!frontier && this.expandSeedFrontier()) frontier = this.nextFrontier()
-        if (!frontier) break
-        try {
-          if (!frontier.resolved) {
-            frontier.seedId = await this.resolveSeed(frontier)
-            if (this.closing || epoch !== this.epoch) return
-            if (!this.frontier.includes(frontier)) continue
-            frontier.resolved = true
-            if (!frontier.seedId) { frontier.exhausted = true; continue }
-          }
-          const signature = cursorKey(frontier)
-          if (this.usedCursors.has(signature)) {
-            this.fallback(frontier); continue
-          }
-          const inputCursor = frontier.cursor
-          const result = frontier.source === 'search'
-            ? await api.scRecommendationSearch(frontier.seed.track.artists[0].slice(0, 128), 20)
-            : await api.scRecommendationPage(frontier.seedId!, inputCursor, 30, frontier.source)
-          if (this.closing || epoch !== this.epoch) return
-          if (!this.frontier.includes(frontier)) continue
-          const knownArtists = this.frontier.flatMap(seed => seed.seed.track.artists)
-          const tracks = frontier.source === 'search' ? result.tracks.filter(track => {
-            const identity = recordingIdentity(track, knownArtists)
-            return identity.artist !== null && frontier.seed.track.artists.some(artist => normalizeRecordingText(artist) === identity.artist)
-          }) : result.tracks
-          const accepted = await this.accept(tracks, frontier, inputCursor, epoch)
-          if (this.closing || epoch !== this.epoch) return
-          if (!this.frontier.includes(frontier)) continue
-          frontier.updatedAt = Date.now()
-          if (frontier.seed.limitedEvidence && (frontier.limitedAccepted ?? 0) >= 4) frontier.exhausted = true
-          if (result.error) {
-            if (isUnavailableRecommendationSource(result.status, result.failedEndpoint)) {
-              // A missing or rejected endpoint for one seed/source must not
-              // block the remaining fallbacks or unrelated listening seeds.
-              // 404 is an unavailable source, not a user-visible feed failure.
-              this.lastBadRequest = result.status === 400 ? result.error : null
-              frontier.retryAt = null
-              this.fallback(frontier)
-              this.emit({ error: null, retryAt: null })
-              this.publish()
-              this.save(true)
-              continue
-            }
-            // Partial tracks are useful; failed pages retain the INPUT cursor.
-            frontier.retryAt = result.retryAt ?? Date.now() + 30_000
-            this.emit({ error: result.error, retryAt: frontier.retryAt })
-            this.publish()
-            this.save(true)
-            break
-          }
-          this.usedCursors.add(signature)
-          this.lastBadRequest = null
-          // Remember recent cursors per source, retaining valid continuation beyond
-          // this window. Old cycles still encounter canonical/session exclusions.
-          const scope = signature.slice(0, 17)
-          const recent = [...this.usedCursors].filter(key => key.startsWith(scope))
-          for (const old of recent.slice(0, Math.max(0, recent.length - 32))) this.usedCursors.delete(old)
-          while (this.usedCursors.size > FEED_LIMITS.cursors) this.usedCursors.delete(this.usedCursors.values().next().value!)
-          frontier.pages += 1
-          frontier.retryAt = null
-          this.emit({ error: null, retryAt: null })
-          frontier.emptyPages = accepted ? 0 : frontier.emptyPages + 1
-          frontier.cursor = result.nextCursor
-          if (!result.nextCursor || frontier.emptyPages >= 3) this.fallback(frontier)
-          if (this.wantsPublish && page >= 1) this.publish()
-          this.save()
-        } catch (cause) {
-          if (this.closing || epoch !== this.epoch) return
-          if (!this.frontier.includes(frontier)) continue
-          const providerFailure = typeof cause === 'object' && cause !== null
-            ? cause as { status?: unknown; failedEndpoint?: unknown } : null
-          if (isUnavailableRecommendationSource(Number(providerFailure?.status), providerFailure?.failedEndpoint)
-            && providerFailure?.failedEndpoint === 'search') {
-            // A rejected/missing lookup means this non-SoundCloud listening-
-            // history seed has no provider ID; continue with other seeds.
-            this.lastBadRequest = Number(providerFailure?.status) === 400 ? message(cause) : null
-            frontier.exhausted = true
-            frontier.retryAt = null
-            this.emit({ error: null, retryAt: null })
-            this.publish()
-            this.save(true)
-            continue
-          }
-          const retryAt = typeof cause === 'object' && cause !== null && 'retryAt' in cause ? Number(cause.retryAt) : 0
-          frontier.retryAt = Math.max(Number.isFinite(retryAt) ? retryAt : 0, this.snapshot.retryAt ?? 0, Date.now() + 30_000)
-          this.emit({ error: message(cause), retryAt: frontier.retryAt })
-          this.save(true)
-          break
-        }
+      for (let page = 0; page < PAGE_BUDGET && this.candidates.length < FEED_LIMITS.candidates;) {
+        const remainingBudget = PAGE_BUDGET - page
+        let batch = this.nextFrontierBatch(remainingBudget)
+        if (!batch.length && this.expandSeedFrontier()) batch = this.nextFrontierBatch(remainingBudget)
+        if (!batch.length) break
+        if (!await this.fetchFrontierBatch(batch, page, epoch)) break
+        page += batch.length
       }
       if (epoch !== this.epoch) return
       this.publish()
