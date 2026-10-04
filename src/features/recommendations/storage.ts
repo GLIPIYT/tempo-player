@@ -11,6 +11,8 @@ export interface FeedCandidate {
   identity: RecordingIdentity
   groupKey: string
   seedTrackKey: string
+  /** Other independent listening-history seeds that also returned this recording. */
+  supportingSeedTrackKeys?: string[]
   cursor: string | null
   alternates: ScTrack[]
   addedAt: number
@@ -72,6 +74,9 @@ function validCandidate(value: unknown): value is FeedCandidate {
     && typeof candidate.track.title === 'string' && typeof candidate.track.artist === 'string'
     && Number.isFinite(candidate.track.durationMs) && typeof candidate.groupKey === 'string'
     && typeof candidate.seedTrackKey === 'string' && typeof candidate.identity?.trackKey === 'string'
+    && (candidate.supportingSeedTrackKeys === undefined
+      || (Array.isArray(candidate.supportingSeedTrackKeys) && candidate.supportingSeedTrackKeys.length <= FEED_LIMITS.seeds
+        && candidate.supportingSeedTrackKeys.every(key => typeof key === 'string' && key.length > 0 && key.length <= 256)))
     && Array.isArray(candidate.alternates) && candidate.alternates.length <= 3
 }
 
@@ -185,8 +190,18 @@ function mergeFeedStates(latest: StoredRecommendationState, local: StoredRecomme
   if (latest.contextKey === local.contextKey) {
     merged.published = mergeUnique(preferred.published, other.published, item => item.identity.trackKey, FEED_LIMITS.published)
     const publishedKeys = new Set(merged.published.map(item => item.identity.trackKey))
-    merged.candidates = mergeUnique(preferred.candidates, other.candidates, item => item.identity.trackKey, FEED_LIMITS.candidates)
+    const candidateCopies = mergeUnique(preferred.candidates, other.candidates, item => item.identity.trackKey, FEED_LIMITS.candidates)
       .filter(item => !publishedKeys.has(item.identity.trackKey))
+    merged.candidates = candidateCopies.map(item => {
+      const supports = new Set([item.seedTrackKey, ...(item.supportingSeedTrackKeys ?? [])])
+      for (const copy of [...preferred.candidates, ...other.candidates]) {
+        if (copy.identity.trackKey === item.identity.trackKey) {
+          supports.add(copy.seedTrackKey)
+          copy.supportingSeedTrackKeys?.forEach(key => supports.add(key))
+        }
+      }
+      return { ...item, supportingSeedTrackKeys: [...supports].slice(-FEED_LIMITS.seeds) }
+    })
     const frontiers = new Map(preferred.seedFrontier.map(item => [item.seed.track.trackKey, item]))
     for (const item of other.seedFrontier) {
       const current = frontiers.get(item.seed.track.trackKey)

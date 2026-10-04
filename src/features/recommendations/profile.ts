@@ -240,24 +240,93 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
 export function candidateScore(candidate: Readonly<FeedCandidate>, profile: TasteProfile): number {
   const max = (values: Record<string, number>) => Math.max(...Object.values(values), 0.001)
   const relative = (values: Record<string, number>, value: string | null | undefined) => value ? (values[norm(value)] ?? 0) / max(values) : 0
-  const seed = profile.seeds.find(seed => seed.track.trackKey === candidate.seedTrackKey)
-  let score = (seed?.weight ?? 0) * (seed?.confidence ?? 0) * (seed?.limitedEvidence ? 0.25 : 1)
+  const seedKeys = [...new Set([candidate.seedTrackKey, ...(candidate.supportingSeedTrackKeys ?? [])])]
+  const seedScores = seedKeys.flatMap(key => {
+    const seed = profile.seeds.find(item => item.track.trackKey === key)
+    return seed ? [seed.weight * seed.confidence * (seed.limitedEvidence ? 0.25 : 1)] : []
+  })
+  const strongestSeedScore = Math.max(0, ...seedScores)
+  // Several independent related queries returning the same track is stronger
+  // evidence than a hit from only one seed, while one weak seed cannot dominate.
+  let score = strongestSeedScore + (seedScores.reduce((sum, value) => sum + value, 0) - strongestSeedScore) * 0.35
   let affinityScore = relative(profile.artists, candidate.identity.artist) * 0.6
   affinityScore += relative(profile.genres, candidate.track.genre) * 0.25
   affinityScore += Math.max(0, ...(candidate.track.tags ?? []).map(tag => relative(profile.tags, tag))) * 0.15
   affinityScore += relative(profile.versions, candidate.identity.version) * 0.1
   if (profile.tempo && candidate.track.bpm) affinityScore += Math.max(0, 1 - Math.abs(candidate.track.bpm - profile.tempo) / 60) * 0.1
   score += affinityScore * profile.confidence
-  const group = profile.groups[`soundcloud:${candidate.track.id}`] ?? candidate.groupKey
-  const feature = profile.features.get(`soundcloud:${candidate.track.id}`)
-    ?? [...profile.features.values()].find(item => profile.groups[item.trackKey] === group)
-  const language = feature?.data.language as unknown as LanguageEvidence | undefined
-  if (language && !language.evidence.translated) {
-    const affinity = Object.entries(language.distribution).reduce((sum, [code, share]) => sum + share * (profile.languages[code] ?? 0), 0)
-    // Missing/unknown contributes zero; no foreign-language penalty.
-    score += 0.12 * affinity * language.confidence * profile.languageConfidence
-  }
+  const language = candidateLanguage(candidate, profile)
+  if (language) score += 0.12 * (profile.languages[language] ?? 0) * profile.languageConfidence
   return score
+}
+
+function languageFeature(key: string, profile: TasteProfile): LanguageEvidence | undefined {
+  const group = profile.groups[key]
+  const feature = profile.features.get(key)
+    ?? (group ? [...profile.features.values()].find(item => profile.groups[item.trackKey] === group) : undefined)
+  return feature?.data.language as unknown as LanguageEvidence | undefined
+}
+
+function strongestLanguage(evidence: LanguageEvidence | undefined): [string, number] | null {
+  if (!evidence || evidence.evidence.translated || evidence.confidence < 0.2) return null
+  const [code, share] = Object.entries(evidence.distribution).sort((a, b) => b[1] - a[1])[0] ?? []
+  return code && share >= 0.4 ? [code, share] : null
+}
+
+function candidateLanguage(candidate: Readonly<FeedCandidate>, profile: TasteProfile): string | null {
+  const key = `soundcloud:${candidate.track.id}`
+  const group = profile.groups[key] ?? candidate.groupKey
+  const feature = profile.features.get(key)
+    ?? [...profile.features.values()].find(item => profile.groups[item.trackKey] === group)
+  const direct = strongestLanguage(feature?.data.language as unknown as LanguageEvidence | undefined)
+  if (direct) return direct[0]
+
+  // Short metadata is too weak for a language detector, but Cyrillic script
+  // reliably separates Russian-language catalogue items from Latin titles.
+  const title = `${candidate.track.title} ${candidate.track.artist}`
+  const letters = title.match(/\p{L}/gu)?.length ?? 0
+  const cyrillic = title.match(/\p{Script=Cyrillic}/gu)?.length ?? 0
+  if (letters >= 3 && cyrillic / letters >= 0.65) {
+    const cyrillicCodes = new Set(['rus', 'ukr', 'bul', 'bel', 'mkd', 'srp', 'kaz', 'kir'])
+    const learned = Object.entries(profile.languages).filter(([code, weight]) => cyrillicCodes.has(code) && weight > 0)
+      .sort((a, b) => b[1] - a[1])[0]
+    if (learned) return learned[0]
+  }
+
+  const scores: Record<string, number> = {}
+  for (const seedKey of new Set([candidate.seedTrackKey, ...(candidate.supportingSeedTrackKeys ?? [])])) {
+    const evidence = languageFeature(seedKey, profile)
+    if (!evidence || evidence.evidence.translated || evidence.confidence < 0.2) continue
+    const seed = profile.seeds.find(item => item.track.trackKey === seedKey)
+    const weight = (seed?.weight ?? 1) * (seed?.confidence ?? 1) * evidence.confidence
+    for (const [code, share] of Object.entries(evidence.distribution)) scores[code] = (scores[code] ?? 0) + share * weight
+  }
+  const entries = Object.entries(scores).sort((a, b) => b[1] - a[1])
+  const total = entries.reduce((sum, [, weight]) => sum + weight, 0)
+  return entries[0] && total > 0 && entries[0][1] / total >= 0.55 ? entries[0][0] : null
+}
+
+function interleaveLanguages(ordered: FeedCandidate[], profile: TasteProfile): FeedCandidate[] {
+  if (profile.languageConfidence < 0.05) return ordered
+  const codes = Object.keys(profile.languages).filter(code => profile.languages[code] > 0)
+  if (!codes.length) return ordered
+  const pools = new Map(codes.map(code => [code, [] as FeedCandidate[]]))
+  const unknown: FeedCandidate[] = []
+  for (const candidate of ordered) {
+    const code = candidateLanguage(candidate, profile)
+    const pool = code ? pools.get(code) : undefined
+    if (pool) pool.push(candidate)
+    else unknown.push(candidate)
+  }
+  const active = [...pools.entries()].filter(([, pool]) => pool.length > 0)
+  if (active.length + Number(unknown.length > 0) < 2) return ordered
+  const activePools = active.map(([, pool]) => pool)
+  const weights = active.map(([code]) => profile.languages[code])
+  if (unknown.length) {
+    activePools.push(unknown)
+    weights.push(Math.max(0.1, Math.min(0.25, profile.unknownShare)))
+  }
+  return mixBuckets(activePools, weights)
 }
 
 export function rankCandidates(candidates: FeedCandidate[], profile: TasteProfile,
@@ -292,5 +361,5 @@ export function rankCandidates(candidates: FeedCandidate[], profile: TasteProfil
       > weights[best] / total * (prior.length + result.length + 1) - counts[best] ? next : best, active[0])
     result.push(pools[index].shift()!); counts[index] += 1
   }
-  return result
+  return interleaveLanguages(result, profile)
 }

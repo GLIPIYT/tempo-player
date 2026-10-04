@@ -553,7 +553,10 @@ export class AudioEngine {
       }
 
       const targetTime = this.clampMediaTime(incoming, outgoing.currentTime)
-      await this.seekElement(incoming, targetTime)
+      if (!await this.seekElement(incoming, targetTime)) {
+        discardPrepared()
+        return false
+      }
       let shouldPlay = !outgoing.paused && !outgoing.ended
       if (shouldPlay) {
         // Start silently so the local decoder is already running when the
@@ -568,7 +571,10 @@ export class AudioEngine {
           discardPrepared()
           return false
         }
-        await this.seekElement(incoming, this.clampMediaTime(incoming, outgoing.currentTime))
+        if (!await this.seekElement(incoming, this.clampMediaTime(incoming, outgoing.currentTime))) {
+          discardPrepared()
+          return false
+        }
         if (outgoing.paused || outgoing.ended) {
           incoming.pause()
           shouldPlay = false
@@ -620,23 +626,27 @@ export class AudioEngine {
     return Math.min(value, Math.max(0, el.duration - 0.04))
   }
 
-  private async seekElement(el: HTMLAudioElement, time: number): Promise<void> {
-    if (Math.abs(el.currentTime - time) < 0.04) return
-    await new Promise<void>((resolve) => {
+  private async seekElement(el: HTMLAudioElement, time: number): Promise<boolean> {
+    if (Math.abs(el.currentTime - time) < 0.04) return true
+    return new Promise<boolean>((resolve) => {
       let settled = false
       const finish = () => {
         if (settled) return
         settled = true
         window.clearTimeout(timeout)
         el.removeEventListener('seeked', finish)
-        resolve()
+        resolve(Math.abs(el.currentTime - time) <= 0.12)
       }
       const timeout = window.setTimeout(finish, 700)
       el.addEventListener('seeked', finish, { once: true })
       try {
         el.currentTime = time
       } catch {
-        finish()
+        if (settled) return
+        settled = true
+        window.clearTimeout(timeout)
+        el.removeEventListener('seeked', finish)
+        resolve(false)
       }
     })
   }

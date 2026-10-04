@@ -1024,6 +1024,11 @@ class RecommendationService {
       } : undefined
       const duplicate = currentDuplicate ?? historicalDuplicate
       if (duplicate) {
+        const supportingSeeds = new Set([duplicate.seedTrackKey, ...(duplicate.supportingSeedTrackKeys ?? [])])
+        if (!supportingSeeds.has(frontier.seed.track.trackKey)) {
+          supportingSeeds.add(frontier.seed.track.trackKey)
+          duplicate.supportingSeedTrackKeys = [...supportingSeeds].slice(-FEED_LIMITS.seeds)
+        }
         if (keyOf(duplicate.track) !== identity.trackKey) {
           try {
             const roots = [duplicate.groupKey, this.group(duplicate.groupKey), groupKey, this.group(identity.trackKey)]
