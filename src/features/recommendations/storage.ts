@@ -1,7 +1,7 @@
 import { api } from '../../api/client'
 import type { ScTrack } from '../../types/models'
 import type { RecordingIdentity, RecommendationContext, RecommendationSeed } from './types'
-import type { ReceiptState } from './receipts'
+import { RECEIPT_RECENT_LIMIT, RecommendationReceipts, type ReceiptState } from './receipts'
 
 export const FEED_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 export const FEED_LIMITS = { candidates: 100, published: 300, seeds: 40, cursors: 2560, seen: 5000, groups: 400 } as const
@@ -137,6 +137,88 @@ function encode(state: StoredRecommendationState): Record<string, unknown> {
   return data as unknown as Record<string, unknown>
 }
 
+function mergeReceipts(preferred: ReceiptState | undefined, other: ReceiptState | undefined): ReceiptState | undefined {
+  if (!preferred) return other
+  if (!other) return preferred
+  try {
+    const left = atob(preferred.summary), right = atob(other.summary)
+    if (left.length !== right.length) return preferred
+    const chars = new Array<string>(left.length)
+    for (let index = 0; index < left.length; index += 1) {
+      const value = left.charCodeAt(index) | right.charCodeAt(index)
+      chars[index] = String.fromCharCode(value)
+    }
+    const bloom = new RecommendationReceipts()
+    bloom.restore({ recent: [], summary: btoa(chars.join('')) })
+    const recent = [...new Set([...other.recent, ...preferred.recent])].slice(-RECEIPT_RECENT_LIMIT)
+    recent.forEach(key => bloom.add(key))
+    return bloom.snapshot()
+  } catch {
+    return preferred
+  }
+}
+
+function mergeUnique<T>(preferred: readonly T[], other: readonly T[], key: (item: T) => string, limit: number): T[] {
+  const merged = new Map<string, T>()
+  for (const item of [...preferred, ...other]) if (!merged.has(key(item))) merged.set(key(item), item)
+  return [...merged.values()].slice(0, limit)
+}
+
+function mergeFeedStates(latest: StoredRecommendationState, local: StoredRecommendationState): StoredRecommendationState {
+  const preferred = local.updatedAt >= latest.updatedAt ? local : latest
+  const other = preferred === local ? latest : local
+  const merged = structuredClone(preferred)
+
+  // If the recommendation profile changed between writers, retain the newer
+  // feed itself but still combine no-repeat receipts and recording aliases.
+  if (latest.contextKey === local.contextKey) {
+    merged.published = mergeUnique(preferred.published, other.published, item => item.identity.trackKey, FEED_LIMITS.published)
+    const publishedKeys = new Set(merged.published.map(item => item.identity.trackKey))
+    merged.candidates = mergeUnique(preferred.candidates, other.candidates, item => item.identity.trackKey, FEED_LIMITS.candidates)
+      .filter(item => !publishedKeys.has(item.identity.trackKey))
+    const frontiers = new Map(preferred.seedFrontier.map(item => [item.seed.track.trackKey, item]))
+    for (const item of other.seedFrontier) {
+      const current = frontiers.get(item.seed.track.trackKey)
+      if (!current || item.updatedAt > current.updatedAt || (item.updatedAt === current.updatedAt && item.pages > current.pages)) {
+        frontiers.set(item.seed.track.trackKey, item)
+      }
+    }
+    merged.seedFrontier = [...frontiers.values()].slice(0, FEED_LIMITS.seeds)
+    merged.usedCursors = [...new Set([...other.usedCursors, ...preferred.usedCursors])].slice(-FEED_LIMITS.cursors)
+    merged.radioRecent = mergeUnique(preferred.radioRecent ?? [], other.radioRecent ?? [], item => item.identity.trackKey, 9)
+  }
+
+  const groups = new Map(preferred.groups.map(item => [item.key, item]))
+  for (const item of other.groups) if (!groups.has(item.key)) groups.set(item.key, item)
+  merged.groups = [...groups.values()].slice(0, FEED_LIMITS.groups)
+  merged.sessionSeen = [...new Set([...other.sessionSeen, ...preferred.sessionSeen])].slice(-FEED_LIMITS.seen)
+  if (preferred.receipts || other.receipts) {
+    merged.receipts = {
+      home: mergeReceipts(preferred.receipts?.home, other.receipts?.home)!,
+      radio: mergeReceipts(preferred.receipts?.radio, other.receipts?.radio)!,
+    }
+  }
+  if (preferred.cooldownReceipts || other.cooldownReceipts) {
+    const mergeCooldown = (left: { state: ReceiptState; until: number } | undefined, right: { state: ReceiptState; until: number } | undefined) => {
+      if (!left) return right
+      if (!right) return left
+      return { state: mergeReceipts(left.state, right.state)!, until: Math.max(left.until, right.until) }
+    }
+    const home = mergeCooldown(preferred.cooldownReceipts?.home, other.cooldownReceipts?.home)
+    const skip = mergeCooldown(preferred.cooldownReceipts?.skip, other.cooldownReceipts?.skip)
+    if (home && skip) merged.cooldownReceipts = { home, skip }
+  }
+  const retries = [preferred.retryAt, other.retryAt].filter((value): value is number => value !== null)
+  merged.retryAt = retries.length ? Math.max(...retries) : null
+  merged.updatedAt = Math.max(preferred.updatedAt, other.updatedAt)
+  merged.revision = Math.max(preferred.revision, other.revision)
+  return merged
+}
+
+function isFeedRevisionConflict(cause: unknown): boolean {
+  return (cause instanceof Error ? cause.message : String(cause)).includes('Feed revision conflict')
+}
+
 /** One serialized debounced writer; each write retains its captured generation. */
 export class RecommendationStorage {
   private expectedRevision = 0
@@ -162,6 +244,7 @@ export class RecommendationStorage {
     if (!this.failed) this.timer = setTimeout(() => { this.timer = null; void this.flush().catch(() => undefined) }, 400)
   }
   hasPendingWrites() { return this.pending !== null || this.running !== null }
+  private queuedPending(): { state: StoredRecommendationState; generation: number } | null { return this.pending }
   async flush(): Promise<void> {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
@@ -176,21 +259,54 @@ export class RecommendationStorage {
   }
   private async drain() {
     while (this.pending) {
-      const pending = this.pending, epoch = this.epoch
+      let pending = this.pending
+      const epoch = this.epoch
       this.pending = null
-      try {
-        const revision = Math.max(pending.state.revision, this.expectedRevision + 1)
-        await api.saveRecommendationState({ revision, data: encode({ ...pending.state, revision }) }, pending.generation, this.expectedRevision)
-        if (epoch === this.epoch) this.expectedRevision = revision
-      } catch (cause) {
-        if (epoch === this.epoch) {
-          // Newer state coalesces the failed payload; never replace it with old data.
-          this.pending ??= pending
-          this.failed = true
-          if (this.timer) clearTimeout(this.timer)
-          this.timer = null
-          this.onError(cause instanceof Error ? cause.message : String(cause))
-          throw cause
+      let conflicts = 0
+      while (true) {
+        try {
+          const revision = Math.max(pending.state.revision, this.expectedRevision + 1)
+          await api.saveRecommendationState({ revision, data: encode({ ...pending.state, revision }) }, pending.generation, this.expectedRevision)
+          if (epoch === this.epoch) {
+            this.expectedRevision = revision
+            const queued = this.queuedPending()
+            if (queued?.generation === pending.generation) {
+              this.pending = { ...queued, state: mergeFeedStates(pending.state, queued.state) }
+            }
+          }
+          break
+        } catch (cause) {
+          let failure = cause
+          if (epoch === this.epoch && isFeedRevisionConflict(cause) && conflicts < 4) {
+            try {
+              const context = await api.getRecommendationContext()
+              if (context.generation !== pending.generation) throw new Error('Recommendation feedback was cleared')
+              const latestRevision = context.storedState?.revision ?? 0
+              const latest = hydrateRecommendationState(context)
+              const rebased = latest ? mergeFeedStates(latest, pending.state) : pending.state
+              pending = { ...pending, state: { ...rebased, revision: Math.max(rebased.revision, latestRevision + 1) } }
+              this.expectedRevision = latestRevision
+              const queued = this.queuedPending()
+              if (queued?.generation === pending.generation) {
+                this.pending = { ...queued, state: mergeFeedStates(rebased, queued.state) }
+              }
+              conflicts += 1
+              await new Promise(resolve => setTimeout(resolve, 50 * 2 ** (conflicts - 1)))
+              continue
+            } catch (rebaseCause) {
+              failure = rebaseCause
+            }
+          }
+          if (epoch === this.epoch) {
+            // Newer state coalesces the failed payload; never replace it with old data.
+            this.pending ??= pending
+            this.failed = true
+            if (this.timer) clearTimeout(this.timer)
+            this.timer = null
+            this.onError(failure instanceof Error ? failure.message : String(failure))
+            throw failure
+          }
+          break
         }
       }
     }
