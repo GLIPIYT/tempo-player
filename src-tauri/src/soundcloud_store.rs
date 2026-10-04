@@ -165,15 +165,34 @@ pub async fn get_playback(
     default_root: PathBuf,
     covers_dir: PathBuf,
     track_id: &str,
+    permalink_url: Option<&str>,
+    ytdlp_configured: &str,
+    bin_dir: &Path,
+    cookies_from_browser: &str,
+    force_ytdlp: bool,
     app: Option<AppHandle>,
     wait_for_cache: bool,
 ) -> Result<ScPlayback, String> {
     let dir = cache_dir(&db, &default_root);
     let cached = cached_file_path(&dir, track_id);
-    if cached.exists() {
+    if cached.exists() && !force_ytdlp {
         return Ok(local_playback(&cached));
     }
-    let info = crate::soundcloud::get_stream_info(track_id).await?;
+    let info = if force_ytdlp {
+        resolve_with_ytdlp(permalink_url, ytdlp_configured, bin_dir, cookies_from_browser).await?
+    } else {
+        match crate::soundcloud::get_stream_info(track_id).await {
+            Ok(info) => info,
+            Err(native_error) => resolve_with_ytdlp(
+                permalink_url,
+                ytdlp_configured,
+                bin_dir,
+                cookies_from_browser,
+            )
+            .await
+            .map_err(|fallback_error| format!("{native_error}; yt-dlp fallback: {fallback_error}"))?,
+        }
+    };
     let format = Some(info.format.clone());
     if info.format == "hls" {
         return Ok(ScPlayback { url: Some(info.url), cached_path: None, format });
@@ -181,7 +200,7 @@ pub async fn get_playback(
 
     // A concurrent prefetch may have completed while stream metadata was
     // loading. Prefer the local copy instead of reopening the remote URL.
-    if cached.exists() {
+    if cached.exists() && !force_ytdlp {
         return Ok(local_playback(&cached));
     }
     if wait_for_cache {
@@ -218,6 +237,35 @@ pub async fn get_playback(
         .await;
     });
     Ok(ScPlayback { url: Some(remote_url), cached_path: None, format })
+}
+
+async fn resolve_with_ytdlp(
+    permalink_url: Option<&str>,
+    configured: &str,
+    bin_dir: &Path,
+    cookies_from_browser: &str,
+) -> Result<crate::soundcloud::StreamInfo, String> {
+    let permalink = permalink_url
+        .ok_or_else(|| "SoundCloud track has no permalink for fallback".to_string())?;
+    let parsed = reqwest::Url::parse(permalink)
+        .map_err(|_| "invalid SoundCloud track permalink".to_string())?;
+    let host = parsed.host_str().unwrap_or_default();
+    if parsed.scheme() != "https"
+        || !(host == "soundcloud.com" || host.ends_with(".soundcloud.com"))
+    {
+        return Err("fallback accepts SoundCloud permalinks only".to_string());
+    }
+
+    let configured = configured.to_string();
+    let bin_dir = bin_dir.to_path_buf();
+    let permalink = permalink.to_string();
+    let cookies_from_browser = cookies_from_browser.to_string();
+    let (url, format) = tokio::task::spawn_blocking(move || {
+        crate::ytdlp::resolve_soundcloud_stream(&configured, &bin_dir, &permalink, &cookies_from_browser)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    Ok(crate::soundcloud::StreamInfo { url, format })
 }
 
 fn local_playback(path: &Path) -> ScPlayback {
@@ -609,11 +657,17 @@ mod tests {
         std::fs::create_dir_all(&cache).unwrap();
         std::fs::write(cache.join("999.mp3"), b"cached-bytes").unwrap();
         set_cache_dir(&db, cache.to_str().unwrap()).unwrap();
+        let bin_dir = root.join("bin");
         let playback = get_playback(
             Arc::new(db),
             root.join("default"),
             root.join("covers"),
             "999",
+            None,
+            "",
+            &bin_dir,
+            "",
+            false,
             None,
             false,
         )

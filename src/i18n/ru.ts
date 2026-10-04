@@ -56,6 +56,9 @@ export const ru: Record<string, string> = {
     'Скрытые файлы остаются на диске и пропускаются при сканировании.',
   'Downloads first and enables SoundCloud spectrum analysis.':
     'Сначала скачивает трек и включает спектр SoundCloud.',
+  'SoundCloud browser session': 'Браузерная сессия SoundCloud',
+  'If the normal stream fails, yt-dlp can use your login in the selected browser.':
+    'Если обычный поток не сработает, yt-dlp может использовать ваш вход в выбранном браузере.',
   Pulse: 'Пульс',
   Orbit: 'Орбита',
   Accent: 'Акцент',

@@ -27,6 +27,7 @@ import {
   VISUALIZER_BARS_MIN,
   clampMiniShowMs,
   useSettings,
+  type SoundCloudCookieBrowser,
   type StartupPage,
   type VisualizerStyle,
 } from '../state/settings'
@@ -709,6 +710,30 @@ function StorageCard() {
         </div>
         <div className="set-note" style={{ marginTop: 6 }}>
           {t('Downloads first and enables SoundCloud spectrum analysis.')}
+        </div>
+        <div className="set-row" style={{ marginTop: 12 }}>
+          <span className="set-row-label">{t('SoundCloud browser session')}</span>
+          <select
+            className="select"
+            value={settings.soundcloud.cookiesFromBrowser}
+            onChange={event => update({
+              soundcloud: { cookiesFromBrowser: event.target.value as SoundCloudCookieBrowser },
+            })}
+          >
+            <option value="">{t('None')}</option>
+            <option value="brave">Brave</option>
+            <option value="chrome">Chrome</option>
+            <option value="chromium">Chromium</option>
+            <option value="edge">Edge</option>
+            <option value="firefox">Firefox</option>
+            <option value="opera">Opera</option>
+            <option value="safari">Safari</option>
+            <option value="vivaldi">Vivaldi</option>
+            <option value="whale">Whale</option>
+          </select>
+        </div>
+        <div className="set-note" style={{ marginTop: 6 }}>
+          {t('If the normal stream fails, yt-dlp can use your login in the selected browser.')}
         </div>
         <CommitSlider
           label={t('Cache limit')}

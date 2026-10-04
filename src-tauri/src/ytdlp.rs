@@ -762,6 +762,69 @@ pub fn resolve_one(
         .find_map(|line| parse_json_entry(line.trim(), "")))
 }
 
+/// Resolves a SoundCloud track through yt-dlp when the native stream resolver
+/// cannot return a usable URL. Browser cookies are opt-in and limited to the
+/// browser names yt-dlp itself supports; no cookie file is written by Tempo.
+pub fn resolve_soundcloud_stream(
+    configured: &str,
+    bin_dir: &Path,
+    url: &str,
+    cookies_from_browser: &str,
+) -> Result<(String, String), String> {
+    const BROWSERS: &[&str] = &[
+        "brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale",
+    ];
+    let path = binary(configured, bin_dir).ok_or_else(|| "yt-dlp is not available".to_string())?;
+    let browser = cookies_from_browser.trim();
+    if !browser.is_empty() && !BROWSERS.contains(&browser) {
+        return Err("unsupported browser for SoundCloud cookies".to_string());
+    }
+
+    let mut args = vec![
+        "--no-warnings",
+        "--no-progress",
+        "--no-playlist",
+        "--get-url",
+        "--format",
+        "bestaudio",
+    ];
+    if !browser.is_empty() {
+        args.extend(["--cookies-from-browser", browser]);
+    }
+    args.push(url);
+    let out = run(&path, &args, 120)?;
+    if !out.status.success() {
+        let detail = String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("no stream returned")
+            .trim()
+            .to_string();
+        return Err(format!(
+            "yt-dlp could not resolve this SoundCloud track: {detail}"
+        ));
+    }
+    let stream_url = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("https://") || line.starts_with("http://"))
+        .ok_or_else(|| "yt-dlp returned no SoundCloud stream URL".to_string())?
+        .to_string();
+    let parsed = reqwest::Url::parse(&stream_url)
+        .map_err(|_| "yt-dlp returned an invalid SoundCloud stream URL".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("yt-dlp returned an unsupported SoundCloud stream protocol".to_string());
+    }
+    let path = parsed.path().to_ascii_lowercase();
+    let format = if path.contains(".m3u8") || path.contains("/hls") {
+        "hls"
+    } else {
+        "progressive"
+    };
+    Ok((stream_url, format.to_string()))
+}
+
 /// Searches one of YouTube Music's other sections.
 ///
 /// Albums, artists and playlists come back as bare ids and browse URLs: their

@@ -183,18 +183,22 @@ function toScPlayback(res: { url: string | null; cachedPath: string | null; form
   return null
 }
 
-async function fetchScPlayback(sourceId: string, waitForCache: boolean): Promise<ScPlayback | null> {
+async function fetchScPlayback(sourceId: string, waitForCache: boolean, permalinkUrl: string | null = null,
+  forceYtdlp = false): Promise<ScPlayback | null> {
   // The flag changes the answer, so it is part of the key: flipping the setting
   // must not keep serving the other mode's resolution.
-  const key = `${sourceId}|${waitForCache ? 'cache' : 'stream'}`
+  const key = `${sourceId}|${waitForCache ? 'cache' : 'stream'}${forceYtdlp ? '|ytdlp' : ''}`
   const hit = scPlaybackCache.get(key)
   if (hit && (hit.playback?.cached === true || Date.now() - hit.at < SC_PLAYBACK_TTL_MS)) {
     return hit.playback
   }
   // one retry: the first call can lose a cold connection
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const attempts = forceYtdlp ? 1 : 2
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      const playback = toScPlayback(await api.scGetPlayback(sourceId, waitForCache))
+      const settings = getSettings()
+      const playback = toScPlayback(await api.scGetPlayback(sourceId, waitForCache, permalinkUrl,
+        settings.ytdlp.path, settings.soundcloud.cookiesFromBrowser, forceYtdlp))
       scPlaybackCache.set(key, { playback, at: Date.now() })
       return playback
     } catch {
@@ -337,21 +341,21 @@ export class PlayerController {
     }
     this.engine.onEnded = () => this.handleEnded()
     this.engine.onError = msg => {
-      this.finishListening('error')
-      console.error('[tempo player]', msg)
-      this.crossfading = false
-      this.engine.pause()
-      this.isPlaying = false
-      this.loadedSourceId = null
-      this.emit()
-      const current = this.queueCtl.current(), seq = this.startSeq
-      if (current?.provenance?.origin === 'radio' && !this.exiting) {
-        void this.resolveRadioPlayback(current, seq).then(resolved => {
-          if (seq !== this.startSeq || this.exiting) return
-          if (resolved) this.startTrack(current, resolved)
-          else this.cancelRadio()
+      const failedTrack = this.queueCtl.current()
+      const failedSeq = this.startSeq
+      if (failedTrack?.source === 'soundcloud') {
+        if (this.soundcloudFallbackInFlight.has(failedTrack.sourceId)) return
+        void this.retrySoundcloudWithYtdlp(failedTrack, failedSeq).then(recovered => {
+          if (
+            recovered ||
+            failedSeq !== this.startSeq ||
+            this.queueCtl.current() !== failedTrack
+          ) return
+          this.handlePlaybackError(msg)
         })
-      } else this.cancelRadio()
+        return
+      }
+      this.handlePlaybackError(msg)
     }
     void onSoundcloudCacheReady(sourceId => {
       void this.handleSoundcloudCacheReady(sourceId)
@@ -614,6 +618,8 @@ export class PlayerController {
   private prefetchPending: PrefetchItem[] = []
   private prefetchActiveKey: string | null = null
   private prefetchRunning = false
+  private soundcloudFallbackAttempts = new Map<string, number>()
+  private soundcloudFallbackInFlight = new Set<string>()
 
   private async resolveTrackUrl(t: UnifiedTrack): Promise<ResolvedTrack | null> {
     if (t.localPath) return { url: convertFileSrc(t.localPath), format: null, channel: 'local' }
@@ -631,7 +637,7 @@ export class PlayerController {
           })
         } catch {}
       }
-      const playback = await fetchScPlayback(t.sourceId, cacheScBeforePlay())
+      const playback = await fetchScPlayback(t.sourceId, cacheScBeforePlay(), t.externalUrl)
       if (!playback) return null
       // Cached files are local; HLS reaches the element through MediaSource,
       // i.e. a blob URL, which is same-origin too. Only a progressive remote
@@ -712,6 +718,61 @@ export class PlayerController {
     return null
   }
 
+  private async retrySoundcloudWithYtdlp(track: UnifiedTrack, failedSeq: number): Promise<boolean> {
+    const sourceId = track.sourceId
+    const now = Date.now()
+    const lastAttempt = this.soundcloudFallbackAttempts.get(sourceId) ?? 0
+    if (this.soundcloudFallbackInFlight.has(sourceId) || now - lastAttempt < 30_000) return false
+    this.soundcloudFallbackAttempts.set(sourceId, now)
+    if (this.soundcloudFallbackAttempts.size > 256) {
+      const oldest = [...this.soundcloudFallbackAttempts.entries()]
+        .sort((a, b) => a[1] - b[1])[0]?.[0]
+      if (oldest) this.soundcloudFallbackAttempts.delete(oldest)
+    }
+    this.soundcloudFallbackInFlight.add(sourceId)
+
+    const enginePosition = this.engine.getCurrentTime()
+    const resumeAt = Math.max(0, enginePosition > 0 ? enginePosition : this.position)
+    this.engine.pause()
+    this.isPlaying = false
+    this.preparing = true
+    this.emit()
+    try {
+      const playback = await fetchScPlayback(sourceId, false, track.externalUrl, true)
+      if (!playback) return false
+      if (this.exiting || failedSeq !== this.startSeq || this.queueCtl.current() !== track) return true
+
+      const channel: AudioChannel = playback.cached || playback.format === 'hls' ? 'local' : 'stream'
+      const duration = track.durationSec ?? 0
+      const position = duration > 0 ? Math.min(resumeAt, duration) : resumeAt
+      this.startTrack(track, { url: playback.url, format: playback.format, channel }, 0, position)
+      return true
+    } catch {
+      return false
+    } finally {
+      this.soundcloudFallbackInFlight.delete(sourceId)
+    }
+  }
+
+  private handlePlaybackError(msg: string): void {
+    this.finishListening('error')
+    console.error('[tempo player]', msg)
+    this.crossfading = false
+    this.engine.pause()
+    this.isPlaying = false
+    this.preparing = false
+    this.loadedSourceId = null
+    this.emit()
+    const current = this.queueCtl.current(), seq = this.startSeq
+    if (current?.provenance?.origin === 'radio' && !this.exiting) {
+      void this.resolveRadioPlayback(current, seq).then(resolved => {
+        if (seq !== this.startSeq || this.exiting) return
+        if (resolved) this.startTrack(current, resolved)
+        else this.cancelRadio()
+      })
+    } else this.cancelRadio()
+  }
+
   private beginTransition(track: UnifiedTrack): void {
     this.position = 0
     this.duration = track.durationSec ?? 0
@@ -751,7 +812,7 @@ export class PlayerController {
     this.stop()
   }
 
-  private startTrack(track: UnifiedTrack, resolved: ResolvedTrack, fadeSec = 0): void {
+  private startTrack(track: UnifiedTrack, resolved: ResolvedTrack, fadeSec = 0, initialPosition = 0): void {
     if (this.exiting) return
     if (fadeSec <= 0) this.finishListening('stop')
     const reason = this.nextStartReason === 'manual' || this.nextStartReason === 'repeat' || this.nextStartReason === 'restore'
@@ -763,7 +824,7 @@ export class PlayerController {
     this.loadedSourceId = track.sourceId
     this.playedSourceIds.add(track.sourceId)
     this.playedTrackKeys.add(`${track.source}:${track.sourceId}`)
-    this.position = 0
+    this.position = initialPosition
     this.duration = track.durationSec ?? 0
     this.bufferPct = null
     this.preparing = false
@@ -782,7 +843,11 @@ export class PlayerController {
     } else {
       void this.engine
         .loadWithFormat(resolved.url, resolved.format, resolved.channel, session.id)
-        .then(() => { if (playbackSeq === this.startSeq && !this.exiting) this.engine.play() })
+        .then(() => {
+          if (playbackSeq !== this.startSeq || this.exiting) return
+          if (initialPosition > 0) this.engine.setCurrentTime(initialPosition)
+          this.engine.play()
+        })
         .catch(() => { this.finishSession(session.id, 'error') })
     }
     this.isPlaying = true
@@ -889,7 +954,7 @@ export class PlayerController {
       this.engine.getActiveChannel() !== 'stream'
     ) return
 
-    const playback = await fetchScPlayback(sourceId, false)
+    const playback = await fetchScPlayback(sourceId, false, current.externalUrl)
     if (!playback?.cached) return
 
     const stillCurrent = this.queueCtl.current()

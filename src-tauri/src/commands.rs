@@ -1448,6 +1448,10 @@ pub async fn sc_get_playback(
     app: AppHandle,
     state: State<'_, AppState>,
     track_id: String,
+    permalink_url: Option<String>,
+    configured: String,
+    cookies_from_browser: String,
+    force_ytdlp: bool,
     wait_for_cache: bool,
 ) -> Result<crate::soundcloud_store::ScPlayback, String> {
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
@@ -1456,6 +1460,11 @@ pub async fn sc_get_playback(
         root,
         state.covers_dir.clone(),
         &track_id,
+        permalink_url.as_deref(),
+        &configured,
+        &state.bin_dir,
+        &cookies_from_browser,
+        force_ytdlp,
         Some(app),
         wait_for_cache,
     )

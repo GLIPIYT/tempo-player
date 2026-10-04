@@ -5,6 +5,7 @@ import { initializeDeepAnalysisDefault } from '../features/lyrics/analysis/hardw
 
 export type StartupPage = 'home' | 'library' | 'albums' | 'artists' | 'playlists'
 export type BrandIconStyle = 'pulse' | 'orbit'
+export type SoundCloudCookieBrowser = '' | 'brave' | 'chrome' | 'chromium' | 'edge' | 'firefox' | 'opera' | 'safari' | 'vivaldi' | 'whale'
 
 const STARTUP_PAGES: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists']
 
@@ -91,6 +92,8 @@ export interface AppSettings {
      * graph - instead of streaming past it.
      */
     cacheBeforePlay: boolean
+    /** Optional browser session used only by the yt-dlp playback fallback. */
+    cookiesFromBrowser: SoundCloudCookieBrowser
   }
   ytdlp: {
     /**
@@ -144,7 +147,7 @@ export const defaultSettings: AppSettings = {
   audio: { normalize: false, crossfadeSec: 0, equalizer: DEFAULT_EQUALIZER_SETTINGS },
   // off by default: streaming starts immediately, which is what most people
   // expect from a search result
-  soundcloud: { cacheBeforePlay: false },
+  soundcloud: { cacheBeforePlay: false, cookiesFromBrowser: '' },
   // Empty by default: most people already have yt-dlp on PATH, and asking for
   // a path before anything works would be a poor first impression.
   ytdlp: { path: '' },

@@ -391,9 +391,14 @@ export const api = {
     cachedPath: string | null
   }) => invoke<number>('upsert_yt_track', payload),
 
-  scGetPlayback: (trackId: string, waitForCache = false) =>
+  scGetPlayback: (trackId: string, waitForCache = false, permalinkUrl: string | null = null,
+    configured = '', cookiesFromBrowser = '', forceYtdlp = false) =>
     invoke<{ url: string | null; cachedPath: string | null; format: string | null }>('sc_get_playback', {
       trackId,
+      permalinkUrl,
+      configured,
+      cookiesFromBrowser,
+      forceYtdlp,
       waitForCache,
     }),
 
