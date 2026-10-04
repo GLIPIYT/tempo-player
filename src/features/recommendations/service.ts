@@ -430,11 +430,9 @@ class RecommendationService {
     const previous = new Map(this.frontier.map(seed => [seed.seed.track.trackKey, seed]))
     // Keep minority confirmed languages inside the capped frontier even when the artist limit creates a deficit.
     for (const seed of seeds) if (!selected.some(item => item.track.trackKey === seed.track.trackKey)) {
-      const language = this.features.get(seed.track.trackKey)?.data.language as unknown as LanguageEvidence | undefined
-      if (!language || !Object.keys(language.distribution).some(code => (this.profile?.languages[code] ?? 0) > 0 && !selected.some(item => {
-        const known = this.features.get(item.track.trackKey)?.data.language as unknown as LanguageEvidence | undefined
-        return known && (known.distribution[code] ?? 0) >= 0.2
-      }))) continue
+      const language = this.profile?.seedLanguages?.[seed.track.trackKey]
+      if (!language || (this.profile?.languages[language] ?? 0) <= 0
+        || selected.some(item => this.profile?.seedLanguages?.[item.track.trackKey] === language)) continue
       if (selected.length >= PROFILE_SEED_LIMIT) selected.pop()
       selected.push(seed)
     }

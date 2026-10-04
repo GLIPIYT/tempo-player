@@ -3,12 +3,16 @@ import type { FeedCandidate } from './storage'
 import type { LanguageEvidence, RecommendationContext, RecommendationSeed, RecommendationTrack } from './types'
 
 const DAY = 86_400_000
+const CYRILLIC_SCRIPT_LANGUAGE = 'und-Cyrl'
+const CYRILLIC_LANGUAGE_CODES = new Set(['rus', 'ukr', 'bul', 'bel', 'mkd', 'srp', 'kaz', 'kir'])
 export interface TasteTrack {
   track: RecommendationTrack; weight: number; confidence: number; at: number
   bucket: 'steady' | 'recent' | 'discovery'
 }
 export interface TasteProfile {
   tracks: TasteTrack[]; seeds: RecommendationSeed[]; languages: Record<string, number>
+  /** Best-known language per seed, including weak title-script inference. */
+  seedLanguages?: Record<string, string>
   languageConfidence: number; unknownShare: number; confidence: number
   artists: Record<string, number>; genres: Record<string, number>; tags: Record<string, number>
   versions: Record<string, number>; tempo: number | null
@@ -21,6 +25,18 @@ const canonical = (context: RecommendationContext, key: string) => context.canon
   ?? context.recordingGroups?.find(group => group.trackKeys.includes(key))?.groupKey ?? key
 const decay = (at: number, now: number) => Math.pow(0.5, Math.max(0, now - at) / (45 * DAY))
 const norm = normalizeRecordingText
+
+function titleScriptLanguage(title: string): string | null {
+  const letters = title.match(/\p{L}/gu)?.length ?? 0
+  const cyrillic = title.match(/\p{Script=Cyrillic}/gu)?.length ?? 0
+  return letters >= 3 && cyrillic / letters >= 0.65 ? CYRILLIC_SCRIPT_LANGUAGE : null
+}
+
+function strongestLanguage(evidence: LanguageEvidence | undefined): [string, number] | null {
+  if (!evidence || evidence.evidence.translated || evidence.confidence < 0.2) return null
+  const [code, share] = Object.entries(evidence.distribution).sort((a, b) => b[1] - a[1])[0] ?? []
+  return code && share >= 0.4 ? [code, share] : null
+}
 
 /** Weighted deficit order, redistributing missing buckets among the available ones. */
 export function mixBuckets<T>(pools: T[][], weights: number[], limit = Infinity): T[] {
@@ -189,7 +205,8 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
   const profile: TasteProfile = { tracks: tasteTracks, seeds: [], languages: {}, languageConfidence: 0, unknownShare: 1,
     confidence: Math.min(1, [...days.values()].reduce((sum, item) => sum + Math.min(1, item.listen + item.action) * item.confidence, 0) / 12),
     artists: {}, genres: {}, tags: {}, versions: {}, tempo: null, features, groups }
-  let total = 0, known = 0, tempoSum = 0, tempoWeight = 0
+  let languageTotal = 0, known = 0, tempoSum = 0, tempoWeight = 0
+  const seedLanguages: Record<string, string> = {}
   const add = (map: Record<string, number>, value: string, weight: number) => { if (norm(value)) map[norm(value)] = (map[norm(value)] ?? 0) + weight }
   for (const item of tasteTracks) {
     const feature = features.get(item.track.trackKey) ?? [...features.values()].find(value => canonical(context, value.trackKey) === canonical(context, item.track.trackKey))
@@ -197,7 +214,10 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
     const traits = { ...item.track.traits, ...(catalog?.traits as RecommendationTrack['traits']) }
     const language = feature?.data.language as unknown as LanguageEvidence | undefined
     const weight = item.weight * item.confidence
-    total += weight
+    // Language is a slow-moving preference. Square-root and cap each track's
+    // vote so a few freshly liked tracks cannot rewrite the listener's profile.
+    const languageWeight = Math.min(0.08, Math.sqrt(Math.max(0, item.weight))) * item.confidence
+    languageTotal += languageWeight
     for (const artist of item.track.artists) add(profile.artists, artist, weight)
     const supported = confirmedListeningGroups.has(canonical(context, item.track.trackKey)) || item.track.artists.some(confirmedArtist)
     if (traits?.genre && (genreFamilies.get(norm(traits.genre))?.size ?? 0) >= 2) add(profile.genres, traits.genre, weight)
@@ -206,15 +226,40 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
       if (traits?.version) add(profile.versions, traits.version, weight)
       if (traits?.bpm && traits.bpm >= 30 && traits.bpm <= 300) { tempoSum += traits.bpm * weight; tempoWeight += weight }
     }
-    if (language && language.confidence > 0 && !language.evidence.translated) {
-      for (const [code, share] of Object.entries(language.distribution)) profile.languages[code] = (profile.languages[code] ?? 0) + share * language.confidence * weight
-      known += weight * language.confidence * (1 - language.unknownShare)
+    const learnedLanguage = strongestLanguage(language)
+    if (language && language.confidence >= 0.2 && !language.evidence.translated) {
+      for (const [code, share] of Object.entries(language.distribution)) {
+        profile.languages[code] = (profile.languages[code] ?? 0) + share * language.confidence * languageWeight
+      }
+      known += languageWeight * language.confidence * (1 - language.unknownShare)
+      if (learnedLanguage) seedLanguages[item.track.trackKey] = learnedLanguage[0]
+    } else {
+      // Lyric metadata is often absent for older Russian tracks. Cyrillic in
+      // the song title is useful weak evidence; artist names/handles are not.
+      const inferred = titleScriptLanguage(item.track.title)
+      if (inferred) {
+        const confidence = 0.45
+        profile.languages[inferred] = (profile.languages[inferred] ?? 0) + confidence * languageWeight
+        known += confidence * languageWeight
+        seedLanguages[item.track.trackKey] = inferred
+      }
     }
   }
-  profile.unknownShare = total ? Math.max(0, 1 - known / total) : 1
-  profile.languageConfidence = total ? known / total * profile.confidence : 0
-  const languageTotal = Object.values(profile.languages).reduce((sum, value) => sum + value, 0)
-  for (const code of Object.keys(profile.languages)) profile.languages[code] /= languageTotal || 1
+  profile.seedLanguages = seedLanguages
+  profile.unknownShare = languageTotal ? Math.max(0, 1 - known / languageTotal) : 1
+  profile.languageConfidence = languageTotal ? known / languageTotal * profile.confidence : 0
+  const knownCyrillicLanguage = Object.entries(profile.languages)
+    .filter(([code, weight]) => CYRILLIC_LANGUAGE_CODES.has(code) && weight > 0)
+    .sort((a, b) => b[1] - a[1])[0]?.[0]
+  if (knownCyrillicLanguage && profile.languages[CYRILLIC_SCRIPT_LANGUAGE]) {
+    profile.languages[knownCyrillicLanguage] += profile.languages[CYRILLIC_SCRIPT_LANGUAGE]
+    delete profile.languages[CYRILLIC_SCRIPT_LANGUAGE]
+    for (const [trackKey, code] of Object.entries(seedLanguages)) {
+      if (code === CYRILLIC_SCRIPT_LANGUAGE) seedLanguages[trackKey] = knownCyrillicLanguage
+    }
+  }
+  const languageMass = Object.values(profile.languages).reduce((sum, value) => sum + value, 0)
+  for (const code of Object.keys(profile.languages)) profile.languages[code] /= languageMass || 1
   profile.tempo = tempoWeight ? tempoSum / tempoWeight : null
   const pools = (['steady', 'recent', 'discovery'] as const).map(bucket => tasteTracks.filter(item => item.bucket === bucket)
     .map(item => ({ track: item.track, weight: item.weight, confidence: item.confidence, at: item.at, bucket,
@@ -224,15 +269,33 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
   profile.seeds = mixBuckets(pools, [0.6, 0.25, 0.15], 40)
   // Reserve actual secondary-language seeds before trimming to the source budget.
   for (const code of Object.keys(profile.languages)) {
-    const seed = tasteTracks.find(item => {
-      const lang = features.get(item.track.trackKey)?.data.language as unknown as LanguageEvidence | undefined
-      return lang && lang.confidence >= 0.2 && (lang.distribution[code] ?? 0) >= 0.2
-    })
+    const seed = tasteTracks.find(item => seedLanguages[item.track.trackKey] === code)
     if (seed && !profile.seeds.some(item => item.track.trackKey === seed.track.trackKey)) {
       if (profile.seeds.length >= 40) profile.seeds.pop()
       profile.seeds.push({ ...seed, evidence: 'listening', limitedEvidence: seed.track.durationSec != null && seed.track.durationSec > 0 && seed.track.durationSec < 15
         || (currentLikes.has(canonical(context, seed.track.trackKey)) && limitedLike(seed.track)) })
     }
+  }
+  // Put minority-language queries near the front. The resolver uses an early
+  // capped frontier, so appending a secondary-language seed to the end did not
+  // protect the first recommendations from a recent like streak.
+  const languagePools = new Map<string, RecommendationSeed[]>()
+  const unknownSeeds: RecommendationSeed[] = []
+  for (const seed of profile.seeds) {
+    const code = seedLanguages[seed.track.trackKey]
+    if (!code || profile.languages[code] === undefined) { unknownSeeds.push(seed); continue }
+    const pool = languagePools.get(code) ?? []
+    pool.push(seed); languagePools.set(code, pool)
+  }
+  if (languagePools.size + Number(unknownSeeds.length > 0) > 1) {
+    const pools = [...languagePools.entries()]
+    const seedPools = pools.map(([, pool]) => pool)
+    const weights = pools.map(([code]) => profile.languages[code])
+    if (unknownSeeds.length) {
+      seedPools.push(unknownSeeds)
+      weights.push(Math.min(0.2, Math.max(0.05, profile.unknownShare)))
+    }
+    profile.seeds = mixBuckets(seedPools, weights, 40)
   }
   return profile
 }
@@ -267,12 +330,6 @@ function languageFeature(key: string, profile: TasteProfile): LanguageEvidence |
   return feature?.data.language as unknown as LanguageEvidence | undefined
 }
 
-function strongestLanguage(evidence: LanguageEvidence | undefined): [string, number] | null {
-  if (!evidence || evidence.evidence.translated || evidence.confidence < 0.2) return null
-  const [code, share] = Object.entries(evidence.distribution).sort((a, b) => b[1] - a[1])[0] ?? []
-  return code && share >= 0.4 ? [code, share] : null
-}
-
 function candidateLanguage(candidate: Readonly<FeedCandidate>, profile: TasteProfile): string | null {
   const key = `soundcloud:${candidate.track.id}`
   const group = profile.groups[key] ?? candidate.groupKey
@@ -283,23 +340,20 @@ function candidateLanguage(candidate: Readonly<FeedCandidate>, profile: TastePro
 
   // Short metadata is too weak for a language detector, but Cyrillic script
   // reliably separates Russian-language catalogue items from Latin titles.
-  const title = `${candidate.track.title} ${candidate.track.artist}`
-  const letters = title.match(/\p{L}/gu)?.length ?? 0
-  const cyrillic = title.match(/\p{Script=Cyrillic}/gu)?.length ?? 0
-  if (letters >= 3 && cyrillic / letters >= 0.65) {
-    const cyrillicCodes = new Set(['rus', 'ukr', 'bul', 'bel', 'mkd', 'srp', 'kaz', 'kir'])
-    const learned = Object.entries(profile.languages).filter(([code, weight]) => cyrillicCodes.has(code) && weight > 0)
+  if (titleScriptLanguage(candidate.track.title)) {
+    const learned = Object.entries(profile.languages).filter(([code, weight]) => CYRILLIC_LANGUAGE_CODES.has(code) && weight > 0)
       .sort((a, b) => b[1] - a[1])[0]
-    if (learned) return learned[0]
+    return learned?.[0] ?? CYRILLIC_SCRIPT_LANGUAGE
   }
 
   const scores: Record<string, number> = {}
   for (const seedKey of new Set([candidate.seedTrackKey, ...(candidate.supportingSeedTrackKeys ?? [])])) {
     const evidence = languageFeature(seedKey, profile)
-    if (!evidence || evidence.evidence.translated || evidence.confidence < 0.2) continue
+    if (evidence?.evidence.translated || (evidence && evidence.confidence < 0.2)) continue
     const seed = profile.seeds.find(item => item.track.trackKey === seedKey)
-    const weight = (seed?.weight ?? 1) * (seed?.confidence ?? 1) * evidence.confidence
-    for (const [code, share] of Object.entries(evidence.distribution)) scores[code] = (scores[code] ?? 0) + share * weight
+    const weight = (seed?.weight ?? 1) * (seed?.confidence ?? 1) * (evidence?.confidence ?? 1)
+    const code = profile.seedLanguages?.[seedKey] ?? strongestLanguage(evidence)?.[0]
+    if (code) scores[code] = (scores[code] ?? 0) + weight
   }
   const entries = Object.entries(scores).sort((a, b) => b[1] - a[1])
   const total = entries.reduce((sum, [, weight]) => sum + weight, 0)
