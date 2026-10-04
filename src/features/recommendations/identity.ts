@@ -12,7 +12,8 @@ export function normalizeRecordingText(value: string): string {
     .replace(/\s+/gu, ' ').trim()
 }
 
-const versionToken = /\b(?:remix|live|slowed|sped[ -]?up|cover|instrumental|acoustic|edit)\b/iu
+export const RECORDING_VERSION_MARKER_SOURCE = String.raw`remix|live|slowed|sped[ -]?up|speed[ -]?up|nightcore|mylancore|cover|instrumental|acoustic|edit|demo|rework|bootleg|reverb|bass[ -]?boosted|8d|karaoke`
+const versionToken = new RegExp(`\\b(?:${RECORDING_VERSION_MARKER_SOURCE})\\b`, 'iu')
 const noise = /\s*[([]\s*(?:official (?:audio|video|music video)|lyrics?(?: video)?|hq|hd|free download)\s*[)\]]/giu
 const genericTitles = new Set(['intro', 'outro', 'untitled', 'track', 'song', 'demo', 'test', 'unknown'])
 
@@ -44,7 +45,7 @@ export function recordingIdentity(track: ScTrack, knownArtists: Iterable<string>
     title = title.slice(0, suffix.index).trim()
   }
   // Unbracketed version names stay in the title and also guard version equality.
-  const unbracketed = title.match(/\b(?:remix|live|slowed|sped[ -]?up|cover|instrumental|acoustic|edit)\b/giu)
+  const unbracketed = title.match(new RegExp(`\\b(?:${RECORDING_VERSION_MARKER_SOURCE})\\b`, 'giu'))
   // Keep placement distinct: a song named "Live Forever" is not its "(live)" upload.
   if (unbracketed) versions.push(...unbracketed.map(token => `title:${token}`))
   title = title.replace(/\s+/gu, ' ').trim()

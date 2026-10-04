@@ -242,8 +242,8 @@ export default function RecommendationsShelf({
           {persistenceError ? <span>{t('Could not save recommendations')}: {persistenceError}</span> : null}
         </small>
       ) : null}
-      {tracks.length > 0 && (loading || exhausted || coolingDown) ? (
-        <small className="muted" role="status">{t(coolingDown ? 'Retry after cooldown' : loading ? 'Loading…' : 'No more recommendations')}</small>
+      {tracks.length > 0 && (exhausted || coolingDown) ? (
+        <small className="muted" role="status">{t(coolingDown ? 'Retry after cooldown' : 'No more recommendations')}</small>
       ) : null}
     </section>
   )

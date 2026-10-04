@@ -1,23 +1,25 @@
 import { api } from '../../api/client'
 import { withAnalysisLane } from '../../audio/analysisLane'
+import { RECORDING_VERSION_MARKER_SOURCE } from './identity'
 import type { AudioRecordingFeature, RecommendationTrack } from './types'
 
-const VERSION_MARKER = /\b(?:remix|live|slowed|sped[ -]?up|nightcore|cover|instrumental|acoustic|edit|demo|rework|bootleg)\b/giu
-const VERSION_KEYS = new Set(['remix', 'live', 'slowed', 'sped up', 'nightcore', 'cover', 'instrumental', 'acoustic', 'edit', 'demo', 'rework', 'bootleg'])
+const versionMarkers = (value: string) => Array.from(
+  value.matchAll(new RegExp(`\\b(?:${RECORDING_VERSION_MARKER_SOURCE})\\b`, 'giu')),
+  match => match[0].replace(/[ -]+/gu, ' ').trim().replace(/\b(speed|sped)up\b/gu, '$1 up'),
+)
 
 export function audioVersionKey(track: RecommendationTrack): string {
   const title = track.title.normalize('NFKC').toLocaleLowerCase('en-US')
-  const markers = new Set(Array.from(title.matchAll(VERSION_MARKER), match => match[0].replace(/[ -]+/gu, ' ').trim()))
+  const markers = new Set(versionMarkers(title))
   const declared = track.traits?.version?.normalize('NFKC').toLocaleLowerCase('en-US').trim()
   if (declared && declared !== 'original' && declared !== 'base' && declared !== 'unknown') {
-    const declaredMarkers = Array.from(declared.matchAll(VERSION_MARKER), match => match[0].replace(/[ -]+/gu, ' ').trim())
+    const declaredMarkers = versionMarkers(declared)
     if (!declaredMarkers.length) return 'unknown'
     for (const marker of declaredMarkers) markers.add(marker)
   } else if (declared === 'unknown') {
     return 'unknown'
   }
-  const ordered = [...markers].filter(marker => VERSION_KEYS.has(marker)).sort()
-  return ordered.length ? ordered.join('|').replace(/ /gu, '-') : 'base'
+  return markers.size ? [...markers].sort().join('|').replace(/ /gu, '-') : 'base'
 }
 
 export async function analyzeCachedRecommendationTrack(
