@@ -1,6 +1,7 @@
 import { api } from '../../api/client'
 import { onSoundcloudCacheReady } from '../../api/events'
 import { libraryVersion } from '../../utils/libraryVersion'
+import { getSettings } from '../../state/settings'
 import { scTrackToUnified } from '../../utils/unified'
 import type { ScTrack, UnifiedTrack } from '../../types/models'
 import { chooseRepresentative, duplicateConfidence, normalizeRecordingText, recordingIdentity } from './identity'
@@ -8,7 +9,7 @@ import { compactScTrack, FEED_CACHE_TTL_MS, FEED_LIMITS, MAX_PENDING_RECOMMENDAT
   type FeedCandidate, type SeedFrontier, type StoredRecommendationState } from './storage'
 import type { RecordingIdentity, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationSeed } from './types'
 import { RecommendationReceipts } from './receipts'
-import { buildTasteProfile, candidateLanguage, candidateScore, favoriteGenre as getFavoriteGenre, rankCandidates, rebalanceCandidateLanguages, type TasteProfile } from './profile'
+import { buildTasteProfile, candidateLanguage, candidateScore, effectiveLanguageWeights, favoriteGenre as getFavoriteGenre, rankCandidates, rebalanceCandidateLanguages, type TasteContext, type TasteProfile } from './profile'
 import { detectLyricLanguages, type LyricEvidenceSource } from './language'
 import { analyzeCachedRecommendationTrack } from './audio'
 import { flushFeedbackOperations, stopFeedbackOperations, type ExplicitActionIntent } from './feedbackBridge'
@@ -29,6 +30,15 @@ const LANGUAGE_LOOKUP_CACHE_TTL = 7 * DAY
 const MAX_PENDING_ACTIONS = 5000
 const MAX_LANGUAGE_JOBS = 5000
 const RECOMMENDATION_ENDPOINTS = new Set(['related', 'station', 'search', 'track-hydration'])
+function recommendationLanguagePreference(): string | null {
+  const setting = getSettings().lang
+  const locale = setting === 'system'
+    ? (typeof navigator === 'undefined' ? '' : navigator.language)
+    : setting
+  if (locale.toLowerCase().startsWith('ru')) return 'rus'
+  if (locale.toLowerCase().startsWith('en')) return 'eng'
+  return null
+}
 const keyOf = (track: ScTrack) => `soundcloud:${track.id}`
 const playable = (track: ScTrack) => track.streamable && (track.hasProgressive || track.hasHls)
 const isUnavailableRecommendationSource = (status: unknown, endpoint: unknown) =>
@@ -134,7 +144,7 @@ class RecommendationService {
   private featureTimer: ReturnType<typeof setTimeout> | null = null
   private storage = new RecommendationStorage(error => this.reportPersistenceError('State', error))
   private persistenceErrors = new Map<string, string>()
-  private context: RecommendationContext | null = null
+  private context: TasteContext | null = null
   private profile: TasteProfile | null = null
   private readonly sessionStartedAt = Date.now()
   private closing = false
@@ -341,7 +351,7 @@ class RecommendationService {
     for (const [key, feature] of this.features) if (feature.revision > (latest.get(key)?.revision ?? -1)) latest.set(key, feature)
     this.features = latest
     context.features = [...latest.values()]
-    this.context = { ...context, canonicalGroups: Object.fromEntries(this.aliases) }
+    this.context = { ...context, canonicalGroups: Object.fromEntries(this.aliases), languagePreference: recommendationLanguagePreference() }
     this.scheduleContextAudioAnalysis(context)
     this.profile = buildTasteProfile({ ...this.context, sessionStartedAt: this.sessionStartedAt }, Date.now())
     this.emit({ favoriteGenre: getFavoriteGenre(this.profile) })
@@ -658,8 +668,9 @@ class RecommendationService {
   }
   private queueLanguageLookups(candidates: FeedCandidate[]) {
     const profile = this.profile
-    if (this.closing || !profile || profile.languageConfidence < 0.2 || this.languageLookupAttempts >= LANGUAGE_LOOKUP_BUDGET) return
-    const preferred = Object.entries(profile.languages).sort((left, right) => right[1] - left[1])[0]
+    if (this.closing || !profile || (profile.languageConfidence < 0.2 && !profile.languagePreference)
+      || this.languageLookupAttempts >= LANGUAGE_LOOKUP_BUDGET) return
+    const preferred = Object.entries(effectiveLanguageWeights(profile)).sort((left, right) => right[1] - left[1])[0]
     if (!preferred || preferred[1] < 0.55) return
     for (const candidate of candidates) {
       const key = keyOf(candidate.track)
@@ -890,9 +901,10 @@ class RecommendationService {
       pool.push(seed); languagePools.set(code, pool)
     }
     const languageEntries = [...languagePools.entries()]
+    const effectiveLanguages = this.profile ? effectiveLanguageWeights(this.profile) : {}
     const languageWeights = languageEntries.map(([code]) => code === '?'
       ? Math.min(0.2, Math.max(0.05, this.profile?.unknownShare ?? 1))
-      : Math.max(0.01, this.profile?.languages[code] ?? 0))
+      : Math.max(0.01, effectiveLanguages[code] ?? 0))
     const languageTotal = languageWeights.reduce((sum, weight) => sum + weight, 0)
     const languageCount = [...this.seedLanguageCounts.values()].reduce((sum, value) => sum + value, 0)
     const languageDebt = (candidate: number) => languageWeights[candidate] / languageTotal * (languageCount + 1)

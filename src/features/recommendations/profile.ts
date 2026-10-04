@@ -11,6 +11,8 @@ export interface TasteTrack {
 }
 export interface TasteProfile {
   tracks: TasteTrack[]; seeds: RecommendationSeed[]; languages: Record<string, number>
+  /** Effective interface-language fallback used only while music-language evidence is weak. */
+  languagePreference?: string | null
   /** Best-known language per seed, including weak title-script inference. */
   seedLanguages?: Record<string, string>
   languageConfidence: number; unknownShare: number; confidence: number
@@ -20,7 +22,7 @@ export interface TasteProfile {
   features: Map<string, RecommendationContext['features'][number]>
   groups: Record<string, string>
 }
-export interface TasteContext extends RecommendationContext { sessionStartedAt?: number }
+export interface TasteContext extends RecommendationContext { sessionStartedAt?: number; languagePreference?: string | null }
 type SeedBucket = TasteTrack['bucket']
 interface TasteRecord {
   track: RecommendationTrack
@@ -232,7 +234,9 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
     tasteTracks.push({ track: item.track, weight, confidence: item.confidence, at: item.at, bucket })
   }
   tasteTracks.sort((a, b) => b.weight - a.weight || b.at - a.at)
-  const profile: TasteProfile = { tracks: tasteTracks, seeds: [], languages: {}, languageConfidence: 0, unknownShare: 1,
+  const languagePreference = context.languagePreference ?? null
+  const profile: TasteProfile = { tracks: tasteTracks, seeds: [], languages: {}, languagePreference,
+    languageConfidence: 0, unknownShare: 1,
     confidence: Math.min(1, [...days.values()].reduce((sum, item) => sum + Math.min(1, item.listen + item.action) * item.confidence, 0) / 12),
     artists: {}, genres: {}, genreLabels: {}, tags: {}, versions: {}, tempo: null, features, groups }
   let languageTotal = 0, known = 0, tempoSum = 0, tempoWeight = 0
@@ -273,7 +277,10 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
       // the song title is useful weak evidence; artist names/handles are not.
       const inferred = titleScriptLanguage(item.track.title)
       if (inferred) {
-        const confidence = 0.45
+        // A Cyrillic title is a useful bootstrap signal when lyrics are absent.
+        // Keep it weaker than recognized lyrics, while strong enough to keep
+        // clearly Cyrillic-heavy listening from disappearing into "unknown".
+        const confidence = 0.8
         profile.languages[inferred] = (profile.languages[inferred] ?? 0) + confidence * languageWeight
         known += confidence * languageWeight
         seedLanguages[item.track.trackKey] = inferred
@@ -286,11 +293,13 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
   const knownCyrillicLanguage = Object.entries(profile.languages)
     .filter(([code, weight]) => CYRILLIC_LANGUAGE_CODES.has(code) && weight > 0)
     .sort((a, b) => b[1] - a[1])[0]?.[0]
-  if (knownCyrillicLanguage && profile.languages[CYRILLIC_SCRIPT_LANGUAGE]) {
-    profile.languages[knownCyrillicLanguage] += profile.languages[CYRILLIC_SCRIPT_LANGUAGE]
+  const cyrillicLanguage = knownCyrillicLanguage
+    ?? (languagePreference && CYRILLIC_LANGUAGE_CODES.has(languagePreference) ? languagePreference : null)
+  if (cyrillicLanguage && profile.languages[CYRILLIC_SCRIPT_LANGUAGE]) {
+    profile.languages[cyrillicLanguage] = (profile.languages[cyrillicLanguage] ?? 0) + profile.languages[CYRILLIC_SCRIPT_LANGUAGE]
     delete profile.languages[CYRILLIC_SCRIPT_LANGUAGE]
     for (const [trackKey, code] of Object.entries(seedLanguages)) {
-      if (code === CYRILLIC_SCRIPT_LANGUAGE) seedLanguages[trackKey] = knownCyrillicLanguage
+      if (code === CYRILLIC_SCRIPT_LANGUAGE) seedLanguages[trackKey] = cyrillicLanguage
     }
   }
   const languageMass = Object.values(profile.languages).reduce((sum, value) => sum + value, 0)
@@ -354,8 +363,36 @@ export function candidateScore(candidate: Readonly<FeedCandidate>, profile: Tast
   if (profile.tempo && candidate.track.bpm) affinityScore += Math.max(0, 1 - Math.abs(candidate.track.bpm - profile.tempo) / 60) * 0.1
   score += affinityScore * profile.confidence
   const language = candidateLanguage(candidate, profile)
-  if (language) score += 0.12 * (profile.languages[language] ?? 0) * profile.languageConfidence
+  if (language) score += 0.12 * (effectiveLanguageWeights(profile)[language] ?? 0) * profile.languageConfidence
   return score
+}
+
+/**
+ * Use the chosen/system UI language as a bootstrap prior while listening
+ * history has little attributable language evidence. As lyric/title evidence
+ * grows, the prior fades and the listener's actual profile takes over.
+ */
+export function effectiveLanguageWeights(profile: TasteProfile): Record<string, number> {
+  const weights = { ...profile.languages }
+  const preference = profile.languagePreference
+  if (!preference) return weights
+
+  const total = Object.values(weights).reduce((sum, value) => sum + value, 0)
+  if (!total) return { [preference]: 1 }
+  for (const code of Object.keys(weights)) weights[code] /= total
+
+  const preferredShare = weights[preference] ?? 0
+  const floor = profile.languageConfidence < 0.15 ? 0.68
+    : profile.languageConfidence < 0.3 ? 0.62
+      : profile.languageConfidence < 0.45 ? 0.55 : 0
+  if (floor > preferredShare) {
+    const otherTotal = 1 - preferredShare
+    for (const code of Object.keys(weights)) {
+      weights[code] = code === preference ? floor : otherTotal > 0 ? weights[code] * (1 - floor) / otherTotal : 0
+    }
+    weights[preference] = floor
+  }
+  return weights
 }
 
 export function candidateLanguage(candidate: Readonly<FeedCandidate>, profile: TasteProfile): string | null {
@@ -382,9 +419,11 @@ export function candidateLanguage(candidate: Readonly<FeedCandidate>, profile: T
   // Short metadata is too weak for a language detector, but Cyrillic script
   // reliably separates Russian-language catalogue items from Latin titles.
   if (titleScriptLanguage(candidate.track.title)) {
-    const learned = Object.entries(profile.languages).filter(([code, weight]) => CYRILLIC_LANGUAGE_CODES.has(code) && weight > 0)
+    const learned = Object.entries(effectiveLanguageWeights(profile)).filter(([code, weight]) => CYRILLIC_LANGUAGE_CODES.has(code) && weight > 0)
       .sort((a, b) => b[1] - a[1])[0]
-    return learned?.[0] ?? CYRILLIC_SCRIPT_LANGUAGE
+    if (learned) return learned[0]
+    if (profile.languagePreference && CYRILLIC_LANGUAGE_CODES.has(profile.languagePreference)) return profile.languagePreference
+    return CYRILLIC_SCRIPT_LANGUAGE
   }
 
   // Related tracks do not necessarily share their seed's language. Keep Latin-
@@ -398,8 +437,9 @@ export function favoriteGenre(profile: TasteProfile): { key: string; label: stri
 }
 
 function interleaveLanguages(ordered: FeedCandidate[], profile: TasteProfile): FeedCandidate[] {
-  if (profile.languageConfidence < 0.05) return ordered
-  const codes = Object.keys(profile.languages).filter(code => profile.languages[code] > 0)
+  if (profile.languageConfidence < 0.05 && !profile.languagePreference) return ordered
+  const languageWeights = effectiveLanguageWeights(profile)
+  const codes = Object.keys(languageWeights).filter(code => languageWeights[code] > 0)
   if (!codes.length) return ordered
   const pools = new Map(codes.map(code => [code, [] as FeedCandidate[]]))
   const unknown: FeedCandidate[] = []
@@ -412,10 +452,10 @@ function interleaveLanguages(ordered: FeedCandidate[], profile: TasteProfile): F
   const active = [...pools.entries()].filter(([, pool]) => pool.length > 0)
   if (active.length + Number(unknown.length > 0) < 2) return ordered
   const activePools = active.map(([, pool]) => pool)
-  const weights = active.map(([code]) => profile.languages[code])
+  const weights = active.map(([code]) => languageWeights[code])
   if (unknown.length) {
     activePools.push(unknown)
-    weights.push(Math.max(0.1, Math.min(0.25, profile.unknownShare)))
+    weights.push(Math.max(0.1, Math.min(profile.languagePreference ? 0.2 : 0.25, profile.unknownShare)))
   }
   return mixBuckets(activePools, weights)
 }
