@@ -687,6 +687,16 @@ pub fn save_recommendation_state(
             let values=stored_state.data.get(field).and_then(Value::as_array).ok_or_else(||format!("Missing feed field {field}"))?;
             if values.len()>limit {return Err(format!("Feed field {field} exceeds limit"));}
         }
+        if let Some(values)=stored_state.data.get("expandedSeedKeys") {
+            let keys=values.as_array().ok_or("Invalid expanded seed keys")?;
+            if keys.len()>1024||keys.iter().any(|key|!key.as_str().is_some_and(|value|!value.is_empty()&&value.len()<=256)) {
+                return Err("Invalid expanded seed keys".into());
+            }
+        }
+        if let Some(values)=stored_state.data.get("discoveryPool") {
+            let candidates=values.as_array().ok_or("Invalid discovery pool")?;
+            if candidates.len()>120 {return Err("Discovery pool exceeds limit".into());}
+        }
         for (field, names, bytes) in [("receipts",["home","radio"],32768_usize),("cooldownReceipts",["home","skip"],8192_usize)] {
             if let Some(receipts)=stored_state.data.get(field) {
                 for name in names {

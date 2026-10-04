@@ -4,7 +4,7 @@ import type { RecordingIdentity, RecommendationContext, RecommendationSeed } fro
 import { RECEIPT_RECENT_LIMIT, RecommendationReceipts, type ReceiptState } from './receipts'
 
 export const FEED_CACHE_TTL_MS = 24 * 60 * 60 * 1000
-export const FEED_LIMITS = { candidates: 100, published: 300, seeds: 40, cursors: 2560, seen: 5000, groups: 400 } as const
+export const FEED_LIMITS = { candidates: 100, published: 300, seeds: 40, cursors: 2560, seen: 5000, groups: 400, expandedSeeds: 1024, discoveryPool: 120 } as const
 export const MAX_PENDING_RECOMMENDATION_WRITES = 4900
 export interface FeedCandidate {
   track: ScTrack
@@ -17,6 +17,8 @@ export interface FeedCandidate {
 }
 export interface SeedFrontier {
   seed: RecommendationSeed
+  /** Marks a SoundCloud seed derived from a personalized recommendation. */
+  discovered?: boolean
   seedId: string | null
   resolved: boolean
   source: 'related' | 'station' | 'search'
@@ -33,9 +35,11 @@ export interface StoredRecommendationState {
   revision: number
   candidates: FeedCandidate[]
   published: FeedCandidate[]
+  discoveryPool?: FeedCandidate[]
   seedFrontier: SeedFrontier[]
   usedCursors: string[]
   sessionSeen: string[]
+  expandedSeedKeys?: string[]
   receipts?: { home: ReceiptState; radio: ReceiptState }
   cooldownReceipts?: { home: { state: ReceiptState; until: number }; skip: { state: ReceiptState; until: number } }
   groups: { key: string; groupKey: string }[]
@@ -77,9 +81,13 @@ export function hydrateRecommendationState(context: RecommendationContext): Stor
   const data = stored.data as unknown as StoredRecommendationState
   if (!Array.isArray(data.candidates) || data.candidates.length > FEED_LIMITS.candidates
     || !Array.isArray(data.published) || data.published.length > FEED_LIMITS.published
+    || (data.discoveryPool !== undefined && (!Array.isArray(data.discoveryPool) || data.discoveryPool.length > FEED_LIMITS.discoveryPool
+      || !data.discoveryPool.every(validCandidate)))
     || !Array.isArray(data.seedFrontier) || data.seedFrontier.length > FEED_LIMITS.seeds
     || !Array.isArray(data.usedCursors) || data.usedCursors.length > FEED_LIMITS.cursors
     || !Array.isArray(data.sessionSeen) || data.sessionSeen.length > FEED_LIMITS.seen
+    || (data.expandedSeedKeys !== undefined && (!Array.isArray(data.expandedSeedKeys) || data.expandedSeedKeys.length > FEED_LIMITS.expandedSeeds
+      || !data.expandedSeedKeys.every(key => typeof key === 'string' && key.length > 0 && key.length <= 256)))
     || !Array.isArray(data.groups) || data.groups.length > FEED_LIMITS.groups
     || !data.candidates.every(validCandidate) || !data.published.every(validCandidate)
     || !data.usedCursors.every(key => typeof key === 'string')
@@ -91,7 +99,7 @@ export function hydrateRecommendationState(context: RecommendationContext): Stor
     && (frontier.cursor === null || typeof frontier.cursor === 'string')
     && (frontier.seedId === null || /^\d+$/u.test(frontier.seedId)))) return null
   if (data.radioRecent && (!Array.isArray(data.radioRecent) || data.radioRecent.length > 9 || !data.radioRecent.every(validCandidate))) return null
-  return { ...data, revision: stored.revision }
+  return { ...data, expandedSeedKeys: data.expandedSeedKeys ?? [], revision: stored.revision }
 }
 
 function encode(state: StoredRecommendationState): Record<string, unknown> {
@@ -101,19 +109,22 @@ function encode(state: StoredRecommendationState): Record<string, unknown> {
     identity: { ...item.identity, originalTitle: '', uploaderId: null, uploaderName: null, familyKey: '' },
     track: compactScTrack(item.track), alternates: item.alternates.slice(0, 3).map(compactScTrack),
   })
-  const data = { ...state, candidates: state.candidates.map(candidate), published: state.published.map(candidate), radioRecent: state.radioRecent?.map(candidate) }
+  const data = { ...state, candidates: state.candidates.map(candidate), published: state.published.map(candidate),
+    discoveryPool: state.discoveryPool?.map(candidate), radioRecent: state.radioRecent?.map(candidate) }
   // `receipts.home.recent` plus its Bloom summary supersede this legacy list.
   // Omitting the duplicate list keeps old snapshots readable and saves space.
   if (data.receipts) data.sessionSeen = []
   const size = () => new TextEncoder().encode(JSON.stringify(data)).byteLength
-  const allCandidates = () => [...data.candidates, ...data.published, ...(data.radioRecent ?? [])]
+  const allCandidates = () => [...data.candidates, ...data.published, ...(data.discoveryPool ?? []), ...(data.radioRecent ?? [])]
   // Radio history only affects short-term diversity and is less important than
   // preserving the active candidate frontier and current Home cards.
   while (size() > 500 * 1024 && (data.radioRecent?.length ?? 0) > 3) data.radioRecent!.shift()
+  while (size() > 500 * 1024 && (data.discoveryPool?.length ?? 0) > 60) data.discoveryPool!.shift()
   // Unpublished candidates can be fetched again from the persisted frontier.
   while (size() > 500 * 1024 && data.candidates.length > 20) data.candidates.shift()
   // Remove optional fallback metadata before sacrificing artwork on visible cards.
   if (size() > 500 * 1024) for (const item of allCandidates()) item.alternates = []
+  while (size() > 500 * 1024 && (data.discoveryPool?.length ?? 0) > 0) data.discoveryPool!.shift()
   if (size() > 500 * 1024) {
     for (const item of [...data.candidates, ...(data.radioRecent ?? [])]) {
       item.track = { ...item.track, artworkUrl: null, artistAvatarUrl: null, permalinkUrl: null }
@@ -187,6 +198,12 @@ function mergeFeedStates(latest: StoredRecommendationState, local: StoredRecomme
     merged.usedCursors = [...new Set([...other.usedCursors, ...preferred.usedCursors])].slice(-FEED_LIMITS.cursors)
     merged.radioRecent = mergeUnique(preferred.radioRecent ?? [], other.radioRecent ?? [], item => item.identity.trackKey, 9)
   }
+
+  merged.discoveryPool = mergeUnique(preferred.discoveryPool ?? [], other.discoveryPool ?? [],
+    item => item.identity.trackKey, FEED_LIMITS.discoveryPool)
+
+  merged.expandedSeedKeys = [...new Set([...(other.expandedSeedKeys ?? []), ...(preferred.expandedSeedKeys ?? [])])]
+    .slice(-FEED_LIMITS.expandedSeeds)
 
   const groups = new Map(preferred.groups.map(item => [item.key, item]))
   for (const item of other.groups) if (!groups.has(item.key)) groups.set(item.key, item)

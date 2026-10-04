@@ -8,7 +8,7 @@ import { compactScTrack, FEED_CACHE_TTL_MS, FEED_LIMITS, MAX_PENDING_RECOMMENDAT
   type FeedCandidate, type SeedFrontier, type StoredRecommendationState } from './storage'
 import type { RecordingIdentity, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationSeed } from './types'
 import { RecommendationReceipts } from './receipts'
-import { buildTasteProfile, rankCandidates, type TasteProfile } from './profile'
+import { buildTasteProfile, candidateScore, rankCandidates, type TasteProfile } from './profile'
 import { detectLyricLanguages, type LyricEvidenceSource } from './language'
 import { analyzeCachedRecommendationTrack } from './audio'
 import { flushFeedbackOperations, stopFeedbackOperations, type ExplicitActionIntent } from './feedbackBridge'
@@ -18,6 +18,9 @@ const DAY = 86400_000
 const PUBLISH_SIZE = 20
 const LOW_WATER = 30
 const PAGE_BUDGET = 6
+const DISCOVERY_SEED_LIMIT = 3
+const PROFILE_SEED_LIMIT = FEED_LIMITS.seeds - DISCOVERY_SEED_LIMIT
+const MIN_DISCOVERY_SEED_SCORE = 0.005
 const CACHE_FLAG_TTL = 60_000
 const WRITE_BATCH = 100
 const MAX_PENDING_ACTIONS = 5000
@@ -70,7 +73,9 @@ class RecommendationService {
     hasMore: true, exhausted: false, retryAt: null, revision: 0, cachedTrackIds: new Set() }
   private candidates: FeedCandidate[] = []
   private published: FeedCandidate[] = []
+  private discoveryPool: FeedCandidate[] = []
   private frontier: SeedFrontier[] = []
+  private expandedSeedKeys = new Set<string>()
   private usedCursors = new Set<string>()
   private sessionSeen = new RecommendationReceipts()
   private radioSeen = new RecommendationReceipts()
@@ -180,7 +185,9 @@ class RecommendationService {
       this.initialized = false
       this.initializeFlight = null
       this.candidates = []
+      this.discoveryPool = []
       this.frontier = []
+      this.expandedSeedKeys.clear()
       this.usedCursors.clear()
       this.cooldowns.clear()
       this.impressions = []
@@ -223,8 +230,10 @@ class RecommendationService {
     if (!this.initialized) return
     const relevant = new Set([...this.published, ...this.candidates].flatMap(item => [item.groupKey, keyOf(item.track)]))
     const state: StoredRecommendationState = { version: 1, revision: this.snapshot.revision,
-      candidates: this.candidates.slice(), published: this.published.slice(), seedFrontier: structuredClone(this.frontier),
+      candidates: this.candidates.slice(), published: this.published.slice(), discoveryPool: this.discoveryPool.slice(-FEED_LIMITS.discoveryPool),
+      seedFrontier: structuredClone(this.frontier),
       usedCursors: [...this.usedCursors], sessionSeen: this.sessionSeen.keys(),
+      expandedSeedKeys: [...this.expandedSeedKeys].slice(-FEED_LIMITS.expandedSeeds),
       receipts: { home: this.sessionSeen.snapshot(), radio: this.radioSeen.snapshot() },
       cooldownReceipts: {
         home: { state: this.homeCooldownOverflow.snapshot(), until: this.homeCooldownOverflowUntil },
@@ -355,7 +364,9 @@ class RecommendationService {
       if (stored && revision === this.snapshot.revision && !this.published.length) {
         this.candidates = stored.candidates
         this.published = stored.published
+        this.discoveryPool = stored.discoveryPool ?? []
         this.frontier = stored.seedFrontier
+        this.expandedSeedKeys = new Set(stored.expandedSeedKeys ?? [])
         this.usedCursors = new Set(stored.usedCursors)
         this.contextKey = stored.contextKey
         this.createdAt = stored.createdAt
@@ -376,11 +387,13 @@ class RecommendationService {
       if (Number.isFinite(technicalRetry) && technicalRetry > Date.now()) this.emit({ retryAt: Math.max(this.snapshot.retryAt ?? 0, technicalRetry) })
       await this.applyContext(context)
       if (epoch !== this.epoch) return
+      this.recoverDiscoveryPoolFromFeatures()
       this.candidates = this.candidates.filter(item => this.cooldownUntil(this.group(item.groupKey)) <= Date.now())
       this.published = this.published.filter(item => this.cooldownUntil(this.group(item.groupKey)) <= Date.now())
       for (const item of this.published) { this.sessionSeen.add(this.group(item.groupKey)); this.sessionSeen.add(keyOf(item.track)) }
       this.initialized = true
       this.emit({ tracks: this.published.map(item => item.track), hasLoaded: this.published.length > 0, error: null })
+      this.save()
       void this.queryCacheFlags()
     })().finally(() => { if (epoch === this.epoch) this.initializeFlight = null })
     return this.initializeFlight
@@ -413,10 +426,7 @@ class RecommendationService {
       if (artist && count >= 3) return false
       artists.set(artist, count + 1)
       return true
-    }).slice(0, FEED_LIMITS.seeds)
-    const contextKey = selected.map(seed => seed.track.trackKey).sort().join('|')
-    if (contextKey !== this.contextKey) this.lastBadRequest = null
-    this.contextKey = contextKey
+    }).slice(0, PROFILE_SEED_LIMIT)
     const previous = new Map(this.frontier.map(seed => [seed.seed.track.trackKey, seed]))
     // Keep minority confirmed languages inside the capped frontier even when the artist limit creates a deficit.
     for (const seed of seeds) if (!selected.some(item => item.track.trackKey === seed.track.trackKey)) {
@@ -425,9 +435,15 @@ class RecommendationService {
         const known = this.features.get(item.track.trackKey)?.data.language as unknown as LanguageEvidence | undefined
         return known && (known.distribution[code] ?? 0) >= 0.2
       }))) continue
-      if (selected.length >= FEED_LIMITS.seeds) selected.pop()
+      if (selected.length >= PROFILE_SEED_LIMIT) selected.pop()
       selected.push(seed)
     }
+    const contextKey = selected.map(seed => seed.track.trackKey).sort().join('|')
+    const sameProfile = contextKey === this.contextKey
+    if (!sameProfile) this.lastBadRequest = null
+    this.contextKey = contextKey
+    const discovered = sameProfile ? [...previous.values()].filter(item => item.discovered)
+      .slice(0, DISCOVERY_SEED_LIMIT) : []
     this.frontier = selected.map(seed => {
       const old = previous.get(seed.track.trackKey)
       if (old && Date.now() - old.updatedAt < FEED_CACHE_TTL_MS) {
@@ -443,6 +459,8 @@ class RecommendationService {
       return { seed, seedId: null, resolved: false, source: 'related', cursor: null,
         emptyPages: 0, exhausted: false, retryAt: null, pages: 0, updatedAt: Date.now() }
     })
+    const baseKeys = new Set(this.frontier.map(item => item.seed.track.trackKey))
+    this.frontier.push(...discovered.filter(item => !baseKeys.has(item.seed.track.trackKey)))
     if (!this.initialized) {
       // Apply the new policy before showing a pre-policy cached rail.
       let weakShown = 0
@@ -770,6 +788,93 @@ class RecommendationService {
     const matches = hits.filter(hit => playable(hit) && duplicateConfidence(identity, recordingIdentity(hit, track.artists)) >= 0.95)
     return matches.length ? chooseRepresentative(matches).id : null
   }
+  private expandSeedFrontier(): boolean {
+    if (!this.profile || !this.frontier.length || !this.frontier.every(seed => seed.exhausted)) return false
+
+    const baseFrontier = this.frontier.filter(seed => !seed.discovered)
+    const slots = Math.min(DISCOVERY_SEED_LIMIT, FEED_LIMITS.seeds - baseFrontier.length)
+    if (slots <= 0 || this.expandedSeedKeys.size >= FEED_LIMITS.expandedSeeds) return false
+
+    const activeSeedKeys = new Set(baseFrontier.map(seed => seed.seed.track.trackKey))
+    const pool = new Map<string, FeedCandidate>()
+    for (const candidate of [...this.discoveryPool, ...this.published, ...this.candidates]) {
+      const key = keyOf(candidate.track)
+      if (pool.has(key)) continue
+      const parent = this.profile.seeds.find(seed => seed.track.trackKey === candidate.seedTrackKey)
+      const parentWasDiscovered = this.expandedSeedKeys.has(candidate.seedTrackKey)
+      const parentIsStrong = !!parent && !parent.limitedEvidence && parent.evidence !== 'legacy' && parent.confidence >= 0.45
+      if (!playable(candidate.track) || candidate.track.durationMs < 15_000
+        || activeSeedKeys.has(key) || this.expandedSeedKeys.has(key)) continue
+      if (parent?.limitedEvidence) continue
+      const score = candidateScore(candidate, this.profile)
+      if (!parentIsStrong && !parentWasDiscovered && (parent || score < MIN_DISCOVERY_SEED_SCORE * 3)) continue
+      pool.set(key, candidate)
+    }
+    if (!pool.size) return false
+
+    const ranked = rankCandidates([...pool.values()], this.profile, this.published)
+      .map(candidate => ({ candidate, score: candidateScore(candidate, this.profile!) }))
+      .sort((a, b) => b.score - a.score || a.candidate.addedAt - b.candidate.addedAt)
+    const bestScore = ranked[0]?.score ?? 0
+    const minimumScore = Math.max(MIN_DISCOVERY_SEED_SCORE, bestScore * 0.3)
+    const artists = new Set<string>()
+    const selected: typeof ranked = []
+    for (const entry of ranked) {
+      const candidate = entry.candidate
+      const key = keyOf(candidate.track)
+      const artist = normalizeRecordingText(candidate.identity.artist ?? candidate.track.artist ?? '')
+      if (entry.score < minimumScore || (artist && artists.has(artist))) continue
+      selected.push(entry)
+      this.expandedSeedKeys.delete(key)
+      this.expandedSeedKeys.add(key)
+      if (artist) artists.add(artist)
+      if (selected.length >= slots || this.expandedSeedKeys.size >= FEED_LIMITS.expandedSeeds) break
+    }
+    if (!selected.length) return false
+
+    this.frontier = baseFrontier
+    for (const { candidate, score } of selected) {
+      const parent = this.profile.seeds.find(seed => seed.track.trackKey === candidate.seedTrackKey)
+      const confidence = parent?.confidence ?? this.profile.confidence
+      this.frontier.push({
+        seed: {
+          track: recommendationTrack(this.toUnified(candidate.track)), evidence: 'aggregate',
+          confidence: Math.max(0.5, Math.min(1, confidence)), weight: Math.max(0.02, Math.min(1, score)),
+          at: Date.now(), bucket: 'discovery', limitedEvidence: false,
+        },
+        discovered: true, seedId: candidate.track.id, resolved: true, source: 'related', cursor: null,
+        emptyPages: 0, exhausted: false, retryAt: null, pages: 0, updatedAt: Date.now(),
+      })
+    }
+    while (this.expandedSeedKeys.size > FEED_LIMITS.expandedSeeds) {
+      this.expandedSeedKeys.delete(this.expandedSeedKeys.values().next().value!)
+    }
+    const scopes = new Set(this.frontier.flatMap(frontier => ['related', 'station', 'search']
+      .map(source => signature(`${frontier.seed.track.trackKey}:${frontier.seedId}:${source}`))))
+    this.usedCursors = new Set([...this.usedCursors].filter(key => scopes.has(key.slice(0, 16))))
+    this.lastBadRequest = null
+    this.emit({ error: null, hasMore: true, exhausted: false })
+    this.save()
+    return true
+  }
+  private recoverDiscoveryPoolFromFeatures() {
+    if (!this.profile || this.discoveryPool.length >= FEED_LIMITS.discoveryPool) return
+    const candidates = new Map(this.discoveryPool.map(candidate => [keyOf(candidate.track), candidate]))
+    for (const feature of this.features.values()) {
+      const catalog = catalogOf(feature)
+      const track = catalog.playable as ScTrack | undefined
+      const identity = catalog.identity as RecordingIdentity | undefined
+      if (!track || !identity || !/^\d{1,64}$/u.test(track.id) || !playable(track) || track.durationMs < 15_000
+        || typeof identity.trackKey !== 'string' || typeof catalog.recordingGroup !== 'string') continue
+      const key = keyOf(track)
+      if (candidates.has(key) || this.expandedSeedKeys.has(key)) continue
+      candidates.set(key, { track, identity, groupKey: this.group(catalog.recordingGroup), seedTrackKey: feature.trackKey,
+        cursor: null, alternates: (catalog.alternates as ScTrack[] | undefined)?.slice(0, 3) ?? [], addedAt: feature.updatedAt })
+    }
+    this.discoveryPool = [...candidates.values()]
+      .sort((left, right) => candidateScore(right, this.profile!) - candidateScore(left, this.profile!) || right.addedAt - left.addedAt)
+      .slice(0, FEED_LIMITS.discoveryPool)
+  }
   private fallback(frontier: SeedFrontier) {
     frontier.cursor = null
     frontier.emptyPages = 0
@@ -785,7 +890,8 @@ class RecommendationService {
     this.emit({ loading: true })
     this.fillFlight = (async () => {
       for (let page = 0; page < PAGE_BUDGET && this.candidates.length < FEED_LIMITS.candidates; page += 1) {
-        const frontier = this.nextFrontier()
+        let frontier = this.nextFrontier()
+        if (!frontier && this.expandSeedFrontier()) frontier = this.nextFrontier()
         if (!frontier) break
         try {
           if (!frontier.resolved) {
@@ -957,6 +1063,10 @@ class RecommendationService {
         || this.cooldownUntil(groupKey) > Date.now() || this.candidates.length >= FEED_LIMITS.candidates) continue
       const item: FeedCandidate = { track, identity, groupKey, seedTrackKey: frontier.seed.track.trackKey, cursor, alternates: [], addedAt: Date.now() }
       this.candidates.push(item)
+      if (frontier.discovered || (!frontier.seed.limitedEvidence && frontier.seed.evidence !== 'legacy' && frontier.seed.confidence >= 0.45)) {
+        this.discoveryPool = [...this.discoveryPool.filter(entry => entry.identity.trackKey !== identity.trackKey), structuredClone(item)]
+          .slice(-FEED_LIMITS.discoveryPool)
+      }
       accepted += 1
       frontier.limitedAccepted = (frontier.limitedAccepted ?? 0) + 1
       this.persistFeature(item)
