@@ -56,12 +56,30 @@ describe('recommendation diversity', () => {
       candidate('ru-1', russian.track.trackKey, 5), candidate('ru-2', russian.track.trackKey, 6),
       candidate('ru-3', russian.track.trackKey, 7), candidate('ru-4', russian.track.trackKey, 8),
     ]
+    for (const item of candidates) {
+      const code = item.track.id.startsWith('ru-') ? 'rus' : 'eng'
+      profile.features.set(`soundcloud:${item.track.id}`, {
+        trackKey: `soundcloud:${item.track.id}`, revision: 1, updatedAt: 1_000,
+        data: { language: language(code) },
+      })
+    }
 
     const ranked = rankCandidates(candidates, profile)
 
     expect(ranked.slice(0, 4).map(item => item.seedTrackKey)).toEqual([
       russian.track.trackKey, russian.track.trackKey, english.track.trackKey, russian.track.trackKey,
     ])
+  })
+
+  it('does not infer a Latin-script candidate language from its seed', () => {
+    const english = seed('soundcloud:en-seed')
+    const russian = seed('soundcloud:ru-seed')
+    const profile = profileFor({ rus: 0.8, eng: 0.2 }, [english, russian])
+    const fromEnglishSeed = candidate('latin-a', english.track.trackKey, 1)
+    const fromRussianSeed = candidate('latin-b', russian.track.trackKey, 2)
+
+    expect(rankCandidates([fromEnglishSeed, fromRussianSeed], profile).map(item => item.track.id))
+      .toEqual(['latin-a', 'latin-b'])
   })
 
   it('ranks a candidate higher when independent seed queries agree on it', () => {
