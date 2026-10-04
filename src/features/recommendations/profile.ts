@@ -358,13 +358,26 @@ export function candidateScore(candidate: Readonly<FeedCandidate>, profile: Tast
   return score
 }
 
-function candidateLanguage(candidate: Readonly<FeedCandidate>, profile: TasteProfile): string | null {
+export function candidateLanguage(candidate: Readonly<FeedCandidate>, profile: TasteProfile): string | null {
   const key = `soundcloud:${candidate.track.id}`
   const group = profile.groups[key] ?? candidate.groupKey
   const feature = profile.features.get(key)
     ?? [...profile.features.values()].find(item => profile.groups[item.trackKey] === group)
   const direct = strongestLanguage(feature?.data.language as unknown as LanguageEvidence | undefined)
   if (direct) return direct[0]
+
+  // SoundCloud tags occasionally carry an explicit language label. Accept
+  // only clear language tags; generic two-letter tags can mean other things.
+  for (const raw of candidate.track.tags ?? []) {
+    const tag = raw.trim().toLocaleLowerCase()
+    const explicit = tag.match(/^(?:language|lang|язык)\s*[:=]\s*(.+)$/iu)?.[1]
+    const value = (explicit ?? tag).replace(/^#|\s+(?:vocals?|lyrics?)$/giu, '').trim()
+    if (['english', 'eng', 'английский', 'англ'].includes(value) || (explicit && ['en', 'en-us', 'en-gb'].includes(value))) return 'eng'
+    if (['russian', 'rus', 'русский', 'рус'].includes(value) || (explicit && ['ru', 'ru-ru'].includes(value))) return 'rus'
+    if (['ukrainian', 'ukr', 'украинский', 'українська'].includes(value)) return 'ukr'
+    if (['belarusian', 'bel', 'белорусский', 'беларуская'].includes(value)) return 'bel'
+    if (['bulgarian', 'bul', 'болгарский', 'български'].includes(value)) return 'bul'
+  }
 
   // Short metadata is too weak for a language detector, but Cyrillic script
   // reliably separates Russian-language catalogue items from Latin titles.

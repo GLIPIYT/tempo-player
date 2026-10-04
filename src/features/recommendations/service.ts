@@ -8,7 +8,7 @@ import { compactScTrack, FEED_CACHE_TTL_MS, FEED_LIMITS, MAX_PENDING_RECOMMENDAT
   type FeedCandidate, type SeedFrontier, type StoredRecommendationState } from './storage'
 import type { RecordingIdentity, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationSeed } from './types'
 import { RecommendationReceipts } from './receipts'
-import { buildTasteProfile, candidateScore, favoriteGenre as getFavoriteGenre, rankCandidates, rebalanceCandidateLanguages, type TasteProfile } from './profile'
+import { buildTasteProfile, candidateLanguage, candidateScore, favoriteGenre as getFavoriteGenre, rankCandidates, rebalanceCandidateLanguages, type TasteProfile } from './profile'
 import { detectLyricLanguages, type LyricEvidenceSource } from './language'
 import { analyzeCachedRecommendationTrack } from './audio'
 import { flushFeedbackOperations, stopFeedbackOperations, type ExplicitActionIntent } from './feedbackBridge'
@@ -23,6 +23,9 @@ const PROFILE_SEED_LIMIT = FEED_LIMITS.seeds - DISCOVERY_SEED_LIMIT
 const MIN_DISCOVERY_SEED_SCORE = 0.005
 const CACHE_FLAG_TTL = 60_000
 const WRITE_BATCH = 100
+const LANGUAGE_LOOKUP_BUDGET = 8
+const LANGUAGE_LOOKUP_BATCH = 2
+const LANGUAGE_LOOKUP_CACHE_TTL = 7 * DAY
 const MAX_PENDING_ACTIONS = 5000
 const MAX_LANGUAGE_JOBS = 5000
 const RECOMMENDATION_ENDPOINTS = new Set(['related', 'station', 'search', 'track-hydration'])
@@ -67,6 +70,15 @@ export interface RadioReservation {
   release: () => void
 }
 export type CandidateRanker = (candidate: Readonly<FeedCandidate>) => number
+interface LanguageLookupRequest {
+  kind: 'seed' | 'candidate'
+  trackKey: string
+  artist: string
+  title: string
+  album: string | null
+  durationSec: number | null
+  dbId: number | null
+}
 
 class RecommendationService {
   private listeners = new Set<() => void>()
@@ -136,6 +148,10 @@ class RecommendationService {
   private languageJobs = new Set<Promise<void>>()
   private languageSequences = new Map<string, number>()
   private languageHashes = new Map<string, string>()
+  private languageLookupQueue = new Map<string, LanguageLookupRequest>()
+  private languageLookupFlight: Promise<void> | null = null
+  private languageLookupAttempts = 0
+  private languageSeedLookupsQueued = 0
   private sectionClocks = new Map<string, number>()
   private audioQueue = new Map<string, RecommendationTrack>()
   private audioAttempted = new Set<string>()
@@ -205,6 +221,9 @@ class RecommendationService {
       this.skipCooldownOverflow.clear()
       this.homeCooldownOverflowUntil = 0
       this.skipCooldownOverflowUntil = 0
+      this.languageLookupQueue.clear()
+      this.languageLookupAttempts = 0
+      this.languageSeedLookupsQueued = 0
       this.aliases.clear()
       for (const item of this.published) { this.sessionSeen.add(item.groupKey); this.sessionSeen.add(keyOf(item.track)) }
       this.pendingFeatures.clear()
@@ -404,6 +423,9 @@ class RecommendationService {
       for (const item of this.published) { this.sessionSeen.add(this.group(item.groupKey)); this.sessionSeen.add(keyOf(item.track)) }
       this.initialized = true
       this.emit({ tracks: this.published.map(item => item.track), hasLoaded: this.published.length > 0, error: null })
+      this.queueSeedLanguageLookups(this.profile?.seeds ?? [])
+      this.queueLanguageLookups([...this.published.slice(0, PUBLISH_SIZE / 2), ...this.candidates.slice(0, PUBLISH_SIZE / 2),
+        ...this.published.slice(PUBLISH_SIZE / 2, PUBLISH_SIZE), ...this.candidates.slice(PUBLISH_SIZE / 2, PUBLISH_SIZE)])
       this.save()
       void this.queryCacheFlags()
     })().finally(() => { if (epoch === this.epoch) this.initializeFlight = null })
@@ -634,6 +656,86 @@ class RecommendationService {
     this.pendingSections.set(key, { trackKey, section: 'language', data: evidence as unknown as Record<string, unknown>, updatedAt: this.nextSectionTime(trackKey, 'language') })
     if (!this.sectionFailed) void this.flushSections().catch(() => undefined)
   }
+  private queueLanguageLookups(candidates: FeedCandidate[]) {
+    const profile = this.profile
+    if (this.closing || !profile || profile.languageConfidence < 0.2 || this.languageLookupAttempts >= LANGUAGE_LOOKUP_BUDGET) return
+    const preferred = Object.entries(profile.languages).sort((left, right) => right[1] - left[1])[0]
+    if (!preferred || preferred[1] < 0.55) return
+    for (const candidate of candidates) {
+      const key = keyOf(candidate.track)
+      if (candidateLanguage(candidate, profile) || this.languageLookupQueue.has(key)) continue
+      this.enqueueLanguageLookup({ kind: 'candidate', trackKey: key, artist: candidate.track.metadataArtist || candidate.identity.artist || candidate.track.artist,
+        title: candidate.track.title, album: null, durationSec: candidate.track.durationMs > 0 ? candidate.track.durationMs / 1000 : null, dbId: null })
+      if (this.languageLookupAttempts + this.languageLookupQueue.size >= LANGUAGE_LOOKUP_BUDGET) break
+    }
+    if (!this.languageLookupFlight && this.languageLookupQueue.size) this.startLanguageLookupDrain()
+  }
+  private queueSeedLanguageLookups(seeds: RecommendationSeed[]) {
+    const profile = this.profile
+    if (this.closing || !profile || profile.seeds.length < 3 || this.languageLookupAttempts >= LANGUAGE_LOOKUP_BUDGET) return
+    for (const seed of seeds) {
+      if (profile.seedLanguages?.[seed.track.trackKey] || this.languageLookupQueue.has(seed.track.trackKey)) continue
+      if (this.languageSeedLookupsQueued >= Math.floor(LANGUAGE_LOOKUP_BUDGET / 2)) break
+      if (this.enqueueLanguageLookup({ kind: 'seed', trackKey: seed.track.trackKey, artist: seed.track.artists[0] ?? '', title: seed.track.title,
+        album: seed.track.album, durationSec: seed.track.durationSec, dbId: seed.track.dbId })) this.languageSeedLookupsQueued += 1
+    }
+    if (!this.languageLookupFlight && this.languageLookupQueue.size) this.startLanguageLookupDrain()
+  }
+  private enqueueLanguageLookup(request: LanguageLookupRequest): boolean {
+    if (this.languageLookupQueue.has(request.trackKey)
+      || this.languageLookupAttempts + this.languageLookupQueue.size >= LANGUAGE_LOOKUP_BUDGET) return false
+    const feature = this.features.get(request.trackKey)
+    const language = feature?.data.language as LanguageEvidence | undefined
+    const sectionTimes = feature?.data.sectionUpdatedAt as Record<string, number> | undefined
+    const checkedAt = sectionTimes?.language ?? feature?.updatedAt ?? 0
+    if (language?.evidence.source === 'recommendation-lookup' && Date.now() - checkedAt < LANGUAGE_LOOKUP_CACHE_TTL) return false
+    this.languageLookupQueue.set(request.trackKey, request)
+    return true
+  }
+  private startLanguageLookupDrain() {
+    if (this.languageLookupFlight || this.closing || !this.languageLookupQueue.size) return
+    const epoch = this.epoch
+    const flight = (async () => {
+      while (this.languageLookupQueue.size && this.languageLookupAttempts < LANGUAGE_LOOKUP_BUDGET && epoch === this.epoch && !this.closing) {
+        const batch = [...this.languageLookupQueue.entries()].slice(0, LANGUAGE_LOOKUP_BATCH)
+        for (const [key] of batch) this.languageLookupQueue.delete(key)
+        this.languageLookupAttempts += batch.length
+        await Promise.all(batch.map(async ([trackKey, request]) => {
+          try {
+            let text = request.dbId != null ? (await api.getTrackLyrics(request.dbId)?.catch(() => null))?.trim() ?? '' : ''
+            const letters = (value: string) => value.match(/\p{L}/gu)?.length ?? 0
+            if (letters(text) < 80) {
+              const result = await api.fetchOnlineLyrics(request.artist, request.title, request.album, request.durationSec)
+              text = result?.plain?.trim() || result?.syncedLrc?.trim() || text
+            }
+            if (epoch !== this.epoch || this.closing) return
+            const evidence: LanguageEvidence = text
+              ? await detectLyricLanguages(text, { source: 'recommendation-lookup' })
+              : { distribution: {}, confidence: 0, textHash: 'recommendation-lyrics-unavailable',
+                evidence: { source: 'recommendation-lookup', algorithm: 'franc-min-6.2.0-blocks-v1', blocks: 0 }, unknownShare: 1 }
+            if (epoch === this.epoch && !this.closing) this.recordLanguage(trackKey, evidence)
+          } catch {
+            // This is best-effort metadata enrichment; playback and suggestions
+            // remain available if lyric providers are offline.
+          }
+        }))
+        if (epoch !== this.epoch || this.closing) return
+        await this.flushSections().catch(() => undefined)
+        if (this.languageLookupQueue.size) await new Promise(resolve => setTimeout(resolve, 750))
+      }
+      if (epoch !== this.epoch || this.closing || !this.profile || this.published.length < 2) return
+      const reordered = rebalanceCandidateLanguages(this.published, this.profile)
+      if (reordered.some((item, index) => item !== this.published[index])) {
+        this.published = reordered
+        this.emit({ tracks: this.published.map(item => item.track) })
+        this.save()
+      }
+    })().catch(() => undefined).finally(() => {
+      if (this.languageLookupFlight === flight) this.languageLookupFlight = null
+      if (!this.closing && this.languageLookupQueue.size && this.languageLookupAttempts < LANGUAGE_LOOKUP_BUDGET) this.startLanguageLookupDrain()
+    })
+    this.languageLookupFlight = flight
+  }
   private async flushSections(): Promise<void> {
     if (this.sectionFlight) { await this.sectionFlight; return this.flushSections() }
     if (!this.pendingSections.size) return
@@ -651,6 +753,10 @@ class RecommendationService {
             if (!this.closing) {
               this.emit({ favoriteGenre: getFavoriteGenre(this.profile) })
               this.setSeedPlan(this.profile.seeds)
+              if (entries.some(([, update]) => update.section === 'language'
+                && (update.data as unknown as LanguageEvidence).evidence.source === 'recommendation-lookup')) {
+                this.queueLanguageLookups([...this.published.slice(0, PUBLISH_SIZE / 2), ...this.candidates.slice(0, PUBLISH_SIZE / 2)])
+              }
             }
           }
         } catch (cause) {
@@ -785,7 +891,7 @@ class RecommendationService {
     }
     const languageEntries = [...languagePools.entries()]
     const languageWeights = languageEntries.map(([code]) => code === '?'
-      ? Math.max(0.05, this.profile?.unknownShare ?? 1)
+      ? Math.min(0.2, Math.max(0.05, this.profile?.unknownShare ?? 1))
       : Math.max(0.01, this.profile?.languages[code] ?? 0))
     const languageTotal = languageWeights.reduce((sum, weight) => sum + weight, 0)
     const languageCount = [...this.seedLanguageCounts.values()].reduce((sum, value) => sum + value, 0)
@@ -1270,6 +1376,7 @@ class RecommendationService {
     this.published = [...this.published, ...selected]
     this.wantsPublish = false
     this.emit({ tracks: this.published.map(item => item.track), hasLoaded: true })
+    this.queueLanguageLookups(selected)
     this.save()
     void this.queryCacheFlags()
   }

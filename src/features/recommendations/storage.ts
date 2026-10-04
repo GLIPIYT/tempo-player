@@ -251,6 +251,16 @@ function isFeedRevisionConflict(cause: unknown): boolean {
   return (cause instanceof Error ? cause.message : String(cause)).includes('Feed revision conflict')
 }
 
+const RECOMMENDATION_STATE_LOCK = 'tempo-recommendation-feed-state'
+type CrossContextLockManager = { request<T>(name: string, callback: () => Promise<T>): Promise<T> }
+
+function withRecommendationStateLock<T>(action: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator === 'undefined'
+    ? undefined
+    : (navigator as unknown as { locks?: CrossContextLockManager }).locks
+  return locks ? locks.request(RECOMMENDATION_STATE_LOCK, action) : action()
+}
+
 /** One serialized debounced writer; each write retains its captured generation. */
 export class RecommendationStorage {
   private expectedRevision = 0
@@ -294,53 +304,55 @@ export class RecommendationStorage {
       let pending = this.pending
       const epoch = this.epoch
       this.pending = null
-      let conflicts = 0
-      while (true) {
-        try {
-          const revision = Math.max(pending.state.revision, this.expectedRevision + 1)
-          await api.saveRecommendationState({ revision, data: encode({ ...pending.state, revision }) }, pending.generation, this.expectedRevision)
-          if (epoch === this.epoch) {
-            this.expectedRevision = revision
-            const queued = this.queuedPending()
-            if (queued?.generation === pending.generation) {
-              this.pending = { ...queued, state: mergeFeedStates(pending.state, queued.state) }
-            }
-          }
-          break
-        } catch (cause) {
-          let failure = cause
-          if (epoch === this.epoch && isFeedRevisionConflict(cause) && conflicts < 4) {
-            try {
-              const context = await api.getRecommendationContext()
-              if (context.generation !== pending.generation) throw new Error('Recommendation feedback was cleared')
-              const latestRevision = context.storedState?.revision ?? 0
-              const latest = hydrateRecommendationState(context)
-              const rebased = latest ? mergeFeedStates(latest, pending.state) : pending.state
-              pending = { ...pending, state: { ...rebased, revision: Math.max(rebased.revision, latestRevision + 1) } }
-              this.expectedRevision = latestRevision
+      await withRecommendationStateLock(async () => {
+        let conflicts = 0
+        while (true) {
+          try {
+            const revision = Math.max(pending.state.revision, this.expectedRevision + 1)
+            await api.saveRecommendationState({ revision, data: encode({ ...pending.state, revision }) }, pending.generation, this.expectedRevision)
+            if (epoch === this.epoch) {
+              this.expectedRevision = revision
               const queued = this.queuedPending()
               if (queued?.generation === pending.generation) {
-                this.pending = { ...queued, state: mergeFeedStates(rebased, queued.state) }
+                this.pending = { ...queued, state: mergeFeedStates(pending.state, queued.state) }
               }
-              conflicts += 1
-              await new Promise(resolve => setTimeout(resolve, 50 * 2 ** (conflicts - 1)))
-              continue
-            } catch (rebaseCause) {
-              failure = rebaseCause
             }
+            break
+          } catch (cause) {
+            let failure = cause
+            if (epoch === this.epoch && isFeedRevisionConflict(cause) && conflicts < 4) {
+              try {
+                const context = await api.getRecommendationContext()
+                if (context.generation !== pending.generation) throw new Error('Recommendation feedback was cleared')
+                const latestRevision = context.storedState?.revision ?? 0
+                const latest = hydrateRecommendationState(context)
+                const rebased = latest ? mergeFeedStates(latest, pending.state) : pending.state
+                pending = { ...pending, state: { ...rebased, revision: Math.max(rebased.revision, latestRevision + 1) } }
+                this.expectedRevision = latestRevision
+                const queued = this.queuedPending()
+                if (queued?.generation === pending.generation) {
+                  this.pending = { ...queued, state: mergeFeedStates(rebased, queued.state) }
+                }
+                conflicts += 1
+                await new Promise(resolve => setTimeout(resolve, 50 * 2 ** (conflicts - 1)))
+                continue
+              } catch (rebaseCause) {
+                failure = rebaseCause
+              }
+            }
+            if (epoch === this.epoch) {
+              // Newer state coalesces the failed payload; never replace it with old data.
+              this.pending ??= pending
+              this.failed = true
+              if (this.timer) clearTimeout(this.timer)
+              this.timer = null
+              this.onError(failure instanceof Error ? failure.message : String(failure))
+              throw failure
+            }
+            break
           }
-          if (epoch === this.epoch) {
-            // Newer state coalesces the failed payload; never replace it with old data.
-            this.pending ??= pending
-            this.failed = true
-            if (this.timer) clearTimeout(this.timer)
-            this.timer = null
-            this.onError(failure instanceof Error ? failure.message : String(failure))
-            throw failure
-          }
-          break
         }
-      }
+      })
     }
   }
 }
