@@ -939,10 +939,11 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       plain: result.kind === 'plain' ? result.text : null,
       syncedLrc: result.kind === 'synced' ? formatLrc(result.lines) : null,
     }
-  }, [activeLyrics?.generation, activeLyrics?.provider, activeLyrics?.sourceResult, activeLyrics?.result])
-  const selectionCandidates = candidates.length > 0
-    ? candidates
-    : activeServiceCandidate ? [activeServiceCandidate] : []
+  }, [activeLyrics?.provider, activeLyrics?.sourceResult, activeLyrics?.result])
+  const selectionCandidates = useMemo(
+    () => candidates.length > 0 ? candidates : activeServiceCandidate ? [activeServiceCandidate] : [],
+    [candidates, activeServiceCandidate],
+  )
 
   useEffect(() => {
     let cancelled = false

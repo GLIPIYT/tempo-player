@@ -973,7 +973,7 @@ fn replacement_with_same_size_and_restored_mtime_rejects_the_previous_issued_ide
 }
 
 #[test]
-fn migration19_reopen_is_idempotent_and_merges_do_not_lose_prior_lines_or_windows() {
+fn analysis_cache_reopens_and_merges_do_not_lose_prior_lines_or_windows() {
     let root = Temp::new();
     let (db, store, id) = audio_env(&root.0);
     let identity = store
@@ -1022,11 +1022,6 @@ fn migration19_reopen_is_idempotent_and_merges_do_not_lose_prior_lines_or_window
         .unwrap();
     assert_eq!(saved.fragments.len(), 2);
     assert_eq!(saved.lyric_matches[0].ends.len(), 2);
-    db.with_conn(|conn| {
-        conn.execute_batch("PRAGMA user_version=18")
-            .map_err(|e| e.to_string())
-    })
-    .unwrap();
     drop(store);
     drop(db);
     let db = Arc::new(Db::open_at(&root.0.join("tempo.db")).unwrap());

@@ -59,7 +59,7 @@ function activate(trackId: string, sourceResult: LyricsResult | null, durationSe
   const original = sourceResult?.kind === 'synced' ? sourceResult.lines.map(line => line.text).join('\n')
     : sourceResult?.kind === 'plain' ? sourceResult.text : ''
   const hash = sha256Hex(`${provider}|${original}`)
-  if (original && requestedTrackKey && languageSourceHashes.get(requestedTrackKey) !== hash) {
+  if (typeof window !== 'undefined' && original && requestedTrackKey && languageSourceHashes.get(requestedTrackKey) !== hash) {
     languageSourceHashes.set(requestedTrackKey, hash)
     if (languageSourceHashes.size > 4096) languageSourceHashes.delete(languageSourceHashes.keys().next().value!)
     window.dispatchEvent(new CustomEvent('tempo:original-lyrics', { detail: { trackKey: requestedTrackKey, text: original,
