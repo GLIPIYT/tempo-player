@@ -5094,6 +5094,74 @@ html[data-bright-wallpaper='true'] .adaptive-text-outline-soft {
   line-height: 1.08;
 }
 
+.playlist-title-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28em;
+  max-width: 100%;
+  margin: -0.08em -0.12em;
+  padding: 0.08em 0.12em;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.playlist-title-trigger > span { overflow-wrap: anywhere; }
+.playlist-title-trigger:hover,
+.playlist-title-trigger:focus-visible { background: color-mix(in srgb, var(--surface) 72%, transparent); }
+.playlist-title-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.playlist-title-pencil { flex: 0 0 auto; color: var(--text-secondary); opacity: 0; transition: opacity 140ms ease; }
+.playlist-title-trigger:hover .playlist-title-pencil,
+.playlist-title-trigger:focus-visible .playlist-title-pencil { opacity: 0.9; }
+
+.playlist-title-editor {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.playlist-title-input {
+  width: clamp(180px, 38vw, 620px);
+  max-width: 58vw;
+  min-width: 0;
+  padding: 0.09em 0.22em;
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--border));
+  border-radius: 9px;
+  outline: none;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: 1.08;
+}
+
+.playlist-title-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.playlist-title-action {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.playlist-title-action.is-save { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); color: var(--accent); }
+.playlist-title-action:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 15%, var(--surface)); color: var(--text-primary); }
+.playlist-title-action:disabled { opacity: 0.45; cursor: default; }
+
 .editorial-detail-description {
   max-width: 560px;
   margin: 8px 0 0;

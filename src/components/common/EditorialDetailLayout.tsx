@@ -21,7 +21,7 @@ export default function EditorialDetailLayout({
   art: ReactNode
   round?: boolean
   kind: ReactNode
-  title: string
+  title: ReactNode
   description?: ReactNode
   meta: ReactNode
   actions?: ReactNode

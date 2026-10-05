@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { save } from '@tauri-apps/plugin-dialog'
-import { Download, FileDown, ListMusic, Pencil, Play, Star, StarOff, Trash2, X } from 'lucide-react'
+import { Check, Download, FileDown, ListMusic, Pencil, Play, Star, StarOff, Trash2, X } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { useT } from '../i18n'
 import { api } from '../api/client'
@@ -17,7 +17,6 @@ import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import CacheBadge from '../soundcloud/CacheBadge'
 import { toast } from '../components/common/Toast'
 import EmptyState from '../components/common/EmptyState'
-import Modal from '../components/common/Modal'
 import TrackMenu, { type TrackMenuHandle } from '../components/common/TrackMenu'
 import { beginTrackDrag } from '../dnd/trackDrag'
 
@@ -34,6 +33,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const lists = useAsync(() => api.listPlaylists(), [version])
   const [renaming, setRenaming] = useState(false)
   const [name, setName] = useState('')
+  const [savedRename, setSavedRename] = useState<{ playlistId: number; name: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dragFromPos, setDragFromPos] = useState<number | null>(null)
@@ -144,10 +144,18 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const rename = async () => {
     const trimmed = name.trim()
     if (trimmed.length === 0 || !playlist) return
+    const currentName = savedRename?.playlistId === playlistId ? savedRename.name : playlist.name
+    if (trimmed === currentName) {
+      setRenaming(false)
+      return
+    }
     setBusy(true)
     try {
       await api.renamePlaylist(playlistId, trimmed)
+      setName(trimmed)
+      setSavedRename({ playlistId, name: trimmed })
       setRenaming(false)
+      bumpLibraryVersion()
       lists.reload()
       setError(null)
     } catch (e: unknown) {
@@ -190,8 +198,23 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const removeAria = t('Remove')
   const fromPlaylist = t('from playlist')
   const unknownArtist = t('Unknown artist')
-  const displayName = playlistDisplayName(playlist, t('Playlist'), t)
+  const currentName = playlist
+    ? (savedRename?.playlistId === playlistId ? savedRename.name : playlist.name)
+    : t('Playlist')
+  const displayPlaylist = playlist && savedRename?.playlistId === playlistId
+    ? { ...playlist, name: savedRename.name }
+    : playlist
+  const displayName = playlistDisplayName(displayPlaylist, t('Playlist'), t)
   const isLikes = playlist?.isLikes === true
+  const beginRename = () => {
+    if (!playlist || isLikes || busy) return
+    setName(currentName)
+    setRenaming(true)
+  }
+  const cancelRename = () => {
+    setName(currentName)
+    setRenaming(false)
+  }
 
   return (
     <EditorialDetailLayout
@@ -221,7 +244,37 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
         </CacheBadge>
       }
       kind={t('Playlist')}
-      title={displayName}
+      title={playlist && !isLikes ? (
+        renaming ? (
+          <span className="playlist-title-editor">
+            <input
+              className="playlist-title-input"
+              autoFocus
+              aria-label={t('Playlist name')}
+              value={name}
+              spellCheck={false}
+              onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void rename()
+                if (event.key === 'Escape') cancelRename()
+              }}
+            />
+            <button className="playlist-title-action is-save" type="button" aria-label={t('Save')} title={t('Save')}
+              disabled={busy || name.trim().length === 0} onClick={() => void rename()}>
+              <Check size={16} />
+            </button>
+            <button className="playlist-title-action" type="button" aria-label={t('Cancel')} title={t('Cancel')}
+              disabled={busy} onClick={cancelRename}>
+              <X size={15} />
+            </button>
+          </span>
+        ) : (
+          <button className="playlist-title-trigger" type="button" title={t('Rename playlist')} onClick={beginRename}>
+            <span>{displayName}</span>
+            <Pencil className="playlist-title-pencil" size={17} aria-hidden="true" />
+          </button>
+        )
+      ) : displayName}
       meta={
         <span>
           {items.length === 1 ? `${items.length} ${t('track')}` : `${items.length} ${t('tracks')}`}
@@ -252,10 +305,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
               </button>
               <button
                 className="btn"
-                onClick={() => {
-                  setName(playlist.name)
-                  setRenaming(true)
-                }}
+                onClick={beginRename}
               >
                 <Pencil size={14} />
                 {t('Rename')}
@@ -410,31 +460,6 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
         </div>
       )}
 
-      <Modal open={renaming} title={t('Rename playlist')} onClose={() => setRenaming(false)}>
-        <input
-          className="text-input"
-          autoFocus
-          value={name}
-          placeholder={t('Playlist name')}
-          spellCheck={false}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void rename()
-          }}
-        />
-        <div className="modal-actions">
-          <button className="btn" onClick={() => setRenaming(false)}>
-            {t('Cancel')}
-          </button>
-          <button
-            className="btn btn-primary"
-            disabled={busy || name.trim().length === 0}
-            onClick={() => void rename()}
-          >
-            {t('Save')}
-          </button>
-        </div>
-      </Modal>
     </EditorialDetailLayout>
   )
 }
