@@ -421,6 +421,8 @@ fn recommendation_endpoint(url: &reqwest::Url) -> String {
     let path = url.path();
     if url.host_str() == Some("soundcloud.com") {
         "client-id".into()
+    } else if url.host_str() == Some("api.soundcloud.com") && path == "/tracks" {
+        "genre-search".into()
     } else if path == "/search/tracks" {
         "search".into()
     } else if path == "/tracks" {
@@ -585,6 +587,60 @@ pub async fn sc_recommendation_search(
         Err(failure)=>{result.retry_at=failure.retry_at;result.status=failure.status;result.failed_endpoint=failure.endpoint;result.error=Some(failure.error);}
     }
     if let Some(retry_at)=result.retry_at {state.db.set_app_setting("recommendation_provider_retry_at",&retry_at.to_string())?;}
+    Ok(result)
+}
+
+/// Fetches a genre-specific SoundCloud page independently from personalized
+/// recommendation state. The documented public track-search `genres` filter
+/// keeps this shelf from inheriting the main feed's seeds or candidates.
+#[tauri::command]
+pub async fn sc_recommendation_genre_search(
+    state: tauri::State<'_, crate::commands::AppState>, genre: String, limit: u32,
+) -> Result<ScRelatedPage, String> {
+    let genre = genre.trim();
+    if genre.is_empty() || genre.len() > 96 || genre.chars().any(char::is_control) {
+        return Err("Invalid SoundCloud genre".into());
+    }
+    let saved = state.db.get_app_setting("recommendation_provider_retry_at")?
+        .and_then(|value| value.parse::<i64>().ok()).unwrap_or(0);
+    if saved > now_ms() {
+        return Ok(ScRelatedPage { tracks: Vec::new(), next_cursor: None, source: "genre".into(),
+            retry_at: Some(saved), error: Some("SoundCloud cooldown".into()), status: Some(429), failed_endpoint: None });
+    }
+    let limit = limit.clamp(1, 50);
+    let cache_key = format!("sc-genre:v1:{}:{limit}", genre.to_lowercase());
+    if let Some(cached) = crate::recommendation_store::page(&state.db, &cache_key)? {
+        if let Ok(page) = serde_json::from_value::<ScRelatedPage>(cached.data) {
+            if page.error.is_none() && page.retry_at.is_none() && page.source == "genre" {
+                return Ok(page);
+            }
+        }
+    }
+
+    let mut url = reqwest::Url::parse("https://api.soundcloud.com/tracks").expect("genre search URL");
+    url.query_pairs_mut().append_pair("genres", genre)
+        .append_pair("access", "playable")
+        .append_pair("limit", &limit.to_string())
+        .append_pair("linked_partitioning", "true");
+    let mut result = ScRelatedPage { tracks: Vec::new(), next_cursor: None, source: "genre".into(),
+        retry_at: None, error: None, status: None, failed_endpoint: None };
+    match recommendation_json(url).await {
+        Ok(value) => result.tracks = tracks_from_response(&value).into_iter().take(limit as usize).collect(),
+        Err(failure) => {
+            result.retry_at = failure.retry_at;
+            result.status = failure.status;
+            result.failed_endpoint = failure.endpoint;
+            result.error = Some(failure.error);
+        }
+    }
+    if let Some(retry_at) = result.retry_at {
+        state.db.set_app_setting("recommendation_provider_retry_at", &retry_at.to_string())?;
+    }
+    if result.error.is_none() {
+        crate::recommendation_store::save_page(&state.db, crate::recommendation_store::ProviderPage {
+            key: cache_key, fetched_at: now_ms(), data: serde_json::to_value(&result).map_err(|e| e.to_string())?,
+        })?;
+    }
     Ok(result)
 }
 

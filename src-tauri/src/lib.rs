@@ -182,6 +182,7 @@ pub fn run() {
             commands::sc_related_tracks,
             soundcloud::sc_recommendation_page,
             soundcloud::sc_recommendation_search,
+            soundcloud::sc_recommendation_genre_search,
             commands::sc_get_playlist,
             commands::sc_get_artist,
             commands::sc_artist_tracks,

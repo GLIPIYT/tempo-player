@@ -334,10 +334,11 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
   if (languagePools.size + Number(unknownSeeds.length > 0) > 1) {
     const pools = [...languagePools.entries()]
     const seedPools = pools.map(([, pool]) => pool)
-    const weights = pools.map(([code]) => profile.languages[code])
+    const languageWeights = effectiveLanguageWeights(profile)
+    const weights = pools.map(([code]) => languageWeights[code] ?? 0.01)
     if (unknownSeeds.length) {
       seedPools.push(unknownSeeds)
-      weights.push(Math.min(0.2, Math.max(0.05, profile.unknownShare)))
+      weights.push(Math.min(0.12, Math.max(0.05, profile.unknownShare)))
     }
     profile.seeds = mixBuckets(seedPools, weights, 40)
   }
@@ -363,7 +364,10 @@ export function candidateScore(candidate: Readonly<FeedCandidate>, profile: Tast
   if (profile.tempo && candidate.track.bpm) affinityScore += Math.max(0, 1 - Math.abs(candidate.track.bpm - profile.tempo) / 60) * 0.1
   score += affinityScore * profile.confidence
   const language = candidateLanguage(candidate, profile)
-  if (language) score += 0.12 * (effectiveLanguageWeights(profile)[language] ?? 0) * profile.languageConfidence
+  if (language) {
+    const preferenceEvidence = Math.max(profile.languageConfidence, profile.languagePreference ? 0.35 : 0)
+    score += 0.24 * (effectiveLanguageWeights(profile)[language] ?? 0) * preferenceEvidence
+  }
   return score
 }
 
@@ -455,7 +459,7 @@ function interleaveLanguages(ordered: FeedCandidate[], profile: TasteProfile): F
   const weights = active.map(([code]) => languageWeights[code])
   if (unknown.length) {
     activePools.push(unknown)
-    weights.push(Math.max(0.1, Math.min(profile.languagePreference ? 0.2 : 0.25, profile.unknownShare)))
+    weights.push(Math.max(0.05, Math.min(profile.languagePreference ? 0.12 : 0.18, profile.unknownShare)))
   }
   return mixBuckets(activePools, weights)
 }

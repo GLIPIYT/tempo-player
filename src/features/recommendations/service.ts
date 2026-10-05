@@ -9,7 +9,7 @@ import { compactScTrack, FEED_CACHE_TTL_MS, FEED_LIMITS, MAX_PENDING_RECOMMENDAT
   type FeedCandidate, type SeedFrontier, type StoredRecommendationState } from './storage'
 import type { RecordingIdentity, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationSeed } from './types'
 import { RecommendationReceipts } from './receipts'
-import { buildTasteProfile, candidateLanguage, candidateScore, effectiveLanguageWeights, favoriteGenre as getFavoriteGenre, rankCandidates, rebalanceCandidateLanguages, type TasteContext, type TasteProfile } from './profile'
+import { buildTasteProfile, candidateLanguage, candidateScore, effectiveLanguageWeights, favoriteGenre as getFavoriteGenre, mixBuckets, rankCandidates, rebalanceCandidateLanguages, type TasteContext, type TasteProfile } from './profile'
 import { detectLyricLanguages, type LyricEvidenceSource } from './language'
 import { analyzeCachedRecommendationTrack } from './audio'
 import { flushFeedbackOperations, stopFeedbackOperations, type ExplicitActionIntent } from './feedbackBridge'
@@ -463,13 +463,28 @@ class RecommendationService {
     }
     const sorted = [...unique.values()]
     const artists = new Map<string, number>()
-    const selected = sorted.filter(seed => {
+    const artistLimited = sorted.filter(seed => {
       const artist = normalizeRecordingText(seed.track.artists[0] ?? '')
       const count = artists.get(artist) ?? 0
       if (artist && count >= 3) return false
       artists.set(artist, count + 1)
       return true
-    }).slice(0, PROFILE_SEED_LIMIT)
+    })
+    const seedLanguagePools = new Map<string, RecommendationSeed[]>()
+    for (const seed of artistLimited) {
+      const code = this.profile?.seedLanguages?.[seed.track.trackKey] ?? '?'
+      const pool = seedLanguagePools.get(code) ?? []
+      pool.push(seed)
+      seedLanguagePools.set(code, pool)
+    }
+    const languageEntries = [...seedLanguagePools.entries()]
+    const effectiveLanguages = this.profile ? effectiveLanguageWeights(this.profile) : {}
+    const seedLanguageWeights = languageEntries.map(([code]) => code === '?'
+      ? Math.min(0.12, Math.max(0.05, this.profile?.unknownShare ?? 1))
+      : Math.max(0.01, effectiveLanguages[code] ?? 0))
+    let selected = languageEntries.length > 1
+      ? mixBuckets(languageEntries.map(([, pool]) => pool.slice()), seedLanguageWeights, PROFILE_SEED_LIMIT)
+      : artistLimited.slice(0, PROFILE_SEED_LIMIT)
     const previous = new Map(this.frontier.map(seed => [seed.seed.track.trackKey, seed]))
     // Keep minority confirmed languages inside the capped frontier even when the artist limit creates a deficit.
     for (const seed of seeds) if (!selected.some(item => item.track.trackKey === seed.track.trackKey)) {

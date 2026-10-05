@@ -17,7 +17,7 @@ import { usePlayer } from '../player'
 import { useNav } from '../state/nav'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { toast } from '../components/common/Toast'
-import { trackToUnified } from '../utils/unified'
+import { scTracksToUnified, trackToUnified } from '../utils/unified'
 import HomeMixFeature from '../components/home/HomeMixFeature'
 import HomeShelves from '../components/home/HomeShelves'
 import RecommendationsShelf from '../components/home/RecommendationsShelf'
@@ -29,7 +29,6 @@ import { buildHourMixes } from '../utils/hourMixes'
 import { requestTrackCache } from '../soundcloud/cacheJobs'
 import { useSoundCloudRecommendations } from '../hooks/useSoundCloudRecommendations'
 import { recommendationService } from '../features/recommendations/service'
-import { normalizeRecordingText } from '../features/recommendations/identity'
 import {
   anySectionHidden,
   hideSectionUntilTomorrow,
@@ -112,10 +111,6 @@ export default function HomePage() {
       },
     },
   ), [hourPicksList, unknownArtist, t, mixLibrary.data, top.data, played.data, dormant.data, likedTracks])
-  const favoriteGenreTracks = useMemo(() => recommendations.favoriteGenre
-    ? recommendations.tracks.filter(track => normalizeRecordingText(track.genre ?? '') === recommendations.favoriteGenre?.key).slice(0, 12)
-    : [], [recommendations.favoriteGenre, recommendations.tracks])
-
   // Reuse one track menu for cards across the home shelves.
   const [ctx, setCtx] = useState<TrackContextRequest | null>(null)
   useHiddenSections()
@@ -149,8 +144,8 @@ export default function HomePage() {
   const playRecommendations = (index: number) => {
     player.playTracks(recommendations.tracks.map(track => recommendationService.toUnified(track)), index)
   }
-  const playFavoriteGenre = (index: number) => {
-    player.playTracks(favoriteGenreTracks.map(track => recommendationService.toUnified(track)), index)
+  const playFavoriteGenre = (tracks: ScTrack[], index: number) => {
+    player.playTracks(scTracksToUnified(tracks), index)
   }
 
   const cacheRecommendation = (track: ScTrack) => {
@@ -319,7 +314,6 @@ export default function HomePage() {
               <RecommendationsShelf
                 tracks={recommendations.tracks}
                 favoriteGenre={recommendations.favoriteGenre}
-                favoriteGenreTracks={favoriteGenreTracks}
                 loading={recommendations.loading}
                 error={recommendations.error}
                 persistenceError={recommendations.persistenceError}

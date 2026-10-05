@@ -3,11 +3,11 @@ import { ChevronLeft, ChevronRight, Download, Play, RefreshCw } from 'lucide-rea
 import type { ScTrack } from '../../types/models'
 import { useT } from '../../i18n'
 import { beginTrackDrag, consumeDragClick } from '../../dnd/trackDrag'
+import { useSoundCloudGenreRecommendations } from '../../hooks/useSoundCloudGenreRecommendations'
 
 interface RecommendationsShelfProps {
   tracks: ScTrack[]
   favoriteGenre: { key: string; label: string } | null
-  favoriteGenreTracks: ScTrack[]
   loading: boolean
   error: string | null
   persistenceError: string | null
@@ -17,7 +17,7 @@ interface RecommendationsShelfProps {
   retryAt: number | null
   cachedTrackIds: ReadonlySet<string>
   onPlay: (index: number) => void
-  onPlayFavoriteGenre: (index: number) => void
+  onPlayFavoriteGenre: (tracks: ScTrack[], index: number) => void
   onCache: (track: ScTrack) => void
   onDropToPlaylist: (playlistId: number, track: ScTrack) => void
   onRetry: () => void
@@ -32,7 +32,6 @@ interface RecommendationsShelfProps {
 export default function RecommendationsShelf({
   tracks,
   favoriteGenre,
-  favoriteGenreTracks,
   loading,
   error,
   persistenceError,
@@ -54,6 +53,9 @@ export default function RecommendationsShelf({
   onSectionMenu,
 }: RecommendationsShelfProps) {
   const t = useT()
+  const genreRecommendations = useSoundCloudGenreRecommendations(favoriteGenre)
+  const favoriteGenreTracks = genreRecommendations.tracks
+  const genreCachedTrackIds = new Set([...cachedTrackIds, ...genreRecommendations.cachedTrackIds])
   const sectionRef = useRef<HTMLElement>(null)
   const railRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLSpanElement>(null)
@@ -162,7 +164,7 @@ export default function RecommendationsShelf({
     trimAnchor.current = null
   }, [tracks])
 
-  const renderCards = (items: ScTrack[], play: (index: number) => void) => items.map((track, index) => (
+  const renderCards = (items: ScTrack[], play: (index: number) => void, cachedIds = cachedTrackIds) => items.map((track, index) => (
     <div className="home-recommendation-card" key={track.id} data-track-id={track.id}>
       <button
         type="button"
@@ -182,7 +184,7 @@ export default function RecommendationsShelf({
         <strong title={track.title}>{track.title}</strong>
         <small title={track.artist}>{track.artist}</small>
       </button>
-      {track.streamable && track.hasProgressive && !cachedTrackIds.has(track.id) ? (
+      {track.streamable && track.hasProgressive && !cachedIds.has(track.id) ? (
         <button
           type="button"
           className="home-recommendation-cache"
@@ -244,21 +246,39 @@ export default function RecommendationsShelf({
           {t(exhausted ? 'No more recommendations' : hasLoaded ? 'No recommendations yet' : 'SoundCloud recommendations will appear here.')}
         </div>
       )}
-      {favoriteGenre && favoriteGenreTracks.length > 0 ? (
+      {favoriteGenre && (favoriteGenreTracks.length > 0 || genreRecommendations.loading || genreRecommendations.error) ? (
         <div className="home-favorite-genre">
           <div className="home-section-head">
             <div className="home-recommendations-title">
               <span className="home-section-title">{favoriteGenre.label}</span>
               <small>{t('Your most-listened genre')}</small>
             </div>
-            <button type="button" className="btn btn-ghost home-recommendations-play" onClick={() => onPlayFavoriteGenre(0)}>
-              <Play size={14} fill="currentColor" />
-              {t('Play all')}
-            </button>
+            <div className="home-section-tools">
+              {favoriteGenreTracks.length > 0 ? (
+                <button type="button" className="btn btn-ghost home-recommendations-play" onClick={() => onPlayFavoriteGenre(favoriteGenreTracks, 0)}>
+                  <Play size={14} fill="currentColor" />
+                  {t('Play all')}
+                </button>
+              ) : null}
+              {genreRecommendations.error ? (
+                <button type="button" className="btn btn-ghost" onClick={genreRecommendations.retry} disabled={genreRecommendations.loading}>
+                  <RefreshCw size={14} />
+                  {t('Try again')}
+                </button>
+              ) : null}
+            </div>
           </div>
-          <div className="home-track-rail home-recommendation-rail" tabIndex={0} aria-label={`${favoriteGenre.label} · ${t('Recommended for you')}`}>
-            {renderCards(favoriteGenreTracks, onPlayFavoriteGenre)}
-          </div>
+          {genreRecommendations.loading && favoriteGenreTracks.length === 0 ? (
+            <div className="home-recommendation-skeletons" role="status" aria-label={t('Loading…')}>
+              {Array.from({ length: 5 }, (_, index) => <span className="home-recommendation-skeleton" key={index} />)}
+            </div>
+          ) : genreRecommendations.error ? (
+            <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}: {genreRecommendations.error}</div>
+          ) : favoriteGenreTracks.length > 0 ? (
+            <div className="home-track-rail home-recommendation-rail" tabIndex={0} aria-label={`${favoriteGenre.label} · ${t('Recommended for you')}`}>
+              {renderCards(favoriteGenreTracks, (index) => onPlayFavoriteGenre(favoriteGenreTracks, index), genreCachedTrackIds)}
+            </div>
+          ) : null}
         </div>
       ) : null}
       {error || persistenceError ? (

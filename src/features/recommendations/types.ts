@@ -1,6 +1,6 @@
 import type { ScTrack, SourceId, UnifiedTrack } from '../../types/models'
 
-export type ScRecommendationSource = 'related' | 'station'
+export type ScRecommendationSource = 'related' | 'station' | 'genre'
 export interface ScRelatedPage {
   tracks: ScTrack[]
   nextCursor: string | null
@@ -8,7 +8,7 @@ export interface ScRelatedPage {
   retryAt: number | null
   error: string | null
   status?: number | null
-  failedEndpoint?: 'related' | 'station' | 'search' | 'track-hydration' | 'client-id' | 'other' | null
+  failedEndpoint?: 'related' | 'station' | 'search' | 'genre-search' | 'track-hydration' | 'client-id' | 'other' | null
 }
 export interface RecordingIdentity {
   featureVersion: number

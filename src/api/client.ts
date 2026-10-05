@@ -294,6 +294,8 @@ export const api = {
   scRecommendationPage: (seedId: string, cursor: string | null, limit: number, source: ScRecommendationSource) =>
     invoke<ScRelatedPage>('sc_recommendation_page', { seedId, cursor, limit, source }),
   scRecommendationSearch: (query: string, limit: number) => invoke<ScRelatedPage>('sc_recommendation_search', { query, limit }),
+  scRecommendationGenreSearch: (genre: string, limit: number) =>
+    invoke<ScRelatedPage>('sc_recommendation_genre_search', { genre, limit }),
 
   /** Cache-only status lookup; it never resolves stream URLs or starts downloads. */
   scGetCachedTrackIds: (trackIds: string[]) =>
