@@ -421,7 +421,8 @@ fn recommendation_endpoint(url: &reqwest::Url) -> String {
     let path = url.path();
     if url.host_str() == Some("soundcloud.com") {
         "client-id".into()
-    } else if url.host_str() == Some("api.soundcloud.com") && path == "/tracks" {
+    } else if url.host_str() == Some("api-v2.soundcloud.com") && path == "/search/tracks"
+        && url.query_pairs().any(|(key, _)| key == "filter.genre_or_tag") {
         "genre-search".into()
     } else if path == "/search/tracks" {
         "search".into()
@@ -608,7 +609,7 @@ pub async fn sc_recommendation_genre_search(
             retry_at: Some(saved), error: Some("SoundCloud cooldown".into()), status: Some(429), failed_endpoint: None });
     }
     let limit = limit.clamp(1, 50);
-    let cache_key = format!("sc-genre:v1:{}:{limit}", genre.to_lowercase());
+    let cache_key = format!("sc-genre:v2:{}:{limit}", genre.to_lowercase());
     if let Some(cached) = crate::recommendation_store::page(&state.db, &cache_key)? {
         if let Ok(page) = serde_json::from_value::<ScRelatedPage>(cached.data) {
             if page.error.is_none() && page.retry_at.is_none() && page.source == "genre" {
@@ -617,8 +618,9 @@ pub async fn sc_recommendation_genre_search(
         }
     }
 
-    let mut url = reqwest::Url::parse("https://api.soundcloud.com/tracks").expect("genre search URL");
-    url.query_pairs_mut().append_pair("genres", genre)
+    let mut url = reqwest::Url::parse(&format!("{API}/search/tracks")).expect("genre search URL");
+    url.query_pairs_mut().append_pair("q", genre)
+        .append_pair("filter.genre_or_tag", genre)
         .append_pair("access", "playable")
         .append_pair("limit", &limit.to_string())
         .append_pair("linked_partitioning", "true");
