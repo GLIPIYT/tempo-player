@@ -179,7 +179,7 @@ export default function HomeMixFeature({
                   onClick={() => chooseMix(index)}
                   onContextMenu={(event) => onMixMenu(event, mix)}
                 >
-                  <Cover path={mixCover(mix)} label={mix.title} size={146} />
+                  <span className="home-mix-choice-art"><Cover path={mixCover(mix)} label={mix.title} size={146} /></span>
                   <span className="home-mix-choice-copy">
                     <small>{mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}</small>
                     <strong>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</strong>
