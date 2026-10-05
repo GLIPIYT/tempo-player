@@ -9,7 +9,8 @@ import { compactScTrack, FEED_CACHE_TTL_MS, FEED_LIMITS, MAX_PENDING_RECOMMENDAT
   type FeedCandidate, type SeedFrontier, type StoredRecommendationState } from './storage'
 import type { RecordingIdentity, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationSeed } from './types'
 import { RecommendationReceipts } from './receipts'
-import { buildTasteProfile, candidateLanguage, candidateScore, effectiveLanguageWeights, favoriteGenre as getFavoriteGenre, mixBuckets, rankCandidates, rebalanceCandidateLanguages, type TasteContext, type TasteProfile } from './profile'
+import { buildTasteProfile, candidateLanguage, candidateScore, effectiveLanguageWeights, favoriteGenre as getFavoriteGenre, mixBuckets, rankCandidates, rebalanceCandidateLanguages, recommendationSeedLanguage, type TasteContext, type TasteProfile } from './profile'
+import { seedSchedulingPool, selectRecommendationBatch } from './scheduling'
 import { detectLyricLanguages, type LyricEvidenceSource } from './language'
 import { analyzeCachedRecommendationTrack } from './audio'
 import { flushFeedbackOperations, stopFeedbackOperations, type ExplicitActionIntent } from './feedbackBridge'
@@ -17,6 +18,7 @@ import { recommendationTrack, type ExplicitActionKind, type FeatureSectionUpdate
 
 const DAY = 86400_000
 const PUBLISH_SIZE = 20
+const LANGUAGE_SCHEDULING_VERSION = 1
 const LOW_WATER = 30
 const PAGE_BUDGET = 6
 const DISCOVERY_SEED_LIMIT = 3
@@ -263,7 +265,7 @@ class RecommendationService {
   private save(immediate = false) {
     if (!this.initialized) return
     const relevant = new Set([...this.published, ...this.candidates].flatMap(item => [item.groupKey, keyOf(item.track)]))
-    const state: StoredRecommendationState = { version: 1, revision: this.snapshot.revision,
+    const state: StoredRecommendationState = { version: 1, languageSchedulingVersion: LANGUAGE_SCHEDULING_VERSION, revision: this.snapshot.revision,
       candidates: this.candidates.slice(), published: this.published.slice(), discoveryPool: this.discoveryPool.slice(-FEED_LIMITS.discoveryPool),
       seedFrontier: structuredClone(this.frontier),
       usedCursors: [...this.usedCursors], sessionSeen: this.sessionSeen.keys(),
@@ -400,8 +402,10 @@ class RecommendationService {
       this.storage.initialize(context.storedState?.revision ?? 0)
       const technicalRetry = Number(providerRetry)
       const stored = hydrateRecommendationState(context)
+      let rebalanceStoredFeed = false
       // Hydration is allowed only before local publications/mutations.
       if (stored && revision === this.snapshot.revision && !this.published.length) {
+        rebalanceStoredFeed = (stored.languageSchedulingVersion ?? 0) < LANGUAGE_SCHEDULING_VERSION
         this.candidates = stored.candidates
         this.published = stored.published
         this.discoveryPool = stored.discoveryPool ?? []
@@ -430,6 +434,19 @@ class RecommendationService {
       this.recoverDiscoveryPoolFromFeatures()
       this.candidates = this.candidates.filter(item => this.cooldownUntil(this.group(item.groupKey)) <= Date.now())
       this.published = this.published.filter(item => this.cooldownUntil(this.group(item.groupKey)) <= Date.now())
+      if (rebalanceStoredFeed && this.profile) {
+        // Reordering an old rail cannot add missing languages. Replan its first
+        // batch from both pools once, while retaining receipts for retired cards.
+        const pool = new Map(this.published.map(item => [this.group(item.groupKey), item]))
+        for (const item of this.candidates) {
+          const group = this.group(item.groupKey)
+          if (!this.sessionSeen.has(group) && !this.sessionSeen.has(keyOf(item.track)) && !pool.has(group)) pool.set(group, item)
+        }
+        for (const item of this.published) { this.sessionSeen.add(this.group(item.groupKey)); this.sessionSeen.add(keyOf(item.track)) }
+        this.published = selectRecommendationBatch(rankCandidates([...pool.values()], this.profile), this.profile, [], PUBLISH_SIZE)
+        const selected = new Set(this.published.map(item => this.group(item.groupKey)))
+        this.candidates = this.candidates.filter(item => !selected.has(this.group(item.groupKey)))
+      }
       for (const item of this.published) { this.sessionSeen.add(this.group(item.groupKey)); this.sessionSeen.add(keyOf(item.track)) }
       this.initialized = true
       this.emit({ tracks: this.published.map(item => item.track), hasLoaded: this.published.length > 0, error: null })
@@ -472,7 +489,7 @@ class RecommendationService {
     })
     const seedLanguagePools = new Map<string, RecommendationSeed[]>()
     for (const seed of artistLimited) {
-      const code = this.profile?.seedLanguages?.[seed.track.trackKey] ?? '?'
+      const code = this.profile ? recommendationSeedLanguage(seed, this.profile) ?? '?' : '?'
       const pool = seedLanguagePools.get(code) ?? []
       pool.push(seed)
       seedLanguagePools.set(code, pool)
@@ -488,15 +505,15 @@ class RecommendationService {
     const previous = new Map(this.frontier.map(seed => [seed.seed.track.trackKey, seed]))
     // Keep minority confirmed languages inside the capped frontier even when the artist limit creates a deficit.
     for (const seed of seeds) if (!selected.some(item => item.track.trackKey === seed.track.trackKey)) {
-      const language = this.profile?.seedLanguages?.[seed.track.trackKey]
+      const language = this.profile ? recommendationSeedLanguage(seed, this.profile) : null
       if (!language || (this.profile?.languages[language] ?? 0) <= 0
-        || selected.some(item => this.profile?.seedLanguages?.[item.track.trackKey] === language)) continue
+        || selected.some(item => this.profile && recommendationSeedLanguage(item, this.profile) === language)) continue
       if (selected.length >= PROFILE_SEED_LIMIT) selected.pop()
       selected.push(seed)
     }
     const contextKey = selected.map(seed => seed.track.trackKey).sort().join('|')
     const sameProfile = contextKey === this.contextKey
-    const languageContextKey = selected.map(seed => `${seed.track.trackKey}:${this.profile?.seedLanguages?.[seed.track.trackKey] ?? '?'}`).sort().join('|')
+    const languageContextKey = selected.map(seed => `${seed.track.trackKey}:${this.profile ? recommendationSeedLanguage(seed, this.profile) ?? '?' : '?'}`).sort().join('|')
     if (!sameProfile) this.lastBadRequest = null
     if (languageContextKey !== this.seedLanguageContextKey) {
       this.seedLanguageCounts.clear(); this.seedBucketCounts = [0, 0, 0]
@@ -700,7 +717,7 @@ class RecommendationService {
     const profile = this.profile
     if (this.closing || !profile || profile.seeds.length < 3 || this.languageLookupAttempts >= LANGUAGE_LOOKUP_BUDGET) return
     for (const seed of seeds) {
-      if (profile.seedLanguages?.[seed.track.trackKey] || this.languageLookupQueue.has(seed.track.trackKey)) continue
+      if (recommendationSeedLanguage(seed, profile) || this.languageLookupQueue.has(seed.track.trackKey)) continue
       if (this.languageSeedLookupsQueued >= Math.floor(LANGUAGE_LOOKUP_BUDGET / 2)) break
       if (this.enqueueLanguageLookup({ kind: 'seed', trackKey: seed.track.trackKey, artist: seed.track.artists[0] ?? '', title: seed.track.title,
         album: seed.track.album, durationSec: seed.track.durationSec, dbId: seed.track.dbId })) this.languageSeedLookupsQueued += 1
@@ -897,80 +914,40 @@ class RecommendationService {
     this.wantsPublish = this.published.length === 0 || this.wantsPublish
     await this.activate()
   }
-  private nextFrontier(): SeedFrontier | undefined {
+  private nextFrontier(excluded: ReadonlySet<SeedFrontier> = new Set(), cohort?: SeedFrontier): SeedFrontier | undefined {
     const now = Date.now()
     const primaryRemaining = this.frontier.some(seed => !seed.exhausted && seed.source !== 'search')
-    const bucketNames = ['steady', 'recent', 'discovery'] as const, weights = [0.6, 0.25, 0.15]
-    const ready = this.frontier.filter(seed => !seed.exhausted && (!primaryRemaining || seed.source !== 'search') && (seed.retryAt ?? 0) <= now)
-    const active = bucketNames.map((name, index) => ready.some(seed => (seed.seed.bucket ?? 'steady') === name) ? index : -1).filter(index => index >= 0)
-    if (!active.length) return
-    const total = active.reduce((sum, index) => sum + weights[index], 0), count = this.seedBucketCounts.reduce((sum, value) => sum + value, 0)
-    const selected = active.reduce((best, next) => weights[next] / total * (count + 1) - this.seedBucketCounts[next]
-      > weights[best] / total * (count + 1) - this.seedBucketCounts[best] ? next : best, active[0])
-    const bucket = bucketNames[selected]
-    const eligible = ready.filter(seed => (seed.seed.bucket ?? 'steady') === bucket)
-    const languagePools = new Map<string, SeedFrontier[]>()
-    for (const seed of eligible) {
-      const code = this.profile?.seedLanguages?.[seed.seed.track.trackKey] ?? '?'
-      const pool = languagePools.get(code) ?? []
-      pool.push(seed); languagePools.set(code, pool)
+    const ready = this.frontier.filter(seed => !excluded.has(seed) && !seed.exhausted
+      && (!primaryRemaining || seed.source !== 'search') && (seed.retryAt ?? 0) <= now)
+    let eligible = seedSchedulingPool(ready, this.profile, this.seedLanguageCounts, this.seedBucketCounts)
+    // Cohorts improve multi-seed agreement only after language/bucket quotas are satisfied.
+    if (cohort) {
+      const artists = new Set(cohort.seed.track.artists.map(normalizeRecordingText).filter(Boolean))
+      const genre = normalizeRecordingText(cohort.seed.track.traits?.genre ?? '')
+      const related = eligible.filter(item => item.seed.track.artists.some(artist => artists.has(normalizeRecordingText(artist)))
+        || !!genre && normalizeRecordingText(item.seed.track.traits?.genre ?? '') === genre)
+      if (related.length) eligible = related
     }
-    const languageEntries = [...languagePools.entries()]
-    const effectiveLanguages = this.profile ? effectiveLanguageWeights(this.profile) : {}
-    const languageWeights = languageEntries.map(([code]) => code === '?'
-      ? Math.min(0.2, Math.max(0.05, this.profile?.unknownShare ?? 1))
-      : Math.max(0.01, effectiveLanguages[code] ?? 0))
-    const languageTotal = languageWeights.reduce((sum, weight) => sum + weight, 0)
-    const languageCount = [...this.seedLanguageCounts.values()].reduce((sum, value) => sum + value, 0)
-    const languageDebt = (candidate: number) => languageWeights[candidate] / languageTotal * (languageCount + 1)
-      - (this.seedLanguageCounts.get(languageEntries[candidate][0]) ?? 0)
-    let languageIndex = 0
-    for (let index = 1; index < languageEntries.length; index += 1) {
-      if (languageDebt(index) > languageDebt(languageIndex)) languageIndex = index
-    }
-    const language = languageEntries[languageIndex]?.[0] ?? '?'
     for (let offset = 0; offset < this.frontier.length; offset += 1) {
       const index = (this.nextSeed + offset) % this.frontier.length
-      const frontier = this.frontier[index]
-      if (ready.includes(frontier) && (frontier.seed.bucket ?? 'steady') === bucket
-        && (this.profile?.seedLanguages?.[frontier.seed.track.trackKey] ?? '?') === language) {
-        this.seedBucketCounts[selected] += 1
-        this.seedLanguageCounts.set(language, (this.seedLanguageCounts.get(language) ?? 0) + 1)
-        this.nextSeed = (index + 1) % this.frontier.length
-        return frontier
-      }
+      const item = this.frontier[index]
+      if (!eligible.includes(item)) continue
+      const bucket = (['steady', 'recent', 'discovery'] as const).indexOf(item.seed.bucket ?? 'steady')
+      this.seedBucketCounts[bucket] += 1
+      const language = this.profile ? recommendationSeedLanguage(item.seed, this.profile) ?? '?' : '?'
+      this.seedLanguageCounts.set(language, (this.seedLanguageCounts.get(language) ?? 0) + 1)
+      this.nextSeed = (index + 1) % this.frontier.length
+      return item
     }
   }
-  /** Fetch up to three seed pages as one small related cohort. */
+  /** Every request in a multi-seed batch pays the same language quota. */
   private nextFrontierBatch(maxSize = 3): SeedFrontier[] {
-    const first = this.nextFrontier()
-    if (!first || first.source === 'search') return first ? [first] : []
-    if (maxSize <= 1) return [first]
-    const artistKeys = new Set(first.seed.track.artists.map(normalizeRecordingText).filter(Boolean))
-    const genreKey = normalizeRecordingText(first.seed.track.traits?.genre ?? '')
-    if (!artistKeys.size && !genreKey) return [first]
-    const ready = new Set(this.frontier.filter(seed => !seed.exhausted && seed.source === first.source
-      && (seed.seed.bucket ?? 'steady') === (first.seed.bucket ?? 'steady') && (seed.retryAt ?? 0) <= Date.now()))
-    const sameCohort = (seed: SeedFrontier) => {
-      if (seed === first || !ready.has(seed)) return false
-      const sameArtist = seed.seed.track.artists.some(artist => artistKeys.has(normalizeRecordingText(artist)))
-      const sameGenre = !!genreKey && genreKey === normalizeRecordingText(seed.seed.track.traits?.genre ?? '')
-      return sameArtist || sameGenre
-    }
-    const others = this.frontier.filter(sameCohort)
-    const firstLanguage = this.profile?.seedLanguages?.[first.seed.track.trackKey] ?? '?'
-    others.sort((left, right) => Number((this.profile?.seedLanguages?.[right.seed.track.trackKey] ?? '?') === firstLanguage)
-      - Number((this.profile?.seedLanguages?.[left.seed.track.trackKey] ?? '?') === firstLanguage))
-    const batch = [first, ...others.slice(0, Math.min(2, maxSize - 1))]
-    const bucketIndex = (['steady', 'recent', 'discovery'] as const).indexOf(first.seed.bucket ?? 'steady')
-    for (const seed of batch.slice(1)) {
-      if (bucketIndex >= 0) this.seedBucketCounts[bucketIndex] += 1
-      const language = this.profile?.seedLanguages?.[seed.seed.track.trackKey] ?? '?'
-      this.seedLanguageCounts.set(language, (this.seedLanguageCounts.get(language) ?? 0) + 1)
-    }
-    if (batch.length > 1) {
-      const lastIndex = this.frontier.indexOf(batch[batch.length - 1])
-      this.nextSeed = (lastIndex + 1) % this.frontier.length
+    const batch: SeedFrontier[] = []
+    while (batch.length < Math.min(3, maxSize)) {
+      const item = this.nextFrontier(new Set(batch), batch[0])
+      if (!item) break
+      batch.push(item)
+      if (item.source === 'search') break
     }
     return batch
   }
@@ -1101,7 +1078,6 @@ class RecommendationService {
       frontier.exhausted = true
       frontier.retryAt = null
       this.emit({ error: null, retryAt: null })
-      this.publish()
       this.save(true)
       return true
     }
@@ -1163,13 +1139,11 @@ class RecommendationService {
             frontier.retryAt = null
             this.fallback(frontier)
             this.emit({ error: null, retryAt: null })
-            this.publish()
             this.save(true)
             continue
           }
           frontier.retryAt = result.retryAt ?? Date.now() + 30_000
           this.emit({ error: result.error, retryAt: frontier.retryAt })
-          this.publish()
           this.save(true)
           canContinue = false
           continue
@@ -1186,12 +1160,13 @@ class RecommendationService {
         frontier.emptyPages = accepted ? 0 : frontier.emptyPages + 1
         frontier.cursor = result.nextCursor
         if (!result.nextCursor || frontier.emptyPages >= 3) this.fallback(frontier)
-        if (this.wantsPublish && cycle + index >= 1) this.publish()
         this.save()
       } catch (cause) {
         if (!this.handleFrontierFailure(frontier, cause, epoch)) canContinue = false
       }
     }
+    // Accept the whole batch before publishing; response order must not determine language mix.
+    if (this.wantsPublish && cycle + requests.length >= 2) this.publish()
     return canContinue
   }
   private fill = async (): Promise<void> => {
@@ -1366,9 +1341,6 @@ class RecommendationService {
       return true
     })
     const room = Math.min(PUBLISH_SIZE, FEED_LIMITS.published - this.published.length)
-    const selected: FeedCandidate[] = []
-    const artistWindow = this.published.slice(-9).map(item => item.identity.artist)
-    const familyWindow = this.published.slice(-9).map(item => `${item.identity.artist}|${item.identity.title}`)
     const available = this.candidates.filter(item => !this.isReserved(this.group(item.groupKey))
       && !this.sessionSeen.has(this.group(item.groupKey)) && !this.sessionSeen.has(keyOf(item.track)) && this.cooldownUntil(this.group(item.groupKey)) <= Date.now())
       .sort((a, b) => this.ranker(b) - this.ranker(a))
@@ -1382,18 +1354,8 @@ class RecommendationService {
       this.candidates = this.candidates.filter(item => !rejectedWeak.has(item))
       available.splice(0, available.length, ...ranked)
     }
-    while (selected.length < room && available.length) {
-      const lastSeed = selected.at(-1)?.seedTrackKey ?? this.published.at(-1)?.seedTrackKey
-      const diverseArtist = (item: FeedCandidate) => !item.identity.artist || artistWindow.slice(-9).filter(artist => artist === item.identity.artist).length < 2
-      const diverseFamily = (item: FeedCandidate) => !familyWindow.slice(-9).includes(`${item.identity.artist}|${item.identity.title}`)
-      let index = available.findIndex(item => item.seedTrackKey !== lastSeed && diverseArtist(item) && diverseFamily(item))
-      if (index < 0) index = available.findIndex(item => diverseArtist(item) && diverseFamily(item))
-      if (index < 0) index = available.findIndex(diverseFamily)
-      const item = available.splice(index >= 0 ? index : 0, 1)[0]
-      if (selected.some(previous => this.group(previous.groupKey) === this.group(item.groupKey))) continue
-      selected.push(item)
-      artistWindow.push(item.identity.artist)
-      familyWindow.push(`${item.identity.artist}|${item.identity.title}`)
+    const selected = selectRecommendationBatch(available, this.profile, this.published, room)
+    for (const item of selected) {
       this.sessionSeen.add(this.group(item.groupKey))
       this.sessionSeen.add(keyOf(item.track))
     }
@@ -1452,10 +1414,7 @@ class RecommendationService {
       return !excludedGroups.has(group) && !this.radioSeen.has(group) && !this.radioSeen.has(keyOf(item.track)) && !this.isReserved(group)
         && this.skipCooldownUntil(group) <= Date.now() && playable(item.track)
       })
-      const diverseArtist = (item: FeedCandidate) => !item.identity.artist || this.radioRecent.filter(previous => previous.identity.artist === item.identity.artist).length < 2
-      const diverseFamily = (item: FeedCandidate) => !this.radioRecent.some(previous => previous.identity.artist === item.identity.artist && previous.identity.title === item.identity.title)
-      return eligible.find(item => diverseArtist(item) && diverseFamily(item) && item.seedTrackKey !== this.radioRecent.at(-1)?.seedTrackKey)
-        ?? eligible.find(item => diverseArtist(item) && diverseFamily(item)) ?? eligible.find(diverseFamily) ?? eligible[0]
+      return selectRecommendationBatch(eligible, this.profile, this.radioRecent, 1)[0]
     }
     let candidate = pick()
     // Continue beyond one prefetch cycle when its pages contain only previously

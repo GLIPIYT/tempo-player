@@ -34,6 +34,7 @@ export interface SeedFrontier {
 }
 export interface StoredRecommendationState {
   version: 1
+  languageSchedulingVersion?: number
   revision: number
   candidates: FeedCandidate[]
   published: FeedCandidate[]
@@ -84,6 +85,8 @@ export function hydrateRecommendationState(context: RecommendationContext): Stor
   const stored = context.storedState
   if (!stored || stored.data.version !== 1) return null
   const data = stored.data as unknown as StoredRecommendationState
+  if (data.languageSchedulingVersion !== undefined && (!Number.isSafeInteger(data.languageSchedulingVersion)
+    || data.languageSchedulingVersion < 0)) return null
   if (!Array.isArray(data.candidates) || data.candidates.length > FEED_LIMITS.candidates
     || !Array.isArray(data.published) || data.published.length > FEED_LIMITS.published
     || (data.discoveryPool !== undefined && (!Array.isArray(data.discoveryPool) || data.discoveryPool.length > FEED_LIMITS.discoveryPool

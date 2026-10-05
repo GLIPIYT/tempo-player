@@ -407,9 +407,25 @@ export function candidateLanguage(candidate: Readonly<FeedCandidate>, profile: T
   const direct = strongestLanguage(feature?.data.language as unknown as LanguageEvidence | undefined)
   if (direct) return direct[0]
 
+  return metadataLanguage(candidate.track.title, candidate.track.tags ?? [], profile)
+}
+
+/** Language belongs to the seed recording, including seeds discovered beyond the taste profile. */
+export function recommendationSeedLanguage(seed: RecommendationSeed, profile: TasteProfile): string | null {
+  const key = seed.track.trackKey
+  const known = profile.seedLanguages?.[key]
+  if (known) return known
+  const group = profile.groups[key] ?? key
+  const feature = profile.features.get(key)
+    ?? [...profile.features.values()].find(item => profile.groups[item.trackKey] === group)
+  const direct = strongestLanguage(feature?.data.language as unknown as LanguageEvidence | undefined)
+  return direct?.[0] ?? metadataLanguage(seed.track.title, seed.track.traits?.tags ?? [], profile)
+}
+
+function metadataLanguage(title: string, tags: readonly string[], profile: TasteProfile): string | null {
   // SoundCloud tags occasionally carry an explicit language label. Accept
   // only clear language tags; generic two-letter tags can mean other things.
-  for (const raw of candidate.track.tags ?? []) {
+  for (const raw of tags) {
     const tag = raw.trim().toLocaleLowerCase()
     const explicit = tag.match(/^(?:language|lang|язык)\s*[:=]\s*(.+)$/iu)?.[1]
     const value = (explicit ?? tag).replace(/^#|\s+(?:vocals?|lyrics?)$/giu, '').trim()
@@ -422,7 +438,7 @@ export function candidateLanguage(candidate: Readonly<FeedCandidate>, profile: T
 
   // Short metadata is too weak for a language detector, but Cyrillic script
   // reliably separates Russian-language catalogue items from Latin titles.
-  if (titleScriptLanguage(candidate.track.title)) {
+  if (titleScriptLanguage(title)) {
     const learned = Object.entries(effectiveLanguageWeights(profile)).filter(([code, weight]) => CYRILLIC_LANGUAGE_CODES.has(code) && weight > 0)
       .sort((a, b) => b[1] - a[1])[0]
     if (learned) return learned[0]
