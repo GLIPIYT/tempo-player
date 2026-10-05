@@ -388,7 +388,7 @@ export default function Sidebar() {
           toast.show(`${t('Added to')} ${name}`)
           bumpLibraryVersion()
         })
-        .catch(() => undefined)
+        .catch((cause: unknown) => toast.show(cause instanceof Error ? cause.message : String(cause), 'error'))
     })
     return () => registerPlaylistDropper(null)
   }, [t])

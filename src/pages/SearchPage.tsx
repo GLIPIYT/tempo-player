@@ -29,6 +29,7 @@ import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
 import { scTrackToUnified, scTracksToUnified } from '../utils/unified'
 import { ytHitToUnified, ytdlpPath } from '../providers/youtubeProvider'
+import { bumpLibraryVersion } from '../utils/libraryVersion'
 
 /** Emitted once per track as its metadata resolves. */
 const YT_ENRICH_EVENT = 'ytdlp://enriched'
@@ -122,21 +123,7 @@ function ScRowMenu({ track }: { track: ScTrack }) {
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null)
-  const [note, setNote] = useState<{ text: string; bad: boolean } | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
-  const timerRef = useRef<number | null>(null)
-
-  const flash = useCallback((text: string, bad: boolean) => {
-    setNote({ text, bad })
-    if (timerRef.current !== null) window.clearTimeout(timerRef.current)
-    timerRef.current = window.setTimeout(() => setNote(null), 1500)
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current)
-    }
-  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -183,7 +170,6 @@ function ScRowMenu({ track }: { track: ScTrack }) {
       close()
       return
     }
-    setNote(null)
     setSub(false)
     setCreating(false)
     setNewName('')
@@ -194,10 +180,11 @@ function ScRowMenu({ track }: { track: ScTrack }) {
   const addTo = async (pl: Playlist) => {
     try {
       await api.addScTrackToPlaylist(pl.id, track)
+      bumpLibraryVersion()
       setSub(false)
-      flash(`${t('Added to')} ${pl.name}`, false)
+      toast.show(`${t('Added to')} ${pl.name}`)
     } catch (e: unknown) {
-      flash(errText(e), true)
+      toast.show(errText(e), 'error')
     }
   }
 
@@ -207,12 +194,13 @@ function ScRowMenu({ track }: { track: ScTrack }) {
     try {
       const pl = await api.createPlaylist(name)
       await api.addScTrackToPlaylist(pl.id, track)
+      bumpLibraryVersion()
       setCreating(false)
       setNewName('')
       setSub(false)
-      flash(`${t('Added to')} ${pl.name}`, false)
+      toast.show(`${t('Added to')} ${pl.name}`)
     } catch (e: unknown) {
-      flash(errText(e), true)
+      toast.show(errText(e), 'error')
     }
   }
 
@@ -238,7 +226,6 @@ function ScRowMenu({ track }: { track: ScTrack }) {
       </button>
       {open ? (
         <div className="menu-pop" role="menu">
-          {note ? <div className={'menu-note' + (note.bad ? ' is-bad' : '')}>{note.text}</div> : null}
           {sub ? (
             <>
               <div className="menu-title">{t('Add to playlist')}</div>
@@ -332,6 +319,7 @@ export default function SearchPage() {
   const version = useLibraryVersion()
   const player = usePlayer()
   const [results, setResults] = useState<SearchResults | null>(null)
+  const resultsForQuery = useRef<{ query: string; results: SearchResults | null }>({ query: '', results: null })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [scStatuses, setScStatuses] = useState<Record<'tracks' | 'playlists' | 'artists', ScStatus>>({
@@ -373,27 +361,36 @@ export default function SearchPage() {
   useEffect(() => {
     if (trimmed.length === 0) {
       setResults(null)
+      resultsForQuery.current = { query: '', results: null }
       setError(null)
       setLoading(false)
       return
     }
-    setResults(null)
+    const hasCurrentResults = resultsForQuery.current.query === trimmed && resultsForQuery.current.results !== null
+    if (!hasCurrentResults) {
+      setResults(null)
+      setLoading(true)
+    }
     setError(null)
-    setLoading(true)
     let cancelled = false
     const timer = window.setTimeout(() => {
       api
         .searchAll(trimmed)
         .then((r) => {
           if (cancelled) return
+          resultsForQuery.current = { query: trimmed, results: r }
           setResults(r)
           setError(null)
           setLoading(false)
         })
         .catch((e: unknown) => {
           if (cancelled) return
-          setError(e instanceof Error ? e.message : String(e))
-          setLoading(false)
+          if (hasCurrentResults) {
+            setError(null)
+          } else {
+            setError(e instanceof Error ? e.message : String(e))
+            setLoading(false)
+          }
         })
     }, 250)
     return () => {
