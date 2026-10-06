@@ -12,10 +12,13 @@ const VOICE_LOW_HZ = 180
 const VOICE_HIGH_HZ = 3600
 const FORMANT_LOW_HZ = 350
 const FORMANT_HIGH_HZ = 2800
-const VOICE_ON_THRESHOLD = 0.2
-const VOICE_HOLD_THRESHOLD = 0.13
-const RELEASE_MS = 300
-const MIN_SEGMENT_MS = 120
+// getByteFrequencyData() stores the analyser's -85..-15 dB range in bytes.
+// A typical singing voice has per-bin levels around -70..-55 dB, so normalizing
+// against 0.012 (about -38 dB) made the score nearly always zero.
+const VOICE_ON_THRESHOLD = 0.12
+const VOICE_HOLD_THRESHOLD = 0.075
+const RELEASE_MS = 260
+const MIN_SEGMENT_MS = 100
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
@@ -75,7 +78,7 @@ export function estimateVocalActivity(
   const bandScore = clamp01((bandShare - 0.14) / 0.36)
   const formantScore = clamp01((formantShare - 0.18) / 0.42)
   const peakScore = clamp01(peaks / 3.25)
-  const levelScore = clamp01((averageLevel - 0.0005) / 0.012)
+  const levelScore = clamp01((averageLevel - 0.00005) / 0.0007)
   return clamp01((bandScore * 0.48 + formantScore * 0.32 + peakScore * 0.2) * levelScore)
 }
 

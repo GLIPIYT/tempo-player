@@ -205,10 +205,13 @@ export default function Sidebar() {
 
       const sidebarRect = sidebar.getBoundingClientRect()
       const targetRect = target.getBoundingClientRect()
-      const x = targetRect.left - sidebarRect.left
-      const y = targetRect.top - sidebarRect.top + 6
+      // CSS zoom scales getBoundingClientRect() values, but also scales the
+      // marker's CSS transform. Convert back to the sidebar's layout pixels.
+      const zoom = Math.max(50, Math.min(200, settings.font.uiScalePct)) / 100
+      const x = (targetRect.left - sidebarRect.left) / zoom
+      const y = (targetRect.top - sidebarRect.top) / zoom + 6
       marker.style.transform = `translate3d(${x}px, ${y}px, 0)`
-      marker.style.height = `${Math.max(0, targetRect.height - 12)}px`
+      marker.style.height = `${Math.max(0, targetRect.height / zoom - 12)}px`
       marker.dataset.visible = 'true'
 
       if (!marker.classList.contains('is-ready')) {
@@ -240,7 +243,7 @@ export default function Sidebar() {
       resizeObserver.disconnect()
       window.removeEventListener('resize', updatePosition)
     }
-  }, [activeMarkerKey, collapsed, width])
+  }, [activeMarkerKey, collapsed, settings.font.uiScalePct, width])
 
   useEffect(() => {
     let cancelled = false
