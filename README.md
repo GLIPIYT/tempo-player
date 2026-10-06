@@ -2,36 +2,52 @@
 
 <p align="center">
   <strong>Your music, together in one player.</strong><br>
-  A local-first desktop player for the music you own and the music you find.
+  A Windows desktop player for your local collection and the music you find online.
 </p>
 
 <p align="center">
   <a href="README.ru.md">Русская версия</a> ·
+  <a href="https://github.com/GLIPIYT/tempo-player/releases">Download for Windows</a> ·
   <a href="https://github.com/GLIPIYT/tempo-player/actions/workflows/ci.yml"><img src="https://github.com/GLIPIYT/tempo-player/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a> ·
   <a href="LICENSE">MIT License</a>
 </p>
 
-Tempo is a local-first music player for Windows that brings your files, SoundCloud and YouTube Music into one library and queue. Your collection stays on your computer, and playback keeps going as you move between pages.
-
-**[Get Tempo](https://github.com/GLIPIYT/tempo-player/releases)** · **[Report a problem](https://github.com/GLIPIYT/tempo-player/issues)**
-
 <p align="center">
-  <img src="docs/screenshots/tempo-showcase.png" alt="A visual tour of Tempo's home, library, albums, artists, playlists and settings" width="100%">
+  <a href="docs/screenshots/1.0.0/">
+    <img src="docs/screenshots/tempo-showcase-en.png" alt="Tempo walkthrough: Home, library, albums, artists, playlists, search, playback, lyrics, profile and settings" width="100%">
+  </a>
 </p>
 
-## One place for your music
+## What Tempo brings together
 
-| | |
+- **Your local library.** Scan folders with MP3, FLAC, M4A, AAC, OGG, Opus and WAV files. Tempo reads track tags and artwork, then lets you browse by track, album, artist or playlist. Your original music files stay where they are.
+- **Online discovery.** Search SoundCloud and YouTube Music beside your own tracks. Build a queue from what you find, and cache supported tracks for later playback.
+- **A player you can tune.** Use playlists, shuffle, repeat, playback speed, crossfade and loudness normalization. The ten-band equalizer works with local and cached audio; choose a waveform or spectrum visualizer.
+- **Lyrics and listening history.** Follow synced lyrics, adjust their timing or edit the text. Your profile shows listening activity and recent plays.
+- **A space that feels personal.** Choose themes, backgrounds, fonts and interface scale. Tempo also includes a floating mini player, Discord Rich Presence and M3U8 playlist import and export.
+- **Recommendations on Home.** Browse a SoundCloud recommendation feed and a separate shelf for a frequently played genre.
+
+## Keyboard shortcuts
+
+Shortcuts work while Tempo is active and focus is outside a text field or control.
+
+| Key | Action |
 |---|---|
-| **Your files, in one library** | Scan MP3, FLAC, M4A, AAC, OGG, Opus and WAV folders. Tempo reads tags, finds covers and makes later scans incremental. Hide tracks without moving or deleting files. |
-| **Music that travels with you** | Search SoundCloud and YouTube Music beside your local collection. Build a queue, shuffle, repeat, tune crossfade and loudness, change playback speed, shape local or cached tracks with a ten-band EQ, and choose a waveform or spectrum visualiser. |
-| **A player that feels like yours** | Create playlists, like tracks, pin artists and albums, follow synced lyrics, and choose a theme, background, font and player layout. |
+| `Space` | Play or pause |
+| `←` / `→` | Previous or next track |
+| `Ctrl` + `←` / `→` | Seek backward or forward by one second |
+| `↑` / `↓` | Raise or lower volume by 5% |
+| `M` | Mute or restore volume |
+| `S` | Toggle shuffle |
+| `R` | Cycle repeat: off, all, one |
 
-Tempo also includes a floating mini player, Discord Rich Presence, listening history, M3U8 playlist import/export and a built-in updater. You can use the local library without an account or cloud service.
+## Install
 
-## Get started
+Download the current Windows installer from [GitHub Releases](https://github.com/GLIPIYT/tempo-player/releases). The release workflow publishes an NSIS installer.
 
-Current releases are Windows NSIS installers. To build Tempo from source, install [Node.js 22](https://nodejs.org/), [Rust](https://rustup.rs/) and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your platform.
+## Build from source
+
+Tempo uses Node.js 22, stable Rust and the [Tauri prerequisites for Windows](https://tauri.app/start/prerequisites/).
 
 ```bash
 git clone https://github.com/GLIPIYT/tempo-player.git
@@ -40,33 +56,41 @@ npm ci
 npm run tauri dev
 ```
 
-Create a Windows installer with `npm run tauri build`. For frontend-only work, `npm run dev` starts Vite; features that use the library or playback need the Tauri backend.
+Build a Windows installer with:
 
-## Under the hood
+```bash
+npm run tauri build
+```
 
-| Area | Implementation |
-|---|---|
-| Desktop | Tauri 2; React 18, TypeScript and Vite |
-| Playback | Persistent HTML audio engine, queue controller and `hls.js` for SoundCloud |
-| Native core | Rust commands for scanning, metadata, networking and app integration |
-| Storage | SQLite with ordered migrations; music files stay in their original folders |
-| Sources | Local files, SoundCloud and YouTube Music through a shared track model |
+`npm run dev` starts the frontend only. The library, audio playback and native integrations require the Tauri app.
 
-The frontend crosses into Rust through typed wrappers in `src/api/`. The Rust core owns the database and filesystem work; React pages and providers work with shared track models. See [ARCHITECTURE.md](ARCHITECTURE.md) for the data model, module boundaries and runtime flows.
+## Checks
 
-## Development checks
+Run the same frontend and Rust checks used by the repository's CI:
 
 ```bash
 npm run check
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-GitHub Actions runs frontend type checks, tests, hook-order and lint checks, workflow linting, and Rust tests on pushes and pull requests to `main`.
+GitHub Actions runs the frontend type check, Vitest tests, hook-order check, ESLint, workflow linting and Rust tests on pushes and pull requests to `main`.
 
-## Project
+## Technology
 
-Tempo is in alpha (`0.9.0`) and Windows-first. The release workflow currently publishes a Windows installer. Network access is used by online features and the updater; the local library does not require an account or cloud service.
+| Area | Stack |
+|---|---|
+| Desktop app | Tauri 2 |
+| Frontend | React 18, TypeScript and Vite |
+| Native services | Rust commands for scanning, metadata, networking and system integration |
+| Storage | SQLite; local music files remain in their original folders |
+| Audio | HTML audio playback and `hls.js` for SoundCloud streams |
 
-[Releases](https://github.com/GLIPIYT/tempo-player/releases) · [Issues](https://github.com/GLIPIYT/tempo-player/issues) · [Architecture](ARCHITECTURE.md)
+The frontend calls the Rust core through typed wrappers in `src/api/`. See [ARCHITECTURE.md](ARCHITECTURE.md) for the application structure and data flows.
 
-Released under the [MIT License](LICENSE).
+## Local data and online services
+
+Tempo does not require an account for your local library. Library data, playlists and listening history are stored on the device. Online search, streams, lyrics, recommendations and update checks need an internet connection and depend on the relevant provider being available.
+
+## Project links
+
+[Releases](https://github.com/GLIPIYT/tempo-player/releases) · [Issues](https://github.com/GLIPIYT/tempo-player/issues) · [Architecture](ARCHITECTURE.md) · [License](LICENSE)

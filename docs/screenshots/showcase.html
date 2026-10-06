@@ -1,81 +1,149 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Tempo — a closer look</title>
+  <meta name="color-scheme" content="dark">
+  <title>Tempo — обзор плеера</title>
   <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      color: #f4f1ef;
-      background: #08090d;
-      font-family: Inter, "Segoe UI", Arial, sans-serif;
-      background-image: radial-gradient(ellipse at 50% 10%, #251316 0, #0b0a0e 38rem, #08090d 75rem);
-    }
-    main { width: min(100% - 80px, 1060px); margin: 0 auto; padding: 92px 0 108px; }
-    header { text-align: center; padding: 12px 0 86px; }
-    .eyebrow { color: #ff7949; text-transform: uppercase; letter-spacing: .28em; font-size: 13px; font-weight: 700; }
-    h1 { margin: 18px 0 14px; font-size: 78px; line-height: .98; letter-spacing: -.055em; }
-    h1 span, h2 span { color: #ff7849; }
-    header p { margin: 0 auto; max-width: 620px; color: #aaa8b2; font-size: 19px; line-height: 1.6; }
-    section { margin: 0 auto 96px; }
-    .section-head { margin: 0 0 25px; text-align: center; }
-    .section-head .eyebrow { font-size: 11px; }
-    h2 { margin: 10px 0 8px; font-size: 38px; letter-spacing: -.035em; }
-    .section-head p { margin: 0; color: #9998a2; font-size: 16px; }
-    figure {
-      margin: 0;
-      padding: 10px;
-      border: 1px solid transparent;
-      border-radius: 20px;
-      background: linear-gradient(#11131b, #11131b) padding-box, linear-gradient(135deg, #ff7448, #d63865 58%, #473c74) border-box;
-      box-shadow: 0 22px 75px #d33e481b, 0 0 28px #ff744815;
-    }
-    figure img { display: block; width: 100%; height: auto; border-radius: 12px; }
-    figcaption { padding: 14px 8px 5px; color: #b9b7c2; font-size: 13px; letter-spacing: .04em; }
-    footer { padding-top: 25px; text-align: center; color: #7f7e89; font-size: 13px; letter-spacing: .08em; }
+    :root { color-scheme: dark; --text:#f7f3f6; --muted:#b2a9b2; --pink:#ff477f; }
+    * { box-sizing:border-box; }
+    html,body { margin:0; min-width:1280px; color:var(--text); background:#09080d; }
+    body { font-family:"Segoe UI",Inter,Arial,sans-serif; background:radial-gradient(ellipse at 50% 0%,#34111f 0,transparent 34rem),radial-gradient(ellipse at 0% 45%,#1a0d19 0,transparent 45rem),radial-gradient(ellipse at 100% 78%,#21101c 0,transparent 42rem),#09080d; }
+    main { width:1180px; margin:0 auto; padding:58px 0 76px; }
+    header { text-align:center; padding:0 26px 74px; }
+    .kicker,.eyebrow { color:#ff6c98; font-size:12px; font-weight:750; letter-spacing:.24em; text-transform:uppercase; }
+    h1 { margin:20px 0 18px; font-size:76px; line-height:.99; letter-spacing:-.06em; }
+    h1 span { color:var(--pink); }
+    .intro { width:800px; margin:0 auto; color:#c2b9c2; font-size:19px; line-height:1.55; }
+    .pills { display:flex; justify-content:center; gap:10px; margin:28px 0 18px; }
+    .pill { padding:9px 14px; border:1px solid #563048; border-radius:999px; color:#e8dbe3; background:#1a1019; font-size:13px; }
+    .locale-note { margin:9px 0 0; color:#948993; font-size:12px; letter-spacing:.03em; }
+    .cover-panel { width:1160px; margin:45px auto 0; padding:8px; border-radius:22px; background:linear-gradient(135deg,#ff477f,#a83877 58%,#623859); box-shadow:0 22px 72px #df346b20,0 0 36px #ff477f12; }
+    .cover-panel img { display:block; width:100%; height:auto; border-radius:15px; }
+    .cover-caption { margin-top:14px; color:var(--muted); font-size:14px; letter-spacing:.02em; }
+    section { margin:0 0 88px; }
+    .section-head { margin:0 0 26px; text-align:center; }
+    .section-head h2 { margin:11px 0 8px; font-size:39px; line-height:1.1; letter-spacing:-.045em; }
+    .section-head p { max-width:760px; margin:0 auto; color:var(--muted); font-size:16px; line-height:1.5; }
+    figure { min-width:0; margin:0; padding:9px; border:1px solid transparent; border-radius:19px; background:linear-gradient(#101017,#101017) padding-box,linear-gradient(135deg,#ff477f,#803e71 58%,#3c2c49) border-box; box-shadow:0 21px 68px #e3366d17; }
+    figure img { display:block; width:100%; height:auto; border-radius:11px; }
+    figcaption { padding:13px 7px 4px; color:#bcb2be; font-size:13px; letter-spacing:.02em; }
+    .settings-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+    .settings-grid figure { padding:7px; }
+    .settings-grid figcaption { padding:10px 5px 3px; font-size:12px; }
+    footer { padding-top:4px; text-align:center; color:#93848f; font-size:12px; letter-spacing:.17em; text-transform:uppercase; }
   </style>
 </head>
 <body>
   <main>
     <header>
-      <div class="eyebrow">Tempo · музыка в одном месте</div>
-      <h1>Твоя музыка.<br><span>Твой ритм.</span></h1>
-      <p>Локальная коллекция, любимые альбомы и очередь воспроизведения — в одном спокойном пространстве.</p>
+      <div class="kicker" id="kicker"></div>
+      <h1 id="title"></h1>
+      <p class="intro" id="intro"></p>
+      <div class="pills" id="pills"></div>
+      <p class="locale-note" id="locale-note"></p>
+      <div class="cover-panel"><img src="1.0.0/library-cover-grid.png" id="cover-grid" alt=""></div>
+      <p class="cover-caption" id="cover-caption"></p>
     </header>
-
-    <section>
-      <div class="section-head"><div class="eyebrow">01 · главный экран</div><h2>Начни с <span>любимого</span></h2><p>Продолжай слушать с того места, где остановился.</p></div>
-      <figure><img src="01-home.png" alt="Главный экран Tempo"><figcaption>Новая музыка, недавние треки и твоя библиотека.</figcaption></figure>
-    </section>
-
-    <section>
-      <div class="section-head"><div class="eyebrow">02 · коллекция</div><h2>Всё звучит <span>вместе</span></h2><p>Файлы с компьютера и музыка из сети — одна библиотека.</p></div>
-      <figure><img src="02-library.png" alt="Библиотека Tempo"><figcaption>Треки, обложки, поиск и очередь — всегда под рукой.</figcaption></figure>
-    </section>
-
-    <section>
-      <div class="section-head"><div class="eyebrow">03 · альбомы и люди</div><h2>Найди свой <span>звук</span></h2><p>Исследуй коллекцию по альбомам и исполнителям.</p></div>
-      <figure><img src="03-albums.png" alt="Альбомы в Tempo"><figcaption>Альбомы, собранные из твоей музыкальной коллекции.</figcaption></figure>
-    </section>
-
-    <section>
-      <div class="section-head"><div class="eyebrow">04 · любимые артисты</div><h2>Знакомые <span>голоса</span></h2><p>Страница исполнителя помогает вернуться к его музыке.</p></div>
-      <figure><img src="04-artists.png" alt="Исполнители в Tempo"><figcaption>Артисты и треки из личной библиотеки.</figcaption></figure>
-    </section>
-
-    <section>
-      <div class="section-head"><div class="eyebrow">05 · подборки</div><h2>Собери свой <span>микс</span></h2><p>Плейлисты для любого настроения и момента.</p></div>
-      <figure><img src="05-playlists.png" alt="Плейлисты в Tempo"><figcaption>Твои подборки и любимые треки в одном месте.</figcaption></figure>
-    </section>
-
-    <section>
-      <div class="section-head"><div class="eyebrow">06 · под себя</div><h2>Плеер, который <span>твой</span></h2><p>Настрой внешний вид и поведение Tempo.</p></div>
-      <figure><img src="06-settings.png" alt="Настройки Tempo"><figcaption>Язык, оформление, интеграции и параметры воспроизведения.</figcaption></figure>
-    </section>
-
-    <footer>T E M P O &nbsp; · &nbsp; слушай по-своему</footer>
+    <div id="tour"></div>
+    <footer id="footer"></footer>
   </main>
+  <script>
+    const copy = {
+      en: {
+        lang:'en', title:'Tempo — a closer look', kicker:'TEMPO · DESKTOP MUSIC PLAYER',
+        titleFirst:'Your music.', titleAccent:'One player.',
+        intro:'Keep local files, SoundCloud and YouTube Music together in one library and queue. Find a track, shape the way it plays, and make the listening space yours.',
+        pills:['Local library','SoundCloud','YouTube Music','Synced lyrics'],
+        locale:'The app interface in these screenshots is shown in Russian.',
+        coverAlt:'A grid of cover art from Tempo recommendations',
+        coverCaption:'A quick glimpse of the music shelf: recommendations, covers and genre picks.',
+        footer:'TEMPO · MUSIC THAT FITS YOUR LIBRARY',
+        sections:[
+          { kicker:'01 · HOME', title:'Start from what you love', text:'Recommendations, recent listens and listening mixes share one starting point.', image:'01-home.png', alt:'Tempo Home with recommendations and listening mixes', caption:'Home · recommendations and mixes' },
+          { kicker:'02 · YOUR LIBRARY', title:'Your collection, easy to browse', text:'Scan music folders, search tracks and return to recently added or most-played music.', image:'02-library.png', alt:'Tempo music library with tracks and album information', caption:'Library · local tracks and albums' },
+          { kicker:'03 · ALBUMS', title:'Browse by album', text:'Keep full albums together and open a page with their tracks and artwork.', image:'03-albums.png', alt:'Album collection in Tempo', caption:'Albums · cover grid' },
+          { kicker:'04 · ALBUM PAGE', title:'Open an album', text:'See its track list, play it in order or add it to your favourites.', image:'04-album-detail.png', alt:'Album page with track list in Tempo', caption:'Album · details and tracks' },
+          { kicker:'05 · ARTISTS', title:'Find music by artist', text:'Browse the artists in your collection and jump straight into their music.', image:'05-artists.png', alt:'Artists collection in Tempo', caption:'Artists · your music, grouped by artist' },
+          { kicker:'06 · ARTIST PAGE', title:'Stay with an artist', text:'Open an artist page to see albums and tracks in one place.', image:'06-artist-detail.png', alt:'Artist page with albums and tracks in Tempo', caption:'Artist · albums and tracks' },
+          { kicker:'07 · PLAYLISTS', title:'Make a playlist for the moment', text:'Create and pin playlists, then keep the ones you use most within reach.', image:'07-playlists.png', alt:'Playlist collection in Tempo', caption:'Playlists · pinned and personal collections' },
+          { kicker:'08 · PLAYLIST PAGE', title:'Keep the whole mix together', text:'Manage a playlist, play it from the beginning or export it as M3U8.', image:'08-playlist-detail.png', alt:'Playlist page with its cover grid and tracks in Tempo', caption:'Playlist · artwork and track list' },
+          { kicker:'09 · SEARCH', title:'Find music across your sources', text:'Search your library, SoundCloud and YouTube Music from the same view.', image:'13-search.png', alt:'Search results from the library and online music providers', caption:'Search · local and online results' },
+          { kicker:'10 · PLAYER', title:'Keep listening as you move around', text:'The queue and playback controls stay available while you browse the app.', image:'14-now-playing.png', alt:'Tempo player with the current track and playback controls', caption:'Now playing · track, queue and controls' },
+          { kicker:'11 · LYRICS', title:'Follow along with the song', text:'Use synced lyrics, adjust their timing or edit the text for a track.', image:'15-lyrics.png', alt:'Synced lyrics shown beside the current track', caption:'Lyrics · synchronised with playback' },
+          { kicker:'12 · PROFILE', title:'Look back on what you played', text:'Listening activity and recent plays help you revisit your music.', image:'09-profile.png', alt:'Tempo profile with listening activity and recent plays', caption:'Profile · listening activity and history' },
+          { kicker:'13 · APPEARANCE', title:'Set the space around the music', text:'Choose a theme, app icon, font, background and interface scale.', images:[['10-settings-general.png','General settings'],['11-settings-appearance.png','Themes and typography'],['12-background-settings.png','Background image settings']] }
+        ]
+      },
+      ru: {
+        lang:'ru', title:'Tempo — обзор плеера', kicker:'TEMPO · МУЗЫКАЛЬНЫЙ ПЛЕЕР ДЛЯ ПК',
+        titleFirst:'Вся музыка.', titleAccent:'Один плеер.',
+        intro:'Локальные файлы, SoundCloud и YouTube Music — в одной медиатеке и очереди. Ищите музыку, настраивайте воспроизведение и оформление под себя.',
+        pills:['Локальная медиатека','SoundCloud','YouTube Music','Синхронная лирика'],
+        locale:'', coverAlt:'Сетка обложек из рекомендаций Tempo',
+        coverCaption:'Музыкальная полка: рекомендации, обложки и подборки по жанру.',
+        footer:'TEMPO · МУЗЫКА В ВАШЕЙ МЕДИАТЕКЕ',
+        sections:[
+          { kicker:'01 · ГЛАВНАЯ', title:'Начните с любимой музыки', text:'Рекомендации, недавние прослушивания и подборки собраны на одном экране.', image:'01-home.png', alt:'Главная страница Tempo с рекомендациями и подборками', caption:'Главная · рекомендации и подборки' },
+          { kicker:'02 · МЕДИАТЕКА', title:'Вся коллекция — под рукой', text:'Добавляйте музыкальные папки, ищите треки и возвращайтесь к недавним или часто включаемым.', image:'02-library.png', alt:'Медиатека Tempo со списком треков и альбомов', caption:'Медиатека · локальные треки и альбомы' },
+          { kicker:'03 · АЛЬБОМЫ', title:'Слушайте альбомами', text:'Обложки помогают быстро найти нужный релиз и открыть список его треков.', image:'03-albums.png', alt:'Коллекция альбомов в Tempo', caption:'Альбомы · сетка обложек' },
+          { kicker:'04 · СТРАНИЦА АЛЬБОМА', title:'Откройте альбом', text:'Просматривайте трек-лист, запускайте альбом целиком и добавляйте его в избранное.', image:'04-album-detail.png', alt:'Страница альбома с трек-листом в Tempo', caption:'Альбом · описание и треки' },
+          { kicker:'05 · ИСПОЛНИТЕЛИ', title:'Находите музыку по артистам', text:'Вся коллекция исполнителей — в отдельном списке с быстрым переходом к музыке.', image:'05-artists.png', alt:'Список исполнителей в Tempo', caption:'Исполнители · музыка сгруппирована по артистам' },
+          { kicker:'06 · СТРАНИЦА ИСПОЛНИТЕЛЯ', title:'Продолжайте слушать артиста', text:'На странице артиста собраны его альбомы и треки.', image:'06-artist-detail.png', alt:'Страница исполнителя с альбомами и треками в Tempo', caption:'Исполнитель · альбомы и треки' },
+          { kicker:'07 · ПЛЕЙЛИСТЫ', title:'Подборка для каждого момента', text:'Создавайте и закрепляйте плейлисты, чтобы любимые миксы всегда были рядом.', image:'07-playlists.png', alt:'Список плейлистов в Tempo', caption:'Плейлисты · закреплённые и личные подборки' },
+          { kicker:'08 · СТРАНИЦА ПЛЕЙЛИСТА', title:'Соберите музыку в один микс', text:'Управляйте плейлистом, запускайте его целиком или экспортируйте в M3U8.', image:'08-playlist-detail.png', alt:'Страница плейлиста с обложками и треками в Tempo', caption:'Плейлист · обложки и трек-лист' },
+          { kicker:'09 · ПОИСК', title:'Ищите музыку во всех источниках', text:'Находите треки в своей медиатеке, SoundCloud и YouTube Music в одном окне.', image:'13-search.png', alt:'Результаты поиска по медиатеке и онлайн-сервисам', caption:'Поиск · локальные и сетевые результаты' },
+          { kicker:'10 · ПЛЕЕР', title:'Музыка играет, пока вы листаете', text:'Очередь и управление воспроизведением остаются доступны на других страницах.', image:'14-now-playing.png', alt:'Плеер Tempo с текущим треком и элементами управления', caption:'Сейчас играет · трек, очередь и управление' },
+          { kicker:'11 · ЛИРИКА', title:'Следите за текстом песни', text:'Включайте синхронизированную лирику, подгоняйте тайминг и редактируйте текст.', image:'15-lyrics.png', alt:'Синхронизированная лирика рядом с текущим треком', caption:'Лирика · синхронизация с воспроизведением' },
+          { kicker:'12 · ПРОФИЛЬ', title:'Возвращайтесь к прослушанному', text:'История и активность помогают вспомнить недавние треки.', image:'09-profile.png', alt:'Профиль Tempo со статистикой и недавними прослушиваниями', caption:'Профиль · активность и история' },
+          { kicker:'13 · ОФОРМЛЕНИЕ', title:'Настройте пространство для музыки', text:'Выберите тему, значок приложения, шрифт, фон и масштаб интерфейса.', images:[['10-settings-general.png','Общие настройки'],['11-settings-appearance.png','Темы и шрифт'],['12-background-settings.png','Фоновое изображение']] }
+        ]
+      }
+    };
+    const locale = new URLSearchParams(location.search).get('lang') === 'en' ? 'en' : 'ru';
+    const data = copy[locale];
+    document.documentElement.lang = data.lang;
+    document.title = data.title;
+    document.querySelector('#kicker').textContent = data.kicker;
+    document.querySelector('#title').innerHTML = `${data.titleFirst}<br><span>${data.titleAccent}</span>`;
+    document.querySelector('#intro').textContent = data.intro;
+    document.querySelector('#locale-note').textContent = data.locale;
+    document.querySelector('#cover-grid').alt = data.coverAlt;
+    document.querySelector('#cover-grid').width = 1114;
+    document.querySelector('#cover-grid').height = 528;
+    document.querySelector('#cover-caption').textContent = data.coverCaption;
+    document.querySelector('#footer').textContent = data.footer;
+    for (const label of data.pills) {
+      const pill = document.createElement('span'); pill.className = 'pill'; pill.textContent = label;
+      document.querySelector('#pills').append(pill);
+    }
+    const tour = document.querySelector('#tour');
+    for (const section of data.sections) {
+      const element = document.createElement('section');
+      const head = document.createElement('div'); head.className = 'section-head';
+      const kicker = document.createElement('div'); kicker.className = 'eyebrow'; kicker.textContent = section.kicker;
+      const title = document.createElement('h2'); title.textContent = section.title;
+      const text = document.createElement('p'); text.textContent = section.text;
+      head.append(kicker, title, text); element.append(head);
+      if (section.images) {
+        const grid = document.createElement('div'); grid.className = 'settings-grid';
+        for (const [src, caption] of section.images) {
+          const figure = document.createElement('figure');
+          const image = document.createElement('img'); image.src = `1.0.0/${src}`; image.alt = caption; image.width = 2576; image.height = 1408;
+          const figcaption = document.createElement('figcaption'); figcaption.textContent = caption;
+          figure.append(image, figcaption); grid.append(figure);
+        }
+        element.append(grid);
+      } else {
+        const figure = document.createElement('figure');
+        const image = document.createElement('img'); image.src = `1.0.0/${section.image}`; image.alt = section.alt; image.width = 2576; image.height = 1408;
+        const figcaption = document.createElement('figcaption'); figcaption.textContent = section.caption;
+        figure.append(image, figcaption); element.append(figure);
+      }
+      tour.append(element);
+    }
+    document.documentElement.dataset.renderHeight = String(Math.ceil(document.documentElement.scrollHeight));
+  </script>
 </body>
 </html>
