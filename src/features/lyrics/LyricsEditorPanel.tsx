@@ -1,5 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Activity, AudioLines, Check, ChevronDown, Clock3, Eye, GripVertical, MicVocal, MoreHorizontal, Play, Plus, Save, Search, SkipBack, SkipForward, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, Clock3, GripVertical, MicVocal, MoreHorizontal, Pause, Play, Plus, Save, Search, SkipBack, SkipForward, Trash2 } from 'lucide-react'
+import { subscribeSpectrum } from '../../audio/spectrum'
+import { getEngine } from '../../player/engine'
 import { useT } from '../../i18n'
 import {
   fromPlainLyrics,
@@ -15,6 +17,8 @@ import type {
   LyricsEditorIssue,
   SyncedLyricsDocument,
 } from './editorDocument'
+import { estimateVocalActivity, findVocalActivitySegments } from './vocalActivity'
+import type { VocalActivitySample } from './vocalActivity'
 import './lyrics-editor.css'
 
 export interface LyricsEditorSourceOption {
@@ -29,8 +33,11 @@ export interface LyricsEditorPanelProps {
   sourceOptions: LyricsEditorSourceOption[]
   durationMs?: number | null
   currentTimeSec: number
-  trackTitle?: string
-  trackArtist?: string
+  isPlaying: boolean
+  playbackRate: number
+  onSeek: (timeSec: number) => void
+  onTogglePlayback: () => void
+  onPlaybackRateChange: (rate: number) => void
   onSave: (document: LyricsEditorDocument, sourceId: string | null) => void | Promise<void>
   onPublish?: (document: LyricsEditorDocument, sourceId: string | null) => void | Promise<void>
   onCancel: () => void
@@ -55,12 +62,10 @@ function formatTimecode(milliseconds: number | null): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(fraction).padStart(2, '0')}`
 }
 
-function formatPreciseTime(milliseconds: number): string {
-  const safe = Math.max(0, Math.round(milliseconds))
-  const minutes = Math.floor(safe / 60_000)
-  const seconds = Math.floor((safe % 60_000) / 1000)
-  const fraction = safe % 1000
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(fraction).padStart(3, '0')}`
+function readPlaybackPositionMs(fallbackPositionSec: number): number {
+  const engineTime = getEngine()?.getCurrentTime()
+  const positionSec = Number.isFinite(engineTime) ? engineTime! : fallbackPositionSec
+  return Number.isFinite(positionSec) ? Math.max(0, Math.round(positionSec * 1000)) : 0
 }
 
 function parseTimecode(value: string): number {
@@ -128,8 +133,11 @@ export default function LyricsEditorPanel({
   sourceOptions,
   durationMs,
   currentTimeSec,
-  trackTitle = '',
-  trackArtist = '',
+  isPlaying,
+  playbackRate,
+  onSeek,
+  onTogglePlayback,
+  onPlaybackRateChange,
   onSave,
   onPublish,
   onCancel,
@@ -149,7 +157,10 @@ export default function LyricsEditorPanel({
   const [localAction, setLocalAction] = useState<LocalAction>(null)
   const [sourceOpen, setSourceOpen] = useState(false)
   const [sourceQuery, setSourceQuery] = useState('')
-  const [previewMode, setPreviewMode] = useState(false)
+  const [dragOverLine, setDragOverLine] = useState<number | null>(null)
+  const dragLineIndex = useRef<number | null>(null)
+  const vocalSamples = useRef<VocalActivitySample[]>([])
+  const initialPlaybackRate = useRef(playbackRate).current
 
   useEffect(() => {
     const next = JSON.parse(initialDocumentJson) as LyricsEditorDocument
@@ -160,7 +171,6 @@ export default function LyricsEditorPanel({
     setSourceQuery('')
     setActionError('')
     setActionNotice('')
-    setPreviewMode(false)
   }, [initialDocumentJson, initialSourceId])
 
   useEffect(() => {
@@ -193,41 +203,12 @@ export default function LyricsEditorPanel({
   const invalidLineIndexes = new Set(issues.flatMap((issue) => issue.lineIndex === undefined ? [] : [issue.lineIndex]))
   const selectedSource = sourceOptions.find((source) => source.id === selectedSourceId)
   const filteredSources = sourceOptions.filter((source) => source.label.toLocaleLowerCase().includes(sourceQuery.trim().toLocaleLowerCase()))
-
-  const previewRows = useMemo<Array<{ text: string; startMs: number; endMs: number }>>(() => {
-    const sourceLines: Array<{ text: string; startMs?: number; endMs?: number | null }> = document.mode === 'synced'
-      ? document.lines.filter((line) => line.text.trim()).slice(0, 7)
-        .map((line) => ({ text: line.text, startMs: line.startMs, endMs: line.endMs }))
-      : document.lines.filter((line) => line.text.trim()).slice(0, 7)
-        .map((line) => ({ text: line.text }))
-    const examples = [
-      t('Light reaches the window'), t('The city wakes up'), t('I keep moving forward'),
-      t('The night gives way to morning'), t('And the lights come back on'), t('I can hear the silence'),
-    ]
-    const count = Math.max(6, document.lines.filter((line) => line.text.trim()).length)
-    const trackDuration = Number.isFinite(durationMs) && (durationMs ?? 0) > 0 ? durationMs! : 180_000
-    const span = Math.max(1, Math.round(trackDuration / count))
-    return Array.from({ length: Math.min(7, count) }, (_, index) => {
-      const line = sourceLines[index]
-      const startMs = typeof line?.startMs === 'number' && Number.isFinite(line.startMs)
-        ? line.startMs : Math.round(span * index)
-      const nextLine = sourceLines[index + 1]
-      const nextStart = typeof nextLine?.startMs === 'number' && Number.isFinite(nextLine.startMs)
-        ? nextLine.startMs : startMs + span
-      const sourceEnd = typeof line?.endMs === 'number' && Number.isFinite(line.endMs) ? line.endMs : null
-      return {
-        text: line?.text.trim() || examples[index % examples.length],
-        startMs,
-        endMs: sourceEnd !== null && sourceEnd > startMs ? sourceEnd : Math.max(startMs + 1000, nextStart),
-      }
-    })
-  }, [document, durationMs, t])
-
-  const previewWindowStart = Math.max(0, previewRows[0]?.startMs ?? 0)
-  const previewWindowEnd = Math.max(previewRows.at(-1)?.endMs ?? previewWindowStart + 12_000, previewWindowStart + 12_000)
-  const previewWindowSpan = previewWindowEnd - previewWindowStart
-  const previewPosition = previewWindowStart + previewWindowSpan * 0.44
-  const previewActiveIndex = Math.max(0, previewRows.findIndex((row) => previewPosition >= row.startMs && previewPosition < row.endMs))
+  const currentPositionMs = Number.isFinite(currentTimeSec) ? Math.max(0, Math.round(currentTimeSec * 1000)) : null
+  const trackDurationMs = Number.isFinite(durationMs) && (durationMs ?? 0) > 0 ? Math.round(durationMs!) : null
+  const playbackSpeedMax = Math.max(1, initialPlaybackRate)
+  const activeLineIndex = document.mode === 'synced'
+    ? document.lines.reduce((latest, line, index) => line.startMs <= (currentPositionMs ?? 0) ? index : latest, -1)
+    : -1
 
   const replaceDocument = (next: LyricsEditorDocument): void => {
     setDocument(next)
@@ -259,8 +240,7 @@ export default function LyricsEditorPanel({
 
   const setLineTimeToCurrentPosition = (lineIndex: number, field: TimeField): void => {
     if (document.mode !== 'synced') return
-    const timeMs = currentPositionMs
-    if (timeMs === null) return
+    const timeMs = readPlaybackPositionMs(currentTimeSec)
     const currentLine = document.lines[lineIndex]
     if (!currentLine || (field === 'endMs' && timeMs <= currentLine.startMs)) return
     const clearEnd = field === 'startMs' && currentLine.endMs !== null && currentLine.endMs <= timeMs
@@ -323,6 +303,112 @@ export default function LyricsEditorPanel({
     replaceDocument({ mode: 'synced', lines: document.lines.filter((_, index) => index !== lineIndex) })
   }
 
+  const moveLineText = (fromIndex: number, toIndex: number): void => {
+    if (document.mode !== 'synced' || fromIndex === toIndex
+      || fromIndex < 0 || toIndex < 0 || fromIndex >= document.lines.length || toIndex >= document.lines.length) return
+    const lyricTexts = document.lines.map((line, index) => ({ text: line.text, sourceIndex: index }))
+    const [moved] = lyricTexts.splice(fromIndex, 1)
+    if (!moved) return
+    lyricTexts.splice(toIndex, 0, moved)
+    const lines = document.lines.map((line, index) => {
+      const lyric = lyricTexts[index]
+      if (!lyric || lyric.sourceIndex === index) return line
+      const updated = { ...line, text: lyric.text }
+      delete updated.words
+      if (updated.endOrigin === 'source') updated.endOrigin = 'auto'
+      return updated
+    })
+    setDocument({ mode: 'synced', lines })
+    setActionError('')
+    setActionNotice('')
+  }
+
+  const correctLineTiming = (): void => {
+    setActionError('')
+    setActionNotice('')
+    if (document.mode !== 'synced') return
+    const positionMs = readPlaybackPositionMs(currentTimeSec)
+    const engine = getEngine()
+    if (!engine || engine.getActiveChannel() !== 'local' || !engine.getAnalyser()) {
+      setActionError(t('Vocal correction requires a cached track'))
+      return
+    }
+
+    const samples = vocalSamples.current.filter((sample) => (
+      sample.positionMs >= positionMs - 5200 && sample.positionMs <= positionMs + 80
+    ))
+    if (samples.length < 12) {
+      setActionError(t('Play the local track for a few seconds before correcting'))
+      return
+    }
+
+    const latestStartedLine = document.lines.reduce((latest, line, index) => (
+      line.startMs <= positionMs ? index : latest
+    ), -1)
+    if (latestStartedLine < 0) {
+      setActionError(t('No lyric line near the current position'))
+      return
+    }
+
+    const line = document.lines[latestStartedLine]
+    const previousLine = document.lines[latestStartedLine - 1]
+    const nextLine = document.lines[latestStartedLine + 1]
+    const positionWindowStart = samples[0]?.positionMs ?? positionMs
+    const positionWindowEnd = samples.at(-1)?.positionMs ?? positionMs
+    const lineBoundary = line.endMs ?? nextLine?.startMs ?? trackDurationMs
+    const analysisEnd = Math.min(positionMs, lineBoundary ?? positionMs)
+    const analysisStart = Math.max(line.startMs, positionWindowStart)
+    const segments = findVocalActivitySegments(samples)
+      .filter((segment) => segment.endMs >= analysisStart && segment.startMs <= analysisEnd)
+      .map((segment) => ({
+        startMs: Math.max(segment.startMs, analysisStart),
+        endMs: Math.min(segment.endMs, analysisEnd),
+      }))
+      .filter((segment) => segment.endMs > segment.startMs)
+    if (segments.length === 0) {
+      setActionError(t('No clear vocal phrase found near this line'))
+      return
+    }
+
+    const coversLineStart = positionWindowStart <= line.startMs + 180
+    const startsAtLineBoundary = coversLineStart && segments[0].startMs <= line.startMs + 900
+    const newStartMs = startsAtLineBoundary
+      ? Math.max(previousLine?.startMs ?? 0, segments[0].startMs)
+      : line.startMs
+    const boundaryWasHeard = lineBoundary !== null
+      && lineBoundary <= positionMs + 80
+      && positionWindowEnd >= lineBoundary - 180
+    const newEndMs = boundaryWasHeard
+      ? Math.min(lineBoundary, nextLine?.startMs ?? Number.POSITIVE_INFINITY, segments.at(-1)!.endMs)
+      : line.endMs
+    if (newEndMs !== null && newEndMs <= newStartMs) {
+      setActionError(t('No clear vocal phrase found near this line'))
+      return
+    }
+    if (newStartMs === line.startMs && newEndMs === line.endMs) {
+      setActionError(t('No clear vocal phrase found near this line'))
+      return
+    }
+
+    setDocument((current) => {
+      if (current.mode !== 'synced') return current
+      const currentLine = current.lines[latestStartedLine]
+      if (!currentLine) return current
+      const updatedLine = { ...currentLine, startMs: newStartMs, endMs: newEndMs, endOrigin: 'manual' as const }
+      delete updatedLine.words
+      return {
+        mode: 'synced',
+        lines: current.lines.map((item, index) => index === latestStartedLine ? updatedLine : item),
+      }
+    })
+    setTimeDrafts((current) => current.map((draft, index) => index === latestStartedLine
+      ? { start: formatTimecode(newStartMs), end: formatTimecode(newEndMs) }
+      : draft))
+    setActionNotice(t(newStartMs !== line.startMs && newEndMs !== line.endMs
+      ? 'Vocal timing adjusted'
+      : newStartMs !== line.startMs ? 'Vocal start adjusted' : 'Vocal end adjusted'))
+  }
+
   const runAction = async (action: 'save' | 'publish'): Promise<void> => {
     if (busy || issues.length > 0) return
     const callback = action === 'save' ? onSave : onPublish
@@ -347,10 +433,70 @@ export default function LyricsEditorPanel({
 
   const validationId = `${id}-validation`
   const errorId = `${id}-action-error`
-  const currentPositionMs = Number.isFinite(currentTimeSec) ? Math.max(0, Math.round(currentTimeSec * 1000)) : null
+
+  useEffect(() => {
+    if (!isPlaying || document.mode !== 'synced') return
+    const engine = getEngine()
+    if (!engine) return
+    let unsubscribe: (() => void) | null = null
+    let sampleTimer = 0
+    let lastSampleAt = 0
+
+    const onSpectrum = (bins: Float32Array): void => {
+      if (engine.getActiveChannel() !== 'local' || !engine.getAnalyser()) return
+      const now = performance.now()
+      if (now - lastSampleAt < 50) return
+      const positionMs = Math.round(engine.getCurrentTime() * 1000)
+      const previous = vocalSamples.current.at(-1)
+      if (previous && (positionMs < previous.positionMs - 250 || positionMs - previous.positionMs > 1500)) {
+        vocalSamples.current = []
+      }
+      if (previous?.positionMs === positionMs) return
+      const sampleRate = engine.getAnalyser()?.context.sampleRate ?? 48_000
+      vocalSamples.current.push({ positionMs, score: estimateVocalActivity(bins, sampleRate) })
+      const cutoffMs = positionMs - 6500
+      while (vocalSamples.current[0] && vocalSamples.current[0].positionMs < cutoffMs) {
+        vocalSamples.current.shift()
+      }
+      lastSampleAt = now
+    }
+
+    const subscribeWhenLocal = (): void => {
+      if (!unsubscribe && engine.getActiveChannel() === 'local') unsubscribe = subscribeSpectrum(onSpectrum)
+    }
+    subscribeWhenLocal()
+    sampleTimer = window.setInterval(subscribeWhenLocal, 300)
+    return () => {
+      window.clearInterval(sampleTimer)
+      unsubscribe?.()
+    }
+  }, [document.mode, isPlaying])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey
+        || (event.code !== 'ArrowLeft' && event.code !== 'ArrowRight')) return
+      const target = event.target
+      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]')) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      const deltaSec = event.code === 'ArrowLeft' ? -0.05 : 0.05
+      const maxSec = trackDurationMs === null ? Number.POSITIVE_INFINITY : trackDurationMs / 1000
+      const currentSec = readPlaybackPositionMs(currentTimeSec) / 1000
+      onSeek(Math.min(maxSec, Math.max(0, currentSec + deltaSec)))
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [currentTimeSec, onSeek, trackDurationMs])
+
+  const seekByMs = (deltaMs: number): void => {
+    const maxSec = trackDurationMs === null ? Number.POSITIVE_INFINITY : trackDurationMs / 1000
+    const currentSec = readPlaybackPositionMs(currentTimeSec) / 1000
+    onSeek(Math.min(maxSec, Math.max(0, currentSec + deltaMs / 1000)))
+  }
 
   return (
-    <section className={'lyr-editor-panel' + (previewMode ? ' is-preview' : '')} aria-label={t('Lyrics editor')}>
+    <section className="lyr-editor-panel" aria-label={t('Lyrics editor')}>
       <div className="lyr-editor-toolbar">
         {sourceOptions.length > 0 ? (
           <div className="lyr-editor-source" ref={sourcePickerRef}>
@@ -421,104 +567,64 @@ export default function LyricsEditorPanel({
             {t('Synced lyrics')}
           </button>
         </div>
-        <button
-          type="button"
-          className={'lyr-editor-preview-toggle' + (previewMode ? ' is-active' : '')}
-          aria-pressed={previewMode}
-          onClick={() => { setSourceOpen(false); setPreviewMode((value) => !value) }}
-          disabled={busy}
-        >
-          <Eye size={14} />
-          {t(previewMode ? 'Back to editing' : 'Preview layout')}
-        </button>
       </div>
 
-      {previewMode ? (
-        <div className="lyr-editor-preview">
-          <div className="lyr-editor-preview-heading">
-            <div>
-              <span className="lyr-editor-preview-kicker">{t('Lyrics timing')}</span>
-              <strong>{trackTitle || t('Lyrics editor')}</strong>
-              <small>{trackArtist || t('Adjust line timing while listening')}</small>
-            </div>
-            <span className="lyr-editor-preview-badge">{t('Layout preview')}</span>
+      <div className="lyr-editor-transport" aria-label={t('Playback timing controls')}>
+        <div className="lyr-editor-transport-head">
+          <span className="lyr-editor-transport-time">
+            {formatTimecode(currentPositionMs)} <i>/</i> {formatTimecode(trackDurationMs)}
+          </span>
+          <div className="lyr-editor-transport-controls">
+            <button type="button" className="lyr-editor-transport-button" onClick={() => seekByMs(-50)} aria-label={t('Seek back 50 ms')} title={t('Seek back 50 ms')}>
+              <SkipBack size={14} /><small>50 ms</small>
+            </button>
+            <button type="button" className="lyr-editor-transport-button is-play" onClick={onTogglePlayback} aria-label={isPlaying ? t('Pause') : t('Play')} title={isPlaying ? t('Pause') : t('Play')}>
+              {isPlaying ? <Pause size={15} /> : <Play size={15} />}
+            </button>
+            <button type="button" className="lyr-editor-transport-button" onClick={() => seekByMs(50)} aria-label={t('Seek forward 50 ms')} title={t('Seek forward 50 ms')}>
+              <small>50 ms</small><SkipForward size={14} />
+            </button>
+            <label className="lyr-editor-speed-control">
+              <span>{playbackRate.toFixed(2)}×</span>
+              <input
+                type="range"
+                min={0.5}
+                max={playbackSpeedMax}
+                step={0.05}
+                value={Math.min(playbackSpeedMax, Math.max(0.5, playbackRate))}
+                onChange={(event) => onPlaybackRateChange(event.currentTarget.valueAsNumber)}
+                aria-label={t('Editing playback speed')}
+                style={{ '--fill': `${((playbackRate - 0.5) / (playbackSpeedMax - 0.5)) * 100}%` } as React.CSSProperties}
+              />
+            </label>
+            <button
+              type="button"
+              className="lyr-editor-correct-button"
+              onClick={correctLineTiming}
+              disabled={busy || document.mode !== 'synced'}
+              aria-label={t('Correct lyric timing')}
+              title={t('Correct lyric timing')}
+            >
+              <MicVocal size={14} /> {t('Correct')}
+            </button>
           </div>
-
-          <section className="lyr-editor-preview-transport" aria-label={t('Playback timing controls')}>
-            <div className="lyr-editor-preview-transport-head">
-              <span><AudioLines size={15} /> {t('Timing preview')}</span>
-              <span className="lyr-editor-preview-time">{formatPreciseTime(previewPosition)} <i>/</i> {formatPreciseTime(durationMs ?? 180_000)}</span>
-            </div>
-            <div className="lyr-editor-preview-wave" aria-hidden="true">
-              {Array.from({ length: 64 }, (_, index) => <i key={index} style={{ '--bar-height': `${18 + ((index * 37 + 13) % 67)}%` } as React.CSSProperties} />)}
-              <span style={{ left: '44%' }} />
-            </div>
-            <div className="lyr-editor-preview-transport-controls">
-              <div className="lyr-editor-preview-nudge">
-                <button type="button" disabled aria-label={t('Seek back 50 ms')}><SkipBack size={14} /><small>−50 ms</small></button>
-                <button type="button" className="lyr-editor-preview-play" disabled aria-label={t('Play or pause')}><Play size={16} /></button>
-                <button type="button" disabled aria-label={t('Seek forward 50 ms')}><small>+50 ms</small><SkipForward size={14} /></button>
-                <small className="lyr-editor-preview-shortcut">Ctrl + ← / →</small>
-              </div>
-              <div className="lyr-editor-preview-speed">
-                <span>{t('Editing speed')}</span>
-                <div className="lyr-editor-preview-speed-track"><i /></div>
-                <strong>0.70×</strong>
-              </div>
-            </div>
-            <small className="lyr-editor-preview-note">{t('Preview controls are visual only')}</small>
-          </section>
-
-          <div className="lyr-editor-preview-workspace">
-            <section className="lyr-editor-preview-timeline">
-              <div className="lyr-editor-preview-section-head">
-                <div><strong>{t('Line timing')}</strong><small>{t('Drag rows to reorder')}</small></div>
-                <span><Activity size={14} /> {t('Song timeline')}</span>
-              </div>
-              <div className="lyr-editor-preview-ruler"><span>{formatPreciseTime(previewWindowStart)}</span><span>{formatPreciseTime(previewWindowStart + previewWindowSpan / 2)}</span><span>{formatPreciseTime(previewWindowEnd)}</span></div>
-              <div className="lyr-editor-preview-timing-rows">
-                {previewRows.map((row, index) => {
-                  const left = Math.max(0, ((row.startMs - previewWindowStart) / previewWindowSpan) * 100)
-                  const width = Math.min(100 - left, Math.max(5, ((row.endMs - row.startMs) / previewWindowSpan) * 100))
-                  return (
-                    <div className={'lyr-editor-preview-timing-row' + (index === previewActiveIndex ? ' is-active' : '')} key={`${row.startMs}-${index}`}>
-                      <GripVertical size={15} className="lyr-editor-preview-grip" />
-                      <span className="lyr-editor-preview-row-index">{String(index + 1).padStart(2, '0')}</span>
-                      <div className="lyr-editor-preview-row-track"><i style={{ left: `${left}%`, width: `${width}%` }} /></div>
-                      <span className="lyr-editor-preview-row-time">{formatPreciseTime(row.startMs)}</span>
-                    </div>
-                  )
-                })}
-              </div>
-              <div className="lyr-editor-preview-vocal-lane">
-                <div className="lyr-editor-preview-vocal-title"><MicVocal size={14} /><span>{t('Vocal activity')}</span><small>{t('Voice/music markers without transcription')}</small></div>
-                <div className="lyr-editor-preview-vocal-track" aria-label={t('Example voice and instrumental sections')}>
-                  {[['voice', 18], ['voice', 12], ['music', 9], ['voice', 24], ['music', 11], ['voice', 26]].map(([kind, width], index) => (
-                    <i key={index} className={kind === 'voice' ? 'is-voice' : 'is-music'} style={{ width: `${width}%` }} />
-                  ))}
-                </div>
-                <div className="lyr-editor-preview-vocal-legend"><span><i className="is-voice" />{t('Voice')}</span><span><i className="is-music" />{t('Instrumental')}</span></div>
-              </div>
-            </section>
-
-            <section className="lyr-editor-preview-text">
-              <div className="lyr-editor-preview-section-head">
-                <div><strong>{t('Lyrics lines')}</strong><small>{t('Text stays aligned with timing')}</small></div>
-                <span>{previewRows.length}</span>
-              </div>
-              <div className="lyr-editor-preview-text-rows">
-                {previewRows.map((row, index) => (
-                  <div className={'lyr-editor-preview-text-row' + (index === previewActiveIndex ? ' is-active' : '')} key={`${row.startMs}-${index}`}>
-                    <span>{String(index + 1).padStart(2, '0')}</span>
-                    <div><small>{formatPreciseTime(row.startMs)} – {formatPreciseTime(row.endMs)}</small><p>{row.text}</p></div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          </div>
-          <div className="lyr-editor-preview-disclaimer"><MicVocal size={13} />{t('Vocal detection is a layout sample, not active analysis')}</div>
         </div>
-      ) : document.mode === 'plain' ? (
+        <input
+          className="lyr-editor-seek"
+          type="range"
+          min={0}
+          max={trackDurationMs ?? Math.max(currentPositionMs ?? 0, 1)}
+          step={50}
+          value={Math.min(currentPositionMs ?? 0, trackDurationMs ?? Number.POSITIVE_INFINITY)}
+          onChange={(event) => onSeek(event.currentTarget.valueAsNumber / 1000)}
+          disabled={trackDurationMs === null}
+          aria-label={t('Seek')}
+          title={t('Ctrl arrows seek by 50 ms')}
+          style={{ '--fill': `${trackDurationMs ? Math.min(100, ((currentPositionMs ?? 0) / trackDurationMs) * 100) : 0}%` } as React.CSSProperties}
+        />
+      </div>
+
+      {document.mode === 'plain' ? (
         <textarea
           className="lyr-editor-plain"
           aria-label={t('Plain text')}
@@ -533,19 +639,56 @@ export default function LyricsEditorPanel({
       ) : (
         <div className="lyr-editor-synced-wrap">
           <div className="lyr-editor-column-labels" aria-hidden="true">
+            <span />
             <span>{t('Lyric line')}</span>
-            <span>{t('Start time')}</span>
-            <span>{t('End time')}</span>
+            <div className="lyr-editor-time-labels">
+              <span>{t('Start time')}</span><i>—</i><span>{t('End time')}</span>
+            </div>
             <span />
           </div>
           <div className="lyr-editor-lines" role="list" aria-describedby={firstIssue ? validationId : undefined}>
             {document.lines.map((line, lineIndex) => (
               <div
-                className="lyr-editor-line"
+                className={'lyr-editor-line' + (lineIndex === activeLineIndex ? ' is-current' : '') + (dragOverLine === lineIndex ? ' is-drop-target' : '')}
                 role="listitem"
                 key={lineIndex}
                 data-invalid={invalidLineIndexes.has(lineIndex) || undefined}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  if (dragLineIndex.current !== lineIndex) setDragOverLine(lineIndex)
+                }}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  const fromIndex = dragLineIndex.current
+                  if (fromIndex !== null) moveLineText(fromIndex, lineIndex)
+                  dragLineIndex.current = null
+                  setDragOverLine(null)
+                }}
               >
+                <button
+                  type="button"
+                  className="lyr-editor-drag-handle"
+                  draggable={!busy}
+                  aria-label={`${t('Move lyric line')} ${lineIndex + 1}`}
+                  title={t('Move lyric line')}
+                  onDragStart={(event) => {
+                    dragLineIndex.current = lineIndex
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('text/plain', String(lineIndex))
+                  }}
+                  onDragEnd={() => {
+                    dragLineIndex.current = null
+                    setDragOverLine(null)
+                  }}
+                  onKeyDown={(event) => {
+                    if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    moveLineText(lineIndex, lineIndex + (event.key === 'ArrowUp' ? -1 : 1))
+                  }}
+                >
+                  <GripVertical size={15} />
+                </button>
                 <input
                   className="lyr-editor-line-text"
                   type="text"
@@ -554,51 +697,54 @@ export default function LyricsEditorPanel({
                   onChange={(event) => editSyncedText(lineIndex, event.target.value)}
                   disabled={busy}
                 />
-                <div className="lyr-editor-time-wrap">
-                  <input
-                    className="lyr-editor-time"
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="00:00.00"
-                    aria-label={`${t('Start time')}, ${lineIndex + 1}`}
-                    aria-invalid={!Number.isSafeInteger(line.startMs) || line.startMs < 0 || undefined}
-                    value={timeDrafts[lineIndex]?.start ?? formatTimecode(line.startMs)}
-                    onChange={(event) => editTime(lineIndex, 'startMs', event.target.value)}
-                    disabled={busy}
-                  />
-                  <button
-                    type="button"
-                    className="lyr-editor-capture-time"
-                    title={`${t('Start time')}: ${formatTimecode(currentPositionMs)}`}
-                    aria-label={`${t('Start time')}: ${formatTimecode(currentPositionMs)}`}
-                    onClick={() => setLineTimeToCurrentPosition(lineIndex, 'startMs')}
-                    disabled={busy || currentPositionMs === null}
-                  >
-                    <Clock3 size={13} />
-                  </button>
-                </div>
-                <div className="lyr-editor-time-wrap">
-                  <input
-                    className="lyr-editor-time"
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="00:00.00"
-                    aria-label={`${t('End time')}, ${lineIndex + 1}`}
-                    aria-invalid={line.endMs !== null && (!Number.isSafeInteger(line.endMs) || line.endMs <= line.startMs) || undefined}
-                    value={timeDrafts[lineIndex]?.end ?? formatTimecode(line.endMs)}
-                    onChange={(event) => editTime(lineIndex, 'endMs', event.target.value)}
-                    disabled={busy}
-                  />
-                  <button
-                    type="button"
-                    className="lyr-editor-capture-time"
-                    title={`${t('End time')}: ${formatTimecode(currentPositionMs)}`}
-                    aria-label={`${t('End time')}: ${formatTimecode(currentPositionMs)}`}
-                    onClick={() => setLineTimeToCurrentPosition(lineIndex, 'endMs')}
-                    disabled={busy || currentPositionMs === null || currentPositionMs <= line.startMs}
-                  >
-                    <Clock3 size={13} />
-                  </button>
+                <div className="lyr-editor-time-pair">
+                  <div className="lyr-editor-time-wrap">
+                    <input
+                      className="lyr-editor-time"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="00:00.00"
+                      aria-label={`${t('Start time')}, ${lineIndex + 1}`}
+                      aria-invalid={!Number.isSafeInteger(line.startMs) || line.startMs < 0 || undefined}
+                      value={timeDrafts[lineIndex]?.start ?? formatTimecode(line.startMs)}
+                      onChange={(event) => editTime(lineIndex, 'startMs', event.target.value)}
+                      disabled={busy}
+                    />
+                    <button
+                      type="button"
+                      className="lyr-editor-capture-time"
+                      title={t('Set line start to current position')}
+                      aria-label={`${t('Set line start to current position')}, ${lineIndex + 1}`}
+                      onClick={() => setLineTimeToCurrentPosition(lineIndex, 'startMs')}
+                      disabled={busy || currentPositionMs === null}
+                    >
+                      <Clock3 size={13} />
+                    </button>
+                  </div>
+                  <span className="lyr-editor-time-separator" aria-hidden="true">—</span>
+                  <div className="lyr-editor-time-wrap">
+                    <input
+                      className="lyr-editor-time"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="00:00.00"
+                      aria-label={`${t('End time')}, ${lineIndex + 1}`}
+                      aria-invalid={line.endMs !== null && (!Number.isSafeInteger(line.endMs) || line.endMs <= line.startMs) || undefined}
+                      value={timeDrafts[lineIndex]?.end ?? formatTimecode(line.endMs)}
+                      onChange={(event) => editTime(lineIndex, 'endMs', event.target.value)}
+                      disabled={busy}
+                    />
+                    <button
+                      type="button"
+                      className="lyr-editor-capture-time"
+                      title={t('Set line end to current position')}
+                      aria-label={`${t('Set line end to current position')}, ${lineIndex + 1}`}
+                      onClick={() => setLineTimeToCurrentPosition(lineIndex, 'endMs')}
+                      disabled={busy || currentPositionMs === null || currentPositionMs <= line.startMs}
+                    >
+                      <Clock3 size={13} />
+                    </button>
+                  </div>
                 </div>
                 <button
                   type="button"

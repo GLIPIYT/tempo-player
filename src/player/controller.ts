@@ -507,12 +507,12 @@ export class PlayerController {
     this.emit()
   }
 
-  setPlaybackRate(rate: number): void {
+  setPlaybackRate(rate: number, persist = true): void {
     const safeRate = Number.isFinite(rate) ? rate : 1
     const next = Math.round(Math.min(2, Math.max(0.5, safeRate)) * 20) / 20
     if (next === this.playbackRate) return
     this.playbackRate = next
-    writePref(PLAYBACK_RATE_KEY, String(next))
+    if (persist) writePref(PLAYBACK_RATE_KEY, String(next))
     this.engine.setPlaybackRate(next)
     this.emit()
   }

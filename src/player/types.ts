@@ -23,7 +23,7 @@ export interface PlayerApi {
   previous(): void
   seek(sec: number): void
   setVolume(v: number): void
-  setPlaybackRate(rate: number): void
+  setPlaybackRate(rate: number, persist?: boolean): void
   setPreservePitch(preserve: boolean): void
   setEqualizer(settings: EqualizerSettings): void
   setRepeat(m: RepeatMode): void

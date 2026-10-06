@@ -899,6 +899,8 @@ function LyricsEditMenu({
 
 export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   const p = usePlayer()
+  const playbackRate = p.playbackRate
+  const setPlaybackRate = p.setPlaybackRate
   const t = useT()
   const track = p.currentTrack
   const trackKey = track ? `${track.source}|${track.sourceId}|${track.title}|${track.artists.join(',')}` : ''
@@ -920,11 +922,33 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   const [editedVersion, setEditedVersion] = useState<PersistedEditedVersion | null>(null)
   const [pinnedLoaded, setPinnedLoaded] = useState(false)
   const [editingLyrics, setEditingLyrics] = useState(false)
+  const editingPlaybackRate = useRef<number | null>(null)
   const [savingLyrics, setSavingLyrics] = useState(false)
   const [publishingLyrics, setPublishingLyrics] = useState(false)
   /** the terms the last manual search actually used, for the pinned row's provenance */
   const [searchedAs, setSearchedAs] = useState<{ artist: string; title: string } | null>(null)
   const { settings } = useSettings()
+
+  useEffect(() => {
+    if (editingLyrics) {
+      if (editingPlaybackRate.current === null) editingPlaybackRate.current = playbackRate
+      return
+    }
+    const restoreRate = editingPlaybackRate.current
+    editingPlaybackRate.current = null
+    if (restoreRate !== null && restoreRate !== playbackRate) setPlaybackRate(restoreRate)
+  }, [editingLyrics, playbackRate, setPlaybackRate])
+
+  useEffect(() => () => {
+    const restoreRate = editingPlaybackRate.current
+    editingPlaybackRate.current = null
+    if (restoreRate !== null) setPlaybackRate(restoreRate)
+  }, [setPlaybackRate])
+
+  const startLyricsEditing = (): void => {
+    if (editingPlaybackRate.current === null) editingPlaybackRate.current = playbackRate
+    setEditingLyrics(true)
+  }
   // Only tracks with a database row can pin - there is nothing to pin to otherwise,
   // so SoundCloud results that were never cached keep the session-only dropdown.
   const canPin = track?.dbId != null
@@ -1614,8 +1638,11 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
               sourceOptions={editorSourceOptions}
               durationMs={durationMs}
               currentTimeSec={p.position}
-              trackTitle={track?.title ?? ''}
-              trackArtist={track?.artists.join(', ') ?? ''}
+              isPlaying={p.isPlaying}
+              playbackRate={p.playbackRate}
+              onSeek={p.seek}
+              onTogglePlayback={p.toggle}
+              onPlaybackRateChange={rate => setPlaybackRate(rate, false)}
               onSave={saveEditedLyrics}
               onPublish={publishEditedLyrics}
               onCancel={() => setEditingLyrics(false)}
@@ -1673,7 +1700,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           lyricsRate={activeLyrics?.result?.kind === 'synced' ? lyricsRate : null}
           onNudge={handleNudgeOffset}
           onLyricsRateChange={handleLyricsRateChange}
-          onEdit={() => setEditingLyrics(true)}
+          onEdit={startLyricsEditing}
         />
       )}
     </div>
