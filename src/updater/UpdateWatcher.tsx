@@ -1,6 +1,4 @@
 import { useEffect, useState } from 'react'
-import Modal from '../components/common/Modal'
-import { useT } from '../i18n'
 import UpdateDialog from './UpdateDialog'
 import {
   appVersion,
@@ -11,18 +9,15 @@ import {
 } from './service'
 import { compareVersions, newerThan } from './version'
 
-/**
- * Checks for updates once per launch.
- *
- * Renders nothing at all until there is something to say. Only the newest
- * release the user has not skipped is ever offered - skipping 0.6.0 says
- * nothing about 0.6.1, which is what makes "skip" per version rather than
- * permanent.
- */
+interface UpdateDialogState {
+  releases: ReleaseInfo[]
+  initialVersion: string
+  installedVersion?: string
+}
+
+/** Finds an update once per launch, or opens the same version browser after installation. */
 export default function UpdateWatcher() {
-  const t = useT()
-  const [release, setRelease] = useState<ReleaseInfo | null>(null)
-  const [updatedTo, setUpdatedTo] = useState<string | null>(null)
+  const [dialog, setDialog] = useState<UpdateDialogState | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -35,44 +30,40 @@ export default function UpdateWatcher() {
       }
       if (cancelled) return
 
-      // Did the update started last session actually land? The marker on its
-      // own proves nothing - an installer the user cancelled leaves it behind -
-      // so the running version has to agree before anything is announced.
       const pending = takePendingUpdate()
-      if (pending && compareVersions(current, pending) >= 0) setUpdatedTo(pending)
-
+      const updateLanded = Boolean(pending && compareVersions(current, pending) >= 0)
+      let releases: ReleaseInfo[] = []
       try {
-        const releases = await listReleases()
-        if (cancelled) return
-        const skipped = new Set(skippedVersions())
-        const candidate = newerThan(releases, current).find(
-          (r) => r.assetUrl !== null && !skipped.has(r.version),
-        )
-        if (candidate) setRelease(candidate)
+        releases = await listReleases()
       } catch {
-        // offline, rate limited, or GitHub is down - none of it worth a dialog
+        if (updateLanded && !cancelled) {
+          setDialog({ releases, initialVersion: current, installedVersion: current })
+        }
+        return
       }
+      if (cancelled) return
+
+      if (updateLanded) {
+        setDialog({ releases, initialVersion: current, installedVersion: current })
+        return
+      }
+
+      const skipped = new Set(skippedVersions())
+      const candidate = newerThan(releases, current).find(
+        release => release.assetUrl !== null && !skipped.has(release.version),
+      )
+      if (candidate) setDialog({ releases, initialVersion: candidate.version })
     })()
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [])
 
-  if (!release && !updatedTo) return null
-
+  if (!dialog) return null
   return (
-    <>
-      {release ? <UpdateDialog release={release} onDismiss={() => setRelease(null)} /> : null}
-      {updatedTo ? (
-        <Modal open title={t('Update installed')} onClose={() => setUpdatedTo(null)}>
-          <div className="settings-line">{`${t('Tempo updated successfully. Now running version')} ${updatedTo}.`}</div>
-          <div className="modal-actions">
-            <button className="btn btn-primary" onClick={() => setUpdatedTo(null)}>
-              {t('Close dialog')}
-            </button>
-          </div>
-        </Modal>
-      ) : null}
-    </>
+    <UpdateDialog
+      releases={dialog.releases}
+      initialVersion={dialog.initialVersion}
+      installedVersion={dialog.installedVersion}
+      onDismiss={() => setDialog(null)}
+    />
   )
 }

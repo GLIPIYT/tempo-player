@@ -1629,7 +1629,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           </div>
           <LyricsVolumeRow />
         </aside>
-        <section className={'lyr-stage-col' + (editingLyrics ? ' lyr-stage-col-editing' : '')}>
+        <section className={`lyr-stage-col lyr-align-${settings.lyrics.alignment}${editingLyrics ? ' lyr-stage-col-editing' : ''}`}>
           {editingLyrics ? (
             <LyricsEditorPanel
               key={`${trackKey}-${pinned?.updatedAt ?? 'unpinned'}`}

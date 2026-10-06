@@ -35,6 +35,7 @@ export interface AppSettings {
     cacheOnline: boolean
     /** Null waits for the hardware default; only true permits deep analysis. */
     deepAnalysisEnabled: boolean | null
+    alignment: 'left' | 'center' | 'right'
   }
   font: {
     family: string | null
@@ -126,7 +127,7 @@ export const defaultSettings: AppSettings = {
   startupPage: 'home',
   profile: { nickname: null, avatarPath: null, onboarded: false },
   discord: { enabled: false, clientId: '1543766505295183904', lyricStitchGapSec: 2 },
-  lyrics: { cacheOnline: true, deepAnalysisEnabled: null },
+  lyrics: { cacheOnline: true, deepAnalysisEnabled: null, alignment: 'left' },
   font: { family: null, importedPath: null, sizePx: 13, uiScalePct: 100 },
   background: { path: null, dimPct: 45, blurPx: 0 },
   player: { waveform: false, barStyle: 'classic' },
@@ -249,6 +250,9 @@ export function loadSettings(): AppSettings {
       lyrics: {
         ...defaultSettings.lyrics,
         ...parsed.lyrics,
+        alignment: parsed.lyrics?.alignment === 'center' || parsed.lyrics?.alignment === 'right'
+          ? parsed.lyrics.alignment
+          : 'left',
         deepAnalysisEnabled: typeof parsed.lyrics?.deepAnalysisEnabled === 'boolean'
           ? parsed.lyrics.deepAnalysisEnabled
           : null,

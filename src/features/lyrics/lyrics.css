@@ -274,6 +274,15 @@
   padding-block: 12px;
 }
 
+.lyr-stage-col.lyr-align-center .lyr-synced,
+.lyr-stage-col.lyr-align-center .lyr-plain { align-self: center; }
+.lyr-stage-col.lyr-align-right .lyr-synced,
+.lyr-stage-col.lyr-align-right .lyr-plain { align-self: flex-end; }
+.lyr-stage-col.lyr-align-center .lyr-line { text-align: center; }
+.lyr-stage-col.lyr-align-right .lyr-line { text-align: right; }
+.lyr-stage-col.lyr-align-center .lyr-plain { text-align: center; }
+.lyr-stage-col.lyr-align-right .lyr-plain { text-align: right; }
+
 .lyr-head {
   display: flex;
   flex-wrap: wrap;

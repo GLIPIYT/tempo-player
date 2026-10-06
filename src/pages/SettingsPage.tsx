@@ -55,13 +55,10 @@ import BackgroundImageLibrary from '../components/settings/BackgroundImageLibrar
 import LyricsAnalysisCard from '../components/settings/LyricsAnalysisCard'
 import {
   appVersion,
-  forgetSkippedVersions,
-  formatBytes,
   listReleases,
-  skippedVersions,
   type ReleaseInfo,
 } from '../updater/service'
-import { newerThan } from '../updater/version'
+import { compareVersions } from '../updater/version'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { resolveBrandIcon } from '../theme/brandIcon'
 
@@ -761,19 +758,18 @@ function StorageCard() {
 
 function UpdateCard() {
   const t = useT()
-  const [check, setCheck] = useState(0)
-  const [offer, setOffer] = useState<ReleaseInfo | null>(null)
   const [showPreview, setShowPreview] = useState(false)
-  const [skipped, setSkipped] = useState<string[]>(skippedVersions)
   const current = useAsync(() => appVersion(), [])
-  const releases = useAsync(() => listReleases(), [check])
+  const releases = useAsync(() => listReleases(), [])
 
   const currentVersion = current.data
-  const latest = releases.data?.[0]?.version ?? null
-  const installable =
-    releases.data && currentVersion ? newerThan(releases.data, currentVersion) : []
-  const upToDate = !releases.loading && !releases.error && releases.data !== null && installable.length === 0
-  const previewRelease: ReleaseInfo = releases.data?.[0] ?? {
+  const installableReleases = (releases.data ?? []).filter(release => release.assetUrl !== null)
+    .sort((a, b) => compareVersions(b.version, a.version))
+  const latestRelease = installableReleases[0]
+  const latest = latestRelease?.version ?? null
+  const upToDate = !releases.loading && !releases.error && currentVersion !== null && latest !== null
+    && compareVersions(currentVersion, latest) >= 0
+  const previewRelease: ReleaseInfo = latestRelease ?? releases.data?.[0] ?? {
     version: currentVersion ?? '1.0.0',
     tag: `v${currentVersion ?? '1.0.0'}`,
     name: t('Update preview'),
@@ -801,52 +797,19 @@ function UpdateCard() {
           <div className="set-note">{t('You are on the newest release.')}</div>
         ) : null}
 
-        {installable.length > 0 ? (
-          <>
-            <div className="section-label" style={{ marginTop: 16 }}>
-              {t('Available to install')}
-            </div>
-            {installable.map((r) => (
-              <div key={r.version} className="update-row">
-                <div className="update-row-info">
-                  <span className="update-row-version">{r.version}</span>
-                  {r.assetSize ? <span className="muted">{formatBytes(r.assetSize)}</span> : null}
-                </div>
-                <button
-                  className="btn"
-                  disabled={r.assetUrl === null}
-                  onClick={() => setOffer(r)}
-                >
-                  {t('Download')}
-                </button>
-              </div>
-            ))}
-          </>
-        ) : null}
-
         <div className="set-actions" style={{ marginTop: 16 }}>
-          <button className="btn" disabled={releases.loading} onClick={() => setCheck((n) => n + 1)}>
-            {t('Check now')}
-          </button>
           <button className="btn" onClick={() => setShowPreview(true)}>
             {t('Preview update dialog')}
           </button>
-          {skipped.length > 0 ? (
-            <button
-              className="btn"
-              onClick={() => {
-                forgetSkippedVersions()
-                setSkipped([])
-              }}
-            >
-              {t('Offer skipped versions again')}
-            </button>
-          ) : null}
         </div>
       </Card>
-      {offer ? <UpdateDialog release={offer} onDismiss={() => setOffer(null)} /> : null}
       {showPreview ? (
-        <UpdateDialog release={previewRelease} preview onDismiss={() => setShowPreview(false)} />
+        <UpdateDialog
+          releases={releases.data?.length ? releases.data : [previewRelease]}
+          initialVersion={previewRelease.version}
+          preview
+          onDismiss={() => setShowPreview(false)}
+        />
       ) : null}
     </>
   )
@@ -1274,6 +1237,18 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div className="set-note">{t('Online lyrics are cached for offline playback.')}</div>
+                <div className="set-row" style={{ marginTop: 12 }}>
+                  <span className="set-row-label">{t('Lyrics alignment')}</span>
+                  <Segmented
+                    value={settings.lyrics.alignment}
+                    options={[
+                      { value: 'left', label: t('Left') },
+                      { value: 'center', label: t('Center') },
+                      { value: 'right', label: t('Right') },
+                    ]}
+                    onChange={(alignment) => update({ lyrics: { alignment } })}
+                  />
+                </div>
               </Card>
               <Card
                 title={t('Mini player')}
