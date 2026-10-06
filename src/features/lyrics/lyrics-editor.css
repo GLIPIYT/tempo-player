@@ -498,12 +498,339 @@
   opacity: 0.55;
 }
 
+.lyr-editor-preview-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 31px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.lyr-editor-preview-toggle:hover,
+.lyr-editor-preview-toggle.is-active {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+}
+
+.lyr-editor-panel.is-preview {
+  flex: 1 1 auto;
+  width: min(100%, 1120px);
+  max-height: min(88vh, 850px);
+  padding: 18px;
+  gap: 12px;
+}
+
+.lyr-editor-preview {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 11px;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 36%, transparent) transparent;
+}
+.lyr-editor-preview-heading,
+.lyr-editor-preview-transport,
+.lyr-editor-preview-timeline,
+.lyr-editor-preview-text {
+  border: 1px solid color-mix(in srgb, var(--text-muted) 16%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 42%, var(--surface));
+}
+.lyr-editor-preview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 58px;
+  padding: 9px 13px;
+}
+.lyr-editor-preview-heading > div,
+.lyr-editor-preview-section-head > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.lyr-editor-preview-kicker {
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+.lyr-editor-preview-heading strong {
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lyr-editor-preview-heading small,
+.lyr-editor-preview-section-head small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.lyr-editor-preview-badge {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+  font-size: 10px;
+}
+
+.lyr-editor-preview-transport {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 13px 8px;
+}
+.lyr-editor-preview-transport-head,
+.lyr-editor-preview-transport-head > span,
+.lyr-editor-preview-transport-controls,
+.lyr-editor-preview-nudge,
+.lyr-editor-preview-speed,
+.lyr-editor-preview-section-head,
+.lyr-editor-preview-section-head > span,
+.lyr-editor-preview-vocal-title,
+.lyr-editor-preview-vocal-legend,
+.lyr-editor-preview-disclaimer {
+  display: flex;
+  align-items: center;
+}
+.lyr-editor-preview-transport-head,
+.lyr-editor-preview-transport-controls,
+.lyr-editor-preview-section-head {
+  justify-content: space-between;
+  gap: 10px;
+}
+.lyr-editor-preview-transport-head > span {
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.lyr-editor-preview-transport-head > span:first-child { color: var(--text); font-weight: 600; }
+.lyr-editor-preview-time {
+  font-variant-numeric: tabular-nums;
+}
+.lyr-editor-preview-time i { color: var(--text-muted); font-style: normal; }
+.lyr-editor-preview-wave {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  height: 29px;
+  overflow: hidden;
+  padding-inline: 2px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.lyr-editor-preview-wave i {
+  flex: 1 1 0;
+  height: var(--bar-height);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 60%, var(--text-muted));
+  opacity: .56;
+}
+.lyr-editor-preview-wave i:nth-child(-n+28) { opacity: .95; }
+.lyr-editor-preview-wave > span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--text);
+  box-shadow: 0 0 8px var(--accent);
+}
+.lyr-editor-preview-nudge,
+.lyr-editor-preview-speed { gap: 7px; }
+.lyr-editor-preview-nudge button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 27px;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 9px;
+}
+.lyr-editor-preview-nudge button:disabled { opacity: .82; }
+.lyr-editor-preview-nudge button small,
+.lyr-editor-preview-shortcut,
+.lyr-editor-preview-note { color: var(--text-muted); font-size: 9px; }
+.lyr-editor-preview-nudge button.lyr-editor-preview-play {
+  width: 29px;
+  min-height: 29px;
+  padding: 0;
+  border-color: color-mix(in srgb, var(--accent) 56%, transparent);
+  background: color-mix(in srgb, var(--accent) 20%, var(--surface));
+  color: var(--text);
+}
+.lyr-editor-preview-shortcut { margin-inline-start: 2px; }
+.lyr-editor-preview-speed { min-width: 0; }
+.lyr-editor-preview-speed > span { color: var(--text-muted); font-size: 10px; }
+.lyr-editor-preview-speed > strong { min-width: 37px; font-size: 10px; font-variant-numeric: tabular-nums; }
+.lyr-editor-preview-speed-track {
+  width: clamp(74px, 11vw, 150px);
+  height: 4px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-muted) 24%, transparent);
+}
+.lyr-editor-preview-speed-track i {
+  display: block;
+  width: 58%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.lyr-editor-preview-note { align-self: flex-end; }
+
+.lyr-editor-preview-workspace {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
+  align-items: stretch;
+  gap: 11px;
+  min-height: 245px;
+}
+.lyr-editor-preview-timeline,
+.lyr-editor-preview-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 11px;
+}
+.lyr-editor-preview-section-head { flex: 0 0 auto; margin-bottom: 8px; }
+.lyr-editor-preview-section-head strong { font-size: 12px; }
+.lyr-editor-preview-section-head > span { gap: 5px; color: var(--text-muted); font-size: 9px; }
+.lyr-editor-preview-ruler {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 4px 5px 43px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.lyr-editor-preview-timing-rows,
+.lyr-editor-preview-text-rows { display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+.lyr-editor-preview-timing-row {
+  display: grid;
+  grid-template-columns: 15px 19px minmax(30px, 1fr) 68px;
+  align-items: center;
+  gap: 5px;
+  min-height: 27px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: grab;
+}
+.lyr-editor-preview-timing-row.is-active,
+.lyr-editor-preview-text-row.is-active {
+  border-color: color-mix(in srgb, var(--accent) 44%, transparent);
+  background: color-mix(in srgb, var(--accent) 11%, var(--surface));
+}
+.lyr-editor-preview-grip { color: var(--text-muted); opacity: .7; }
+.lyr-editor-preview-row-index,
+.lyr-editor-preview-row-time { color: var(--text-muted); font-size: 9px; font-variant-numeric: tabular-nums; }
+.lyr-editor-preview-row-track {
+  position: relative;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+.lyr-editor-preview-row-track i {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 74%, #57d2ba);
+}
+.lyr-editor-preview-timing-row.is-active .lyr-editor-preview-row-track i { background: var(--accent); }
+.lyr-editor-preview-vocal-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  padding: 10px 4px 2px;
+}
+.lyr-editor-preview-vocal-title { gap: 6px; color: var(--text); font-size: 10px; }
+.lyr-editor-preview-vocal-title svg { color: var(--accent); }
+.lyr-editor-preview-vocal-title small { margin-inline-start: auto; color: var(--text-muted); font-size: 9px; }
+.lyr-editor-preview-vocal-track { display: flex; gap: 3px; height: 8px; }
+.lyr-editor-preview-vocal-track i { border-radius: 4px; }
+.lyr-editor-preview-vocal-track i.is-voice,
+.lyr-editor-preview-vocal-legend i.is-voice { background: color-mix(in srgb, var(--accent) 78%, #60d5b3); }
+.lyr-editor-preview-vocal-track i.is-music,
+.lyr-editor-preview-vocal-legend i.is-music { background: color-mix(in srgb, var(--text-muted) 25%, var(--surface)); }
+.lyr-editor-preview-vocal-legend { gap: 12px; color: var(--text-muted); font-size: 9px; }
+.lyr-editor-preview-vocal-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.lyr-editor-preview-vocal-legend i { width: 8px; height: 8px; border-radius: 3px; }
+
+.lyr-editor-preview-text-rows { overflow: auto; padding-right: 2px; }
+.lyr-editor-preview-text-row {
+  display: grid;
+  grid-template-columns: 21px minmax(0, 1fr);
+  gap: 7px;
+  padding: 6px 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+}
+.lyr-editor-preview-text-row > span {
+  padding-top: 2px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.lyr-editor-preview-text-row > div { min-width: 0; }
+.lyr-editor-preview-text-row small { color: var(--accent); font-size: 9px; font-variant-numeric: tabular-nums; }
+.lyr-editor-preview-text-row p { margin: 2px 0 0; overflow-wrap: anywhere; color: var(--text); font-size: 12px; line-height: 1.35; }
+.lyr-editor-preview-text-row.is-active p { font-weight: 650; }
+.lyr-editor-preview-disclaimer {
+  flex: 0 0 auto;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 9px;
+}
+.lyr-editor-preview-disclaimer svg { flex: 0 0 auto; color: var(--accent); }
+
+@media (max-width: 800px) {
+  .lyr-editor-panel.is-preview { padding: 12px; }
+  .lyr-editor-preview-workspace { grid-template-columns: minmax(0, 1fr); }
+  .lyr-editor-preview-timeline { min-height: 235px; }
+  .lyr-editor-preview-text { min-height: 220px; }
+}
+
 @media (max-width: 560px) {
   .lyr-editor-panel {
     padding: 9px;
     width: 100%;
     max-height: 78vh;
   }
+
+  .lyr-editor-panel.is-preview { max-height: 82vh; padding: 9px; }
+  .lyr-editor-preview-heading { align-items: flex-start; padding: 8px; }
+  .lyr-editor-preview-heading strong { max-width: 210px; }
+  .lyr-editor-preview-transport { padding: 9px; }
+  .lyr-editor-preview-transport-controls { align-items: flex-start; flex-direction: column; }
+  .lyr-editor-preview-speed { width: 100%; }
+  .lyr-editor-preview-speed-track { flex: 1; width: auto; }
+  .lyr-editor-preview-vocal-title small { max-width: 110px; text-align: right; }
 
   .lyr-editor-toolbar {
     align-items: stretch;

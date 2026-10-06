@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, Clock3, MoreHorizontal, Plus, Save, Search, Trash2 } from 'lucide-react'
+import { Activity, AudioLines, Check, ChevronDown, Clock3, Eye, GripVertical, MicVocal, MoreHorizontal, Play, Plus, Save, Search, SkipBack, SkipForward, Trash2 } from 'lucide-react'
 import { useT } from '../../i18n'
 import {
   fromPlainLyrics,
@@ -29,6 +29,8 @@ export interface LyricsEditorPanelProps {
   sourceOptions: LyricsEditorSourceOption[]
   durationMs?: number | null
   currentTimeSec: number
+  trackTitle?: string
+  trackArtist?: string
   onSave: (document: LyricsEditorDocument, sourceId: string | null) => void | Promise<void>
   onPublish?: (document: LyricsEditorDocument, sourceId: string | null) => void | Promise<void>
   onCancel: () => void
@@ -51,6 +53,14 @@ function formatTimecode(milliseconds: number | null): string {
   const seconds = Math.floor((centiseconds % 6000) / 100)
   const fraction = centiseconds % 100
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(fraction).padStart(2, '0')}`
+}
+
+function formatPreciseTime(milliseconds: number): string {
+  const safe = Math.max(0, Math.round(milliseconds))
+  const minutes = Math.floor(safe / 60_000)
+  const seconds = Math.floor((safe % 60_000) / 1000)
+  const fraction = safe % 1000
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(fraction).padStart(3, '0')}`
 }
 
 function parseTimecode(value: string): number {
@@ -118,6 +128,8 @@ export default function LyricsEditorPanel({
   sourceOptions,
   durationMs,
   currentTimeSec,
+  trackTitle = '',
+  trackArtist = '',
   onSave,
   onPublish,
   onCancel,
@@ -137,6 +149,7 @@ export default function LyricsEditorPanel({
   const [localAction, setLocalAction] = useState<LocalAction>(null)
   const [sourceOpen, setSourceOpen] = useState(false)
   const [sourceQuery, setSourceQuery] = useState('')
+  const [previewMode, setPreviewMode] = useState(false)
 
   useEffect(() => {
     const next = JSON.parse(initialDocumentJson) as LyricsEditorDocument
@@ -147,6 +160,7 @@ export default function LyricsEditorPanel({
     setSourceQuery('')
     setActionError('')
     setActionNotice('')
+    setPreviewMode(false)
   }, [initialDocumentJson, initialSourceId])
 
   useEffect(() => {
@@ -179,6 +193,41 @@ export default function LyricsEditorPanel({
   const invalidLineIndexes = new Set(issues.flatMap((issue) => issue.lineIndex === undefined ? [] : [issue.lineIndex]))
   const selectedSource = sourceOptions.find((source) => source.id === selectedSourceId)
   const filteredSources = sourceOptions.filter((source) => source.label.toLocaleLowerCase().includes(sourceQuery.trim().toLocaleLowerCase()))
+
+  const previewRows = useMemo<Array<{ text: string; startMs: number; endMs: number }>>(() => {
+    const sourceLines: Array<{ text: string; startMs?: number; endMs?: number | null }> = document.mode === 'synced'
+      ? document.lines.filter((line) => line.text.trim()).slice(0, 7)
+        .map((line) => ({ text: line.text, startMs: line.startMs, endMs: line.endMs }))
+      : document.lines.filter((line) => line.text.trim()).slice(0, 7)
+        .map((line) => ({ text: line.text }))
+    const examples = [
+      t('Light reaches the window'), t('The city wakes up'), t('I keep moving forward'),
+      t('The night gives way to morning'), t('And the lights come back on'), t('I can hear the silence'),
+    ]
+    const count = Math.max(6, document.lines.filter((line) => line.text.trim()).length)
+    const trackDuration = Number.isFinite(durationMs) && (durationMs ?? 0) > 0 ? durationMs! : 180_000
+    const span = Math.max(1, Math.round(trackDuration / count))
+    return Array.from({ length: Math.min(7, count) }, (_, index) => {
+      const line = sourceLines[index]
+      const startMs = typeof line?.startMs === 'number' && Number.isFinite(line.startMs)
+        ? line.startMs : Math.round(span * index)
+      const nextLine = sourceLines[index + 1]
+      const nextStart = typeof nextLine?.startMs === 'number' && Number.isFinite(nextLine.startMs)
+        ? nextLine.startMs : startMs + span
+      const sourceEnd = typeof line?.endMs === 'number' && Number.isFinite(line.endMs) ? line.endMs : null
+      return {
+        text: line?.text.trim() || examples[index % examples.length],
+        startMs,
+        endMs: sourceEnd !== null && sourceEnd > startMs ? sourceEnd : Math.max(startMs + 1000, nextStart),
+      }
+    })
+  }, [document, durationMs, t])
+
+  const previewWindowStart = Math.max(0, previewRows[0]?.startMs ?? 0)
+  const previewWindowEnd = Math.max(previewRows.at(-1)?.endMs ?? previewWindowStart + 12_000, previewWindowStart + 12_000)
+  const previewWindowSpan = previewWindowEnd - previewWindowStart
+  const previewPosition = previewWindowStart + previewWindowSpan * 0.44
+  const previewActiveIndex = Math.max(0, previewRows.findIndex((row) => previewPosition >= row.startMs && previewPosition < row.endMs))
 
   const replaceDocument = (next: LyricsEditorDocument): void => {
     setDocument(next)
@@ -301,7 +350,7 @@ export default function LyricsEditorPanel({
   const currentPositionMs = Number.isFinite(currentTimeSec) ? Math.max(0, Math.round(currentTimeSec * 1000)) : null
 
   return (
-    <section className="lyr-editor-panel" aria-label={t('Lyrics editor')}>
+    <section className={'lyr-editor-panel' + (previewMode ? ' is-preview' : '')} aria-label={t('Lyrics editor')}>
       <div className="lyr-editor-toolbar">
         {sourceOptions.length > 0 ? (
           <div className="lyr-editor-source" ref={sourcePickerRef}>
@@ -372,9 +421,104 @@ export default function LyricsEditorPanel({
             {t('Synced lyrics')}
           </button>
         </div>
+        <button
+          type="button"
+          className={'lyr-editor-preview-toggle' + (previewMode ? ' is-active' : '')}
+          aria-pressed={previewMode}
+          onClick={() => { setSourceOpen(false); setPreviewMode((value) => !value) }}
+          disabled={busy}
+        >
+          <Eye size={14} />
+          {t(previewMode ? 'Back to editing' : 'Preview layout')}
+        </button>
       </div>
 
-      {document.mode === 'plain' ? (
+      {previewMode ? (
+        <div className="lyr-editor-preview">
+          <div className="lyr-editor-preview-heading">
+            <div>
+              <span className="lyr-editor-preview-kicker">{t('Lyrics timing')}</span>
+              <strong>{trackTitle || t('Lyrics editor')}</strong>
+              <small>{trackArtist || t('Adjust line timing while listening')}</small>
+            </div>
+            <span className="lyr-editor-preview-badge">{t('Layout preview')}</span>
+          </div>
+
+          <section className="lyr-editor-preview-transport" aria-label={t('Playback timing controls')}>
+            <div className="lyr-editor-preview-transport-head">
+              <span><AudioLines size={15} /> {t('Timing preview')}</span>
+              <span className="lyr-editor-preview-time">{formatPreciseTime(previewPosition)} <i>/</i> {formatPreciseTime(durationMs ?? 180_000)}</span>
+            </div>
+            <div className="lyr-editor-preview-wave" aria-hidden="true">
+              {Array.from({ length: 64 }, (_, index) => <i key={index} style={{ '--bar-height': `${18 + ((index * 37 + 13) % 67)}%` } as React.CSSProperties} />)}
+              <span style={{ left: '44%' }} />
+            </div>
+            <div className="lyr-editor-preview-transport-controls">
+              <div className="lyr-editor-preview-nudge">
+                <button type="button" disabled aria-label={t('Seek back 50 ms')}><SkipBack size={14} /><small>−50 ms</small></button>
+                <button type="button" className="lyr-editor-preview-play" disabled aria-label={t('Play or pause')}><Play size={16} /></button>
+                <button type="button" disabled aria-label={t('Seek forward 50 ms')}><small>+50 ms</small><SkipForward size={14} /></button>
+                <small className="lyr-editor-preview-shortcut">Ctrl + ← / →</small>
+              </div>
+              <div className="lyr-editor-preview-speed">
+                <span>{t('Editing speed')}</span>
+                <div className="lyr-editor-preview-speed-track"><i /></div>
+                <strong>0.70×</strong>
+              </div>
+            </div>
+            <small className="lyr-editor-preview-note">{t('Preview controls are visual only')}</small>
+          </section>
+
+          <div className="lyr-editor-preview-workspace">
+            <section className="lyr-editor-preview-timeline">
+              <div className="lyr-editor-preview-section-head">
+                <div><strong>{t('Line timing')}</strong><small>{t('Drag rows to reorder')}</small></div>
+                <span><Activity size={14} /> {t('Song timeline')}</span>
+              </div>
+              <div className="lyr-editor-preview-ruler"><span>{formatPreciseTime(previewWindowStart)}</span><span>{formatPreciseTime(previewWindowStart + previewWindowSpan / 2)}</span><span>{formatPreciseTime(previewWindowEnd)}</span></div>
+              <div className="lyr-editor-preview-timing-rows">
+                {previewRows.map((row, index) => {
+                  const left = Math.max(0, ((row.startMs - previewWindowStart) / previewWindowSpan) * 100)
+                  const width = Math.min(100 - left, Math.max(5, ((row.endMs - row.startMs) / previewWindowSpan) * 100))
+                  return (
+                    <div className={'lyr-editor-preview-timing-row' + (index === previewActiveIndex ? ' is-active' : '')} key={`${row.startMs}-${index}`}>
+                      <GripVertical size={15} className="lyr-editor-preview-grip" />
+                      <span className="lyr-editor-preview-row-index">{String(index + 1).padStart(2, '0')}</span>
+                      <div className="lyr-editor-preview-row-track"><i style={{ left: `${left}%`, width: `${width}%` }} /></div>
+                      <span className="lyr-editor-preview-row-time">{formatPreciseTime(row.startMs)}</span>
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="lyr-editor-preview-vocal-lane">
+                <div className="lyr-editor-preview-vocal-title"><MicVocal size={14} /><span>{t('Vocal activity')}</span><small>{t('Voice/music markers without transcription')}</small></div>
+                <div className="lyr-editor-preview-vocal-track" aria-label={t('Example voice and instrumental sections')}>
+                  {[['voice', 18], ['voice', 12], ['music', 9], ['voice', 24], ['music', 11], ['voice', 26]].map(([kind, width], index) => (
+                    <i key={index} className={kind === 'voice' ? 'is-voice' : 'is-music'} style={{ width: `${width}%` }} />
+                  ))}
+                </div>
+                <div className="lyr-editor-preview-vocal-legend"><span><i className="is-voice" />{t('Voice')}</span><span><i className="is-music" />{t('Instrumental')}</span></div>
+              </div>
+            </section>
+
+            <section className="lyr-editor-preview-text">
+              <div className="lyr-editor-preview-section-head">
+                <div><strong>{t('Lyrics lines')}</strong><small>{t('Text stays aligned with timing')}</small></div>
+                <span>{previewRows.length}</span>
+              </div>
+              <div className="lyr-editor-preview-text-rows">
+                {previewRows.map((row, index) => (
+                  <div className={'lyr-editor-preview-text-row' + (index === previewActiveIndex ? ' is-active' : '')} key={`${row.startMs}-${index}`}>
+                    <span>{String(index + 1).padStart(2, '0')}</span>
+                    <div><small>{formatPreciseTime(row.startMs)} – {formatPreciseTime(row.endMs)}</small><p>{row.text}</p></div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+          <div className="lyr-editor-preview-disclaimer"><MicVocal size={13} />{t('Vocal detection is a layout sample, not active analysis')}</div>
+        </div>
+      ) : document.mode === 'plain' ? (
         <textarea
           className="lyr-editor-plain"
           aria-label={t('Plain text')}

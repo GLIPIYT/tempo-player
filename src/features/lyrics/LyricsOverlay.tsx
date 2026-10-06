@@ -1614,6 +1614,8 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
               sourceOptions={editorSourceOptions}
               durationMs={durationMs}
               currentTimeSec={p.position}
+              trackTitle={track?.title ?? ''}
+              trackArtist={track?.artists.join(', ') ?? ''}
               onSave={saveEditedLyrics}
               onPublish={publishEditedLyrics}
               onCancel={() => setEditingLyrics(false)}
