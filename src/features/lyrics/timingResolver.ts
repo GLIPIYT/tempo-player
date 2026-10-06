@@ -16,6 +16,8 @@ export interface LyricSegment {
   kind: 'line' | 'notes'
   timeSec: number
   endTimeSec: number
+  /** Actual end of the sung phrase when its display continues to the next line. */
+  progressEndTimeSec?: number
   text: string
   seekToSec: number
   lineIndices: number[]
@@ -193,13 +195,23 @@ export function resolveLyricTiming(
         seekToSec: nextStart ?? group.timeSec, lineIndices: [] })
       continue
     }
-    const displayEnd = Math.min(Math.max(...singing.map((line) => line.endTimeSec)), limit)
+    const phraseEnd = Math.min(Math.max(...singing.map((line) => line.endTimeSec)), limit)
+    const remainingGap = limit - phraseEnd
+    const nextGroup = groups[gi + 1]
+    const nextIsExplicitPause = nextGroup !== undefined && nextGroup.entries.every(({ line }) => !line.text.trim())
+    const shortInterLineGap = nextStart !== undefined && !nextIsExplicitPause
+      && remainingGap < 3.5
+    const longInterLineBreak = nextStart !== undefined && !nextIsExplicitPause
+      && remainingGap >= 3.5 && remainingGap >= (limit - group.timeSec) * 0.2
+    const displayEnd = shortInterLineGap || nextIsExplicitPause ? limit : phraseEnd
     addSegment({ kind: 'line', timeSec: group.timeSec, endTimeSec: displayEnd,
+      progressEndTimeSec: phraseEnd,
       text: singing.map((line) => line.text).join('\n'), seekToSec: group.timeSec,
       lineIndices: singing.map((line) => line.lineIndex) })
-    const remainingGap = limit - displayEnd
-    if (remainingGap >= 0.75 && (!Number.isFinite(limit) || remainingGap >= (limit - group.timeSec) * 0.2)) {
-      addSegment({ kind: 'notes', timeSec: displayEnd, endTimeSec: limit, text: '',
+    const outroBreak = nextStart === undefined && remainingGap >= 0.75
+      && (!Number.isFinite(limit) || remainingGap >= (limit - group.timeSec) * 0.2)
+    if (longInterLineBreak || outroBreak) {
+      addSegment({ kind: 'notes', timeSec: phraseEnd, endTimeSec: limit, text: '',
         seekToSec: nextStart ?? group.timeSec, lineIndices: [] })
     }
   }
@@ -235,7 +247,8 @@ export function lyricTimingAt(timing: ResolvedLyricsTiming, positionSec: number)
   if (found < 0) return NO_POSITION
   const segment = timing.segments[found]
   if (positionSec >= segment.endTimeSec) return NO_POSITION
-  const span = segment.endTimeSec - segment.timeSec
+  const progressEnd = segment.kind === 'line' ? segment.progressEndTimeSec ?? segment.endTimeSec : segment.endTimeSec
+  const span = progressEnd - segment.timeSec
   return { segmentIndex: found, lineIndices: segment.lineIndices,
     progress: segment.kind === 'line' && Number.isFinite(span) && span > 0
       ? Math.max(0, Math.min(1, (positionSec - segment.timeSec) / span)) : 0 }

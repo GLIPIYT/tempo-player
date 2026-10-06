@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Check, ChevronDown, Clock3, GripVertical, MicVocal, MoreHorizontal, Pause, Play, Plus, Save, Search, SkipBack, SkipForward, Trash2 } from 'lucide-react'
 import { subscribeSpectrum } from '../../audio/spectrum'
 import { getEngine } from '../../player/engine'
@@ -159,8 +159,11 @@ export default function LyricsEditorPanel({
   const [sourceQuery, setSourceQuery] = useState('')
   const [dragOverLine, setDragOverLine] = useState<number | null>(null)
   const dragLineIndex = useRef<number | null>(null)
+  const pointerDragCleanup = useRef<(() => void) | null>(null)
   const vocalSamples = useRef<VocalActivitySample[]>([])
   const initialPlaybackRate = useRef(playbackRate).current
+
+  useEffect(() => () => pointerDragCleanup.current?.(), [])
 
   useEffect(() => {
     const next = JSON.parse(initialDocumentJson) as LyricsEditorDocument
@@ -321,6 +324,64 @@ export default function LyricsEditorPanel({
     setDocument({ mode: 'synced', lines })
     setActionError('')
     setActionNotice('')
+  }
+
+  const startLineDrag = (lineIndex: number, event: ReactPointerEvent<HTMLButtonElement>): void => {
+    if (busy || !event.isPrimary || event.button !== 0) return
+    event.preventDefault()
+    pointerDragCleanup.current?.()
+
+    const pointerId = event.pointerId
+    const startX = event.clientX
+    const startY = event.clientY
+    let activated = false
+    let targetIndex: number | null = null
+    dragLineIndex.current = lineIndex
+
+    const readTarget = (x: number, y: number): number | null => {
+      const row = window.document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-lyrics-line-index]')
+      if (!row) return null
+      const index = Number(row.dataset.lyricsLineIndex)
+      return Number.isInteger(index) ? index : null
+    }
+
+    const cleanup = (): void => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      window.removeEventListener('pointercancel', onPointerCancel)
+      dragLineIndex.current = null
+      setDragOverLine(null)
+      if (pointerDragCleanup.current === cleanup) pointerDragCleanup.current = null
+    }
+
+    const onPointerMove = (moveEvent: PointerEvent): void => {
+      if (moveEvent.pointerId !== pointerId) return
+      if (!activated) {
+        if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 5) return
+        activated = true
+      }
+      targetIndex = readTarget(moveEvent.clientX, moveEvent.clientY)
+      setDragOverLine(targetIndex)
+    }
+
+    const onPointerUp = (upEvent: PointerEvent): void => {
+      if (upEvent.pointerId !== pointerId) return
+      if (activated) {
+        const finalTarget = readTarget(upEvent.clientX, upEvent.clientY)
+        if (finalTarget !== null) targetIndex = finalTarget
+        if (targetIndex !== null) moveLineText(lineIndex, targetIndex)
+      }
+      cleanup()
+    }
+
+    const onPointerCancel = (cancelEvent: PointerEvent): void => {
+      if (cancelEvent.pointerId === pointerId) cleanup()
+    }
+
+    pointerDragCleanup.current = cleanup
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    window.addEventListener('pointercancel', onPointerCancel)
   }
 
   const correctLineTiming = (): void => {
@@ -569,7 +630,7 @@ export default function LyricsEditorPanel({
         </div>
       </div>
 
-      <div className="lyr-editor-transport" aria-label={t('Playback timing controls')}>
+      {document.mode === 'synced' ? <div className="lyr-editor-transport" aria-label={t('Playback timing controls')}>
         <div className="lyr-editor-transport-head">
           <span className="lyr-editor-transport-time">
             {formatTimecode(currentPositionMs)} <i>/</i> {formatTimecode(trackDurationMs)}
@@ -622,7 +683,7 @@ export default function LyricsEditorPanel({
           title={t('Ctrl arrows seek by 50 ms')}
           style={{ '--fill': `${trackDurationMs ? Math.min(100, ((currentPositionMs ?? 0) / trackDurationMs) * 100) : 0}%` } as React.CSSProperties}
         />
-      </div>
+      </div> : null}
 
       {document.mode === 'plain' ? (
         <textarea
@@ -649,37 +710,21 @@ export default function LyricsEditorPanel({
           <div className="lyr-editor-lines" role="list" aria-describedby={firstIssue ? validationId : undefined}>
             {document.lines.map((line, lineIndex) => (
               <div
-                className={'lyr-editor-line' + (lineIndex === activeLineIndex ? ' is-current' : '') + (dragOverLine === lineIndex ? ' is-drop-target' : '')}
+                className={'lyr-editor-line' + (lineIndex === activeLineIndex ? ' is-current' : '')
+                  + (dragLineIndex.current === lineIndex && dragOverLine !== null ? ' is-dragging' : '')
+                  + (dragOverLine === lineIndex && dragOverLine !== dragLineIndex.current ? ' is-drop-target' : '')}
                 role="listitem"
                 key={lineIndex}
+                data-lyrics-line-index={lineIndex}
                 data-invalid={invalidLineIndexes.has(lineIndex) || undefined}
-                onDragOver={(event) => {
-                  event.preventDefault()
-                  if (dragLineIndex.current !== lineIndex) setDragOverLine(lineIndex)
-                }}
-                onDrop={(event) => {
-                  event.preventDefault()
-                  const fromIndex = dragLineIndex.current
-                  if (fromIndex !== null) moveLineText(fromIndex, lineIndex)
-                  dragLineIndex.current = null
-                  setDragOverLine(null)
-                }}
               >
                 <button
                   type="button"
                   className="lyr-editor-drag-handle"
-                  draggable={!busy}
+                  disabled={busy}
                   aria-label={`${t('Move lyric line')} ${lineIndex + 1}`}
                   title={t('Move lyric line')}
-                  onDragStart={(event) => {
-                    dragLineIndex.current = lineIndex
-                    event.dataTransfer.effectAllowed = 'move'
-                    event.dataTransfer.setData('text/plain', String(lineIndex))
-                  }}
-                  onDragEnd={() => {
-                    dragLineIndex.current = null
-                    setDragOverLine(null)
-                  }}
+                  onPointerDown={(event) => startLineDrag(lineIndex, event)}
                   onKeyDown={(event) => {
                     if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
                     event.preventDefault()

@@ -108,13 +108,13 @@ describe('resolveLyricTiming', () => {
     expect(timing.lines[1].endSource).toBe('text')
   })
 
-  it('does not insert notes for insignificant gaps or keep an exact ended phrase active', () => {
+  it('does not insert notes and keeps the previous phrase visible across an insignificant gap', () => {
     const timing = resolveLyricTiming([
       { timeSec: 0, text: 'one', endTimeSec: 4.7, endSource: 'source' },
       { timeSec: 5, text: 'two', endTimeSec: 10, endSource: 'source' },
     ], 10)
     expect(timing.segments.filter((s) => s.kind === 'notes')).toEqual([])
-    expect(lyricTimingAt(timing, 4.8).lineIndices).toEqual([])
+    expect(lyricTimingAt(timing, 4.8).lineIndices).toEqual([0])
   })
 
   it('retains a manual overlap while the next started group wins display', () => {

@@ -668,6 +668,7 @@
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
   background: color-mix(in srgb, var(--accent) 8%, var(--surface));
 }
+.lyr-editor-line.is-dragging { opacity: 0.55; }
 .lyr-editor-line.is-drop-target { border-style: dashed; border-color: var(--accent); }
 .lyr-editor-line[data-invalid='true'] {
   border-color: color-mix(in srgb, var(--danger, #df5f67) 34%, transparent);
@@ -685,8 +686,11 @@
   background: transparent;
   color: var(--text-muted);
   cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
-.lyr-editor-drag-handle:active { cursor: grabbing; }
+.lyr-editor-drag-handle:active:not(:disabled) { cursor: grabbing; }
+.lyr-editor-drag-handle:disabled { cursor: default; opacity: 0.5; }
 .lyr-editor-drag-handle:hover { background: color-mix(in srgb, var(--surface-hover) 62%, transparent); color: var(--text); }
 .lyr-editor-time-pair .lyr-editor-time-wrap { gap: 3px; }
 .lyr-editor-time-wrap .lyr-editor-time { flex: 1; min-width: 0; }
