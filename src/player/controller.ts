@@ -41,6 +41,8 @@ export interface PlayerSnapshot {
 interface ResolvedTrack {
   url: string
   format: string | null
+  /** True when `url` points at an already downloaded local copy. */
+  cached?: boolean
   /**
    * Which engine path to play on. Remote SoundCloud streams must not go
    * through the Web Audio graph - a cross-origin source without CORS headers
@@ -301,6 +303,7 @@ export class PlayerController {
   private bufferPct: number | null = null
   /** Set while a track is being resolved and fetched, before it can start. */
   private preparing = false
+  private resolvedFromCache = false
   private playedSourceIds = new Set<string>()
   private autoPickBusy = false
   private radioFetch: AbortController | null = null
@@ -320,13 +323,14 @@ export class PlayerController {
     playbackRate: 1,
     preservePitch: true,
     repeat: 'off',
-    shuffle: false,
+    shuffle: this.shuffle,
     bufferPct: null,
     preparing: false,
     version: 0,
   }
 
   constructor() {
+    this.queueCtl.setShuffled(this.shuffle)
     void this.ensureFeedbackGeneration().catch(error => { console.warn('[tempo listening] context unavailable', error) })
     this.loadSnapshot()
     this.engine.setPlaybackRate(this.playbackRate)
@@ -358,7 +362,7 @@ export class PlayerController {
       }
     }
     this.engine.onProgress = pct => {
-      this.bufferPct = pct
+      this.bufferPct = this.resolvedFromCache ? null : pct
       this.emit()
     }
     this.engine.onEnded = () => this.handleEnded()
@@ -644,7 +648,7 @@ export class PlayerController {
   private soundcloudFallbackInFlight = new Set<string>()
 
   private async resolveTrackUrl(t: UnifiedTrack): Promise<ResolvedTrack | null> {
-    if (t.localPath) return { url: convertFileSrc(t.localPath), format: null, channel: 'local' }
+    if (t.localPath) return { url: convertFileSrc(t.localPath), format: null, channel: 'local', cached: true }
     if (t.source === 'soundcloud') {
       if (t.dbId === null) {
         // tracks started from search have no library row yet - create one so the
@@ -665,7 +669,7 @@ export class PlayerController {
       // i.e. a blob URL, which is same-origin too. Only a progressive remote
       // stream has to stay off the graph.
       const channel: AudioChannel = playback.cached || playback.format === 'hls' ? 'local' : 'stream'
-      return { url: playback.url, format: playback.format, channel }
+      return { url: playback.url, format: playback.format, channel, cached: playback.cached }
     }
     if (t.source === 'youtube') {
       // A googlevideo URL cannot simply be handed to an audio element: it wants
@@ -729,7 +733,7 @@ export class PlayerController {
         } catch {
           // playing matters more than filing; the track still plays
         }
-        return { url: convertFileSrc(file), format: null, channel: 'local' }
+        return { url: convertFileSrc(file), format: null, channel: 'local', cached: true }
       } catch (e) {
         // Silent here would mean a track that simply never plays, with nothing
         // anywhere to say why.
@@ -767,7 +771,7 @@ export class PlayerController {
       const channel: AudioChannel = playback.cached || playback.format === 'hls' ? 'local' : 'stream'
       const duration = track.durationSec ?? 0
       const position = duration > 0 ? Math.min(resumeAt, duration) : resumeAt
-      this.startTrack(track, { url: playback.url, format: playback.format, channel }, 0, position)
+      this.startTrack(track, { url: playback.url, format: playback.format, channel, cached: playback.cached }, 0, position)
       return true
     } catch {
       return false
@@ -809,9 +813,7 @@ export class PlayerController {
     this.crossfading = false
     this.preloadNext()
     this.engine.stop()
-    // Resolving can take seconds with cache-before-play on, so the bar is told
-    // something is happening instead of sitting at 0:00 looking broken.
-    this.preparing = true
+    this.preparing = false
     this.emit()
     let guard = this.queueCtl.getItems().length + 1
     while (guard > 0) {
@@ -820,8 +822,21 @@ export class PlayerController {
       const cur = this.queueCtl.current()
       if (!cur) break
       if (cur.sourceId !== this.loadedSourceId) this.beginTransition(cur)
+      // Avoid flashing “Preparing” while a cached SoundCloud file is resolved
+      // over local IPC. Slow remote lookups still get the status after a short
+      // grace period.
+      const prepareTimer = cur.localPath === null
+        ? window.setTimeout(() => {
+            if (seq === this.startSeq && this.queueCtl.current() === cur) {
+              this.preparing = true
+              this.emit()
+            }
+          }, 320)
+        : null
       const resolved = cur.provenance?.origin === 'radio' ? await this.resolveRadioPlayback(cur, seq) : await this.resolveTrackUrl(cur)
+      if (prepareTimer !== null) window.clearTimeout(prepareTimer)
       if (seq !== this.startSeq) return
+      this.preparing = false
       if (resolved) {
         this.startTrack(cur, resolved)
         return
@@ -844,6 +859,7 @@ export class PlayerController {
     this.nextStartReason = 'queue'
     const playbackSeq = ++this.startSeq
     this.loadedSourceId = track.sourceId
+    this.resolvedFromCache = resolved.cached === true || track.localPath !== null
     this.playedSourceIds.add(track.sourceId)
     this.playedTrackKeys.add(`${track.source}:${track.sourceId}`)
     this.position = initialPosition

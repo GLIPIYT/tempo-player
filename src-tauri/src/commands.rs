@@ -1505,7 +1505,7 @@ pub async fn sc_precache(
         root,
         state.covers_dir.clone(),
         &track,
-        None,
+        Some(app.clone()),
     )
     .await?;
     let Some(cached_path) = crate::soundcloud_store::existing_cached_file(

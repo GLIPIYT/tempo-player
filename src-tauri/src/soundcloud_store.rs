@@ -250,6 +250,7 @@ pub async fn get_playback(
             Some(info.clone()),
             app.clone(),
             None,
+            app.clone(),
         )
         .await
         .is_ok()
@@ -269,8 +270,9 @@ pub async fn get_playback(
             covers_dir,
             &background_track_id,
             Some(background_info),
-            app,
+            app.clone(),
             None,
+            app,
         )
         .await;
     });
@@ -343,7 +345,18 @@ pub async fn precache(
     app: Option<AppHandle>,
 ) -> Result<(), String> {
     let dir = cache_dir(&db, &default_root);
-    ensure_cached_file(db, dir, covers_dir, track_id, None, app, None).await
+    ensure_cached_file(db, dir, covers_dir, track_id, None, app.clone(), None, app).await
+}
+
+async fn precache_for_job(
+    db: Arc<Db>,
+    default_root: PathBuf,
+    covers_dir: PathBuf,
+    track_id: &str,
+    progress_app: AppHandle,
+) -> Result<(), String> {
+    let dir = cache_dir(&db, &default_root);
+    ensure_cached_file(db, dir, covers_dir, track_id, None, None, None, Some(progress_app)).await
 }
 
 /// Downloads a queued SoundCloud track and creates its library row only after
@@ -360,7 +373,7 @@ pub async fn precache_track(
         return Err("invalid SoundCloud track ID".into());
     }
     let dir = cache_dir(&db, &default_root);
-    ensure_cached_file(db, dir, covers_dir, &track.id, None, app, Some(track)).await
+    ensure_cached_file(db, dir, covers_dir, &track.id, None, app.clone(), Some(track), app).await
 }
 
 /// Downloads one ID once even when playback and queue prefetch reach it at the
@@ -374,6 +387,7 @@ async fn ensure_cached_file(
     known_info: Option<crate::soundcloud::StreamInfo>,
     app: Option<AppHandle>,
     library_track: Option<&crate::soundcloud::ScTrack>,
+    progress_app: Option<AppHandle>,
 ) -> Result<(), String> {
     let dest = cached_file_path(&dir, track_id);
     let lock = cache_download_lock(&dest);
@@ -399,7 +413,7 @@ async fn ensure_cached_file(
     if info.format == "hls" {
         return Err("hls cannot be cached".to_string());
     }
-    download_to_cache(&info.url, &dest).await?;
+    download_to_cache(&info.url, &dest, track_id, progress_app.as_ref()).await?;
     if let Some(track) = library_track {
         db.upsert_sc_track(
             &track.id,
@@ -416,6 +430,32 @@ async fn ensure_cached_file(
 
 /// Emitted while a cache job runs: `{ jobId, label, done, total, failed, state }`.
 pub const CACHE_PROGRESS_EVENT: &str = "sc-cache://progress";
+pub const CACHE_TRACK_PROGRESS_EVENT: &str = "sc-cache://track-progress";
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheTrackProgress {
+    pub track_id: String,
+    pub downloaded_bytes: u64,
+    pub total_bytes: u64,
+    pub state: &'static str,
+}
+
+fn emit_track_cache_progress(
+    app: Option<&AppHandle>,
+    track_id: &str,
+    downloaded_bytes: u64,
+    total_bytes: u64,
+    state: &'static str,
+) {
+    let Some(app) = app else { return };
+    let _ = app.emit(CACHE_TRACK_PROGRESS_EVENT, CacheTrackProgress {
+        track_id: track_id.to_string(),
+        downloaded_bytes,
+        total_bytes,
+        state,
+    });
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -495,7 +535,7 @@ pub async fn run_cache_job(
         // `None` for the app handle: letting each track emit its own library
         // change would make the library refetch once per track. One event at
         // the end is enough.
-        if precache(db.clone(), default_root.clone(), covers_dir.clone(), &id, None)
+        if precache_for_job(db.clone(), default_root.clone(), covers_dir.clone(), &id, app.clone())
             .await
             .is_err()
         {
@@ -587,25 +627,59 @@ pub fn existing_cached_file(db: &Db, default_root: &Path, track_id: &str) -> Res
     Ok(Some(canonical))
 }
 
-async fn download_to_cache(url: &str, final_path: &Path) -> Result<(), String> {
+async fn download_to_cache(
+    url: &str,
+    final_path: &Path,
+    track_id: &str,
+    progress_app: Option<&AppHandle>,
+) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .user_agent(DESKTOP_UA)
         .timeout(Duration::from_secs(60))
         .build()
         .map_err(|e| format!("http client error: {}", e))?;
-    let bytes = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("download failed: {}", e))?
-        .error_for_status()
-        .map_err(|e| format!("download failed: {}", e))?
-        .bytes()
-        .await
-        .map_err(|e| format!("download failed: {}", e))?;
-    let tmp_path = final_path.with_extension("tmp");
-    std::fs::write(&tmp_path, &bytes).map_err(|e| format!("cache write failed: {}", e))?;
-    std::fs::rename(&tmp_path, final_path).map_err(|e| format!("cache finalize failed: {}", e))
+    let mut downloaded = 0u64;
+    let mut total = 0u64;
+    let result = async {
+        let mut response = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| format!("download failed: {}", e))?
+            .error_for_status()
+            .map_err(|e| format!("download failed: {}", e))?;
+        total = response.content_length().unwrap_or(0);
+        emit_track_cache_progress(progress_app, track_id, 0, total, "running");
+
+        let mut bytes = Vec::new();
+        let mut reported = 0u64;
+        let report_step = (total / 100).max(96 * 1024);
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| format!("download failed: {}", e))?
+        {
+            downloaded += chunk.len() as u64;
+            bytes.extend_from_slice(&chunk);
+            if downloaded - reported >= report_step {
+                reported = downloaded;
+                emit_track_cache_progress(progress_app, track_id, downloaded, total, "running");
+            }
+        }
+
+        let tmp_path = final_path.with_extension("tmp");
+        std::fs::write(&tmp_path, &bytes).map_err(|e| format!("cache write failed: {}", e))?;
+        std::fs::rename(&tmp_path, final_path).map_err(|e| format!("cache finalize failed: {}", e))?;
+        Ok::<(), String>(())
+    }
+    .await;
+
+    if result.is_ok() {
+        emit_track_cache_progress(progress_app, track_id, downloaded, total.max(downloaded), "done");
+    } else {
+        emit_track_cache_progress(progress_app, track_id, downloaded, total, "failed");
+    }
+    result
 }
 
 #[cfg(test)]

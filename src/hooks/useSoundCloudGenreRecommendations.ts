@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api/client'
+import { libraryVersion } from '../utils/libraryVersion'
 import type { ScTrack } from '../types/models'
 
 interface FavoriteGenre {
@@ -54,6 +55,18 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null) {
 
     return () => { cancelled = true }
   }, [genreKey, genreLabel, retryVersion])
+
+  useEffect(() => {
+    if (tracks.length === 0) return
+    let active = true
+    const refresh = () => {
+      void api.scGetCachedTrackIds(tracks.map(track => track.id))
+        .then(ids => { if (active) setCachedTrackIds(new Set(ids)) })
+        .catch(() => undefined)
+    }
+    const unsubscribe = libraryVersion.subscribe(refresh)
+    return () => { active = false; unsubscribe() }
+  }, [tracks])
 
   const retry = useCallback(() => setRetryVersion((version) => version + 1), [])
   return { tracks, cachedTrackIds, loading, error, retry }

@@ -1,9 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
 import { ChevronLeft, ChevronRight, Download, Play, RefreshCw } from 'lucide-react'
 import type { ScTrack } from '../../types/models'
 import { useT } from '../../i18n'
 import { beginTrackDrag, consumeDragClick } from '../../dnd/trackDrag'
 import { useSoundCloudGenreRecommendations } from '../../hooks/useSoundCloudGenreRecommendations'
+import { getTrackCacheProgresses, subscribeCacheJobs } from '../../soundcloud/cacheJobs'
 
 interface RecommendationsShelfProps {
   tracks: ScTrack[]
@@ -54,6 +55,7 @@ export default function RecommendationsShelf({
 }: RecommendationsShelfProps) {
   const t = useT()
   const genreRecommendations = useSoundCloudGenreRecommendations(favoriteGenre)
+  const cacheProgresses = useSyncExternalStore(subscribeCacheJobs, getTrackCacheProgresses, getTrackCacheProgresses)
   const favoriteGenreTracks = genreRecommendations.tracks
   const genreCachedTrackIds = new Set([...cachedTrackIds, ...genreRecommendations.cachedTrackIds])
   const sectionRef = useRef<HTMLElement>(null)
@@ -184,17 +186,41 @@ export default function RecommendationsShelf({
         <strong title={track.title}>{track.title}</strong>
         <small title={track.artist}>{track.artist}</small>
       </button>
-      {track.streamable && track.hasProgressive && !cachedIds.has(track.id) ? (
-        <button
-          type="button"
-          className="home-recommendation-cache"
-          aria-label={`${t('Cache track')}: ${track.title}`}
-          title={t('Cache track')}
-          onClick={() => onCache(track)}
-        >
-          <Download size={13} />
-        </button>
-      ) : null}
+      {(() => {
+        const progress = cacheProgresses.find(item => item.trackId === track.id)
+        if (progress) {
+          const percent = progress.state === 'done'
+            ? 100
+            : progress.totalBytes > 0
+              ? Math.min(99, Math.round(progress.downloadedBytes / progress.totalBytes * 100))
+              : null
+          const progressRing = percent ?? 12
+          return (
+            <button
+              type="button"
+              className={`home-recommendation-cache is-progress${percent === null ? ' is-indeterminate' : ''}${progress.exiting ? ' is-exiting' : ''}`}
+              style={{ '--cache-progress': `${progressRing}%` } as CSSProperties}
+              aria-label={`${t('Caching…')}${percent === null ? '' : ` ${percent}%`}: ${track.title}`}
+              title={`${t('Caching…')}${percent === null ? '' : ` ${percent}%`}`}
+              disabled
+            >
+              <span>{percent === null ? '…' : `${percent}%`}</span>
+            </button>
+          )
+        }
+        if (!track.streamable || !track.hasProgressive || cachedIds.has(track.id)) return null
+        return (
+          <button
+            type="button"
+            className="home-recommendation-cache"
+            aria-label={`${t('Cache track')}: ${track.title}`}
+            title={t('Cache track')}
+            onClick={() => onCache(track)}
+          >
+            <Download size={13} />
+          </button>
+        )
+      })()}
     </div>
   ))
 

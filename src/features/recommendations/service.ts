@@ -135,6 +135,7 @@ class RecommendationService {
   private visibleIds = new Set<string>()
   private cacheFlags = new Map<string, { cached: boolean; checkedAt: number }>()
   private cacheFlight: Promise<void> | null = null
+  private cacheRefreshQueued = false
   private cacheEpoch = 0
   private nextSeed = 0
   private featuresFlight: Promise<void> | null = null
@@ -199,7 +200,12 @@ class RecommendationService {
     }).catch(() => undefined)
     libraryVersion.subscribe(() => {
       this.cacheEpoch += 1
-      this.cacheFlags.clear()
+      // Keep confirmed downloads visible while the next cache snapshot is
+      // queried. Clearing everything here briefly restores every download
+      // button after each track is cached.
+      for (const [id, flag] of this.cacheFlags) {
+        if (!flag.cached) this.cacheFlags.delete(id)
+      }
       this.emitCacheFlags()
       void this.queryCacheFlags()
       if (!this.closing && this.active && this.initialized) void this.refreshContext()
@@ -1551,7 +1557,10 @@ class RecommendationService {
     this.emit({ cachedTrackIds: ids })
   }
   private async queryCacheFlags(): Promise<void> {
-    if (this.cacheFlight) return this.cacheFlight
+    if (this.cacheFlight) {
+      this.cacheRefreshQueued = true
+      return this.cacheFlight
+    }
     const now = Date.now(), epoch = this.cacheEpoch
     const ids = [...new Set([...this.visibleIds, ...this.published.map(item => item.track.id)])]
       .filter(id => !this.cacheFlags.has(id) || (this.visibleIds.has(id) && now - this.cacheFlags.get(id)!.checkedAt >= CACHE_FLAG_TTL))
@@ -1569,7 +1578,12 @@ class RecommendationService {
       successful = true
     })().catch(() => undefined).finally(() => {
       this.cacheFlight = null
-      if (successful && this.published.some(item => !this.cacheFlags.has(item.track.id))) void this.queryCacheFlags()
+      if (this.cacheRefreshQueued) {
+        this.cacheRefreshQueued = false
+        void this.queryCacheFlags()
+      } else if (successful && this.published.some(item => !this.cacheFlags.has(item.track.id))) {
+        void this.queryCacheFlags()
+      }
     })
     return this.cacheFlight
   }

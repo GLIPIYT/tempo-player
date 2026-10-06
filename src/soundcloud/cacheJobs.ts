@@ -40,7 +40,16 @@ export interface CacheJob {
   exiting: boolean
 }
 
+export interface TrackCacheProgress {
+  trackId: string
+  downloadedBytes: number
+  totalBytes: number
+  state: 'running' | 'done' | 'failed'
+  exiting: boolean
+}
+
 export const CACHE_PROGRESS_EVENT = 'sc-cache://progress'
+export const CACHE_TRACK_PROGRESS_EVENT = 'sc-cache://track-progress'
 
 interface ProgressPayload {
   jobId: string
@@ -49,6 +58,13 @@ interface ProgressPayload {
   total: number
   failed: number
   state: CacheJob['state']
+}
+
+interface TrackProgressPayload {
+  trackId: string
+  downloadedBytes: number
+  totalBytes: number
+  state: TrackCacheProgress['state']
 }
 
 /** How long a finished job stays on screen so the ring can be seen closing. */
@@ -64,6 +80,8 @@ const listeners = new Set<() => void>()
 let starting = false
 let nextGeneration = 0
 const completionTimers = new Map<string, { generation: number; timer: number }>()
+const trackProgressTimers = new Map<string, number[]>()
+let trackProgresses: TrackCacheProgress[] = []
 
 function clearCompletionTimer(id: string): void {
   const current = completionTimers.get(id)
@@ -120,6 +138,33 @@ export function getCacheJobs(): CacheJob[] {
   return jobs
 }
 
+export function getTrackCacheProgresses(): TrackCacheProgress[] {
+  return trackProgresses
+}
+
+function clearTrackProgressTimers(trackId: string): void {
+  for (const timer of trackProgressTimers.get(trackId) ?? []) window.clearTimeout(timer)
+  trackProgressTimers.delete(trackId)
+}
+
+function removeTrackProgress(trackId: string): void {
+  trackProgresses = trackProgresses.filter(progress => progress.trackId !== trackId)
+  trackProgressTimers.delete(trackId)
+  emit()
+}
+
+function finishTrackProgress(trackId: string): void {
+  const lingerTimer = window.setTimeout(() => {
+    trackProgresses = trackProgresses.map(progress => progress.trackId === trackId
+      ? { ...progress, exiting: true }
+      : progress)
+    emit()
+    const removeTimer = window.setTimeout(() => removeTrackProgress(trackId), EXIT_MS)
+    trackProgressTimers.set(trackId, [removeTimer])
+  }, 620)
+  trackProgressTimers.set(trackId, [lingerTimer])
+}
+
 /** Starts listening for progress. Safe to call more than once. */
 export async function initCacheJobs(): Promise<void> {
   if (starting) return
@@ -159,6 +204,16 @@ export async function initCacheJobs(): Promise<void> {
       if (p.state !== 'running') {
         scheduleDismiss(next)
       }
+    })
+    await listen<TrackProgressPayload>(CACHE_TRACK_PROGRESS_EVENT, (event) => {
+      const payload = event.payload
+      clearTrackProgressTimers(payload.trackId)
+      trackProgresses = [
+        ...trackProgresses.filter(progress => progress.trackId !== payload.trackId),
+        { ...payload, exiting: false },
+      ]
+      emit()
+      if (payload.state !== 'running') finishTrackProgress(payload.trackId)
     })
   } catch {
     starting = false
