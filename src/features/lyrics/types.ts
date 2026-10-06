@@ -7,6 +7,8 @@ export type LyricsResult =
 export interface LyricsLine {
   timeSec: number
   text: string
+  /** Blank rows create pauses only when the editor explicitly marks them. */
+  explicitPause?: boolean
   endTimeSec?: number
   endSource?: 'manual' | 'source'
   words?: LyricsWord[]

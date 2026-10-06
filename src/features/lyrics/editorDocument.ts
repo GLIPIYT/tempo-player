@@ -27,8 +27,10 @@ export interface SyncedLyricsDocument {
 export interface SyncedLyricsLine {
   text: string
   startMs: number
-  /** Null means that the source did not provide an end and no duration was known. */
+  /** Null means playback should estimate the phrase end automatically. */
   endMs: number | null
+  /** Blank rows create pauses only when the editor explicitly marks them. */
+  explicitPause?: boolean
   /** Missing on saved legacy documents means an authored end. */
   endOrigin?: 'auto' | 'source' | 'manual'
   words?: SyncedLyricsWord[]
@@ -55,6 +57,8 @@ export function setSyncedLineText(document: SyncedLyricsDocument, lineIndex: num
   return { mode: 'synced', lines: document.lines.map((line, index) => {
     if (index !== lineIndex || line.text === text) return line
     const updated = { ...line, text }
+    if (text.trim()) delete updated.explicitPause
+    else updated.explicitPause = true
     delete updated.words
     if (updated.endOrigin === 'source') updated.endOrigin = 'auto'
     return updated
@@ -132,11 +136,13 @@ export function fromPlainLyrics(text: string): PlainLyricsDocument {
 }
 
 /**
- * Import source words and exact endpoints from enhanced LRC. Other ends are
- * editor hints inferred from the next later start or known track duration,
- * marked auto so saving an untouched import does not claim authored endpoints.
+ * Import source words and exact endpoints from enhanced LRC. Missing ends stay
+ * empty in the editor and are estimated from text and neighboring starts at playback.
  */
-export function fromLrc(lrc: string, durationMs?: number | null): LyricsEditorDocument {
+export function fromLrc(
+  lrc: string,
+  _durationMs?: number | null,
+): LyricsEditorDocument {
   const parsed = parseLrcLines(lrc)
 
   if (parsed.length === 0) {
@@ -147,24 +153,18 @@ export function fromLrc(lrc: string, durationMs?: number | null): LyricsEditorDo
     return fromPlainLyrics(plain)
   }
 
-  const knownDuration = Number.isFinite(durationMs) && (durationMs ?? 0) > 0 ? Math.round(durationMs!) : null
-  let nextDistinctStart: number | null = null
   const lines = new Array<SyncedLyricsLine>(parsed.length)
   for (let index = parsed.length - 1; index >= 0; index -= 1) {
     const source = parsed[index]
     const line: SyncedLyricsLine = { text: source.text, startMs: Math.round(source.timeSec * 1000),
-      endMs: source.endTimeSec === undefined ? nextDistinctStart ?? knownDuration : Math.round(source.endTimeSec * 1000),
+      endMs: source.endTimeSec === undefined ? null : Math.round(source.endTimeSec * 1000),
       endOrigin: source.endTimeSec === undefined ? 'auto' : 'source',
+      ...(source.text.trim() || source.explicitPause !== true ? {} : { explicitPause: true }),
       ...(source.words ? { words: source.words.map((word) => ({ text: word.text, startMs: Math.round(word.timeSec * 1000),
         endMs: word.endTimeSec == null ? null : Math.round(word.endTimeSec * 1000),
       })) } : {}),
     }
-    // Repeated timestamps are valid in LRC. Use the next strictly later start so
-    // repeated lines keep a useful interval rather than becoming zero-length.
     lines[index] = line
-    if (index === 0 || Math.round(parsed[index - 1].timeSec * 1000) < line.startMs) {
-      nextDistinctStart = line.startMs
-    }
   }
   return { mode: 'synced', lines }
 }
@@ -176,6 +176,7 @@ export function toPlaybackLines(document: LyricsEditorDocument, extraOffsetMs = 
     const valid = line.endMs !== null && Number.isSafeInteger(line.endMs) && line.endMs > line.startMs
     const origin = line.endOrigin ?? 'manual'
     return { timeSec: line.startMs / 1000, text: line.text,
+      ...(line.text.trim() || line.explicitPause !== true ? {} : { explicitPause: true }),
       ...(valid && origin !== 'auto' ? { endTimeSec: line.endMs! / 1000, endSource: origin } : {}),
       ...(line.words ? { words: line.words.map((word) => ({ text: word.text, timeSec: word.startMs / 1000,
         endTimeSec: word.endMs === null ? null : word.endMs / 1000,

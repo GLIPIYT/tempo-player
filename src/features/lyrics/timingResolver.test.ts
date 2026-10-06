@@ -68,7 +68,8 @@ describe('resolveLyricTiming', () => {
 
   it('merges explicit adjacent blank markers into an instrumental segment', () => {
     const timing = resolveLyricTiming([
-      { timeSec: 1, text: 'sing' }, { timeSec: 3, text: '' }, { timeSec: 5, text: '' }, { timeSec: 8, text: 'again' },
+      { timeSec: 1, text: 'sing' }, { timeSec: 3, text: '', explicitPause: true },
+      { timeSec: 5, text: '', explicitPause: true }, { timeSec: 8, text: 'again' },
     ], 12)
     const notes = timing.segments.filter((s) => s.kind === 'notes' && s.timeSec <= 3 && s.endTimeSec === 8)
     expect(notes).toHaveLength(1)

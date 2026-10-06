@@ -91,16 +91,12 @@ function plainToSynced(document: Extract<LyricsEditorDocument, { mode: 'plain' }
     mode: 'synced',
     lines: document.lines.map((line, index) => {
       const startMs = interval === null ? index * 3000 : Math.round(index * interval)
-      const proposedEnd = interval === null
-        ? null
-        : index + 1 < document.lines.length
-          ? Math.round((index + 1) * interval)
-          : duration
       return {
         text: line.text,
         startMs,
-        endMs: proposedEnd !== null && proposedEnd > startMs ? proposedEnd : null,
+        endMs: null,
         endOrigin: 'auto',
+        ...(line.text.trim() ? {} : { explicitPause: true }),
       }
     }),
   }
@@ -161,6 +157,7 @@ export default function LyricsEditorPanel({
   const dragLineIndex = useRef<number | null>(null)
   const pointerDragCleanup = useRef<(() => void) | null>(null)
   const vocalSamples = useRef<VocalActivitySample[]>([])
+  const vocalFrequencyBins = useRef<Uint8Array<ArrayBuffer> | null>(null)
   const initialPlaybackRate = useRef(playbackRate).current
 
   useEffect(() => () => pointerDragCleanup.current?.(), [])
@@ -296,9 +293,8 @@ export default function LyricsEditorPanel({
     const startMs = duration === null
       ? Math.max(0, proposedStart)
       : Math.min(Math.max(0, proposedStart), Math.max(0, duration - 1000))
-    const proposedEnd = duration === null ? null : Math.min(duration, startMs + 3000)
-    const endMs = proposedEnd !== null && proposedEnd > startMs ? proposedEnd : null
-    replaceDocument({ mode: 'synced', lines: [...document.lines, { text: '', startMs, endMs, endOrigin: 'auto' }] })
+    replaceDocument({ mode: 'synced', lines: [...document.lines,
+      { text: '', startMs, endMs: null, endOrigin: 'auto', explicitPause: true }] })
   }
 
   const removeLine = (lineIndex: number): void => {
@@ -309,7 +305,7 @@ export default function LyricsEditorPanel({
   const moveLineText = (fromIndex: number, toIndex: number): void => {
     if (document.mode !== 'synced' || fromIndex === toIndex
       || fromIndex < 0 || toIndex < 0 || fromIndex >= document.lines.length || toIndex >= document.lines.length) return
-    const lyricTexts = document.lines.map((line, index) => ({ text: line.text, sourceIndex: index }))
+    const lyricTexts = document.lines.map((line, index) => ({ text: line.text, explicitPause: line.explicitPause, sourceIndex: index }))
     const [moved] = lyricTexts.splice(fromIndex, 1)
     if (!moved) return
     lyricTexts.splice(toIndex, 0, moved)
@@ -317,6 +313,8 @@ export default function LyricsEditorPanel({
       const lyric = lyricTexts[index]
       if (!lyric || lyric.sourceIndex === index) return line
       const updated = { ...line, text: lyric.text }
+      if (lyric.text.trim() || lyric.explicitPause !== true) delete updated.explicitPause
+      else updated.explicitPause = true
       delete updated.words
       if (updated.endOrigin === 'source') updated.endOrigin = 'auto'
       return updated
@@ -396,7 +394,7 @@ export default function LyricsEditorPanel({
     }
 
     const samples = vocalSamples.current.filter((sample) => (
-      sample.positionMs >= positionMs - 5200 && sample.positionMs <= positionMs + 80
+      sample.positionMs >= positionMs - 12_000 && sample.positionMs <= positionMs + 80
     ))
     if (samples.length < 12) {
       setActionError(t('Play the local track for a few seconds before correcting'))
@@ -404,7 +402,7 @@ export default function LyricsEditorPanel({
     }
 
     const latestStartedLine = document.lines.reduce((latest, line, index) => (
-      line.startMs <= positionMs ? index : latest
+      line.text.trim() && line.startMs <= positionMs ? index : latest
     ), -1)
     if (latestStartedLine < 0) {
       setActionError(t('No lyric line near the current position'))
@@ -412,13 +410,22 @@ export default function LyricsEditorPanel({
     }
 
     const line = document.lines[latestStartedLine]
-    const previousLine = document.lines[latestStartedLine - 1]
-    const nextLine = document.lines[latestStartedLine + 1]
+    const previousLine = document.lines.slice(0, latestStartedLine).reverse()
+      .find((candidate) => candidate.startMs < line.startMs)
+    const nextLine = document.lines.slice(latestStartedLine + 1)
+      .find((candidate) => candidate.startMs > line.startMs)
     const positionWindowStart = samples[0]?.positionMs ?? positionMs
     const positionWindowEnd = samples.at(-1)?.positionMs ?? positionMs
-    const lineBoundary = line.endMs ?? nextLine?.startMs ?? trackDurationMs
-    const analysisEnd = Math.min(positionMs, lineBoundary ?? positionMs)
-    const analysisStart = Math.max(line.startMs, positionWindowStart)
+    const lineBoundary = line.endMs !== null && line.endOrigin !== 'auto'
+      ? line.endMs
+      : nextLine?.startMs ?? trackDurationMs
+    const previousBoundary = previousLine
+      ? previousLine.endMs !== null && previousLine.endOrigin !== 'auto'
+        ? previousLine.endMs
+        : Math.max(previousLine.startMs, line.startMs - 900)
+      : 0
+    const analysisEnd = Math.min(positionMs + 80, lineBoundary ?? positionMs + 80)
+    const analysisStart = Math.max(positionWindowStart, Math.max(0, line.startMs - 1800), previousBoundary)
     const segments = findVocalActivitySegments(samples)
       .filter((segment) => segment.endMs >= analysisStart && segment.startMs <= analysisEnd)
       .map((segment) => ({
@@ -431,17 +438,26 @@ export default function LyricsEditorPanel({
       return
     }
 
+    const startCandidate = segments
+      .filter((segment) => Math.abs(segment.startMs - line.startMs) <= 1800)
+      .sort((a, b) => Math.abs(a.startMs - line.startMs) - Math.abs(b.startMs - line.startMs))[0]
     const coversLineStart = positionWindowStart <= line.startMs + 180
-    const startsAtLineBoundary = coversLineStart && segments[0].startMs <= line.startMs + 900
-    const newStartMs = startsAtLineBoundary
-      ? Math.max(previousLine?.startMs ?? 0, segments[0].startMs)
+      && positionWindowEnd >= line.startMs - 180
+    const nextBoundary = nextLine?.startMs ?? trackDurationMs ?? Number.POSITIVE_INFINITY
+    const newStartMs = coversLineStart && startCandidate
+      ? Math.min(nextBoundary - 1, Math.max(previousBoundary, startCandidate.startMs))
       : line.startMs
     const boundaryWasHeard = lineBoundary !== null
       && lineBoundary <= positionMs + 80
       && positionWindowEnd >= lineBoundary - 180
-    const newEndMs = boundaryWasHeard
-      ? Math.min(lineBoundary, nextLine?.startMs ?? Number.POSITIVE_INFINITY, segments.at(-1)!.endMs)
-      : line.endMs
+    const lastLineActivity = segments.filter((segment) => segment.endMs > newStartMs).at(-1)
+    const vocalTailObserved = (line.endMs === null || line.endOrigin === 'auto')
+      && lastLineActivity !== undefined
+      && positionWindowEnd - lastLineActivity.endMs >= 600
+    const lineEndObserved = boundaryWasHeard || vocalTailObserved
+    const newEndMs = lineEndObserved && lineBoundary !== null && lastLineActivity
+      ? Math.min(lineBoundary, nextLine?.startMs ?? Number.POSITIVE_INFINITY, lastLineActivity.endMs)
+      : line.endOrigin === 'auto' ? null : line.endMs
     if (newEndMs !== null && newEndMs <= newStartMs) {
       setActionError(t('No clear vocal phrase found near this line'))
       return
@@ -455,7 +471,13 @@ export default function LyricsEditorPanel({
       if (current.mode !== 'synced') return current
       const currentLine = current.lines[latestStartedLine]
       if (!currentLine) return current
-      const updatedLine = { ...currentLine, startMs: newStartMs, endMs: newEndMs, endOrigin: 'manual' as const }
+      const updatedLine = { ...currentLine, startMs: newStartMs, endMs: newEndMs }
+      if (newEndMs !== line.endMs) {
+        if (newEndMs === null) {
+          if (line.endOrigin === 'auto') updatedLine.endOrigin = 'auto'
+          else delete updatedLine.endOrigin
+        } else updatedLine.endOrigin = 'manual'
+      }
       delete updatedLine.words
       return {
         mode: 'synced',
@@ -503,8 +525,9 @@ export default function LyricsEditorPanel({
     let sampleTimer = 0
     let lastSampleAt = 0
 
-    const onSpectrum = (bins: Float32Array): void => {
-      if (engine.getActiveChannel() !== 'local' || !engine.getAnalyser()) return
+    const onSpectrum = (): void => {
+      const analyser = engine.getAnalyser()
+      if (engine.getActiveChannel() !== 'local' || !analyser) return
       const now = performance.now()
       if (now - lastSampleAt < 50) return
       const positionMs = Math.round(engine.getCurrentTime() * 1000)
@@ -513,9 +536,14 @@ export default function LyricsEditorPanel({
         vocalSamples.current = []
       }
       if (previous?.positionMs === positionMs) return
-      const sampleRate = engine.getAnalyser()?.context.sampleRate ?? 48_000
-      vocalSamples.current.push({ positionMs, score: estimateVocalActivity(bins, sampleRate) })
-      const cutoffMs = positionMs - 6500
+      if (!vocalFrequencyBins.current || vocalFrequencyBins.current.length !== analyser.frequencyBinCount) {
+        vocalFrequencyBins.current = new Uint8Array(analyser.frequencyBinCount)
+      }
+      analyser.getByteFrequencyData(vocalFrequencyBins.current)
+      vocalSamples.current.push({ positionMs, score: estimateVocalActivity(
+        vocalFrequencyBins.current, analyser.context.sampleRate, analyser.minDecibels, analyser.maxDecibels,
+      ) })
+      const cutoffMs = positionMs - 12_500
       while (vocalSamples.current[0] && vocalSamples.current[0].positionMs < cutoffMs) {
         vocalSamples.current.shift()
       }
@@ -703,7 +731,7 @@ export default function LyricsEditorPanel({
             <span />
             <span>{t('Lyric line')}</span>
             <div className="lyr-editor-time-labels">
-              <span>{t('Start time')}</span><i>—</i><span>{t('End time')}</span>
+            <span>{t('Start time')}</span><i>—</i><span>{t('End time')}</span>
             </div>
             <span />
           </div>
@@ -772,8 +800,8 @@ export default function LyricsEditorPanel({
                       className="lyr-editor-time"
                       type="text"
                       inputMode="numeric"
-                      placeholder="00:00.00"
-                      aria-label={`${t('End time')}, ${lineIndex + 1}`}
+                      placeholder={t('Auto')}
+                      aria-label={`${t('End time (optional)')}, ${lineIndex + 1}`}
                       aria-invalid={line.endMs !== null && (!Number.isSafeInteger(line.endMs) || line.endMs <= line.startMs) || undefined}
                       value={timeDrafts[lineIndex]?.end ?? formatTimecode(line.endMs)}
                       onChange={(event) => editTime(lineIndex, 'endMs', event.target.value)}

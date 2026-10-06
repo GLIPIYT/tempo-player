@@ -105,6 +105,8 @@ export const en: Record<string, string> = {
   'Could not publish lyrics': 'Could not publish lyrics',
   'Could not save lyrics': 'Could not save lyrics',
   'End time': 'End time',
+  'End time (optional)': 'End time (optional)',
+  Auto: 'Auto',
   'End time must be after start time': 'End time must be after start time',
   'Enter a valid end time': 'Enter a valid end time',
   'Enter a valid start time': 'Enter a valid start time',

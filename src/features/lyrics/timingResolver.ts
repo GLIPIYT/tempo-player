@@ -16,8 +16,8 @@ export interface LyricSegment {
   kind: 'line' | 'notes'
   timeSec: number
   endTimeSec: number
-  /** Actual end of the sung phrase when its display continues to the next line. */
-  progressEndTimeSec?: number
+  /** Display may continue through a short gap while phrase timing stays exact. */
+  displayEndTimeSec?: number
   text: string
   seekToSec: number
   lineIndices: number[]
@@ -113,6 +113,7 @@ export function resolveLyricTiming(
   const duration = durationSec != null && Number.isFinite(durationSec) && durationSec > 0 ? durationSec : null
   const sorted = lines.map((line, lineIndex) => ({ line, lineIndex, work: phraseWork(typeof line.text === 'string' ? line.text : '') }))
     .filter(({ line }) => Number.isFinite(line.timeSec) && line.timeSec >= 0 && typeof line.text === 'string'
+      && (line.text.trim().length > 0 || line.explicitPause === true)
       && (duration === null || line.timeSec < duration))
     .sort((a, b) => a.line.timeSec - b.line.timeSec || a.lineIndex - b.lineIndex)
   const groups: LineGroup[] = []
@@ -204,8 +205,8 @@ export function resolveLyricTiming(
     const longInterLineBreak = nextStart !== undefined && !nextIsExplicitPause
       && remainingGap >= 3.5 && remainingGap >= (limit - group.timeSec) * 0.2
     const displayEnd = shortInterLineGap || nextIsExplicitPause ? limit : phraseEnd
-    addSegment({ kind: 'line', timeSec: group.timeSec, endTimeSec: displayEnd,
-      progressEndTimeSec: phraseEnd,
+    addSegment({ kind: 'line', timeSec: group.timeSec, endTimeSec: phraseEnd,
+      ...(displayEnd > phraseEnd ? { displayEndTimeSec: displayEnd } : {}),
       text: singing.map((line) => line.text).join('\n'), seekToSec: group.timeSec,
       lineIndices: singing.map((line) => line.lineIndex) })
     const outroBreak = nextStart === undefined && remainingGap >= 0.75
@@ -246,9 +247,8 @@ export function lyricTimingAt(timing: ResolvedLyricsTiming, positionSec: number)
   }
   if (found < 0) return NO_POSITION
   const segment = timing.segments[found]
-  if (positionSec >= segment.endTimeSec) return NO_POSITION
-  const progressEnd = segment.kind === 'line' ? segment.progressEndTimeSec ?? segment.endTimeSec : segment.endTimeSec
-  const span = progressEnd - segment.timeSec
+  if (positionSec >= (segment.displayEndTimeSec ?? segment.endTimeSec)) return NO_POSITION
+  const span = segment.endTimeSec - segment.timeSec
   return { segmentIndex: found, lineIndices: segment.lineIndices,
     progress: segment.kind === 'line' && Number.isFinite(span) && span > 0
       ? Math.max(0, Math.min(1, (positionSec - segment.timeSec) / span)) : 0 }

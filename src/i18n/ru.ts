@@ -411,6 +411,8 @@ export const ru: Record<string, string> = {
   'Could not publish lyrics': 'Не удалось отправить текст',
   'Could not save lyrics': 'Не удалось сохранить текст',
   'End time': 'Конец',
+  'End time (optional)': 'Конец (необязательно)',
+  Auto: 'Авто',
   'End time must be after start time': 'Время окончания должно быть позже начала',
   'Enter a valid end time': 'Укажите корректное время окончания',
   'Enter a valid start time': 'Укажите корректное время начала',

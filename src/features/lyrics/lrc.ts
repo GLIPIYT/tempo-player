@@ -88,9 +88,8 @@ export function parseLrcLines(raw: string, extraOffsetMs = 0): LyricsLine[] {
       rest = rest.slice(m[0].length)
     }
     if (times.length === 0) continue
-    // A timecode with no text is kept, not dropped: that is exactly how LRC marks
-    // an instrumental break, and the overlay draws it while the presence falls
-    // back to the artist instead of holding the last sung line on screen.
+    // Keep empty timecodes in the parsed source. The editor marks intentional
+    // blank rows as pauses; external empty rows do not pause playback by themselves.
     const text = rest.replace(WORD_TAG, '').trim()
     const enhanced = enhancedTiming(rest)
     for (const time of times) {
