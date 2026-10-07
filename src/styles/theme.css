@@ -547,21 +547,56 @@ html.has-bg .page {
 
 .lyrics-color-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
-.lyrics-color-controls input[type='color'] {
-  width: 32px;
-  height: 28px;
-  padding: 2px;
+.lyrics-color-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 39px;
+  padding: 0 11px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--bg-elevated);
+  cursor: pointer;
+}
+
+.lyrics-color-picker:hover {
+  border-color: var(--accent-strong);
+}
+
+.lyrics-color-picker-swatch {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+  border-radius: 5px;
+}
+
+.lyrics-color-picker-value {
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lyrics-color-picker input[type='color'] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .set-page .lyrics-alignment-card:focus-visible,
-.set-page .lyrics-color-controls button:focus-visible {
+.set-page .lyrics-color-controls button:focus-visible,
+.set-page .lyrics-color-picker:focus-within {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }

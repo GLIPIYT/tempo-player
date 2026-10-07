@@ -4,7 +4,7 @@ import { Check, ChevronDown, ChevronLeft, MicVocal, Music2, Pause, Pencil, Pin, 
 import type { CSSProperties, TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from 'react'
 import { usePlayer } from '../../player'
 import { useT } from '../../i18n'
-import { useSettings } from '../../state/settings'
+import { useSettings, type LyricProgressDirection } from '../../state/settings'
 import Cover from '../../components/common/Cover'
 import { fmtTime } from '../../utils/format'
 import { api } from '../../api/client'
@@ -244,6 +244,7 @@ function SyncedView({
   offsetMs,
   alignment,
   progressClipToText,
+  progressDirection,
   fillEnabled,
 }: {
   timing: ResolvedLyricsTiming
@@ -251,6 +252,7 @@ function SyncedView({
   offsetMs: number
   alignment: 'left' | 'center' | 'right'
   progressClipToText: boolean
+  progressDirection: LyricProgressDirection
   fillEnabled: boolean
 }) {
   const p = usePlayer()
@@ -288,10 +290,11 @@ function SyncedView({
       textBounds,
       alignment,
       progressClipToText,
+      progressDirection,
     )
     path.style.left = `${geometry.leftPx}px`
     path.style.width = `${geometry.widthPx}px`
-  }, [alignment, progressClipToText])
+  }, [alignment, progressClipToText, progressDirection])
 
   const applyTransform = useCallback((instant: boolean) => {
     const c = containerRef.current
@@ -524,7 +527,7 @@ function SyncedView({
           </div>
         )
       }),
-    [segments, segIdx, seekToLyricTime, t, endPause, measureAll],
+    [segments, segIdx, seekToLyricTime, t, endPause, measureAll, measureProgressGeometry],
   )
 
   return (
@@ -1728,6 +1731,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
                   offsetMs={activeLyrics.offsetMs}
                   alignment={settings.lyrics.alignment}
                   progressClipToText={settings.lyrics.progressClipToText}
+                  progressDirection={settings.lyrics.progressDirection}
                   fillEnabled={settings.lyrics.fillEnabled}
                 />
               )}

@@ -53,6 +53,7 @@ import VisualizerPreview from '../components/settings/VisualizerPreview'
 import BackgroundSearchPanel from '../components/settings/BackgroundSearchPanel'
 import BackgroundImageLibrary from '../components/settings/BackgroundImageLibrary'
 import LyricsAnalysisCard from '../components/settings/LyricsAnalysisCard'
+import LyricsProgressColorPicker from '../components/settings/LyricsProgressColorPicker'
 import {
   appVersion,
   listReleases,
@@ -1732,15 +1733,21 @@ export default function SettingsPage() {
                 <div className="set-row">
                   <span className="set-row-label">{t('Progress color')}</span>
                   <div className="lyrics-color-controls" role="group" aria-label={t('Progress color')}>
-                    <button type="button" className={`seg-btn${settings.lyrics.progressColorMode === 'theme' ? ' is-active' : ''}`}
-                      aria-pressed={settings.lyrics.progressColorMode === 'theme'}
-                      onClick={() => update({ lyrics: { progressColorMode: 'theme' } })}>{t('Theme color')}</button>
-                    <button type="button" className={`seg-btn${settings.lyrics.progressColorMode === 'custom' ? ' is-active' : ''}`}
-                      aria-pressed={settings.lyrics.progressColorMode === 'custom'}
-                      onClick={() => update({ lyrics: { progressColorMode: 'custom' } })}>{t('Custom color')}</button>
+                    <div className="seg">
+                      <button type="button" className={`seg-btn${settings.lyrics.progressColorMode === 'theme' ? ' is-active' : ''}`}
+                        aria-pressed={settings.lyrics.progressColorMode === 'theme'}
+                        onClick={() => {
+                          if (settings.lyrics.progressColorMode !== 'theme') update({ lyrics: { progressColorMode: 'theme' } })
+                        }}>{t('Theme color')}</button>
+                      <button type="button" className={`seg-btn${settings.lyrics.progressColorMode === 'custom' ? ' is-active' : ''}`}
+                        aria-pressed={settings.lyrics.progressColorMode === 'custom'}
+                        onClick={() => {
+                          if (settings.lyrics.progressColorMode !== 'custom') update({ lyrics: { progressColorMode: 'custom' } })
+                        }}>{t('Custom color')}</button>
+                    </div>
                     {settings.lyrics.progressColorMode === 'custom' && (
-                      <input type="color" value={settings.lyrics.progressColor} aria-label={t('Custom progress color')}
-                        onChange={event => update({ lyrics: { progressColor: event.target.value } })} />
+                      <LyricsProgressColorPicker value={settings.lyrics.progressColor}
+                        onCommit={progressColor => update({ lyrics: { progressColor } })} />
                     )}
                   </div>
                 </div>

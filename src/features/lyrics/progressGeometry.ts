@@ -1,11 +1,12 @@
 const MAX_PROGRESS_WIDTH = 420
 
-/** Place the fixed-width path in its row or match it exactly to the rendered text. */
+/** Place the path in its row, center it on the text, or match the text bounds. */
 export function resolveLyricProgressGeometry(
   row: DOMRectReadOnly,
   text: DOMRectReadOnly,
   alignment: 'left' | 'center' | 'right',
   clipToText: boolean,
+  direction: 'left-to-right' | 'right-to-left' | 'center-out',
 ): { leftPx: number; widthPx: number } {
   const rowWidth = Math.max(0, row.width)
   const width = Math.min(MAX_PROGRESS_WIDTH, rowWidth)
@@ -15,8 +16,13 @@ export function resolveLyricProgressGeometry(
       ? rowWidth - width
       : (rowWidth - width) / 2
 
-  if (!clipToText) return { leftPx: left, widthPx: width }
-
   const textLeft = text.left - row.left
+  if (!clipToText) {
+    const pathLeft = direction === 'center-out'
+      ? textLeft + (Math.max(0, text.width) - width) / 2
+      : left
+    return { leftPx: pathLeft, widthPx: width }
+  }
+
   return { leftPx: textLeft, widthPx: Math.max(0, text.width) }
 }
