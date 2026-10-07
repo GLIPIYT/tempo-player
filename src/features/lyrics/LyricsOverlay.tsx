@@ -543,7 +543,7 @@ function SyncedView({
           </div>
         )
       }),
-    [segments, segIdx, seekToLyricTime, t, endPause, measureAll, measureProgressGeometry],
+    [segments, segIdx, seekToLyricTime, t, endPause, measureAll, measureProgressGeometry, progressDirection],
   )
 
   return (
