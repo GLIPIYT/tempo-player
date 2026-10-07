@@ -5,6 +5,8 @@ import { initializeDeepAnalysisDefault } from '../features/lyrics/analysis/hardw
 
 export type StartupPage = 'home' | 'library' | 'albums' | 'artists' | 'playlists'
 export type BrandIconStyle = 'pulse' | 'orbit'
+export type LyricProgressDirection = 'left-to-right' | 'right-to-left' | 'center-out'
+export type LyricProgressColorMode = 'theme' | 'custom'
 
 const STARTUP_PAGES: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists']
 
@@ -36,6 +38,14 @@ export interface AppSettings {
     /** Null waits for the hardware default; only true permits deep analysis. */
     deepAnalysisEnabled: boolean | null
     alignment: 'left' | 'center' | 'right'
+    textSizePx: number
+    fillEnabled: boolean
+    progressDirection: LyricProgressDirection
+    progressColorMode: LyricProgressColorMode
+    progressColor: string
+    progressOpacityPct: number
+    progressThicknessPx: number
+    progressClipToText: boolean
   }
   font: {
     family: string | null
@@ -127,7 +137,19 @@ export const defaultSettings: AppSettings = {
   startupPage: 'home',
   profile: { nickname: null, avatarPath: null, onboarded: false },
   discord: { enabled: false, clientId: '1543766505295183904', lyricStitchGapSec: 2 },
-  lyrics: { cacheOnline: true, deepAnalysisEnabled: null, alignment: 'left' },
+  lyrics: {
+    cacheOnline: true,
+    deepAnalysisEnabled: null,
+    alignment: 'left',
+    textSizePx: 21,
+    fillEnabled: true,
+    progressDirection: 'left-to-right',
+    progressColorMode: 'theme',
+    progressColor: '#ffffff',
+    progressOpacityPct: 35,
+    progressThicknessPx: 1.5,
+    progressClipToText: true,
+  },
   font: { family: null, importedPath: null, sizePx: 13, uiScalePct: 100 },
   background: { path: null, dimPct: 45, blurPx: 0 },
   player: { waveform: false, barStyle: 'classic' },
@@ -174,6 +196,44 @@ export function clampDiscordStitchGap(value: unknown): number {
   const fallback = defaultSettings.discord.lyricStitchGapSec
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.round(Math.max(0, Math.min(5, value)) / 0.25) * 0.25
+}
+
+const LYRIC_PROGRESS_DIRECTIONS: LyricProgressDirection[] = ['left-to-right', 'right-to-left', 'center-out']
+const LYRIC_PROGRESS_COLOR_MODES: LyricProgressColorMode[] = ['theme', 'custom']
+
+function clampLyricNumber(value: unknown, min: number, max: number, step: number, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  const clamped = Math.max(min, Math.min(max, value))
+  return Math.round((clamped - min) / step) * step + min
+}
+
+function normalizeLyricColor(value: unknown): string {
+  if (typeof value !== 'string') return defaultSettings.lyrics.progressColor
+  const hex = value.trim().match(/^#([\da-f]{3}|[\da-f]{6})$/i)?.[1]
+  if (!hex) return defaultSettings.lyrics.progressColor
+  const expanded = hex.length === 3 ? [...hex].map(char => char + char).join('') : hex
+  return `#${expanded.toLowerCase()}`
+}
+
+function normalizeLyrics(value: Partial<AppSettings['lyrics']>): AppSettings['lyrics'] {
+  const base = defaultSettings.lyrics
+  return {
+    ...base,
+    ...value,
+    alignment: value.alignment === 'center' || value.alignment === 'right' ? value.alignment : 'left',
+    deepAnalysisEnabled: typeof value.deepAnalysisEnabled === 'boolean' ? value.deepAnalysisEnabled : null,
+    textSizePx: clampLyricNumber(value.textSizePx, 16, 40, 1, base.textSizePx),
+    fillEnabled: typeof value.fillEnabled === 'boolean' ? value.fillEnabled : base.fillEnabled,
+    progressDirection: LYRIC_PROGRESS_DIRECTIONS.includes(value.progressDirection as LyricProgressDirection)
+      ? value.progressDirection as LyricProgressDirection : base.progressDirection,
+    progressColorMode: LYRIC_PROGRESS_COLOR_MODES.includes(value.progressColorMode as LyricProgressColorMode)
+      ? value.progressColorMode as LyricProgressColorMode : base.progressColorMode,
+    progressColor: normalizeLyricColor(value.progressColor),
+    progressOpacityPct: clampLyricNumber(value.progressOpacityPct, 5, 100, 1, base.progressOpacityPct),
+    progressThicknessPx: clampLyricNumber(value.progressThicknessPx, 1, 6, 0.5, base.progressThicknessPx),
+    progressClipToText: typeof value.progressClipToText === 'boolean'
+      ? value.progressClipToText : base.progressClipToText,
+  }
 }
 
 export const VISUALIZER_BARS_MIN = 8
@@ -247,16 +307,7 @@ export function loadSettings(): AppSettings {
         // left in settings by older versions where the field was editable.
         clientId: defaultSettings.discord.clientId,
       },
-      lyrics: {
-        ...defaultSettings.lyrics,
-        ...parsed.lyrics,
-        alignment: parsed.lyrics?.alignment === 'center' || parsed.lyrics?.alignment === 'right'
-          ? parsed.lyrics.alignment
-          : 'left',
-        deepAnalysisEnabled: typeof parsed.lyrics?.deepAnalysisEnabled === 'boolean'
-          ? parsed.lyrics.deepAnalysisEnabled
-          : null,
-      },
+      lyrics: normalizeLyrics(parsed.lyrics ?? {}),
       font: { ...defaultSettings.font, ...parsed.font },
       background: { ...defaultSettings.background, ...parsed.background },
       player: { ...defaultSettings.player, ...parsed.player },
@@ -337,7 +388,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
           patch.discord?.lyricStitchGapSec ?? prev.discord.lyricStitchGapSec,
         ),
       },
-      lyrics: { ...prev.lyrics, ...patch.lyrics },
+      lyrics: normalizeLyrics({ ...prev.lyrics, ...patch.lyrics }),
       font: { ...prev.font, ...patch.font },
       background: { ...prev.background, ...patch.background },
       player: { ...prev.player, ...patch.player },

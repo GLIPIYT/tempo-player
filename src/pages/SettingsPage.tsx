@@ -1239,15 +1239,72 @@ export default function SettingsPage() {
                 <div className="set-note">{t('Online lyrics are cached for offline playback.')}</div>
                 <div className="set-row" style={{ marginTop: 12 }}>
                   <span className="set-row-label">{t('Lyrics alignment')}</span>
-                  <Segmented
-                    value={settings.lyrics.alignment}
-                    options={[
-                      { value: 'left', label: t('Left') },
-                      { value: 'center', label: t('Center') },
-                      { value: 'right', label: t('Right') },
-                    ]}
-                    onChange={(alignment) => update({ lyrics: { alignment } })}
-                  />
+                </div>
+                <div className="lyrics-alignment-cards" role="group" aria-label={t('Lyrics alignment')}>
+                  {(['left', 'center', 'right'] as const).map(alignment => (
+                    <button
+                      key={alignment}
+                      type="button"
+                      className={`lyrics-alignment-card${settings.lyrics.alignment === alignment ? ' is-active' : ''}`}
+                      aria-label={t(alignment === 'left' ? 'Left' : alignment === 'center' ? 'Center' : 'Right')}
+                      aria-pressed={settings.lyrics.alignment === alignment}
+                      onClick={() => update({ lyrics: { alignment } })}
+                    >
+                      <span className={`lyrics-alignment-preview is-${alignment}`} aria-hidden="true">
+                        <i /><i /><i />
+                      </span>
+                      <span>{t(alignment === 'left' ? 'Left' : alignment === 'center' ? 'Center' : 'Right')}</span>
+                    </button>
+                  ))}
+                </div>
+                <SliderRow
+                  label={t('Lyrics text size')}
+                  min={16} max={40} step={1}
+                  value={settings.lyrics.textSizePx}
+                  display={`${settings.lyrics.textSizePx}px`}
+                  onChange={textSizePx => update({ lyrics: { textSizePx } })}
+                />
+                <div className="set-row lyrics-toggle-row">
+                  <span className="set-row-label">{t('Enable lyric fill')}</span>
+                  <button className={settings.lyrics.fillEnabled ? 'switch is-on' : 'switch'} role="switch"
+                    aria-checked={settings.lyrics.fillEnabled} aria-label={t('Enable lyric fill')}
+                    onClick={() => update({ lyrics: { fillEnabled: !settings.lyrics.fillEnabled } })} />
+                </div>
+                <div className="set-row">
+                  <label className="set-row-label" htmlFor="lyrics-progress-direction">{t('Progress direction')}</label>
+                  <select id="lyrics-progress-direction" className="select" value={settings.lyrics.progressDirection}
+                    onChange={event => update({ lyrics: { progressDirection: event.target.value as typeof settings.lyrics.progressDirection } })}>
+                    <option value="left-to-right">{t('Left to right')}</option>
+                    <option value="right-to-left">{t('Right to left')}</option>
+                    <option value="center-out">{t('Center outward')}</option>
+                  </select>
+                </div>
+                <div className="set-row">
+                  <span className="set-row-label">{t('Progress color')}</span>
+                  <div className="lyrics-color-controls" role="group" aria-label={t('Progress color')}>
+                    <button type="button" className={`seg-btn${settings.lyrics.progressColorMode === 'theme' ? ' is-active' : ''}`}
+                      aria-pressed={settings.lyrics.progressColorMode === 'theme'}
+                      onClick={() => update({ lyrics: { progressColorMode: 'theme' } })}>{t('Theme color')}</button>
+                    <button type="button" className={`seg-btn${settings.lyrics.progressColorMode === 'custom' ? ' is-active' : ''}`}
+                      aria-pressed={settings.lyrics.progressColorMode === 'custom'}
+                      onClick={() => update({ lyrics: { progressColorMode: 'custom' } })}>{t('Custom color')}</button>
+                    {settings.lyrics.progressColorMode === 'custom' && (
+                      <input type="color" value={settings.lyrics.progressColor} aria-label={t('Custom progress color')}
+                        onChange={event => update({ lyrics: { progressColor: event.target.value } })} />
+                    )}
+                  </div>
+                </div>
+                <SliderRow label={t('Progress opacity')} min={5} max={100} step={1}
+                  value={settings.lyrics.progressOpacityPct} display={`${settings.lyrics.progressOpacityPct}%`}
+                  onChange={progressOpacityPct => update({ lyrics: { progressOpacityPct } })} />
+                <SliderRow label={t('Progress thickness')} min={1} max={6} step={0.5}
+                  value={settings.lyrics.progressThicknessPx} display={`${settings.lyrics.progressThicknessPx}px`}
+                  onChange={progressThicknessPx => update({ lyrics: { progressThicknessPx } })} />
+                <div className="set-row lyrics-toggle-row">
+                  <span className="set-row-label">{t('Clip progress to text')}</span>
+                  <button className={settings.lyrics.progressClipToText ? 'switch is-on' : 'switch'} role="switch"
+                    aria-checked={settings.lyrics.progressClipToText} aria-label={t('Clip progress to text')}
+                    onClick={() => update({ lyrics: { progressClipToText: !settings.lyrics.progressClipToText } })} />
                 </div>
               </Card>
               <Card
