@@ -45,8 +45,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          notes=$(git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}")
-          if [ -z "$notes" ]; then
-            notes=$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")
+          notes_file="$(mktemp)"
+          git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}" > "$notes_file"
+          if [ ! -s "$notes_file" ]; then
+            git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > "$notes_file"
           fi
-          gh release edit "${GITHUB_REF_NAME}" --notes "$notes"
+          gh release edit "${GITHUB_REF_NAME}" --notes-file "$notes_file"
