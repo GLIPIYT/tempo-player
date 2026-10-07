@@ -31,6 +31,7 @@ import { lyricTimingAt, type ResolvedLyricsTiming } from './timingResolver'
 import LyricsEditorPanel from './LyricsEditorPanel'
 import { fromLrc, fromPlainLyrics, toLrclibLyricsfile, toPlainText, toPlaybackLrc } from './editorDocument'
 import type { LyricsEditorDocument } from './editorDocument'
+import { resolveLyricProgressGeometry } from './progressGeometry'
 import './lyrics.css'
 
 interface LyricsOverlayProps {
@@ -241,10 +242,16 @@ function SyncedView({
   timing,
   lyricsRate,
   offsetMs,
+  alignment,
+  progressClipToText,
+  fillEnabled,
 }: {
   timing: ResolvedLyricsTiming
   lyricsRate: number
   offsetMs: number
+  alignment: 'left' | 'center' | 'right'
+  progressClipToText: boolean
+  fillEnabled: boolean
 }) {
   const p = usePlayer()
   const t = useT()
@@ -268,6 +275,21 @@ function SyncedView({
   const seekToLyricTime = useCallback((timeSec: number) => {
     seek(mediaPositionAtLyricTime(timeSec, lyricsRate, offsetMs))
   }, [seek, lyricsRate, offsetMs])
+
+  const measureProgressGeometry = useCallback(() => {
+    const row = underlineRef.current?.parentElement
+    const text = textRef.current
+    const path = underlineRef.current
+    if (!row || !text || !path) return
+    const geometry = resolveLyricProgressGeometry(
+      row.getBoundingClientRect(),
+      text.getBoundingClientRect(),
+      alignment,
+      progressClipToText,
+    )
+    path.style.left = `${geometry.leftPx}px`
+    path.style.width = `${geometry.widthPx}px`
+  }, [alignment, progressClipToText])
 
   const applyTransform = useCallback((instant: boolean) => {
     const c = containerRef.current
@@ -315,22 +337,33 @@ function SyncedView({
   }, [segments, measureAll])
 
   useEffect(() => {
+    const raf = requestAnimationFrame(measureProgressGeometry)
+    return () => cancelAnimationFrame(raf)
+  }, [segIdx, alignment, progressClipToText, measureProgressGeometry])
+
+  useEffect(() => {
     let raf = 0
     const onResize = () => {
       cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => measureAll(true))
+      raf = requestAnimationFrame(() => {
+        measureAll(true)
+        measureProgressGeometry()
+      })
     }
     window.addEventListener('resize', onResize)
     let alive = true
     document.fonts.ready.then(() => {
-      if (alive) measureAll(true)
+      if (alive) {
+        measureAll(true)
+        measureProgressGeometry()
+      }
     })
     return () => {
       alive = false
       window.removeEventListener('resize', onResize)
       cancelAnimationFrame(raf)
     }
-  }, [measureAll])
+  }, [measureAll, measureProgressGeometry])
 
   useEffect(() => {
     const stage = stageRef.current
@@ -339,7 +372,10 @@ function SyncedView({
     let raf = 0
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => measureAll(false))
+      raf = requestAnimationFrame(() => {
+        measureAll(false)
+        measureProgressGeometry()
+      })
     })
     observer.observe(stage)
     observer.observe(track)
@@ -347,7 +383,7 @@ function SyncedView({
       observer.disconnect()
       cancelAnimationFrame(raf)
     }
-  }, [measureAll])
+  }, [measureAll, measureProgressGeometry])
 
   useEffect(() => {
     if (segments.length === 0) return
@@ -367,14 +403,14 @@ function SyncedView({
     if (seg && seg.kind === 'line' && seg.endTimeSec > seg.timeSec) {
       const pct = Math.floor(progress * 100)
       pctRef.current = pct
-      if (ul) ul.style.width = `${pct}%`
       if (tx) tx.style.setProperty('--lyr-fill', `${pct}%`)
+      if (ul) ul.style.transform = `scaleX(${progress})`
     } else if (pctRef.current !== 0) {
       pctRef.current = 0
-      if (ul) ul.style.width = '0%'
       if (tx) tx.style.setProperty('--lyr-fill', '0%')
+      if (ul) ul.style.transform = 'scaleX(0)'
     }
-  }, [p.position, timing, segments, applyTransform, segIdx, lyricsRate, offsetMs])
+  }, [p.position, timing, segments, applyTransform, segIdx, lyricsRate, offsetMs, fillEnabled])
 
   const endPause = useCallback(() => {
     if (pauseTimerRef.current !== 0) {
@@ -455,6 +491,11 @@ function SyncedView({
               itemEls.current[i] = el
             }}
             className={cls}
+            onTransitionEnd={(event) => {
+              if (i === segIdx && event.target === event.currentTarget && event.propertyName === 'font-size') {
+                measureProgressGeometry()
+              }
+            }}
             onClick={() => {
               endPause()
               seekToLyricTime(s.seekToSec)
@@ -474,7 +515,7 @@ function SyncedView({
               {s.text}
             </span>
             <span
-              className="lyr-underline"
+              className={'lyr-underline lyr-progress-' + (fillEnabled ? 'enabled' : 'disabled')}
               ref={
                 i === segIdx
                   ? (el) => {
@@ -486,7 +527,7 @@ function SyncedView({
           </div>
         )
       }),
-    [segments, segIdx, seekToLyricTime, t, endPause, measureAll],
+    [segments, segIdx, seekToLyricTime, t, endPause, measureAll, fillEnabled],
   )
 
   return (
@@ -1629,7 +1670,15 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           </div>
           <LyricsVolumeRow />
         </aside>
-        <section className={`lyr-stage-col lyr-align-${settings.lyrics.alignment}${editingLyrics ? ' lyr-stage-col-editing' : ''}`}>
+        <section
+          className={`lyr-stage-col lyr-align-${settings.lyrics.alignment} lyr-progress-direction-${settings.lyrics.progressDirection}${settings.lyrics.fillEnabled ? ' lyr-fill-enabled' : ''}${settings.lyrics.progressColorMode === 'theme' ? ' lyr-progress-theme' : ' lyr-progress-custom'}${editingLyrics ? ' lyr-stage-col-editing' : ''}`}
+          style={{
+            '--lyr-text-size': `${settings.lyrics.textSizePx}px`,
+            '--lyr-progress-color': settings.lyrics.progressColor,
+            '--lyr-progress-opacity': settings.lyrics.progressOpacityPct / 100,
+            '--lyr-progress-thickness': `${settings.lyrics.progressThicknessPx}px`,
+          } as CSSProperties}
+        >
           {editingLyrics ? (
             <LyricsEditorPanel
               key={`${trackKey}-${pinned?.updatedAt ?? 'unpinned'}`}
@@ -1680,6 +1729,9 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
                   timing={activeLyrics.timing}
                   lyricsRate={lyricsRate}
                   offsetMs={activeLyrics.offsetMs}
+                  alignment={settings.lyrics.alignment}
+                  progressClipToText={settings.lyrics.progressClipToText}
+                  fillEnabled={settings.lyrics.fillEnabled}
                 />
               )}
               {activeLyrics?.result?.kind === 'plain' && <PlainView text={activeLyrics.result.text} />}
