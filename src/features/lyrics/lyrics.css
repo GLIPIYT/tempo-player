@@ -1040,8 +1040,6 @@
   transition: transform 0.12s linear, opacity 0.12s ease;
 }
 
-.lyr-progress-direction-right-to-left .lyr-underline { transform-origin: right center; }
-.lyr-progress-direction-center-out .lyr-underline { transform-origin: center center; }
 .lyr-stage-col.lyr-progress-clip-to-text .lyr-underline { border-radius: 0; }
 .lyr-progress-theme { --lyr-progress-bg: var(--tempo-gradient, var(--accent)); }
 .lyr-progress-custom { --lyr-progress-bg: var(--lyr-progress-color); }

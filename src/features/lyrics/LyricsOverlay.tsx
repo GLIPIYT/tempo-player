@@ -516,6 +516,13 @@ function SyncedView({
             </span>
             <span
               className="lyr-underline"
+              style={{
+                transformOrigin: progressDirection === 'center-out'
+                  ? 'center center'
+                  : progressDirection === 'right-to-left'
+                    ? 'right center'
+                    : 'left center',
+              }}
               ref={
                 i === segIdx
                   ? (el) => {
@@ -1671,7 +1678,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           <LyricsVolumeRow />
         </aside>
         <section
-          className={`lyr-stage-col lyr-align-${settings.lyrics.alignment} lyr-progress-direction-${settings.lyrics.progressDirection}${settings.lyrics.progressClipToText ? ' lyr-progress-clip-to-text' : ''}${settings.lyrics.progressColorMode === 'theme' ? ' lyr-progress-theme' : ' lyr-progress-custom'}${editingLyrics ? ' lyr-stage-col-editing' : ''}`}
+          className={`lyr-stage-col lyr-align-${settings.lyrics.alignment}${settings.lyrics.progressClipToText ? ' lyr-progress-clip-to-text' : ''}${settings.lyrics.progressColorMode === 'theme' ? ' lyr-progress-theme' : ' lyr-progress-custom'}${editingLyrics ? ' lyr-stage-col-editing' : ''}`}
           style={{
             '--lyr-text-size': `${settings.lyrics.textSizePx}px`,
             '--lyr-progress-color': settings.lyrics.progressColor,
