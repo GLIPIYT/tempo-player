@@ -563,7 +563,9 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
 .home-recommendation-card { position: relative; flex: 0 0 118px; min-width: 0; }
 .home-recommendation-card .home-rail-track { width: 100%; }
 .home-recommendation-cover { display: grid; width: 118px; height: 118px; place-items: center; overflow: hidden; border-radius: 9px; background: var(--surface); color: var(--text-muted); font-size: 34px; }
-.home-recommendation-cover img { width: 100%; height: 100%; object-fit: cover; }
+.home-recommendation-cover .sc-art-box { width: 100%; height: 100%; border-radius: inherit; }
+.home-recommendation-cover .sc-art { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.home-recommendation-cover .sc-art-fallback { font-size: 34px; }
 .home-recommendation-cache { position: absolute; top: 7px; right: 7px; display: grid; width: 29px; height: 29px; place-items: center; border: 1px solid color-mix(in srgb, white 26%, transparent); border-radius: 50%; background: color-mix(in srgb, #090b10 72%, transparent); color: #fff; backdrop-filter: blur(8px); }
 .home-recommendation-cache:hover { background: var(--accent); }
 .home-recommendation-cache.is-progress {

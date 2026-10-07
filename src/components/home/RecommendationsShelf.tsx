@@ -5,6 +5,7 @@ import { useT } from '../../i18n'
 import { beginTrackDrag, consumeDragClick } from '../../dnd/trackDrag'
 import { useSoundCloudGenreRecommendations } from '../../hooks/useSoundCloudGenreRecommendations'
 import { getTrackCacheProgresses, subscribeCacheJobs } from '../../soundcloud/cacheJobs'
+import ScArtwork from '../common/ScArtwork'
 
 interface RecommendationsShelfProps {
   tracks: ScTrack[]
@@ -181,7 +182,7 @@ export default function RecommendationsShelf({
         })}
       >
         <span className="home-recommendation-cover">
-          {track.artworkUrl ? <img src={track.artworkUrl} alt="" loading="lazy" /> : <span aria-hidden="true">♪</span>}
+          <ScArtwork url={track.artworkUrl} title={track.title} />
         </span>
         <strong title={track.title}>{track.title}</strong>
         <small title={track.artist}>{track.artist}</small>
