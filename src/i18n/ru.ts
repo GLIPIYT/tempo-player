@@ -812,7 +812,7 @@ export const ru: Record<string, string> = {
   'Restore original': 'Вернуть исходные данные',
   'Saving…': 'Сохранение…',
   'Lyrics text size': 'Размер текста лирики',
-  'Enable lyric fill': 'Включить заполнение текста',
+  'Animate progress line': 'Анимировать полоску прогресса',
   'Progress direction': 'Направление заполнения',
   'Left to right': 'Слева направо',
   'Right to left': 'Справа налево',

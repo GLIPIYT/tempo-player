@@ -1715,9 +1715,9 @@ export default function SettingsPage() {
                   onChange={textSizePx => update({ lyrics: { textSizePx } })}
                 />
                 <div className="set-row lyrics-toggle-row">
-                  <span className="set-row-label">{t('Enable lyric fill')}</span>
+                  <span className="set-row-label">{t('Animate progress line')}</span>
                   <button className={settings.lyrics.fillEnabled ? 'switch is-on' : 'switch'} role="switch"
-                    aria-checked={settings.lyrics.fillEnabled} aria-label={t('Enable lyric fill')}
+                    aria-checked={settings.lyrics.fillEnabled} aria-label={t('Animate progress line')}
                     onClick={() => update({ lyrics: { fillEnabled: !settings.lyrics.fillEnabled } })} />
                 </div>
                 <div className="set-row">

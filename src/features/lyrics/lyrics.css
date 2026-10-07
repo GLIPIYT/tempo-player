@@ -1013,36 +1013,6 @@
   text-shadow: 0 0 30px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
-.lyr-line.is-active .lyr-line-text {
-  background-image: linear-gradient(
-    90deg,
-    #fff var(--lyr-fill, 0%),
-    color-mix(in srgb, #fff 38%, transparent) var(--lyr-fill, 0%)
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.lyr-stage-col:not(.lyr-fill-enabled) .lyr-line.is-active .lyr-line-text {
-  background: none;
-  -webkit-text-fill-color: currentColor;
-}
-
-.lyr-stage-col.lyr-fill-enabled.lyr-progress-direction-right-to-left .lyr-line.is-active .lyr-line-text {
-  background-image: linear-gradient(90deg,
-    color-mix(in srgb, #fff 38%, transparent) calc(100% - var(--lyr-fill, 0%)),
-    #fff calc(100% - var(--lyr-fill, 0%)));
-}
-
-.lyr-stage-col.lyr-fill-enabled.lyr-progress-direction-center-out .lyr-line.is-active .lyr-line-text {
-  background-image: linear-gradient(90deg,
-    color-mix(in srgb, #fff 38%, transparent) calc(50% - var(--lyr-fill, 0%) / 2),
-    #fff calc(50% - var(--lyr-fill, 0%) / 2),
-    #fff calc(50% + var(--lyr-fill, 0%) / 2),
-    color-mix(in srgb, #fff 38%, transparent) calc(50% + var(--lyr-fill, 0%) / 2));
-}
-
 .lyr-underline {
   position: absolute;
   left: 0;
@@ -1059,6 +1029,7 @@
 
 .lyr-progress-direction-right-to-left .lyr-underline { transform-origin: right center; }
 .lyr-progress-direction-center-out .lyr-underline { transform-origin: center center; }
+.lyr-stage-col.lyr-progress-clip-to-text .lyr-underline { border-radius: 0; }
 .lyr-progress-theme { --lyr-progress-bg: var(--tempo-gradient, var(--accent)); }
 .lyr-progress-custom { --lyr-progress-bg: var(--lyr-progress-color); }
 

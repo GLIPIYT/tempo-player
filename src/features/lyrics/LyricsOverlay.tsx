@@ -265,7 +265,6 @@ function SyncedView({
   const segIdxRef = useRef(-1)
   const underlineRef = useRef<HTMLSpanElement | null>(null)
   const textRef = useRef<HTMLSpanElement | null>(null)
-  const pctRef = useRef(0)
   const pausedRef = useRef(false)
   const pauseTimerRef = useRef(0)
   const userOffsetRef = useRef(0)
@@ -281,9 +280,12 @@ function SyncedView({
     const text = textRef.current
     const path = underlineRef.current
     if (!row || !text || !path) return
+    const range = document.createRange()
+    range.selectNodeContents(text)
+    const textBounds = range.getBoundingClientRect()
     const geometry = resolveLyricProgressGeometry(
       row.getBoundingClientRect(),
-      text.getBoundingClientRect(),
+      textBounds,
       alignment,
       progressClipToText,
     )
@@ -399,17 +401,8 @@ function SyncedView({
     }
     const seg = found >= 0 ? segments[found] : null
     const ul = underlineRef.current
-    const tx = textRef.current
-    if (seg && seg.kind === 'line' && seg.endTimeSec > seg.timeSec) {
-      const pct = Math.max(0, Math.min(100, progress * 100))
-      pctRef.current = pct
-      if (tx) tx.style.setProperty('--lyr-fill', `${pct}%`)
-      if (ul) ul.style.transform = `scaleX(${progress})`
-    } else if (pctRef.current !== 0) {
-      pctRef.current = 0
-      if (tx) tx.style.setProperty('--lyr-fill', '0%')
-      if (ul) ul.style.transform = 'scaleX(0)'
-    }
+    const lineProgress = seg?.kind === 'line' && seg.endTimeSec > seg.timeSec ? progress : 0
+    if (ul) ul.style.transform = `scaleX(${fillEnabled ? lineProgress : 0})`
   }, [p.position, timing, segments, applyTransform, segIdx, lyricsRate, offsetMs, fillEnabled])
 
   const endPause = useCallback(() => {
@@ -1671,7 +1664,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           <LyricsVolumeRow />
         </aside>
         <section
-          className={`lyr-stage-col lyr-align-${settings.lyrics.alignment} lyr-progress-direction-${settings.lyrics.progressDirection}${settings.lyrics.fillEnabled ? ' lyr-fill-enabled' : ''}${settings.lyrics.progressColorMode === 'theme' ? ' lyr-progress-theme' : ' lyr-progress-custom'}${editingLyrics ? ' lyr-stage-col-editing' : ''}`}
+          className={`lyr-stage-col lyr-align-${settings.lyrics.alignment} lyr-progress-direction-${settings.lyrics.progressDirection}${settings.lyrics.progressClipToText ? ' lyr-progress-clip-to-text' : ''}${settings.lyrics.progressColorMode === 'theme' ? ' lyr-progress-theme' : ' lyr-progress-custom'}${editingLyrics ? ' lyr-stage-col-editing' : ''}`}
           style={{
             '--lyr-text-size': `${settings.lyrics.textSizePx}px`,
             '--lyr-progress-color': settings.lyrics.progressColor,

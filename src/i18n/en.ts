@@ -167,7 +167,7 @@ export const en: Record<string, string> = {
   Cancel: 'Cancel',
   Save: 'Save',
   'Lyrics text size': 'Lyrics text size',
-  'Enable lyric fill': 'Enable lyric fill',
+  'Animate progress line': 'Animate progress line',
   'Progress direction': 'Progress direction',
   'Left to right': 'Left to right',
   'Right to left': 'Right to left',
