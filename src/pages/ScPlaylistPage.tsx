@@ -14,6 +14,7 @@ import { fmtTime } from '../utils/format'
 import { scTrackToUnified } from '../utils/unified'
 import { favoritePlaylist, requestPlaylistCache, requestTrackCache } from '../soundcloud/cacheJobs'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
+import { openExternalUrl } from '../utils/externalLinks'
 
 /**
  * A SoundCloud playlist or release, read live.
@@ -178,7 +179,7 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
           {playlist.permalinkUrl ? (
             <button
               className="btn"
-              onClick={() => window.open(playlist.permalinkUrl ?? '', '_blank')}
+              onClick={() => void openExternalUrl(playlist.permalinkUrl ?? '').catch(() => toast.show(t('Could not open external link'), 'error'))}
             >
               <ExternalLink size={14} />
               <span>{t('Open on SoundCloud')}</span>

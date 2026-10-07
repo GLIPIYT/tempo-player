@@ -21,6 +21,7 @@ import EmptyState from '../components/common/EmptyState'
 import ScArtwork, { Spinner } from '../components/common/ScArtwork'
 import BrandIcon, { type BrandMark } from '../components/common/BrandIcon'
 import { toast } from '../components/common/Toast'
+import { openExternalUrl } from '../utils/externalLinks'
 import { ScArtistRow, ScPlaylistCard } from '../components/common/ScCards'
 import YtCard from '../components/common/YtCard'
 import { useNav } from '../state/nav'
@@ -206,7 +207,7 @@ function ScRowMenu({ track }: { track: ScTrack }) {
 
   const openOnSoundCloud = () => {
     if (!track.permalinkUrl) return
-    window.open(track.permalinkUrl, '_blank')
+    void openExternalUrl(track.permalinkUrl).catch(() => toast.show(t('Could not open external link'), 'error'))
     setOpen(false)
   }
 
@@ -897,7 +898,7 @@ export default function SearchPage() {
                                       aria-label={t('Open on SoundCloud')}
                                       onClick={(event) => {
                                         event.stopPropagation()
-                                        window.open(unified.externalUrl ?? '', '_blank')
+                                        void openExternalUrl(unified.externalUrl ?? '').catch(() => toast.show(t('Could not open external link'), 'error'))
                                       }}
                                     >
                                       <ExternalLink size={14} />
@@ -977,7 +978,7 @@ export default function SearchPage() {
                               aria-label={t('Open on YouTube')}
                               onClick={(event) => {
                                 event.stopPropagation()
-                                window.open(hit.url, '_blank')
+                                void openExternalUrl(hit.url).catch(() => toast.show(t('Could not open external link'), 'error'))
                               }}
                             >
                               <ExternalLink size={14} />

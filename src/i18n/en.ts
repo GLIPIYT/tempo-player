@@ -8,6 +8,7 @@ export const en: Record<string, string> = {
   'Your most-listened genre': 'Your most-listened genre',
   'SoundCloud recommendations will appear here.': 'SoundCloud recommendations will appear here.',
   'Could not load recommendations': 'Could not load recommendations',
+  'Could not open external link': 'Could not open external link',
   'Could not save recommendations': 'Could not save recommendations',
   'No recommendations yet': 'No recommendations yet',
   'Cache track': 'Cache track',

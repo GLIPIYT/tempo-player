@@ -21,6 +21,7 @@ import { openContextMenu, type ContextMenuItem } from '../components/common/Cont
 import { Copy, Download, ExternalLink, Play, Star } from 'lucide-react'
 import { toast } from '../components/common/Toast'
 import type { YtCollectionDetail } from '../types/models'
+import { openExternalUrl } from '../utils/externalLinks'
 
 type Kind = 'album' | 'artist' | 'playlist'
 
@@ -167,7 +168,7 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
         id: 'open',
         label: t('Open on YouTube Music'),
         icon: <ExternalLink size={13} />,
-        onSelect: () => window.open(hit.url, '_blank'),
+        onSelect: () => void openExternalUrl(hit.url).catch(() => toast.show(t('Could not open external link'), 'error')),
       },
     ]
     openContextMenu({ x: e.clientX, y: e.clientY, title: hit.title, items })

@@ -8,6 +8,7 @@ import { toast } from './Toast'
 import { openContextMenu, type ContextMenuItem } from './ContextMenu'
 import CacheBadge from '../../soundcloud/CacheBadge'
 import { favoritePlaylist, requestArtistCache, requestPlaylistCache } from '../../soundcloud/cacheJobs'
+import { openExternalUrl } from '../../utils/externalLinks'
 
 /**
  * The two SoundCloud result shapes, shared by the search page and the artist
@@ -56,7 +57,7 @@ export function ScPlaylistCard({ playlist }: { playlist: ScPlaylist }) {
         id: 'open',
         label: t('Open on SoundCloud'),
         icon: <ExternalLink size={13} />,
-        onSelect: () => window.open(playlist.permalinkUrl ?? '', '_blank'),
+        onSelect: () => void openExternalUrl(playlist.permalinkUrl ?? '').catch(() => toast.show(t('Could not open external link'), 'error')),
       })
     }
     openContextMenu({ x: e.clientX, y: e.clientY, title: playlist.title, items })
@@ -123,7 +124,7 @@ export function ScArtistRow({ artist }: { artist: ScArtist }) {
         id: 'open',
         label: t('Open on SoundCloud'),
         icon: <ExternalLink size={13} />,
-        onSelect: () => window.open(artist.permalinkUrl ?? '', '_blank'),
+        onSelect: () => void openExternalUrl(artist.permalinkUrl ?? '').catch(() => toast.show(t('Could not open external link'), 'error')),
       })
     }
     openContextMenu({ x: e.clientX, y: e.clientY, title: artist.username, items })

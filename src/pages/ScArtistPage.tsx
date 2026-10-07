@@ -15,6 +15,7 @@ import { fmtTime } from '../utils/format'
 import { scTrackToUnified } from '../utils/unified'
 import { requestArtistCache, requestTrackCache } from '../soundcloud/cacheJobs'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
+import { openExternalUrl } from '../utils/externalLinks'
 
 /** SoundCloud returns a user's tracks in pages; one page is plenty to look at. */
 const TRACK_LIMIT = 50
@@ -187,7 +188,7 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
             <span>{t('Add to favorites')}</span>
           </button>
           {artist.permalinkUrl ? (
-            <button className="btn" onClick={() => window.open(artist.permalinkUrl ?? '', '_blank')}>
+            <button className="btn" onClick={() => void openExternalUrl(artist.permalinkUrl ?? '').catch(() => toast.show(t('Could not open external link'), 'error'))}>
               <ExternalLink size={14} />
               <span>{t('Open on SoundCloud')}</span>
             </button>

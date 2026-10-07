@@ -4,6 +4,7 @@ import { useNav } from '../../state/nav'
 import { useT } from '../../i18n'
 import { openContextMenu, type ContextMenuItem } from './ContextMenu'
 import { toast } from './Toast'
+import { openExternalUrl } from '../../utils/externalLinks'
 import ScArtwork from './ScArtwork'
 import {
   getSaveJob,
@@ -69,7 +70,7 @@ export default function YtCard({
         id: 'open',
         label: t('Open on YouTube Music'),
         icon: <ExternalLink size={13} />,
-        onSelect: () => window.open(browseUrl, '_blank'),
+        onSelect: () => void openExternalUrl(browseUrl).catch(() => toast.show(t('Could not open external link'), 'error')),
       },
     ]
     openContextMenu({ x: e.clientX, y: e.clientY, title: name ?? '', items })

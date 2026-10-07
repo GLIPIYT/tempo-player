@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react'
+import { toast } from '../components/common/Toast'
+import { useT } from '../i18n'
+import { openExternalUrl } from '../utils/externalLinks'
 
-function renderInline(text: string, keyPrefix: string): ReactNode[] {
+function renderInline(text: string, keyPrefix: string, t: (key: string) => string): ReactNode[] {
   const pattern = /(\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|`[^`]+`|\*[^*\n]+\*|_[^_\n]+_|\[[^\]]+\]\([^)]+\))/g
   const nodes: ReactNode[] = []
   let cursor = 0
@@ -24,7 +27,10 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
         if (url.protocol === 'https:' || url.protocol === 'http:') safeHref = url.href
       } catch { /* leave unsupported link syntax as readable text */ }
       nodes.push(safeHref && link
-        ? <a key={key} href={safeHref} target="_blank" rel="noreferrer">{link[1]}</a>
+        ? <a key={key} href={safeHref} onClick={(event) => {
+          event.preventDefault()
+          void openExternalUrl(safeHref).catch(() => toast.show(t('Could not open external link'), 'error'))
+        }}>{link[1]}</a>
         : value)
     } else {
       nodes.push(<em key={key}>{value.slice(1, -1)}</em>)
@@ -41,6 +47,7 @@ function isListStart(line: string): boolean {
 
 /** Renders the common release-note Markdown safely, without accepting raw HTML. */
 export default function ReleaseNotes({ markdown }: { markdown: string }) {
+  const t = useT()
   const lines = markdown.replace(/\r/g, '').split('\n')
   const blocks: ReactNode[] = []
   let index = 0
@@ -53,7 +60,7 @@ export default function ReleaseNotes({ markdown }: { markdown: string }) {
     const heading = /^(#{1,4})\s+(.+)$/.exec(line)
     if (heading) {
       const Tag = `h${Math.min(4, heading[1].length + 1)}` as 'h2' | 'h3' | 'h4' | 'h5'
-      blocks.push(<Tag key={`h-${blockIndex++}`}>{renderInline(heading[2], `h-${index}`)}</Tag>)
+      blocks.push(<Tag key={`h-${blockIndex++}`}>{renderInline(heading[2], `h-${index}`, t)}</Tag>)
       index += 1
       continue
     }
@@ -63,7 +70,7 @@ export default function ReleaseNotes({ markdown }: { markdown: string }) {
       const items: ReactNode[] = []
       while (index < lines.length && isListStart(lines[index])) {
         const item = lines[index].trim().replace(/^(?:[-*+]\s+|\d+\.\s+)/, '')
-        items.push(<li key={`li-${index}`}>{renderInline(item, `li-${index}`)}</li>)
+        items.push(<li key={`li-${index}`}>{renderInline(item, `li-${index}`, t)}</li>)
         index += 1
       }
       blocks.push(ordered
@@ -81,7 +88,7 @@ export default function ReleaseNotes({ markdown }: { markdown: string }) {
       index += 1
     }
     blocks.push(<p key={`p-${blockIndex++}`}>{paragraph.map((part, lineIndex) => (
-      <span key={`line-${lineIndex}`}>{lineIndex > 0 ? <br /> : null}{renderInline(part, `p-${index}-${lineIndex}`)}</span>
+      <span key={`line-${lineIndex}`}>{lineIndex > 0 ? <br /> : null}{renderInline(part, `p-${index}-${lineIndex}`, t)}</span>
     ))}</p>)
   }
 

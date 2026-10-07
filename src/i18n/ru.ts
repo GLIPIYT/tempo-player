@@ -7,6 +7,7 @@ export const ru: Record<string, string> = {
   'Your most-listened genre': 'Жанр, который вы слушаете чаще всего',
   'SoundCloud recommendations will appear here.': 'Здесь появятся рекомендации SoundCloud.',
   'Could not load recommendations': 'Не удалось загрузить рекомендации',
+  'Could not open external link': 'Не удалось открыть внешнюю ссылку',
   'Could not save recommendations': 'Не удалось сохранить рекомендации',
   'No recommendations yet': 'Пока нет рекомендаций',
   'Deep lyrics analysis': 'Углубленное анализирование лирики',
