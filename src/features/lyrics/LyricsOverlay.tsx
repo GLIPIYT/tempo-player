@@ -515,7 +515,7 @@ function SyncedView({
               {s.text}
             </span>
             <span
-              className={'lyr-underline lyr-progress-' + (fillEnabled ? 'enabled' : 'disabled')}
+              className="lyr-underline"
               ref={
                 i === segIdx
                   ? (el) => {
@@ -527,7 +527,7 @@ function SyncedView({
           </div>
         )
       }),
-    [segments, segIdx, seekToLyricTime, t, endPause, measureAll, fillEnabled],
+    [segments, segIdx, seekToLyricTime, t, endPause, measureAll],
   )
 
   return (

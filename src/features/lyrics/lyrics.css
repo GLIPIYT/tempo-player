@@ -1029,13 +1029,13 @@
   -webkit-text-fill-color: currentColor;
 }
 
-.lyr-stage-col.lyr-progress-direction-right-to-left .lyr-line.is-active .lyr-line-text {
+.lyr-stage-col.lyr-fill-enabled.lyr-progress-direction-right-to-left .lyr-line.is-active .lyr-line-text {
   background-image: linear-gradient(90deg,
     color-mix(in srgb, #fff 38%, transparent) calc(100% - var(--lyr-fill, 0%)),
     #fff calc(100% - var(--lyr-fill, 0%)));
 }
 
-.lyr-stage-col.lyr-progress-direction-center-out .lyr-line.is-active .lyr-line-text {
+.lyr-stage-col.lyr-fill-enabled.lyr-progress-direction-center-out .lyr-line.is-active .lyr-line-text {
   background-image: linear-gradient(90deg,
     color-mix(in srgb, #fff 38%, transparent) calc(50% - var(--lyr-fill, 0%) / 2),
     #fff calc(50% - var(--lyr-fill, 0%) / 2),
@@ -1061,8 +1061,6 @@
 .lyr-progress-direction-center-out .lyr-underline { transform-origin: center center; }
 .lyr-progress-theme { --lyr-progress-bg: var(--tempo-gradient, var(--accent)); }
 .lyr-progress-custom { --lyr-progress-bg: var(--lyr-progress-color); }
-.lyr-underline.lyr-progress-disabled { opacity: 0; }
-.lyr-stage-col:not(.lyr-fill-enabled) .lyr-underline { display: none; }
 
 .lyr-line.is-active .lyr-underline { opacity: var(--lyr-progress-opacity, 0.35); }
 
