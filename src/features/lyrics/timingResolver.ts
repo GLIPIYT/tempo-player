@@ -47,6 +47,7 @@ interface LineGroup {
 }
 
 const CONFIDENT = 0.8
+const MIN_AUTHORED_INTERLINE_PAUSE_SEC = 0.75
 const NO_POSITION: LyricTimingPosition = { segmentIndex: -1, lineIndices: [], progress: 0 }
 
 function phraseWork(text: string): PhraseWork {
@@ -202,16 +203,23 @@ export function resolveLyricTiming(
     const nextIsExplicitPause = nextGroup !== undefined && nextGroup.entries.every(({ line }) => !line.text.trim())
     const shortInterLineGap = nextStart !== undefined && !nextIsExplicitPause
       && remainingGap < 3.5
+    const hasAuthoredEnd = singing.some((line) => line.endSource === 'manual' || line.endSource === 'source')
+    const showShortPause = shortInterLineGap && hasAuthoredEnd
+      && remainingGap >= MIN_AUTHORED_INTERLINE_PAUSE_SEC
+      && remainingGap >= (limit - group.timeSec) * 0.2
+    const pauseBeforeExplicit = nextIsExplicitPause && remainingGap > 0
     const longInterLineBreak = nextStart !== undefined && !nextIsExplicitPause
       && remainingGap >= 3.5 && remainingGap >= (limit - group.timeSec) * 0.2
-    const displayEnd = shortInterLineGap || nextIsExplicitPause ? limit : phraseEnd
+    // Estimated phrase ends should flow into the next lyric. Exact authored
+    // endpoints can expose a short breath without turning timestamp noise into a pause.
+    const displayEnd = shortInterLineGap && !showShortPause ? limit : phraseEnd
     addSegment({ kind: 'line', timeSec: group.timeSec, endTimeSec: phraseEnd,
       ...(displayEnd > phraseEnd ? { displayEndTimeSec: displayEnd } : {}),
       text: singing.map((line) => line.text).join('\n'), seekToSec: group.timeSec,
       lineIndices: singing.map((line) => line.lineIndex) })
     const outroBreak = nextStart === undefined && remainingGap >= 0.75
       && (!Number.isFinite(limit) || remainingGap >= (limit - group.timeSec) * 0.2)
-    if (longInterLineBreak || outroBreak) {
+    if (showShortPause || pauseBeforeExplicit || longInterLineBreak || outroBreak) {
       addSegment({ kind: 'notes', timeSec: phraseEnd, endTimeSec: limit, text: '',
         seekToSec: nextStart ?? group.timeSec, lineIndices: [] })
     }

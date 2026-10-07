@@ -401,7 +401,7 @@ function SyncedView({
     const ul = underlineRef.current
     const tx = textRef.current
     if (seg && seg.kind === 'line' && seg.endTimeSec > seg.timeSec) {
-      const pct = Math.floor(progress * 100)
+      const pct = Math.max(0, Math.min(100, progress * 100))
       pctRef.current = pct
       if (tx) tx.style.setProperty('--lyr-fill', `${pct}%`)
       if (ul) ul.style.transform = `scaleX(${progress})`

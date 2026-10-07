@@ -1,6 +1,6 @@
 const MAX_PROGRESS_WIDTH = 420
 
-/** Place a capped progress path in its row, optionally restricting it to the rendered text. */
+/** Place the fixed-width path in its row or match it exactly to the rendered text. */
 export function resolveLyricProgressGeometry(
   row: DOMRectReadOnly,
   text: DOMRectReadOnly,
@@ -17,7 +17,6 @@ export function resolveLyricProgressGeometry(
 
   if (!clipToText) return { leftPx: left, widthPx: width }
 
-  const clippedLeft = Math.max(left, text.left - row.left)
-  const clippedRight = Math.min(left + width, text.right - row.left)
-  return { leftPx: clippedLeft, widthPx: Math.max(0, clippedRight - clippedLeft) }
+  const textLeft = text.left - row.left
+  return { leftPx: textLeft, widthPx: Math.max(0, text.width) }
 }
