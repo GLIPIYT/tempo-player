@@ -284,10 +284,19 @@ function SyncedView({
     if (!row || !text || !path) return
     const range = document.createRange()
     range.selectNodeContents(text)
+    const rowBounds = row.getBoundingClientRect()
     const textBounds = range.getBoundingClientRect()
+    // getBoundingClientRect() is screen-scaled by .app-root's CSS zoom, while
+    // inline left/width values are interpreted in the row's local CSS pixels.
+    // Convert both measurements back before deriving the underline geometry.
+    const measuredZoom = row.offsetWidth > 0 ? rowBounds.width / row.offsetWidth : 1
+    const zoom = Number.isFinite(measuredZoom) && measuredZoom > 0 ? measuredZoom : 1
     const geometry = resolveLyricProgressGeometry(
-      row.getBoundingClientRect(),
-      textBounds,
+      { left: 0, width: row.offsetWidth },
+      {
+        left: (textBounds.left - rowBounds.left) / zoom,
+        width: textBounds.width / zoom,
+      },
       alignment,
       progressClipToText,
       progressDirection,

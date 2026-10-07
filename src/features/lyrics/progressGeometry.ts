@@ -2,8 +2,8 @@ const MAX_PROGRESS_WIDTH = 420
 
 /** Place the path in its row, center it on the text, or match the text bounds. */
 export function resolveLyricProgressGeometry(
-  row: DOMRectReadOnly,
-  text: DOMRectReadOnly,
+  row: Pick<DOMRectReadOnly, 'left' | 'width'>,
+  text: Pick<DOMRectReadOnly, 'left' | 'width'>,
   alignment: 'left' | 'center' | 'right',
   clipToText: boolean,
   direction: 'left-to-right' | 'right-to-left' | 'center-out',
