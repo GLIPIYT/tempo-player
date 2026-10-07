@@ -401,7 +401,11 @@ function SyncedView({
     }
     const seg = found >= 0 ? segments[found] : null
     const ul = underlineRef.current
-    const lineProgress = seg?.kind === 'line' && seg.endTimeSec > seg.timeSec ? progress : 0
+    const lineProgress = seg?.kind === 'line' && seg.endTimeSec > seg.timeSec
+      ? Math.max(0, Math.min(1, progress))
+      : 0
+    const tx = textRef.current
+    if (tx) tx.style.setProperty('--lyr-fill', `${lineProgress * 100}%`)
     if (ul) ul.style.transform = `scaleX(${fillEnabled ? lineProgress : 0})`
   }, [p.position, timing, segments, applyTransform, segIdx, lyricsRate, offsetMs, fillEnabled])
 
