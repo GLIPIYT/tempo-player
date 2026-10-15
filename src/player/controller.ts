@@ -1163,14 +1163,37 @@ export class PlayerController {
   private async handleEnded(): Promise<void> {
     if (this.exiting) return
     this.finishSession(this.activeSessionId, 'end')
-    const expectedSeq = this.startSeq
+    let expectedSeq = this.startSeq
     const cur = this.queueCtl.current()
     if (this.repeat === 'one' && cur) {
+      const seq = ++this.startSeq
+      expectedSeq = seq
+      const session = this.createListeningSession(cur, 'repeat')
+      if (this.engine.replay(session.id)) {
+        this.nextStartReason = 'queue'
+        this.position = 0
+        this.isPlaying = true
+        this.preparing = false
+        this.engine.resetBuffer()
+        if (cur.dbId !== null) api.bumpPlayCount(cur.dbId).catch(() => {})
+        this.emit()
+        return
+      }
+
+      // If the loaded source cannot be replayed in place, retry its resolver
+      // before advancing. Retire the tentative session because the engine did
+      // not bind it to media.
+      this.finishSession(session.id, 'stop')
       this.nextStartReason = 'repeat'
       this.engine.stop()
-      const seq = ++this.startSeq
+      this.position = 0
+      this.isPlaying = false
+      this.preparing = false
+      this.engine.resetBuffer()
+      this.emit()
       const resolved = await this.resolveTrackUrl(cur)
       if (seq !== this.startSeq) return
+      this.preparing = false
       if (resolved) {
         this.startTrack(cur, resolved)
         return

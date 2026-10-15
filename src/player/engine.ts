@@ -20,6 +20,14 @@ const FFT_SIZE = 1024
  */
 const ANALYSER_MIN_DB = -85
 const ANALYSER_MAX_DB = -15
+const HEALTH_CHECK_MS = 1000
+const CONTEXT_RESUME_TIMEOUT_MS = 2500
+const DECODER_STALL_MS = 8000
+const RECOVERY_COOLDOWN_MS = 30_000
+
+interface MediaGraph {
+  nodes: AudioNode[]
+}
 
 /**
  * Two playback paths, chosen per track.
@@ -114,6 +122,16 @@ export class AudioEngine {
   private lastSilenceCheck = 0
   /** Set once the graph has been abandoned; it is never rebuilt afterwards. */
   private graphDisabled = false
+  private graphRequested = false
+  private mediaGraphs = new WeakMap<HTMLAudioElement, MediaGraph>()
+  private healthTimer: number | null = null
+  private healthPosition = 0
+  private healthMovedAt = 0
+  private contextHeld = false
+  private contextResume: { context: AudioContext; at: number } | null = null
+  private lastContextRebuildAt = Number.NEGATIVE_INFINITY
+  private lastDecoderRecoveryAt = Number.NEGATIVE_INFINITY
+  private lastDecoderRecoveryUrl: string | null = null
   private lastLoad: { url: string; format: string | null; channel: AudioChannel } | null = null
   /** The element being faded out, while a crossfade is in flight. */
   private fading: {
@@ -213,6 +231,7 @@ export class AudioEngine {
     this.epoch += 1
     this.pendingSeek = null
     this.lastReported = 0
+    this.resetHealthPosition()
     this.resetBuffer()
     this.stopTicker()
     el.removeAttribute('src')
@@ -229,6 +248,16 @@ export class AudioEngine {
         if (Hls.isSupported()) {
           const hlsInstance = new Hls({ maxBufferLength: 30 })
           this.hls = hlsInstance
+          hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
+            if (!data.fatal || generation !== this.loadGeneration || this.hls !== hlsInstance || this.active() !== el) return
+            this.finishMedia(el, 'error')
+            this.stopTicker()
+            this.stopHealthChecks()
+            this.destroyHls()
+            const message = `HLS audio error: ${data.details}`
+            if (this.fading) this.failFade(message)
+            else this.onError(message)
+          })
           hlsInstance.loadSource(url)
           hlsInstance.attachMedia(el)
           return
@@ -247,6 +276,8 @@ export class AudioEngine {
   stop(): void {
     this.samplePlayback()
     this.playbackPaused = true
+    this.contextHeld = false
+    this.stopHealthChecks()
     this.loadGeneration += 1
     this.destroyHls()
     const wasFading = this.fading !== null
@@ -277,8 +308,11 @@ export class AudioEngine {
     const fade = this.fading
     const generation = this.loadGeneration
     this.playbackPaused = false
-    // autoplay policy: the context starts suspended until a gesture reaches it
-    if (this.ctx && this.ctx.state === 'suspended') void this.ctx.resume().catch(() => {})
+    this.startHealthChecks()
+    if (this.activeChannel === 'local' && this.ctx && this.ctx.state !== 'running') {
+      this.checkContextHealth()
+      return
+    }
     const plays = [el.play()]
     if (fade && !fade.el.ended) plays.push(fade.el.play())
     void Promise.all(plays).then(() => {
@@ -296,9 +330,22 @@ export class AudioEngine {
     this.samplePlayback()
     this.freezeFade()
     this.playbackPaused = true
+    this.contextHeld = false
+    this.stopHealthChecks()
     this.stopTicker()
     this.active()?.pause()
     this.fading?.el.pause()
+  }
+
+  /** Reuse buffered media for repeat-one without a new provider lookup. */
+  replay(sessionId: string): boolean {
+    const el = this.active()
+    if (!el || el.error || (!el.src && !this.hls) || el.readyState < HTMLMediaElement.HAVE_METADATA) return false
+    try { this.setCurrentTime(0) } catch { return false }
+    this.bindSession(el, sessionId)
+    this.resetHealthPosition()
+    this.play()
+    return true
   }
 
   getCurrentTime(): number {
@@ -361,8 +408,6 @@ export class AudioEngine {
   setEqualizer(settings: EqualizerSettings): void {
     this.equalizer = settings
     if (settings.enabled) this.ensureGainGraph()
-    const ctx = this.ctx
-    if (settings.enabled && ctx?.state === 'suspended') void ctx.resume().catch(() => {})
     this.applyEqualizer()
     this.applyGain()
   }
@@ -381,8 +426,10 @@ export class AudioEngine {
   }
 
   private ensureGainGraph(): void {
+    this.graphRequested = true
     if (this.ctx || this.graphDisabled) return
     this.attachGain(this.channels.local ?? this.ensure('local'))
+    this.checkContextHealth()
   }
 
   private applyGain(): void {
@@ -448,6 +495,8 @@ export class AudioEngine {
     this.compressorNode = null
     this.eqFilters = []
     this.channels[outgoingChannel] = null
+    const parked = this.channels[channel]
+    if (parked && parked !== outgoing) this.disposeMedia(parked)
     this.channels[channel] = null
     this.activeChannel = channel
     this.fadeLevel = 0
@@ -742,9 +791,7 @@ export class AudioEngine {
     this.fadeElapsedMs = 0
     this.finishMedia(fade.el, 'end')
     this.fading = null
-    fade.el.pause()
-    fade.el.removeAttribute('src')
-    fade.el.load()
+    this.disposeMedia(fade.el)
   }
 
   private applySeek(sec: number): void {
@@ -753,6 +800,7 @@ export class AudioEngine {
     this.pendingSeek = null
     this.lastSeekAt = performance.now()
     el.currentTime = sec
+    this.resetHealthPosition()
   }
 
   private startTicker(el: HTMLAudioElement): void {
@@ -773,6 +821,7 @@ export class AudioEngine {
     const seekInFlight = el.seeking || performance.now() - this.lastSeekAt < SEEK_SETTLE_MS
     const resync = !seekInFlight && Math.abs(el.currentTime - this.lastReported) > RESYNC_GAP_SEC
     if (seekInFlight && !resync) return
+    if (el.currentTime === this.lastReported) return
     this.lastReported = el.currentTime
     this.onTime(el.currentTime, this.epoch)
   }
@@ -922,6 +971,7 @@ export class AudioEngine {
     el.addEventListener('playing', () => {
       this.sampleMedia(el, 'playing')
       if (isActive()) this.startTicker(el)
+      if (isActive() && !this.playbackPaused) this.startHealthChecks()
       if (isActive()) this.reportBuffer(el)
     })
     el.addEventListener('canplay', () => {
@@ -931,8 +981,8 @@ export class AudioEngine {
       if (!el.ended) return
       this.finishMedia(el, 'end')
       if (!isActive()) return
-      this.destroyHls()
       this.stopTicker()
+      this.stopHealthChecks()
       this.onEnded()
     })
     el.addEventListener('loadedmetadata', () => {
@@ -966,7 +1016,7 @@ export class AudioEngine {
     // A crossfade replaces the channel's element while the graph is already
     // running, so the replacement has to be routed as well - otherwise the
     // incoming track would play outside the graph and ignore the fade.
-    if (channel === 'local' && (this.ctx !== null || this.trackGain !== 1)) this.attachGain(el)
+    if (channel === 'local' && (this.ctx !== null || this.graphRequested || this.trackGain !== 1)) this.attachGain(el)
     this.applyGain()
     return el
   }
@@ -1012,6 +1062,33 @@ export class AudioEngine {
 
   private disableGraph(): void {
     this.graphDisabled = true
+    this.rebuildLocalOutput(true)
+  }
+
+  private disconnectMediaGraph(el: HTMLAudioElement): void {
+    const graph = this.mediaGraphs.get(el)
+    this.mediaGraphs.delete(el)
+    for (const node of graph?.nodes ?? []) {
+      try { node.disconnect() } catch { /* A closed context has already detached its nodes. */ }
+    }
+  }
+
+  private disposeMedia(el: HTMLAudioElement): void {
+    this.disconnectMediaGraph(el)
+    el.pause()
+    el.removeAttribute('src')
+    el.load()
+  }
+
+  private closeGraph(): void {
+    const ctx = this.ctx
+    this.ctx = null
+    ctx?.removeEventListener('statechange', this.handleContextState)
+    this.contextResume = null
+    this.contextHeld = false
+    for (const el of Object.values(this.channels)) if (el) this.disconnectMediaGraph(el)
+    if (this.fading) this.disconnectMediaGraph(this.fading.el)
+    try { this.analyser?.disconnect(); this.sourceMonitor?.disconnect() } catch { /* Already closed. */ }
     this.silentMs = 0
     this.analyser = null
     this.sourceMonitor = null
@@ -1019,27 +1096,121 @@ export class AudioEngine {
     this.gainNode = null
     this.compressorNode = null
     this.eqFilters = []
+    if (ctx && ctx.state !== 'closed') void ctx.close().catch(() => {})
+  }
 
+  private rebuildLocalOutput(resetContext: boolean): void {
     const el = this.channels.local
-    if (!el) return
+    const load = this.lastLoad
+    if (!el || this.activeChannel !== 'local' || !load) return
     const resumeAt = el.currentTime
     this.sampleMedia(el)
     const sessionId = this.mediaSessions.get(el)?.id
     this.mediaSessions.delete(el)
-    const load = this.lastLoad
+    if (this.fading) { this.detachFade(); this.onFadeComplete() }
+    if (resetContext) this.closeGraph()
+    else {
+      this.disconnectMediaGraph(el)
+      this.gainNode = null
+      this.compressorNode = null
+      this.eqFilters = []
+    }
     // a routed element can never be un-routed, so it has to be replaced
     this.channels.local = null
-    el.pause()
-    el.removeAttribute('src')
-    el.load()
-
-    if (this.activeChannel !== 'local' || !load) return
-    void this.loadWithFormat(load.url, load.format, 'local', sessionId)
+    this.disposeMedia(el)
+    const loading = this.loadWithFormat(load.url, load.format, 'local', sessionId)
+    const generation = this.loadGeneration
+    void loading
       .then(() => {
+        if (generation !== this.loadGeneration || this.activeChannel !== 'local') return
         this.setCurrentTime(resumeAt)
-        this.play()
+        if (!this.playbackPaused) this.play()
       })
-      .catch(() => {})
+      .catch(error => {
+        if (generation === this.loadGeneration) this.onError(error instanceof Error ? error.message : 'Could not restore audio output')
+      })
+  }
+
+  private resetHealthPosition(): void {
+    this.healthPosition = this.active()?.currentTime ?? 0
+    this.healthMovedAt = performance.now()
+  }
+
+  private startHealthChecks(): void {
+    if (this.healthTimer !== null) return
+    this.resetHealthPosition()
+    this.healthTimer = window.setInterval(() => this.checkHealth(), HEALTH_CHECK_MS)
+  }
+
+  private stopHealthChecks(): void {
+    if (this.healthTimer !== null) window.clearInterval(this.healthTimer)
+    this.healthTimer = null
+  }
+
+  private checkHealth(): void {
+    const el = this.active()
+    if (this.playbackPaused || !el || el.ended) return
+    this.checkContextHealth()
+    if (this.active() !== el || this.contextHeld) { this.resetHealthPosition(); return }
+    this.reportPosition(el)
+    if (!el.paused) this.checkSilence(el)
+    if (this.active() !== el) return
+    const now = performance.now()
+    if (el.seeking || this.fading || this.swappingStream || Math.abs(el.currentTime - this.healthPosition) > 0.02) {
+      this.resetHealthPosition()
+      return
+    }
+    // Only local files are bounded by this timeout; an online HLS buffer may
+    // legitimately wait longer for the network without a broken decoder.
+    if (this.activeChannel !== 'local' || this.lastLoad?.format === 'hls' || now - this.healthMovedAt < DECODER_STALL_MS) return
+    this.resetHealthPosition()
+    if (this.lastLoad?.url === this.lastDecoderRecoveryUrl && now - this.lastDecoderRecoveryAt < RECOVERY_COOLDOWN_MS) return
+    this.lastDecoderRecoveryAt = now
+    this.lastDecoderRecoveryUrl = this.lastLoad?.url ?? null
+    console.warn('[tempo audio] Reloading stalled local decoder')
+    this.rebuildLocalOutput(false)
+  }
+
+  private handleContextState = (): void => { this.checkContextHealth() }
+
+  private checkContextHealth(): void {
+    const ctx = this.ctx
+    if (!ctx || this.activeChannel !== 'local' || this.playbackPaused) return
+    if (ctx.state === 'running') {
+      this.contextResume = null
+      if (this.contextHeld) { this.contextHeld = false; this.play() }
+      return
+    }
+    if (!this.contextHeld) {
+      this.contextHeld = true
+      this.freezeFade()
+      this.active()?.pause()
+      this.fading?.el.pause()
+    }
+    if (ctx.state === 'closed') { this.recoverContext(ctx); return }
+    const pending = this.contextResume
+    if (pending) {
+      if (performance.now() - pending.at >= CONTEXT_RESUME_TIMEOUT_MS) this.recoverContext(ctx)
+      return
+    }
+    const attempt = { context: ctx, at: performance.now() }
+    this.contextResume = attempt
+    void ctx.resume().then(() => {
+      if (this.ctx === ctx && this.contextResume === attempt && ctx.state === 'running') this.checkContextHealth()
+    }).catch(() => {
+      if (this.ctx === ctx && this.contextResume === attempt && !this.playbackPaused) this.recoverContext(ctx)
+    })
+  }
+
+  private recoverContext(ctx: AudioContext): void {
+    if (this.ctx !== ctx) return
+    const now = performance.now()
+    // One fresh graph preserves EQ after an output interruption. Repeated
+    // failures bypass Web Audio instead of leaving a permanently muted source.
+    if (now - this.lastContextRebuildAt < RECOVERY_COOLDOWN_MS) this.graphDisabled = true
+    this.lastContextRebuildAt = now
+    console.warn('[tempo audio] Restoring audio context', ctx.state)
+    this.rebuildLocalOutput(true)
   }
 
   /**
@@ -1052,16 +1223,17 @@ export class AudioEngine {
     // one active gain at a time; during a crossfade the outgoing element keeps
     // its own, held by `fading`
     if (this.gainNode || this.graphDisabled) return
+    let buildingContext: AudioContext | null = null
+    const nodes: AudioNode[] = []
     try {
       const Ctor =
         window.AudioContext ??
         (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!Ctor) return
-      const ctx = this.ctx ?? new Ctor()
-      // The graph can be requested outside a click and start suspended. Resume
-      // it here; play() also retries after the next direct user gesture.
-      if (ctx.state === 'suspended') void ctx.resume().catch(() => {})
+      const ctx = this.ctx ?? new Ctor({ latencyHint: 'playback' })
+      buildingContext = ctx
       const source = ctx.createMediaElementSource(el)
+      nodes.push(source)
       // Watch the raw media-element signal: mute and EQ attenuation must not
       // look like a broken or CORS-silenced source to the watchdog.
       if (!this.sourceMonitor) {
@@ -1077,6 +1249,7 @@ export class AudioEngine {
       let previous: AudioNode = source
       const eqFilters = EQUALIZER_BANDS.map(({ frequency, type }) => {
         const filter = ctx.createBiquadFilter()
+        nodes.push(filter)
         filter.type = type
         filter.frequency.value = frequency
         if (type === 'peaking') {
@@ -1089,6 +1262,7 @@ export class AudioEngine {
       })
       const gain = ctx.createGain()
       const compressor = ctx.createDynamicsCompressor()
+      nodes.push(gain, compressor)
       compressor.threshold.value = -1
       compressor.knee.value = 0
       compressor.ratio.value = 1
@@ -1111,18 +1285,24 @@ export class AudioEngine {
         this.analyser = analyser
       }
       this.ctx = ctx
+      ctx.removeEventListener('statechange', this.handleContextState)
+      ctx.addEventListener('statechange', this.handleContextState)
+      this.mediaGraphs.set(el, { nodes })
       this.gainNode = gain
       this.compressorNode = compressor
       this.eqFilters = eqFilters
       this.applyEqualizer()
       this.silentMs = 0
     } catch {
-      this.ctx = null
-      this.gainNode = null
-      this.compressorNode = null
-      this.analyser = null
-      this.sourceMonitor = null
-      this.sourceMonitorBuf = null
+      for (const node of nodes) { try { node.disconnect() } catch { /* Partial graph. */ } }
+      if (buildingContext && buildingContext !== this.ctx) void buildingContext.close().catch(() => {})
+      this.closeGraph()
+      // Once MediaElementSource exists, the old element cannot play directly.
+      // Replace it after the caller finishes assigning the source URL.
+      if (buildingContext) {
+        this.graphDisabled = true
+        queueMicrotask(() => { if (this.channels.local === el) this.rebuildLocalOutput(true) })
+      }
     }
   }
 
