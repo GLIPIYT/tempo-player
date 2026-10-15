@@ -797,7 +797,9 @@ pub fn download_soundcloud(
 fn default_browser_for_cookies() -> Option<&'static str> {
     #[cfg(target_os = "windows")]
     {
-        let output = Command::new("reg.exe")
+        let mut command = Command::new("reg.exe");
+        crate::child::quiet(&mut command);
+        let output = command
             .args([
                 "query",
                 r"HKCU\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice",
