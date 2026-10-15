@@ -919,8 +919,14 @@ export default function SettingsPage() {
       frame = window.requestAnimationFrame(animateScroll)
     }
 
+    const cancelRoutedScroll = () => {
+      if (frame !== null) window.cancelAnimationFrame(frame)
+      frame = null
+      targetScrollTop = content.scrollTop
+    }
+
     const routeWheel = (event: WheelEvent) => {
-      if (content.contains(event.target as Node)) return
+      if (content.contains(event.target as Node)) { cancelRoutedScroll(); return }
       if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
       if (event.target instanceof Element && event.target.closest('button, input, select, textarea, [contenteditable="true"]')) return
 
@@ -938,8 +944,10 @@ export default function SettingsPage() {
     }
 
     page.addEventListener('wheel', routeWheel, { passive: false })
+    content.addEventListener('pointerdown', cancelRoutedScroll)
     return () => {
       page.removeEventListener('wheel', routeWheel)
+      content.removeEventListener('pointerdown', cancelRoutedScroll)
       if (frame !== null) window.cancelAnimationFrame(frame)
     }
   }, [])
