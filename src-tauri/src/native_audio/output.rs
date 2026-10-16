@@ -109,6 +109,11 @@ pub fn prepare(
     input::prepare_input(spec, position, settings.sanitized(), bin_dir)
 }
 
+/// Ensures the managed FFmpeg helper is installed and usable for cache remuxing.
+pub(crate) fn ensure_decoder_helper(bin_dir: &std::path::Path) -> Result<PathBuf, String> {
+    input::ensure_ffmpeg(bin_dir)
+}
+
 pub struct OutputEngine {
     sink: Option<MixerDeviceSink>,
     device_error: Arc<AtomicBool>,

@@ -12,6 +12,8 @@ mod metadata;
 mod models;
 mod scanner;
 mod soundcloud;
+mod soundcloud_web;
+mod soundcloud_session;
 mod soundcloud_store;
 mod recommendation_store;
 mod recommendation_audio;
@@ -215,6 +217,8 @@ pub fn run() {
             commands::fetch_online_lyrics,
             commands::fetch_online_lyrics_all,
             commands::sc_get_playback,
+            commands::sc_session_status,
+            commands::sc_session_login,
             commands::sc_get_cached_track_ids,
             commands::sc_precache,
             commands::sc_upsert_track,

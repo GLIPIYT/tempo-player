@@ -458,7 +458,7 @@ pub fn stored_feed_candidate(
 
 fn find_youtube_cache(directory: &Path, key: &str) -> Option<PathBuf> {
     const AUDIO_EXTENSIONS: &[&str] = &[
-        "m4a", "mp4", "webm", "opus", "ogg", "oga", "mp3", "aac", "flac", "wav",
+        "m4a", "mp4", "webm", "opus", "ogg", "oga", "mp3", "aac", "mka", "flac", "wav",
     ];
     std::fs::read_dir(directory)
         .ok()?

@@ -8,7 +8,7 @@ use walkdir::WalkDir;
 use crate::metadata::{self, MetaParsed};
 use crate::models::{FileStamp, TrackInput};
 
-pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "m4a", "aac", "ogg", "opus", "wav"];
+pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "m4a", "aac", "ogg", "opus", "mka", "wav"];
 
 #[derive(Debug)]
 pub struct Tick {

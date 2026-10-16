@@ -31,6 +31,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WALLHAVEN_API_KEY: ${{ secrets.WALLHAVEN_API_KEY }}
+          TEMPO_SOUNDCLOUD_OAUTH_TOKEN: ${{ secrets.TEMPO_SOUNDCLOUD_OAUTH_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Tempo ${{ github.ref_name }}'

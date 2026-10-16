@@ -32,6 +32,17 @@ pub struct AppState {
     pub bin_dir: PathBuf,
 }
 
+fn sc_cache_options(state: &AppState, configured: Option<String>) -> crate::soundcloud_store::CacheOptions {
+    let ytdlp_path = configured.unwrap_or_else(|| {
+        state.db.get_app_setting(crate::native_audio::models::NATIVE_STATE_SETTING)
+            .ok().flatten()
+            .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+            .and_then(|value| value.pointer("/settings/ytdlpPath").and_then(|value| value.as_str()).map(str::to_owned))
+            .unwrap_or_default()
+    });
+    crate::soundcloud_store::CacheOptions { bin_dir: state.bin_dir.clone(), ytdlp_path }
+}
+
 const SCAN_EVENT: &str = "scan://progress";
 const PROGRESS_INTERVAL_MS: u64 = 150;
 
@@ -1469,6 +1480,17 @@ pub async fn sc_get_playback(
     .await
 }
 
+#[tauri::command]
+pub async fn sc_session_status(app: AppHandle) -> Result<crate::soundcloud_session::SessionStatus, String> {
+    crate::soundcloud_session::status(app).await
+}
+
+#[tauri::command]
+pub async fn sc_session_login(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::soundcloud_session::open_login(&app))
+        .await.map_err(|_| "SoundCloud sign-in window could not start".to_string())?
+}
+
 /// Returns which requested SoundCloud IDs already exist in the local cache.
 /// This check is cache-only and never contacts SoundCloud or starts a download.
 #[tauri::command]
@@ -1498,6 +1520,7 @@ pub async fn sc_precache(
     app: AppHandle,
     state: State<'_, AppState>,
     track: crate::soundcloud::ScTrack,
+    ytdlp_path: Option<String>,
 ) -> Result<(), String> {
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
     crate::soundcloud_store::precache_track(
@@ -1505,6 +1528,7 @@ pub async fn sc_precache(
         root,
         state.covers_dir.clone(),
         &track,
+        sc_cache_options(&state, ytdlp_path),
         Some(app.clone()),
     )
     .await?;
@@ -1538,15 +1562,18 @@ pub async fn add_sc_track_to_playlist(
     state: State<'_, AppState>,
     playlist_id: i64,
     track: crate::soundcloud::ScTrack,
+    ytdlp_path: Option<String>,
 ) -> Result<i64, String> {
     let track_id = import_sc_track_for_library(&state, &track, None, None).await?;
     state.db.playlist_add_track_manual(playlist_id, track_id)?;
     let db = state.db.clone();
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
     let covers = state.covers_dir.clone();
-    let sc_id = track.id.clone();
+    let options = sc_cache_options(&state, ytdlp_path);
     tauri::async_runtime::spawn(async move {
-        let _ = crate::soundcloud_store::precache(db, root, covers, &sc_id, Some(app)).await;
+        if let Err(error) = crate::soundcloud_store::precache_track(db, root, covers, &track, options, Some(app)).await {
+            eprintln!("SoundCloud playlist track cache failed: {error}");
+        }
     });
     Ok(track_id)
 }
@@ -1784,6 +1811,7 @@ pub async fn sc_cache_tracks(
     job_id: String,
     label: String,
     track_ids: Vec<String>,
+    ytdlp_path: Option<String>,
 ) -> Result<(), String> {
     let root = crate::soundcloud_store::cache_dir(&state.db, &state.sc_cache_dir);
     crate::soundcloud_store::run_cache_job(
@@ -1794,6 +1822,7 @@ pub async fn sc_cache_tracks(
         job_id,
         label,
         track_ids,
+        sc_cache_options(&state, ytdlp_path),
     )
     .await;
     Ok(())

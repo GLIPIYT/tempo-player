@@ -231,7 +231,7 @@ fn ffmpeg_name() -> &'static str {
     }
 }
 
-fn ensure_ffmpeg(bin_dir: &Path) -> Result<PathBuf, String> {
+pub(super) fn ensure_ffmpeg(bin_dir: &Path) -> Result<PathBuf, String> {
     let _guard = ffmpeg_mutex()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

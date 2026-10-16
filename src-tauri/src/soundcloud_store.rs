@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Weak};
-use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 
 use crate::database::Db;
+
+mod cache_download;
 
 const DESKTOP_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
@@ -13,8 +14,14 @@ const CACHE_DIR_KEY: &str = "sc_cache_dir";
 const CACHE_LIMIT_KEY: &str = "sc_cache_limit_bytes";
 pub const LIBRARY_CHANGED_EVENT: &str = "library://changed";
 const CACHE_AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "m4a", "mp4", "aac", "ogg", "oga", "opus", "webm", "flac", "wav",
+    "mp3", "m4a", "mp4", "aac", "ogg", "oga", "opus", "webm", "mka", "flac", "wav",
 ];
+
+#[derive(Debug, Clone)]
+pub struct CacheOptions {
+    pub bin_dir: PathBuf,
+    pub ytdlp_path: String,
+}
 
 fn cache_download_locks(
 ) -> &'static std::sync::Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>> {
@@ -63,8 +70,12 @@ pub fn cache_dir(db: &Db, default_root: &Path) -> PathBuf {
 }
 
 pub fn set_cache_dir(db: &Db, path: &str) -> Result<(), String> {
-    std::fs::create_dir_all(path)
-        .map_err(|e| format!("failed to create soundcloud cache directory {}: {}", path, e))?;
+    std::fs::create_dir_all(path).map_err(|e| {
+        format!(
+            "failed to create soundcloud cache directory {}: {}",
+            path, e
+        )
+    })?;
     db.set_app_setting(CACHE_DIR_KEY, path)
 }
 
@@ -101,7 +112,8 @@ pub fn enforce_cache_limit(db: &Db, dir: &Path, limit: i64) {
         let Ok(Some(external_id)) = db.oldest_cached_sc_track() else {
             break;
         };
-        let file = find_cached_file(dir, &external_id).unwrap_or_else(|| cached_file_path(dir, &external_id));
+        let file = find_cached_file(dir, &external_id)
+            .unwrap_or_else(|| cache_lock_path(dir, &external_id));
         if std::fs::remove_file(&file).is_ok() || !file.exists() {
             let _ = db.mark_sc_uncached(&external_id);
         } else {
@@ -125,17 +137,31 @@ fn finalize_cached_file(
     dir: &Path,
     covers_dir: &Path,
     sc_id: &str,
-    app: Option<&AppHandle>,
-) {
-    let Some(file) = find_cached_file(dir, sc_id) else {
-        return;
-    };
-    let size = std::fs::metadata(&file).map(|m| m.len() as i64).unwrap_or(0);
-    let _ = db.mark_sc_cached(sc_id, size);
-    let _ = db.enrich_sc_track_from_tags(sc_id, &file, covers_dir);
-    if let Some(app) = app {
-        let _ = app.emit(LIBRARY_CHANGED_EVENT, sc_id.to_string());
+) -> Result<PathBuf, String> {
+    let file = find_cached_file(dir, sc_id)
+        .ok_or_else(|| "completed SoundCloud cache file is missing".to_string())?;
+    let metadata = std::fs::metadata(&file)
+        .map_err(|error| format!("Could not inspect SoundCloud cache file: {error}"))?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err("completed SoundCloud cache file is empty or invalid".into());
     }
+    let has_track = db.with_conn(|conn| {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tracks WHERE source = 'soundcloud' AND external_id = ?1)",
+            [sc_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| error.to_string())
+    })?;
+    if !has_track {
+        return Err("SoundCloud cache has no library row to mark complete".into());
+    }
+    db.mark_sc_cached(sc_id, metadata.len() as i64)?;
+    // Matroska audio streams do not reliably expose SoundCloud title/artist/artwork
+    // tags. A false result means the cache remains valid and the API metadata row
+    // stays authoritative; actual database failures are still surfaced.
+    let _ = db.enrich_sc_track_from_tags(sc_id, &file, covers_dir)?;
+    Ok(file)
 }
 
 pub fn cache_info(db: &Db, default_root: &Path) -> ScCacheInfo {
@@ -145,11 +171,20 @@ pub fn cache_info(db: &Db, default_root: &Path) -> ScCacheInfo {
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if !is_cached_audio_file(&path) {
+            if !is_cached_audio_file(&path)
+                || !path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| {
+                        !stem.is_empty()
+                            && stem.len() <= 32
+                            && stem.bytes().all(|byte| byte.is_ascii_digit())
+                    })
+            {
                 continue;
             }
             if let Ok(meta) = entry.metadata() {
-                if meta.is_file() {
+                if meta.is_file() && meta.len() > 0 {
                     total_bytes += meta.len() as i64;
                     file_count += 1;
                 }
@@ -164,13 +199,9 @@ pub fn cache_info(db: &Db, default_root: &Path) -> ScCacheInfo {
     }
 }
 
-/// `wait_for_cache` blocks until the track is on disk and hands back the local
-/// file instead of a stream URL. That is what lets a SoundCloud track play
-/// through the audio graph - and so show a spectrum - on its very first play,
-/// rather than only once it happens to have finished downloading.
-///
-/// Native HLS is left as a stream through MediaSource. If that stream fails,
-/// the forced yt-dlp path downloads a local copy instead.
+/// `wait_for_cache` blocks until a complete local file is available. Otherwise
+/// playback starts from the remote URL while the same cache path runs in the
+/// background.
 pub async fn get_playback(
     db: Arc<Db>,
     default_root: PathBuf,
@@ -191,90 +222,109 @@ pub async fn get_playback(
         return Err("invalid SoundCloud track ID".to_string());
     }
     if let Some(cached) = find_cached_file(&dir, track_id) {
+        finalize_cached_file(&db, &dir, &covers_dir, track_id)?;
         return Ok(local_playback(&cached));
     }
 
-    let info = if force_ytdlp {
-        let cached = download_with_ytdlp(
+    let options = CacheOptions {
+        bin_dir: bin_dir.to_path_buf(),
+        ytdlp_path: ytdlp_configured.to_string(),
+    };
+    let stream_info = if force_ytdlp {
+        resolve_browser_stream(app.as_ref(), track_id, permalink_url).await
+    } else {
+        resolve_cache_stream(app.as_ref(), track_id, permalink_url).await
+    };
+    let info = match stream_info {
+        Ok(info) => info,
+        Err(stream_error) => {
+            let cached = ensure_cached_file(
+                db.clone(),
+                dir.clone(),
+                covers_dir.clone(),
+                track_id,
+                permalink_url,
+                CacheResolution::YtDlpOnly(stream_error.clone()),
+                options,
+                app.clone(),
+                None,
+                true,
+                app.clone(),
+            )
+            .await
+            .map_err(|fallback_error| {
+                format!("{stream_error}; yt-dlp download fallback: {fallback_error}")
+            })?;
+            return Ok(local_playback(&cached));
+        }
+    };
+    let format = Some(info.format.clone());
+
+    // A concurrent prefetch may have completed while stream metadata was
+    // loading. Prefer the local copy instead of reopening the remote URL.
+    if let Some(cached) = find_cached_file(&dir, track_id) {
+        finalize_cached_file(&db, &dir, &covers_dir, track_id)?;
+        return Ok(local_playback(&cached));
+    }
+    if wait_for_cache || force_ytdlp {
+        match ensure_cached_file(
             db.clone(),
             dir.clone(),
             covers_dir.clone(),
             track_id,
             permalink_url,
-            ytdlp_configured,
-            bin_dir,
-            app.clone(),
-        )
-        .await?;
-        return Ok(local_playback(&cached));
-    } else {
-        match crate::soundcloud::get_stream_info(track_id).await {
-            Ok(info) => info,
-            Err(native_error) => {
-                return download_with_ytdlp(
-                    db.clone(),
-                    dir.clone(),
-                    covers_dir.clone(),
-                    track_id,
-                    permalink_url,
-                    ytdlp_configured,
-                    bin_dir,
-                    app.clone(),
-                )
-                .await
-                .map(|cached| local_playback(&cached))
-                .map_err(|fallback_error| {
-                    format!("{native_error}; yt-dlp download fallback: {fallback_error}")
-                });
-            }
-        }
-    };
-    let format = Some(info.format.clone());
-    if info.format == "hls" {
-        return Ok(ScPlayback { url: Some(info.url), cached_path: None, format });
-    }
-
-    // A concurrent prefetch may have completed while stream metadata was
-    // loading. Prefer the local copy instead of reopening the remote URL.
-    if let Some(cached) = find_cached_file(&dir, track_id) {
-        return Ok(local_playback(&cached));
-    }
-    if wait_for_cache {
-        // Falls back to streaming when the download does not finish in time: a
-        // slow connection should cost a few seconds of waiting, not playback.
-        if ensure_cached_file(
-            db.clone(),
-            dir.clone(),
-            covers_dir.clone(),
-            track_id,
-            Some(info.clone()),
+            CacheResolution::Known(info.clone()),
+            options.clone(),
             app.clone(),
             None,
+            true,
             app.clone(),
         )
         .await
-        .is_ok()
         {
-            if let Some(cached) = find_cached_file(&dir, track_id) {
-                return Ok(local_playback(&cached));
+            Ok(cached) => return Ok(local_playback(&cached)),
+            Err(error) => {
+                if force_ytdlp {
+                    return Err(format!(
+                        "could not create a local SoundCloud fallback for track {track_id}: {error}"
+                    ));
+                }
+                eprintln!("[tempo SoundCloud cache] cache-before-play failed for track {track_id}: {error}");
+                return Ok(ScPlayback {
+                    url: Some(info.url),
+                    cached_path: None,
+                    format,
+                });
             }
         }
     }
     let background_track_id = track_id.to_string();
     let background_info = info.clone();
     let remote_url = info.url.clone();
+    let background_db = db.clone();
+    let background_dir = dir.clone();
+    let background_covers_dir = covers_dir.clone();
+    let background_app = app.clone();
+    let background_options = options.clone();
+    let background_permalink = permalink_url.map(str::to_string);
     tokio::spawn(async move {
-        let _ = ensure_cached_file(
-            db,
-            dir,
-            covers_dir,
+        if let Err(error) = ensure_cached_file(
+            background_db,
+            background_dir,
+            background_covers_dir,
             &background_track_id,
-            Some(background_info),
-            app.clone(),
+            background_permalink.as_deref(),
+            CacheResolution::Known(background_info),
+            background_options,
+            background_app.clone(),
             None,
-            app,
+            true,
+            background_app,
         )
-        .await;
+        .await
+        {
+            eprintln!("[tempo SoundCloud cache] background cache failed for track {background_track_id}: {error}");
+        }
     });
     Ok(ScPlayback {
         url: Some(remote_url),
@@ -283,45 +333,31 @@ pub async fn get_playback(
     })
 }
 
-async fn download_with_ytdlp(
-    db: Arc<Db>,
-    dir: PathBuf,
-    covers_dir: PathBuf,
+async fn resolve_cache_stream(
+    app: Option<&AppHandle>,
     track_id: &str,
     permalink_url: Option<&str>,
-    configured: &str,
-    bin_dir: &Path,
-    app: Option<AppHandle>,
-) -> Result<PathBuf, String> {
-    let permalink = permalink_url
-        .ok_or_else(|| "SoundCloud track has no permalink for fallback".to_string())?;
-    let parsed = reqwest::Url::parse(permalink)
-        .map_err(|_| "invalid SoundCloud track permalink".to_string())?;
-    let host = parsed.host_str().unwrap_or_default();
-    if parsed.scheme() != "https"
-        || !(host == "soundcloud.com" || host.ends_with(".soundcloud.com"))
-    {
-        return Err("fallback accepts SoundCloud permalinks only".to_string());
+) -> Result<crate::soundcloud::StreamInfo, String> {
+    match crate::soundcloud::get_stream_info(track_id).await {
+        Ok(info) => Ok(info),
+        Err(native_error) => match resolve_browser_stream(app, track_id, permalink_url).await {
+            Ok(info) => Ok(info),
+            Err(browser_error) => Err(format!(
+                "{native_error}; browser stream fallback: {browser_error}"
+            )),
+        },
     }
+}
 
-    let lock_path = cached_file_path(&dir, track_id);
-    let lock = cache_download_lock(&lock_path);
-    let _guard = lock.lock().await;
-    if let Some(cached) = find_cached_file(&dir, track_id) {
-        return Ok(cached);
-    }
-
-    let configured = configured.to_string();
-    let bin_dir = bin_dir.to_path_buf();
-    let permalink = permalink.to_string();
-    let output_base = dir.join(track_id);
-    let cached = tokio::task::spawn_blocking(move || {
-        crate::ytdlp::download_soundcloud(&configured, &bin_dir, &permalink, &output_base)
-    })
-    .await
-    .map_err(|error| error.to_string())??;
-    finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
-    Ok(cached)
+async fn resolve_browser_stream(
+    app: Option<&AppHandle>,
+    track_id: &str,
+    permalink_url: Option<&str>,
+) -> Result<crate::soundcloud::StreamInfo, String> {
+    let app = app.ok_or_else(|| {
+        "SoundCloud browser stream fallback requires the application context".to_string()
+    })?;
+    crate::soundcloud_web::resolve_stream(app.clone(), track_id, permalink_url).await
 }
 
 fn local_playback(path: &Path) -> ScPlayback {
@@ -332,31 +368,30 @@ fn local_playback(path: &Path) -> ScPlayback {
     }
 }
 
-/// Brings one track onto disk.
-///
-/// `Ok` means it is cached, either because it already was or because it just
-/// landed. `Err` says why not - a cache job counts those and carries on rather
-/// than stopping at the first one.
-pub async fn precache(
-    db: Arc<Db>,
-    default_root: PathBuf,
-    covers_dir: PathBuf,
-    track_id: &str,
-    app: Option<AppHandle>,
-) -> Result<(), String> {
-    let dir = cache_dir(&db, &default_root);
-    ensure_cached_file(db, dir, covers_dir, track_id, None, app.clone(), None, app).await
-}
-
 async fn precache_for_job(
     db: Arc<Db>,
     default_root: PathBuf,
     covers_dir: PathBuf,
     track_id: &str,
+    options: CacheOptions,
     progress_app: AppHandle,
 ) -> Result<(), String> {
     let dir = cache_dir(&db, &default_root);
-    ensure_cached_file(db, dir, covers_dir, track_id, None, None, None, Some(progress_app)).await
+    ensure_cached_file(
+        db,
+        dir,
+        covers_dir,
+        track_id,
+        None,
+        CacheResolution::Resolve,
+        options,
+        Some(progress_app.clone()),
+        None,
+        false,
+        Some(progress_app),
+    )
+    .await
+    .map(|_| ())
 }
 
 /// Downloads a queued SoundCloud track and creates its library row only after
@@ -367,13 +402,37 @@ pub async fn precache_track(
     default_root: PathBuf,
     covers_dir: PathBuf,
     track: &crate::soundcloud::ScTrack,
+    options: CacheOptions,
     app: Option<AppHandle>,
 ) -> Result<(), String> {
-    if track.id.is_empty() || track.id.len() > 32 || !track.id.bytes().all(|byte| byte.is_ascii_digit()) {
+    if track.id.is_empty()
+        || track.id.len() > 32
+        || !track.id.bytes().all(|byte| byte.is_ascii_digit())
+    {
         return Err("invalid SoundCloud track ID".into());
     }
     let dir = cache_dir(&db, &default_root);
-    ensure_cached_file(db, dir, covers_dir, &track.id, None, app.clone(), Some(track), app).await
+    ensure_cached_file(
+        db,
+        dir,
+        covers_dir,
+        &track.id,
+        track.permalink_url.as_deref(),
+        CacheResolution::Resolve,
+        options,
+        app.clone(),
+        Some(track),
+        true,
+        app,
+    )
+    .await
+    .map(|_| ())
+}
+
+enum CacheResolution {
+    Resolve,
+    Known(crate::soundcloud::StreamInfo),
+    YtDlpOnly(String),
 }
 
 /// Downloads one ID once even when playback and queue prefetch reach it at the
@@ -384,13 +443,62 @@ async fn ensure_cached_file(
     dir: PathBuf,
     covers_dir: PathBuf,
     track_id: &str,
-    known_info: Option<crate::soundcloud::StreamInfo>,
+    permalink_url: Option<&str>,
+    resolution: CacheResolution,
+    options: CacheOptions,
     app: Option<AppHandle>,
     library_track: Option<&crate::soundcloud::ScTrack>,
+    notify_library: bool,
     progress_app: Option<AppHandle>,
-) -> Result<(), String> {
-    let dest = cached_file_path(&dir, track_id);
-    let lock = cache_download_lock(&dest);
+) -> Result<PathBuf, String> {
+    if track_id.is_empty()
+        || track_id.len() > 32
+        || !track_id.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err("invalid SoundCloud track ID".into());
+    }
+    let result = ensure_cached_file_locked(
+        db,
+        dir,
+        covers_dir,
+        track_id,
+        permalink_url,
+        resolution,
+        options,
+        app.clone(),
+        library_track,
+        notify_library,
+        progress_app.as_ref(),
+    )
+    .await;
+    match &result {
+        Ok(path) => {
+            let size = std::fs::metadata(path)
+                .map(|metadata| metadata.len())
+                .unwrap_or(0);
+            emit_track_cache_progress(progress_app.as_ref(), track_id, size, size, "done", None);
+        }
+        Err(error) => {
+            emit_track_cache_progress(progress_app.as_ref(), track_id, 0, 0, "failed", Some(error))
+        }
+    }
+    result
+}
+
+async fn ensure_cached_file_locked(
+    db: Arc<Db>,
+    dir: PathBuf,
+    covers_dir: PathBuf,
+    track_id: &str,
+    permalink_url: Option<&str>,
+    resolution: CacheResolution,
+    options: CacheOptions,
+    app: Option<AppHandle>,
+    library_track: Option<&crate::soundcloud::ScTrack>,
+    notify_library: bool,
+    progress_app: Option<&AppHandle>,
+) -> Result<PathBuf, String> {
+    let lock = cache_download_lock(&cache_lock_path(&dir, track_id));
     let _guard = lock.lock().await;
     if find_cached_file(&dir, track_id).is_some() {
         if let Some(track) = library_track {
@@ -402,18 +510,131 @@ async fn ensure_cached_file(
                 track.artwork_url.as_deref(),
             )?;
         }
-        finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
-        return Ok(());
+        let path = finalize_cached_file(&db, &dir, &covers_dir, track_id)?;
+        if notify_library {
+            if let Some(app) = app.as_ref() {
+                let _ = app.emit(LIBRARY_CHANGED_EVENT, track_id.to_string());
+            }
+        }
+        return Ok(path);
     }
 
-    let info = match known_info {
-        Some(info) => info,
-        None => crate::soundcloud::get_stream_info(track_id).await?,
+    emit_track_cache_progress(progress_app, track_id, 0, 0, "running", None);
+
+    let mut errors = Vec::new();
+    let mut attempted_urls = HashSet::new();
+    let mut first_info = None;
+    let try_browser_after_stream = match resolution {
+        CacheResolution::Resolve => match crate::soundcloud::get_stream_info(track_id).await {
+            Ok(info) => {
+                first_info = Some(info);
+                true
+            }
+            Err(error) => {
+                errors.push(error);
+                true
+            }
+        },
+        CacheResolution::Known(info) => {
+            first_info = Some(info);
+            true
+        }
+        CacheResolution::YtDlpOnly(error) => {
+            errors.push(error);
+            false
+        }
     };
-    if info.format == "hls" {
-        return Err("hls cannot be cached".to_string());
+
+    if let Some(info) = first_info {
+        attempted_urls.insert(info.url.clone());
+        match cache_download::download_stream(&info, &dir, track_id, &options.bin_dir, progress_app)
+            .await
+        {
+            Ok(path) => {
+                return finalize_completed_download(
+                    &db,
+                    &dir,
+                    &covers_dir,
+                    track_id,
+                    path,
+                    library_track,
+                    notify_library,
+                    app.as_ref(),
+                )
+            }
+            Err(error) => errors.push(error),
+        }
     }
-    download_to_cache(&info.url, &dest, track_id, progress_app.as_ref()).await?;
+
+    if try_browser_after_stream {
+        if let Some(app_handle) = app.as_ref() {
+            match crate::soundcloud_web::resolve_stream(app_handle.clone(), track_id, permalink_url)
+                .await
+            {
+                Ok(info) if attempted_urls.insert(info.url.clone()) => {
+                    match cache_download::download_stream(
+                        &info,
+                        &dir,
+                        track_id,
+                        &options.bin_dir,
+                        progress_app,
+                    )
+                    .await
+                    {
+                        Ok(path) => {
+                            return finalize_completed_download(
+                                &db,
+                                &dir,
+                                &covers_dir,
+                                track_id,
+                                path,
+                                library_track,
+                                notify_library,
+                                app.as_ref(),
+                            )
+                        }
+                        Err(error) => errors.push(error),
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => errors.push(format!("browser stream fallback: {error}")),
+            }
+        }
+    }
+
+    match download_ytdlp_to_cache(&dir, track_id, permalink_url, &options, progress_app).await {
+        Ok(path) => {
+            return finalize_completed_download(
+                &db,
+                &dir,
+                &covers_dir,
+                track_id,
+                path,
+                library_track,
+                notify_library,
+                app.as_ref(),
+            )
+        }
+        Err(error) => errors.push(format!("yt-dlp fallback: {error}")),
+    }
+
+    Err(if errors.is_empty() {
+        "SoundCloud track has no downloadable stream".into()
+    } else {
+        errors.join("; ")
+    })
+}
+
+fn finalize_completed_download(
+    db: &Db,
+    dir: &Path,
+    covers_dir: &Path,
+    track_id: &str,
+    path: PathBuf,
+    library_track: Option<&crate::soundcloud::ScTrack>,
+    notify_library: bool,
+    app: Option<&AppHandle>,
+) -> Result<PathBuf, String> {
     if let Some(track) = library_track {
         db.upsert_sc_track(
             &track.id,
@@ -423,9 +644,80 @@ async fn ensure_cached_file(
             track.artwork_url.as_deref(),
         )?;
     }
-    finalize_cached_file(&db, &dir, &covers_dir, track_id, app.as_ref());
-    enforce_cache_limit(&db, &dir, cache_limit(&db));
-    Ok(())
+    let finalized = finalize_cached_file(db, dir, covers_dir, track_id)?;
+    enforce_cache_limit(db, dir, cache_limit(db));
+    if find_cached_file(dir, track_id).is_none() {
+        return Err(
+            "the completed SoundCloud cache file was evicted by the configured cache limit".into(),
+        );
+    }
+    if finalized != path {
+        return Err(
+            "SoundCloud cache finalization selected a different file than the completed download"
+                .into(),
+        );
+    }
+    if notify_library {
+        if let Some(app) = app {
+            let _ = app.emit(LIBRARY_CHANGED_EVENT, track_id.to_string());
+        }
+    }
+    Ok(finalized)
+}
+
+async fn download_ytdlp_to_cache(
+    dir: &Path,
+    track_id: &str,
+    _permalink: Option<&str>,
+    options: &CacheOptions,
+    progress_app: Option<&AppHandle>,
+) -> Result<PathBuf, String> {
+    // A permalink can be renamed or stale; never cache another slug's audio
+    // under the requested ID. `ensure_cached_file` validates the numeric ID.
+    let permalink = format!("https://api.soundcloud.com/tracks/{track_id}");
+    let dir = dir.to_path_buf();
+    let track_id = track_id.to_string();
+    let permalink = permalink.to_string();
+    let configured = options.ytdlp_path.clone();
+    let bin_dir = options.bin_dir.clone();
+    let output_base = cache_download::unique_stage_base(&dir, &track_id);
+    let cleanup_base = output_base.clone();
+    emit_track_cache_progress(progress_app, &track_id, 0, 0, "running", None);
+    let download = match tokio::task::spawn_blocking(move || {
+        crate::ytdlp::download_soundcloud(&configured, &bin_dir, &permalink, &output_base)
+    })
+    .await
+    {
+        Ok(Ok(path)) => path,
+        Ok(Err(error)) => {
+            cache_download::cleanup_staged_base(&dir, &cleanup_base);
+            return Err(error);
+        }
+        Err(error) => {
+            cache_download::cleanup_staged_base(&dir, &cleanup_base);
+            return Err(format!("yt-dlp worker failed: {error}"));
+        }
+    };
+
+    let result = (|| {
+        if !is_cached_audio_file(&download) {
+            return Err("yt-dlp returned an unsupported audio container".into());
+        }
+        let metadata = std::fs::metadata(&download)
+            .map_err(|error| format!("Could not inspect yt-dlp output: {error}"))?;
+        if !metadata.is_file() || metadata.len() == 0 {
+            return Err("yt-dlp produced an empty audio file".into());
+        }
+        let extension = download
+            .extension()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| "yt-dlp output has no audio extension".to_string())?;
+        let final_path = dir.join(format!("{track_id}.{}", extension.to_ascii_lowercase()));
+        cache_download::promote_staged_file(&download, &final_path)?;
+        Ok(final_path)
+    })();
+    cache_download::cleanup_staged_base(&dir, &cleanup_base);
+    result
 }
 
 /// Emitted while a cache job runs: `{ jobId, label, done, total, failed, state }`.
@@ -439,6 +731,8 @@ pub struct CacheTrackProgress {
     pub downloaded_bytes: u64,
     pub total_bytes: u64,
     pub state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 fn emit_track_cache_progress(
@@ -447,14 +741,19 @@ fn emit_track_cache_progress(
     downloaded_bytes: u64,
     total_bytes: u64,
     state: &'static str,
+    error: Option<&str>,
 ) {
     let Some(app) = app else { return };
-    let _ = app.emit(CACHE_TRACK_PROGRESS_EVENT, CacheTrackProgress {
-        track_id: track_id.to_string(),
-        downloaded_bytes,
-        total_bytes,
-        state,
-    });
+    let _ = app.emit(
+        CACHE_TRACK_PROGRESS_EVENT,
+        CacheTrackProgress {
+            track_id: track_id.to_string(),
+            downloaded_bytes,
+            total_bytes,
+            state,
+            error: error.map(str::to_string),
+        },
+    );
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -469,18 +768,20 @@ pub struct CacheProgress {
     pub state: &'static str,
 }
 
-fn cancelled_jobs() -> &'static tokio::sync::Mutex<HashSet<String>> {
-    static CANCELLED: OnceLock<tokio::sync::Mutex<HashSet<String>>> = OnceLock::new();
-    CANCELLED.get_or_init(|| tokio::sync::Mutex::new(HashSet::new()))
+fn active_jobs() -> &'static tokio::sync::Mutex<HashMap<String, bool>> {
+    static ACTIVE: OnceLock<tokio::sync::Mutex<HashMap<String, bool>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()))
 }
 
 /// Asks a running job to stop once the track it is on has finished.
 pub async fn cancel_job(job_id: &str) {
-    cancelled_jobs().lock().await.insert(job_id.to_string());
+    if let Some(cancelled) = active_jobs().lock().await.get_mut(job_id) {
+        *cancelled = true;
+    }
 }
 
 async fn job_cancelled(job_id: &str) -> bool {
-    cancelled_jobs().lock().await.contains(job_id)
+    active_jobs().lock().await.get(job_id).copied().unwrap_or(false)
 }
 
 fn emit_cache_progress(
@@ -519,7 +820,9 @@ pub async fn run_cache_job(
     job_id: String,
     label: String,
     track_ids: Vec<String>,
+    options: CacheOptions,
 ) {
+    active_jobs().lock().await.insert(job_id.clone(), false);
     let total = track_ids.len() as u32;
     let mut done = 0u32;
     let mut failed = 0u32;
@@ -535,9 +838,16 @@ pub async fn run_cache_job(
         // `None` for the app handle: letting each track emit its own library
         // change would make the library refetch once per track. One event at
         // the end is enough.
-        if precache_for_job(db.clone(), default_root.clone(), covers_dir.clone(), &id, app.clone())
-            .await
-            .is_err()
+        if precache_for_job(
+            db.clone(),
+            default_root.clone(),
+            covers_dir.clone(),
+            &id,
+            options.clone(),
+            app.clone(),
+        )
+        .await
+        .is_err()
         {
             failed += 1;
         } else {
@@ -549,12 +859,13 @@ pub async fn run_cache_job(
         emit_cache_progress(&app, &job_id, &label, done, total, failed, "running");
     }
 
-    cancelled_jobs().lock().await.remove(&job_id);
+    active_jobs().lock().await.remove(&job_id);
     let _ = app.emit(LIBRARY_CHANGED_EVENT, String::new());
     emit_cache_progress(&app, &job_id, &label, done, total, failed, state);
 }
 
-pub fn clear_cache(db: &Db, default_root: &Path) -> Result<(u32, u32), String> {    let dir = cache_dir(db, default_root);
+pub fn clear_cache(db: &Db, default_root: &Path) -> Result<(u32, u32), String> {
+    let dir = cache_dir(db, default_root);
     let mut files_deleted = 0u32;
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -581,8 +892,8 @@ pub fn clear_cache(db: &Db, default_root: &Path) -> Result<(u32, u32), String> {
     Ok((files_deleted, playlist_rows_deleted))
 }
 
-fn cached_file_path(dir: &Path, track_id: &str) -> PathBuf {
-    dir.join(format!("{}.mp3", track_id))
+fn cache_lock_path(dir: &Path, track_id: &str) -> PathBuf {
+    dir.join(format!("{track_id}.cache-lock"))
 }
 
 /// Finds a cached file regardless of the audio container selected by yt-dlp.
@@ -593,7 +904,10 @@ pub fn find_cached_file(dir: &Path, track_id: &str) -> Option<PathBuf> {
     CACHE_AUDIO_EXTENSIONS
         .iter()
         .map(|extension| dir.join(format!("{track_id}.{extension}")))
-        .find(|path| path.is_file())
+        .find(|path| {
+            path.metadata()
+                .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
+        })
 }
 
 pub fn is_cached_audio_file(path: &Path) -> bool {
@@ -604,14 +918,18 @@ pub fn is_cached_audio_file(path: &Path) -> bool {
 }
 
 /// Cache-only read: never resolves a stream, starts a download or creates dirs.
-pub fn existing_cached_file(db: &Db, default_root: &Path, track_id: &str) -> Result<Option<PathBuf>, String> {
-    if track_id.is_empty()
-        || track_id.len() > 32
-        || !track_id.bytes().all(|b| b.is_ascii_digit())
-    {
+pub fn existing_cached_file(
+    db: &Db,
+    default_root: &Path,
+    track_id: &str,
+) -> Result<Option<PathBuf>, String> {
+    if track_id.is_empty() || track_id.len() > 32 || !track_id.bytes().all(|b| b.is_ascii_digit()) {
         return Err("invalid SoundCloud track ID".into());
     }
-    let root = db.get_app_setting(CACHE_DIR_KEY)?.map(PathBuf::from).unwrap_or_else(|| default_root.to_path_buf());
+    let root = db
+        .get_app_setting(CACHE_DIR_KEY)?
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_root.to_path_buf());
     let root = match std::fs::canonicalize(root) {
         Ok(root) => root,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -625,61 +943,6 @@ pub fn existing_cached_file(db: &Db, default_root: &Path, track_id: &str) -> Res
         return Err("SoundCloud cache file is outside its cache directory".into());
     }
     Ok(Some(canonical))
-}
-
-async fn download_to_cache(
-    url: &str,
-    final_path: &Path,
-    track_id: &str,
-    progress_app: Option<&AppHandle>,
-) -> Result<(), String> {
-    let client = reqwest::Client::builder()
-        .user_agent(DESKTOP_UA)
-        .timeout(Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("http client error: {}", e))?;
-    let mut downloaded = 0u64;
-    let mut total = 0u64;
-    let result = async {
-        let mut response = client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| format!("download failed: {}", e))?
-            .error_for_status()
-            .map_err(|e| format!("download failed: {}", e))?;
-        total = response.content_length().unwrap_or(0);
-        emit_track_cache_progress(progress_app, track_id, 0, total, "running");
-
-        let mut bytes = Vec::new();
-        let mut reported = 0u64;
-        let report_step = (total / 100).max(96 * 1024);
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|e| format!("download failed: {}", e))?
-        {
-            downloaded += chunk.len() as u64;
-            bytes.extend_from_slice(&chunk);
-            if downloaded - reported >= report_step {
-                reported = downloaded;
-                emit_track_cache_progress(progress_app, track_id, downloaded, total, "running");
-            }
-        }
-
-        let tmp_path = final_path.with_extension("tmp");
-        std::fs::write(&tmp_path, &bytes).map_err(|e| format!("cache write failed: {}", e))?;
-        std::fs::rename(&tmp_path, final_path).map_err(|e| format!("cache finalize failed: {}", e))?;
-        Ok::<(), String>(())
-    }
-    .await;
-
-    if result.is_ok() {
-        emit_track_cache_progress(progress_app, track_id, downloaded, total.max(downloaded), "done");
-    } else {
-        emit_track_cache_progress(progress_app, track_id, downloaded, total, "failed");
-    }
-    result
 }
 
 #[cfg(test)]
@@ -846,8 +1109,11 @@ mod tests {
         db.mark_sc_cached("202", 100).unwrap();
         // make the eviction order deterministic regardless of wall-clock seconds
         db.with_conn(|c| {
-            c.execute("UPDATE tracks SET cached_at = 1 WHERE external_id = '202'", [])
-                .map_err(|e| e.to_string())
+            c.execute(
+                "UPDATE tracks SET cached_at = 1 WHERE external_id = '202'",
+                [],
+            )
+            .map_err(|e| e.to_string())
         })
         .unwrap();
         db.bump_play_count(played).unwrap();

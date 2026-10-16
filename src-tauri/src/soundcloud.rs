@@ -97,7 +97,7 @@ async fn fetch_client_id() -> Result<String, String> {
     Ok(id)
 }
 
-async fn get_client_id() -> Result<String, String> {
+pub(crate) async fn get_client_id() -> Result<String, String> {
     if let Some(id) = client_id_slot().read().await.clone() {
         return Ok(id);
     }
@@ -166,6 +166,9 @@ fn is_encrypted(t: &Value) -> bool {
 /// SoundCloud clients sometimes label the HLS URL as `http`; yt-dlp handles
 /// the same API inconsistency by identifying the protocol from the stream URL.
 fn transcoding_protocol(t: &Value) -> Option<TranscodingProtocol> {
+    if t.get("snipped").and_then(Value::as_bool).unwrap_or(false) {
+        return None;
+    }
     let protocol = t.pointer("/format/protocol").and_then(Value::as_str).unwrap_or_default();
     if protocol == "progressive" {
         return Some(TranscodingProtocol::Progressive);
@@ -1014,6 +1017,9 @@ fn stream_cache() -> &'static tokio::sync::Mutex<HashMap<String, (StreamInfo, In
 
 async fn resolve_stream_info(track_id: &str) -> Result<StreamInfo, String> {
     let meta = get_json_with_fresh_client(&format!("{API}/tracks/{track_id}?client_id=")).await?;
+    if meta.get("policy").and_then(Value::as_str) == Some("SNIP") {
+        return Err("only a SoundCloud preview is available in this session".into());
+    }
     let auth = meta
         .get("track_authorization")
         .and_then(|v| v.as_str())
