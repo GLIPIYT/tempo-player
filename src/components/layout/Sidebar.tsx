@@ -44,6 +44,7 @@ import {
 } from '../../dnd/trackDrag'
 import Cover from '../common/Cover'
 import CacheBadge from '../../soundcloud/CacheBadge'
+import { addTrackToPlaylistAndCache } from '../../soundcloud/cacheJobs'
 import Modal from '../common/Modal'
 import ConfirmModal from '../common/ConfirmModal'
 
@@ -379,17 +380,18 @@ export default function Sidebar() {
 
   // track drop target: add the dropped track to the playlist + toast
   useEffect(() => {
-    registerPlaylistDropper((playlistId, trackId) => {
+    registerPlaylistDropper((playlistId, trackId, sourceTrack) => {
       const found = favoritesRef.current.find(
         (f) => f.kind === 'playlist' && f.id === playlistId,
       )
       const pl = found?.kind === 'playlist' ? found.item : undefined
-      void api
-        .playlistAddTrack(playlistId, trackId)
+      const add = sourceTrack?.id === trackId
+        ? addTrackToPlaylistAndCache(playlistId, sourceTrack)
+        : api.playlistAddTrack(playlistId, trackId).then(() => bumpLibraryVersion())
+      void add
         .then(() => {
           const name = pl ? playlistDisplayName(pl, pl.name, t) : ''
           toast.show(`${t('Added to')} ${name}`)
-          bumpLibraryVersion()
         })
         .catch((cause: unknown) => toast.show(cause instanceof Error ? cause.message : String(cause), 'error'))
     })

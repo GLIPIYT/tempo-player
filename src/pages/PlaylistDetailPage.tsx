@@ -385,6 +385,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                     title: t.title,
                     coverPath: t.coverPath,
                     trackId: t.id,
+                    sourceTrack: t,
                     sort: {
                       group: `playlist-${playlistId}`,
                       position: p.position,

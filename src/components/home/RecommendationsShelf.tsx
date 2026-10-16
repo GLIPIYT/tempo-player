@@ -190,6 +190,19 @@ export default function RecommendationsShelf({
       {(() => {
         const progress = cacheProgresses.find(item => item.trackId === track.id)
         if (progress) {
+          if (progress.state === 'failed') {
+            return (
+              <button
+                type="button"
+                className={`home-recommendation-cache is-failed${progress.exiting ? ' is-exiting' : ''}`}
+                aria-label={`${t('Retry')}: ${track.title}`}
+                title={progress.error || t('Caching failed')}
+                onClick={() => onCache(track)}
+              >
+                <RefreshCw size={13} />
+              </button>
+            )
+          }
           const percent = progress.state === 'done'
             ? 100
             : progress.totalBytes > 0
@@ -209,7 +222,7 @@ export default function RecommendationsShelf({
             </button>
           )
         }
-        if (!track.streamable || !track.hasProgressive || cachedIds.has(track.id)) return null
+        if (!/^[1-9]\d*$/.test(track.id) || cachedIds.has(track.id)) return null
         return (
           <button
             type="button"

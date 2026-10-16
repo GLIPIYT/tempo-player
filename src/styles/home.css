@@ -568,6 +568,8 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
 .home-recommendation-cover .sc-art-fallback { font-size: 34px; }
 .home-recommendation-cache { position: absolute; top: 7px; right: 7px; display: grid; width: 29px; height: 29px; place-items: center; border: 1px solid color-mix(in srgb, white 26%, transparent); border-radius: 50%; background: color-mix(in srgb, #090b10 72%, transparent); color: #fff; backdrop-filter: blur(8px); }
 .home-recommendation-cache:hover { background: var(--accent); }
+.home-recommendation-cache.is-failed { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 60%, transparent); }
+.home-recommendation-cache.is-failed.is-exiting { opacity: 0; transform: scale(.78); }
 .home-recommendation-cache.is-progress {
   top: 4px;
   right: 4px;

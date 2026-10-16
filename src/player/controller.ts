@@ -960,7 +960,7 @@ export class PlayerController {
               artworkUrl: /^https?:\/\//.test(item.track.coverPath ?? '') ? item.track.coverPath : null,
               artistAvatarUrl: item.track.artistAvatarUrl ?? null,
               permalinkUrl: item.track.externalUrl,
-            })
+            }, getSettings().ytdlp.path)
           } else {
             await api.ytdlpCache(
               getSettings().ytdlp.path,

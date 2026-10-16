@@ -17,6 +17,7 @@ import { useT } from '../../i18n'
 import { trackToUnified } from '../../utils/unified'
 import { playlistDisplayName } from '../../utils/playlists'
 import { bumpLibraryVersion } from '../../utils/libraryVersion'
+import { addTrackToPlaylistAndCache } from '../../soundcloud/cacheJobs'
 import { toast } from './Toast'
 import TrackMetadataEditor from './TrackMetadataEditor'
 
@@ -186,7 +187,7 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
 
   const addTo = async (pl: Playlist) => {
     try {
-      await api.playlistAddTrack(pl.id, track.id)
+      await addTrackToPlaylistAndCache(pl.id, track)
       setSub(false)
       flash(`${t('Added to')} ${playlistDisplayName(pl, pl.name, t)}`, false)
     } catch (e: unknown) {
@@ -199,7 +200,7 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
     if (name.length === 0) return
     try {
       const pl = await api.createPlaylist(name)
-      await api.playlistAddTrack(pl.id, track.id)
+      await addTrackToPlaylistAndCache(pl.id, track)
       setCreating(false)
       setNewName('')
       setSub(false)
@@ -221,7 +222,7 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
   }
 
   const toggleLike = () => {
-    likes.toggle(track.id)
+    likes.toggle(track.id, track)
     close()
   }
 

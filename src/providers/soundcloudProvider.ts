@@ -1,8 +1,10 @@
 import { api } from '../api/client'
 import type { ScTrack, UnifiedTrack } from '../types/models'
 import type { MusicProvider, SearchHit } from './provider'
+import { rememberSoundCloudTrack } from '../soundcloud/cacheMetadata'
 
 export function scTrackToUnified(t: ScTrack): UnifiedTrack {
+  rememberSoundCloudTrack(t)
   return {
     source: 'soundcloud',
     traits: { genre: t.genre?.slice(0, 96) ?? null, tags: t.tags?.slice(0, 16).map(tag => tag.slice(0, 64)) ?? null,

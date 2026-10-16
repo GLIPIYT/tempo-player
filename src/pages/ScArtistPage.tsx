@@ -96,7 +96,7 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
     e.preventDefault()
     e.stopPropagation()
     const playableHere = track.streamable && (track.hasProgressive || track.hasHls)
-    const cacheableHere = track.streamable && track.hasProgressive
+    const cacheableHere = /^[1-9]\d*$/.test(track.id)
     const items: ContextMenuItem[] = [
       {
         id: 'play',
@@ -113,8 +113,8 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
         onSelect: () => {
           void requestTrackCache(track)
             .then((outcome) => {
-              if (outcome === 'started') toast.show(t('Caching started'))
-              else toast.show(t('This track cannot be cached'), 'info')
+              if (outcome === 'cached') toast.show(t('Cached'))
+              else if (outcome === 'empty') toast.show(t('This track cannot be cached'), 'info')
             })
             .catch((error: unknown) => toast.show(error instanceof Error ? error.message : String(error), 'error'))
         },

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { convertFileSrc } from '@tauri-apps/api/core'
@@ -18,7 +18,7 @@ import {
   RotateCcw,
   Trash2,
 } from 'lucide-react'
-import { api } from '../api/client'
+import { api, type SoundCloudSessionStatus } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useScanProgress } from '../hooks/useScanProgress'
@@ -813,6 +813,84 @@ function UpdateCard() {
         />
       ) : null}
     </>
+  )
+}
+
+function SoundCloudSessionCard() {
+  const t = useT()
+  const [status, setStatus] = useState<SoundCloudSessionStatus | null>(null)
+  const [loginPending, setLoginPending] = useState(false)
+  const mounted = useRef(false)
+  const refreshing = useRef(false)
+
+  const refreshStatus = useCallback(async () => {
+    if (refreshing.current) return
+    refreshing.current = true
+    try {
+      const next = await api.scSessionStatus()
+      if (mounted.current) setStatus(next)
+    } catch {
+      // Status checks are opportunistic; keep About quiet when the command is unavailable.
+    } finally {
+      refreshing.current = false
+    }
+  }, [])
+
+  useEffect(() => {
+    mounted.current = true
+    const onFocus = () => void refreshStatus()
+    window.addEventListener('focus', onFocus)
+    void refreshStatus()
+    return () => {
+      mounted.current = false
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [refreshStatus])
+
+  useEffect(() => {
+    if (!status?.loginOpen) return
+    const timer = window.setInterval(() => void refreshStatus(), 1500)
+    return () => window.clearInterval(timer)
+  }, [refreshStatus, status?.loginOpen])
+
+  const signIn = async () => {
+    setLoginPending(true)
+    try {
+      await api.scSessionLogin()
+      await refreshStatus()
+    } catch (error) {
+      const details = error instanceof Error && error.message ? `: ${error.message}` : ''
+      toast.show(`${t('Could not open SoundCloud sign-in')}${details}`, 'error', 6000)
+    } finally {
+      setLoginPending(false)
+    }
+  }
+
+  if (!status) return null
+  if (status.personalAvailable) {
+    return (
+      <Card title={t('SoundCloud')}>
+        <div className="set-note">{t('Signed in to SoundCloud')}</div>
+      </Card>
+    )
+  }
+  const expired = status.builtinConfigured && status.builtinState === 'expired'
+  const personalSignInAvailable = !status.builtinConfigured
+  if (!expired && !personalSignInAvailable) return null
+
+  return (
+    <Card title={t('SoundCloud')}>
+      <div className={expired ? 'error-line' : 'set-note'}>
+        {expired
+          ? t('The built-in SoundCloud session expired. Sign in to continue.')
+          : t('Sign in to play tracks that require an account.')}
+      </div>
+      <div className="set-actions">
+        <button className="btn" onClick={() => void signIn()} disabled={loginPending || status.loginOpen}>
+          {t('Sign in to SoundCloud')}
+        </button>
+      </div>
+    </Card>
   )
 }
 
@@ -1947,6 +2025,7 @@ export default function SettingsPage() {
                 </div>
               </Card>
               <UpdateCard />
+              <SoundCloudSessionCard />
             </>
           ) : null}
         </div>

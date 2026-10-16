@@ -1,4 +1,6 @@
 import { api } from '../api/client'
+import { scheduleTrackCacheForSource } from '../soundcloud/cacheJobs'
+import type { Track, UnifiedTrack } from '../types/models'
 import { bumpLibraryVersion } from './libraryVersion'
 
 type Listener = () => void
@@ -50,7 +52,7 @@ export const likesStore = {
     else ids.delete(trackId)
     emit()
   },
-  toggle: (trackId: number): void => {
+  toggle: (trackId: number, sourceTrack?: Track | UnifiedTrack): void => {
     const liked = ids.has(trackId)
     if (liked) ids.delete(trackId)
     else ids.add(trackId)
@@ -60,6 +62,9 @@ export const likesStore = {
       .then(() => {
         // keep track counts on the likes playlist fresh
         bumpLibraryVersion()
+        if (!liked && sourceTrack?.source === 'soundcloud') {
+          scheduleTrackCacheForSource(sourceTrack)
+        }
       })
       .catch(() => {
         // revert on failure

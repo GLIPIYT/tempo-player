@@ -61,6 +61,7 @@ export default function TrackList({ tracks, showAlbum = true, showIndex = true, 
                 title: t.title,
                 coverPath: t.coverPath,
                 trackId: t.id,
+                sourceTrack: t,
               })
             }}
             onDoubleClick={() => playAt(i)}

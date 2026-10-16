@@ -180,7 +180,7 @@ function ScRowMenu({ track }: { track: ScTrack }) {
 
   const addTo = async (pl: Playlist) => {
     try {
-      await api.addScTrackToPlaylist(pl.id, track)
+      await api.addScTrackToPlaylist(pl.id, track, ytdlpPath())
       bumpLibraryVersion()
       setSub(false)
       toast.show(`${t('Added to')} ${pl.name}`)
@@ -194,7 +194,7 @@ function ScRowMenu({ track }: { track: ScTrack }) {
     if (name.length === 0) return
     try {
       const pl = await api.createPlaylist(name)
-      await api.addScTrackToPlaylist(pl.id, track)
+      await api.addScTrackToPlaylist(pl.id, track, ytdlpPath())
       bumpLibraryVersion()
       setCreating(false)
       setNewName('')

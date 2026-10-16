@@ -1,10 +1,12 @@
 import { useEffect, useSyncExternalStore } from 'react'
-import { X } from 'lucide-react'
+import { RefreshCw, X } from 'lucide-react'
 import { useT } from '../i18n'
 import {
   cancelCacheJob,
+  canRetryCacheJob,
   getCacheJobs,
   initCacheJobs,
+  retryCacheJob,
   subscribeCacheJobs,
   type CacheJob,
 } from './cacheJobs'
@@ -28,6 +30,9 @@ function CacheToast({ job }: { job: CacheJob }) {
 
   let status = `${t('Caching…')} ${percent}%`
   if (job.state === 'cancelled') status = t('Caching stopped')
+  else if (job.state === 'failed' || (job.state === 'done' && job.failed > 0 && job.done <= job.failed)) {
+    status = t('Caching failed')
+  }
   else if (job.state === 'done') {
     status = job.failed > 0 ? `${t('Cached')} · ${job.failed} ${t('failed')}` : t('Cached')
   }
@@ -68,7 +73,7 @@ function CacheToast({ job }: { job: CacheJob }) {
           <span className="cache-toast-label" title={job.label}>
             {job.label}
           </span>
-          <span className="cache-toast-status">{status}</span>
+          <span className="cache-toast-status" title={job.error}>{status}</span>
         </div>
         {job.state === 'running' ? (
           <button
@@ -77,6 +82,15 @@ function CacheToast({ job }: { job: CacheJob }) {
             onClick={() => cancelCacheJob(job.id)}
           >
             <X size={14} />
+          </button>
+        ) : canRetryCacheJob(job.id) ? (
+          <button
+            className="icon-btn"
+            aria-label={t('Retry')}
+            title={t('Retry')}
+            onClick={() => retryCacheJob(job.id)}
+          >
+            <RefreshCw size={14} />
           </button>
         ) : null}
       </div>
@@ -89,7 +103,7 @@ export default function CacheToasts() {
   // The component that shows progress is also the one that starts listening,
   // so the two cannot drift apart.
   useEffect(() => {
-    void initCacheJobs()
+    void initCacheJobs().catch(() => undefined)
   }, [])
   if (jobs.length === 0) return null
   return (

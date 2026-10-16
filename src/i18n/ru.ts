@@ -56,6 +56,11 @@ export const ru: Record<string, string> = {
   'A picture behind the library view. Dim and blur it to taste.':
     'Изображение на фоне библиотеки. Настройте затемнение и размытие по вкусу.',
   About: 'О программе',
+  'The built-in SoundCloud session expired. Sign in to continue.': 'Встроенный сеанс SoundCloud истёк. Войдите в аккаунт, чтобы продолжить.',
+  'Sign in to play tracks that require an account.': 'Войдите в аккаунт, чтобы слушать треки, требующие авторизации.',
+  'Signed in to SoundCloud': 'Вход в SoundCloud выполнен',
+  'Sign in to SoundCloud': 'Войти в SoundCloud',
+  'Could not open SoundCloud sign-in': 'Не удалось открыть вход в SoundCloud',
   'App icon': 'Значок приложения',
   'Page opened at launch.': 'Страница при запуске.',
   'Hidden files stay on disk and are skipped during scans.':
@@ -697,6 +702,7 @@ export const ru: Record<string, string> = {
   'Caching started': 'Кэширование началось',
   Caching: 'Кэширование',
   'Caching…': 'Кэшируется',
+  'Caching failed': 'Не удалось кэшировать',
   Cached: 'Скэшировано',
   'Caching stopped': 'Кэширование остановлено',
   failed: 'с ошибкой',

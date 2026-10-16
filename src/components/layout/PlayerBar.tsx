@@ -424,7 +424,7 @@ function PlayerBarContent() {
           {currentDbId !== null ? (
             <button
               className={'icon-btn pb-like-btn' + (liked ? ' is-active' : '')}
-              onClick={() => likes.toggle(currentDbId)}
+              onClick={() => likes.toggle(currentDbId, p.currentTrack ?? undefined)}
               aria-label={liked ? t('Remove from Likes') : t('Add to Likes')}
               title={liked ? t('Remove from Likes') : t('Add to Likes')}
             >

@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { withExplicitFeedback } from '../features/recommendations/feedbackBridge'
+import { rememberSoundCloudTrack } from '../soundcloud/cacheMetadata'
 import type { AudioRecordingFeature, ExplicitAction, FeatureSectionUpdate, RecommendationProvenance } from '../features/recommendations/types'
 import type { ListeningEvent, RecommendationContext, RecommendationFeature, RecommendationImpression, RecommendationProviderPage, RecommendationStoredState, RecordingGroup, RecordingGroupResolution, ScRelatedPage, ScRecommendationSource } from '../features/recommendations/types'
 import type {
@@ -47,6 +48,13 @@ import type {
   BackgroundSearchFilters,
   BackgroundSearchPage,
 } from '../types/backgrounds'
+
+export interface SoundCloudSessionStatus {
+  builtinConfigured: boolean
+  builtinState: 'unconfigured' | 'unchecked' | 'valid' | 'expired'
+  personalAvailable: boolean
+  loginOpen: boolean
+}
 
 function periodSinceSecs(period: AnalyticsPeriod): number | null {
   if (period === 'all') return null
@@ -283,6 +291,9 @@ export const api = {
   scSearchTracks: (query: string, limit: number, offset: number) =>
     invoke<ScTrack[]>('sc_search_tracks', { query, limit, offset }),
 
+  scSessionStatus: () => invoke<SoundCloudSessionStatus>('sc_session_status'),
+  scSessionLogin: () => invoke<void>('sc_session_login'),
+
   scSearchPlaylists: (query: string, limit: number, offset: number) =>
     invoke<ScPlaylist[]>('sc_search_playlists', { query, limit, offset }),
 
@@ -404,8 +415,8 @@ export const api = {
     }),
 
   /** Fetches a track ahead of playback and files it once the cache is ready. */
-  scPrecache: (track: Pick<ScTrack, 'id' | 'title' | 'artist' | 'durationMs' | 'artworkUrl'> & Partial<Pick<ScTrack, 'artistAvatarUrl' | 'permalinkUrl'>>) =>
-    invoke<void>('sc_precache', { track }),
+  scPrecache: (track: Pick<ScTrack, 'id' | 'title' | 'artist' | 'durationMs' | 'artworkUrl'> & Partial<Pick<ScTrack, 'artistAvatarUrl' | 'permalinkUrl'>>, ytdlpPath = '') =>
+    invoke<void>('sc_precache', { track, ytdlpPath }),
   upsertScTrack: (track: Omit<ScTrack, 'artistAvatarUrl' | 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'> & Partial<Pick<ScTrack, 'artistAvatarUrl' | 'permalinkUrl' | 'streamable' | 'hasProgressive' | 'hasHls'>>) =>
     invoke<number>('sc_upsert_track', { track }),
   fetchOnlineLyricsAll: (
@@ -414,9 +425,11 @@ export const api = {
     album: string | null = null,
     durationSec: number | null = null,
   ) => invoke<OnlineLyricsCandidateData[]>('fetch_online_lyrics_all', { artist, title, album, durationSec }),
-  addScTrackToPlaylist: (playlistId: number, track: ScTrack) =>
-    withExplicitFeedback(() => invoke<number>('add_sc_track_to_playlist', { playlistId, track }),
-      dbId => ({ trackKey: `soundcloud:${track.id}`, dbId, playlistId, action: 'playlist-add', intent: 'manual' })),
+  addScTrackToPlaylist: (playlistId: number, track: ScTrack, ytdlpPath = '') => {
+    rememberSoundCloudTrack(track)
+    return withExplicitFeedback(() => invoke<number>('add_sc_track_to_playlist', { playlistId, track, ytdlpPath }),
+      dbId => ({ trackKey: `soundcloud:${track.id}`, dbId, playlistId, action: 'playlist-add', intent: 'manual' }))
+  },
   scCacheInfo: () =>
     invoke<{ path: string; totalBytes: number; fileCount: number; limitBytes: number }>('sc_cache_info'),
   setScCacheDir: (path: string) => invoke<void>('set_sc_cache_dir', { path }),

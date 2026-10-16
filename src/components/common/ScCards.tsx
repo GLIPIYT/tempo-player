@@ -30,8 +30,7 @@ export function ScPlaylistCard({ playlist }: { playlist: ScPlaylist }) {
   const cache = (): void => {
     report(
       requestPlaylistCache(playlist).then((outcome) => {
-        if (outcome === 'started') toast.show(t('Caching started'))
-        else if (outcome === 'empty') toast.show(t('Nothing in this playlist can be cached'), 'info')
+        if (outcome === 'empty') toast.show(t('Nothing in this playlist can be cached'), 'info')
         // 'asked' leaves the name question on screen; it reports its own result
       }),
     )
@@ -94,7 +93,7 @@ export function ScArtistRow({ artist }: { artist: ScArtist }) {
     report(
       requestArtistCache(artist, favorite).then((outcome) => {
         if (outcome === 'started') {
-          toast.show(favorite ? t('Added to favorites') : t('Caching started'))
+          if (favorite) toast.show(t('Added to favorites'))
         } else if (outcome === 'empty') {
           toast.show(t('Nothing to cache for this artist'), 'info')
         }

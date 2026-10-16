@@ -1,6 +1,6 @@
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import Cover from '../components/common/Cover'
-import type { FavoriteKind } from '../types/models'
+import type { FavoriteKind, Track } from '../types/models'
 
 /**
  * Pointer-based drag & drop for tracks (into sidebar playlists or within a
@@ -58,8 +58,9 @@ interface DragSession {
   /** when set, only rows of this kind accept the drop (grouped sidebar) */
   restrictKind?: FavoriteKind | null
   trackId?: number
+  sourceTrack?: Track
   onFavoriteDrop?: (from: number, to: number) => void
-  onTrackDrop?: (playlistId: number, trackId: number) => void
+  onTrackDrop?: (playlistId: number, trackId: number, sourceTrack?: Track) => void
   sortGroup?: string
   sortPosition?: number
   onSortDrop?: (fromPosition: number, insertionIndex: number) => void
@@ -75,10 +76,10 @@ let listeners = new Set<() => void>()
 let targetListeners = new Set<() => void>()
 let lastDragEnd = 0
 
-export function registerPlaylistDropper(fn: ((playlistId: number, trackId: number) => void) | null): void {
+export function registerPlaylistDropper(fn: ((playlistId: number, trackId: number, sourceTrack?: Track) => void) | null): void {
   playlistDropper = fn
 }
-let playlistDropper: ((playlistId: number, trackId: number) => void) | null = null
+let playlistDropper: ((playlistId: number, trackId: number, sourceTrack?: Track) => void) | null = null
 
 function notify(): void {
   for (const l of listeners) l()
@@ -248,6 +249,7 @@ export function beginTrackDrag(opts: {
   title: string
   coverPath: string | null
   trackId?: number
+  sourceTrack?: Track
   /** External tracks are imported/cached when dropped into a local playlist. */
   onDrop?: (playlistId: number) => void
   /** allow starting the drag from inside a <button> (home page cards are buttons) */
@@ -262,7 +264,7 @@ export function beginTrackDrag(opts: {
     onFinish?: () => void
   }
 }): void {
-  const { e, title, coverPath, trackId } = opts
+  const { e, title, coverPath, trackId, sourceTrack } = opts
   if (!opts.onDrop && (!Number.isInteger(trackId) || (trackId ?? 0) <= 0)) return
   const el = e.currentTarget
   if (!opts.allowButtons && (e.target as HTMLElement).closest('button')) return
@@ -290,9 +292,10 @@ export function beginTrackDrag(opts: {
     activated: false,
     targetId: null,
     trackId,
+    sourceTrack,
     onTrackDrop: opts.onDrop
       ? (playlistId) => opts.onDrop?.(playlistId)
-      : (playlistId, tid) => playlistDropper?.(playlistId, tid),
+      : (playlistId, tid, draggedTrack) => playlistDropper?.(playlistId, tid, draggedTrack),
     sortGroup: opts.sort?.group,
     sortPosition: opts.sort?.position,
     onSortDrop: opts.sort?.onDrop,
@@ -350,7 +353,7 @@ export function beginTrackDrag(opts: {
       s.tx = r.left + r.width / 2
       s.ty = r.top + r.height / 2
       s.active = false
-      s.onTrackDrop?.(hit.id, s.trackId ?? 0)
+      s.onTrackDrop?.(hit.id, s.trackId ?? 0, s.sourceTrack)
     } else {
       const sortTarget = s.sortGroup
         ? hitTrackSortTarget(ev.clientX, ev.clientY, s.sortGroup)

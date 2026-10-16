@@ -151,8 +151,8 @@ export default function HomePage() {
   const cacheRecommendation = (track: ScTrack) => {
     void requestTrackCache(track)
       .then((outcome) => {
-        if (outcome === 'started') toast.show(t('Caching started'))
-        else toast.show(t('This track cannot be cached'), 'info')
+        if (outcome === 'cached') toast.show(t('Cached'))
+        else if (outcome === 'empty') toast.show(t('This track cannot be cached'), 'info')
       })
       .catch((cause: unknown) => toast.show(cause instanceof Error ? cause.message : String(cause), 'error'))
   }
@@ -222,7 +222,7 @@ export default function HomePage() {
 
   const addRecommendationToPlaylist = (playlistId: number, track: ScTrack) => {
     const playlist = featuredPlaylists.find((item) => item.id === playlistId)
-    void api.addScTrackToPlaylist(playlistId, track)
+    void api.addScTrackToPlaylist(playlistId, track, settings.ytdlp.path)
       .then(() => {
         bumpLibraryVersion()
         toast.show(`${t('Added to')} ${playlist?.name ?? t('playlist')}`)

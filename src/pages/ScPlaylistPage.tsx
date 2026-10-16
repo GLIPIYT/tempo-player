@@ -12,7 +12,7 @@ import { usePlayer } from '../player'
 import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
 import { scTrackToUnified } from '../utils/unified'
-import { favoritePlaylist, requestPlaylistCache, requestTrackCache } from '../soundcloud/cacheJobs'
+import { favoritePlaylist, requestPlaylistCache, requestTrackCache, type CacheRequestOutcome } from '../soundcloud/cacheJobs'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import { openExternalUrl } from '../utils/externalLinks'
 
@@ -85,7 +85,7 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
     e.preventDefault()
     e.stopPropagation()
     const playableHere = track.streamable && (track.hasProgressive || track.hasHls)
-    const cacheableHere = track.streamable && track.hasProgressive
+    const cacheableHere = /^[1-9]\d*$/.test(track.id)
     const items: ContextMenuItem[] = [
       {
         id: 'play',
@@ -102,8 +102,8 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
         onSelect: () => {
           void requestTrackCache(track)
             .then((outcome) => {
-              if (outcome === 'started') toast.show(t('Caching started'))
-              else toast.show(t('This track cannot be cached'), 'info')
+              if (outcome === 'cached') toast.show(t('Cached'))
+              else if (outcome === 'empty') toast.show(t('This track cannot be cached'), 'info')
             })
             .catch((error: unknown) => toast.show(error instanceof Error ? error.message : String(error), 'error'))
         },
@@ -112,12 +112,12 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
     openContextMenu({ x: e.clientX, y: e.clientY, title: track.title, items })
   }
 
-  const run = async (action: () => Promise<'started' | 'asked' | 'empty'>, done: string) => {
+  const run = async (action: () => Promise<CacheRequestOutcome>, done?: string) => {
     setBusy(true)
     try {
       const outcome = await action()
       if (outcome === 'empty') toast.show(t('Nothing in this playlist can be cached'), 'info')
-      else if (outcome === 'started') toast.show(done)
+      else if (done && outcome === 'started') toast.show(done)
       // 'asked' means the name question is up; that dialog reports its own result
     } catch (e) {
       toast.show(e instanceof Error ? e.message : String(e), 'error')
@@ -163,7 +163,7 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
           <button
             className="btn"
             disabled={busy}
-            onClick={() => void run(() => requestPlaylistCache(playlist), t('Caching started'))}
+            onClick={() => void run(() => requestPlaylistCache(playlist))}
           >
             <Download size={14} />
             <span>{t('Cache playlist')}</span>

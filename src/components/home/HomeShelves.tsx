@@ -28,7 +28,7 @@ interface HomeShelvesProps {
 }
 
 function startDrag(event: PointerEvent<HTMLButtonElement>, track: Track) {
-  beginTrackDrag({ e: event, title: track.title, coverPath: track.coverPath, trackId: track.id, allowButtons: true })
+  beginTrackDrag({ e: event, title: track.title, coverPath: track.coverPath, trackId: track.id, sourceTrack: track, allowButtons: true })
 }
 
 interface TrackRailProps {

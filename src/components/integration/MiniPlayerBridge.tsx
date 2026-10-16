@@ -197,8 +197,9 @@ export default function MiniPlayerBridge(): null {
         break
       }
       case 'toggle_like': {
-        const dbId = playerController.getSnapshot().currentTrack?.dbId ?? null
-        if (dbId !== null) likesStore.toggle(dbId)
+        const currentTrack = playerController.getSnapshot().currentTrack
+        const dbId = currentTrack?.dbId ?? null
+        if (dbId !== null) likesStore.toggle(dbId, currentTrack ?? undefined)
         break
       }
       case 'toggle_shuffle':
