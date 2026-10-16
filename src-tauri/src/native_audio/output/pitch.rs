@@ -1,6 +1,6 @@
 // Upstream source: https://github.com/zxcloli666/SoundCloud-Desktop
 // Adapted from SoundCloud Desktop audio/pitch.rs (MIT, Copyright (c) 2025, zxcloli666).
-// Attribution and license text: THIRD_PARTY_NOTICES.md.
+// Attribution and license text: LICENSE (Third-party notices).
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;

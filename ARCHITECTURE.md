@@ -335,16 +335,49 @@ is parsed and lands in `new` or `updated`. Paths under the root that no longer e
 `removed`. Paths in `hidden_paths` are skipped entirely, which is what keeps a track the user
 removed from coming back on the next pass. Together this is what makes rescans near-instant.
 
-### `soundcloud.rs` + `soundcloud_store.rs`
+### `soundcloud.rs` + `soundcloud_store.rs` + `soundcloud_web.rs`
 
 `soundcloud.rs` is the API client. `soundcloud_store.rs` is the cache.
 
 A SoundCloud track is upserted into `tracks` with `path = 'soundcloud://{id}'`, `folder_id NULL`,
 `cached_at NULL` — present in the database, invisible in the library. `sc_get_playback` returns a
-playable URL immediately and downloads the progressive stream in the background; on success it sets
+playable URL immediately and caches progressive or ordinary HLS audio in the background. Explicit
+likes, playlist additions/imports and cache actions use the same per-track download lock. Progressive
+responses are streamed to disk with a detected audio container; HLS audio is remuxed without
+re-encoding to Matroska (`.mka`) using the managed FFmpeg helper. Downloads are staged and renamed
+only after completion; on success the cache sets
 `cached_at` + `file_size`, emits `library://changed`, and enforces the cache limit by evicting the
 least-recently-played files. Startup maintenance re-syncs `cached_at` against the cache directory
 and prunes duplicate local rows.
+
+Resolution first tries the native API client, then a temporary invisible SoundCloud webview, then
+yt-dlp. The browser fallback uses the installed web engine's real network stack and the web
+client configuration. It serializes browser resolutions, closes the window after a result or
+timeout, and has no remote Tauri IPC permission. It does not expose a session selector. The yt-dlp
+fallback accepts a SoundCloud track ID even when its permalink was not saved. Only available full
+audio variants can be cached; missing, preview-only or encrypted-only streams remain errors.
+`sc-cache://track-progress` reports running/done/failed for both silent and explicit downloads;
+`done` is emitted after the completed file and database marker exist. Bulk jobs retain failed
+counts and can be retried instead of silently excluding HLS tracks.
+
+`soundcloud_session.rs` supplies optional authentication for that browser fallback. A personal
+`oauth_token` from the app's official SoundCloud sign-in window takes priority over a shared
+`TEMPO_SOUNDCLOUD_OAUTH_TOKEN` configured in the build environment or ignored root `.env`.
+The build writes that optional value to generated Rust source in `OUT_DIR`, without emitting it
+as a Cargo directive. It is never sent through frontend IPC or returned by session status. A
+build-time shared session is extractable from the shipped executable; use a dedicated account.
+The default/example value is empty, so no shared account is supplied by the repository.
+
+Session health uses a bounded, cached `/me` check. Only confirmed authentication rejection marks
+the shared session expired; network failures do not. About settings can then offer personal
+sign-in. The login window opens only on user action and shares the app's persistent WebView
+cookie profile; it has no remote IPC grant. A copied cookie is not an OAuth refresh credential:
+this implementation does not automatically renew a revoked shared session. Update the configured
+value when building a new release, or sign in with a personal account. Authentication does not
+guarantee a full unencrypted variant or access beyond the account's provider permissions.
+The release workflow reads the same optional name from GitHub Actions secrets; an absent secret
+builds guest/personal sign-in support without a shared account. Direct SoundCloud login is
+supported by the window policy; external identity-provider redirects/popups are blocked.
 
 ### `ytdlp.rs`
 
