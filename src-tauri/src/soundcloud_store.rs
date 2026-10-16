@@ -145,15 +145,7 @@ fn finalize_cached_file(
     if !metadata.is_file() || metadata.len() == 0 {
         return Err("completed SoundCloud cache file is empty or invalid".into());
     }
-    let has_track = db.with_conn(|conn| {
-        conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM tracks WHERE source = 'soundcloud' AND external_id = ?1)",
-            [sc_id],
-            |row| row.get::<_, bool>(0),
-        )
-        .map_err(|error| error.to_string())
-    })?;
-    if !has_track {
+    if !has_library_row(db, sc_id)? {
         return Err("SoundCloud cache has no library row to mark complete".into());
     }
     db.mark_sc_cached(sc_id, metadata.len() as i64)?;
@@ -162,6 +154,17 @@ fn finalize_cached_file(
     // stays authoritative; actual database failures are still surfaced.
     let _ = db.enrich_sc_track_from_tags(sc_id, &file, covers_dir)?;
     Ok(file)
+}
+
+fn has_library_row(db: &Db, sc_id: &str) -> Result<bool, String> {
+    db.with_conn(|conn| {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tracks WHERE source = 'soundcloud' AND external_id = ?1)",
+            [sc_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| error.to_string())
+    })
 }
 
 pub fn cache_info(db: &Db, default_root: &Path) -> ScCacheInfo {
@@ -222,7 +225,11 @@ pub async fn get_playback(
         return Err("invalid SoundCloud track ID".to_string());
     }
     if let Some(cached) = find_cached_file(&dir, track_id) {
-        finalize_cached_file(&db, &dir, &covers_dir, track_id)?;
+        // Older cache files can outlive their catalog rows. Playback remains
+        // offline-capable; creating a new row still requires source metadata.
+        if has_library_row(&db, track_id)? {
+            finalize_cached_file(&db, &dir, &covers_dir, track_id)?;
+        }
         return Ok(local_playback(&cached));
     }
 
@@ -263,7 +270,9 @@ pub async fn get_playback(
     // A concurrent prefetch may have completed while stream metadata was
     // loading. Prefer the local copy instead of reopening the remote URL.
     if let Some(cached) = find_cached_file(&dir, track_id) {
-        finalize_cached_file(&db, &dir, &covers_dir, track_id)?;
+        if has_library_row(&db, track_id)? {
+            finalize_cached_file(&db, &dir, &covers_dir, track_id)?;
+        }
         return Ok(local_playback(&cached));
     }
     if wait_for_cache || force_ytdlp {
@@ -781,7 +790,12 @@ pub async fn cancel_job(job_id: &str) {
 }
 
 async fn job_cancelled(job_id: &str) -> bool {
-    active_jobs().lock().await.get(job_id).copied().unwrap_or(false)
+    active_jobs()
+        .lock()
+        .await
+        .get(job_id)
+        .copied()
+        .unwrap_or(false)
 }
 
 fn emit_cache_progress(
@@ -993,8 +1007,8 @@ mod tests {
         let (db, root) = test_env("info");
         let cache = root.join("cache");
         std::fs::create_dir_all(&cache).unwrap();
-        std::fs::write(cache.join("a.mp3"), vec![0u8; 100]).unwrap();
-        std::fs::write(cache.join("b.mp3"), vec![0u8; 25]).unwrap();
+        std::fs::write(cache.join("101.mp3"), vec![0u8; 100]).unwrap();
+        std::fs::write(cache.join("102.mp3"), vec![0u8; 25]).unwrap();
         std::fs::write(cache.join("c.tmp"), vec![0u8; 50]).unwrap();
         std::fs::create_dir_all(cache.join("nested")).unwrap();
         set_cache_dir(&db, cache.to_str().unwrap()).unwrap();

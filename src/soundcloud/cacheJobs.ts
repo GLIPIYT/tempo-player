@@ -434,7 +434,13 @@ async function requestTrackCacheOnce(
   options: { localId?: number },
 ): Promise<CacheRequestOutcome> {
   const cachedIds = await api.scGetCachedTrackIds([track.id])
-  if (cachedIds.includes(track.id)) return 'cached'
+  if (cachedIds.includes(track.id)) {
+    // Reattach metadata if the catalog was reset while its complete cache
+    // files remained. This command reuses the file without downloading it.
+    await api.scPrecache(track, getSettings().ytdlp.path)
+    bumpLibraryVersion()
+    return 'cached'
+  }
 
   const localId = options.localId ?? await withExplicitFeedback(() => api.scImportTrack(track),
     dbId => ({ trackKey: `soundcloud:${track.id}`, dbId, action: 'cache', intent: 'manual' }))
