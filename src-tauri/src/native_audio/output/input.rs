@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
@@ -212,6 +212,17 @@ fn ffmpeg_mutex() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FfmpegSignature {
+    byte_len: u64,
+    modified: SystemTime,
+}
+
+fn ffmpeg_validation_cache() -> &'static Mutex<HashMap<PathBuf, FfmpegSignature>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, FfmpegSignature>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn ffmpeg_name() -> &'static str {
     if cfg!(windows) {
         "ffmpeg.exe"
@@ -323,8 +334,39 @@ fn copy_permissions(_source: &Path, _destination: &Path) -> Result<(), String> {
 }
 
 fn is_usable_ffmpeg(path: &Path) -> bool {
-    if !path.is_file() {
+    let cacheable = path
+        .file_name()
+        .is_some_and(|name| name == OsStr::new(ffmpeg_name()));
+    let Ok(metadata) = fs::metadata(path) else {
+        if cacheable {
+            ffmpeg_validation_cache()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(path);
+        }
         return false;
+    };
+    if !metadata.is_file() {
+        if cacheable {
+            ffmpeg_validation_cache()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(path);
+        }
+        return false;
+    }
+    let signature = metadata.modified().ok().map(|modified| FfmpegSignature {
+        byte_len: metadata.len(),
+        modified,
+    });
+    if cacheable {
+        let mut cache = ffmpeg_validation_cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if signature.is_some_and(|signature| cache.get(path) == Some(&signature)) {
+            return true;
+        }
+        cache.remove(path);
     }
     let mut command = Command::new(path);
     command.args(["-version", "-hide_banner"]);
@@ -338,22 +380,35 @@ fn is_usable_ffmpeg(path: &Path) -> bool {
         return false;
     };
     let deadline = Instant::now() + Duration::from_secs(8);
-    loop {
+    let usable = loop {
         match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
+            Ok(Some(status)) => break status.success(),
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(40)),
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return false;
+                break false;
             }
             Err(_) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return false;
+                break false;
             }
         }
+    };
+    if cacheable {
+        let mut cache = ffmpeg_validation_cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if usable {
+            if let Some(signature) = signature {
+                cache.insert(path.to_path_buf(), signature);
+            }
+        } else {
+            cache.remove(path);
+        }
     }
+    usable
 }
 
 fn open_decoder_input(
@@ -400,6 +455,8 @@ fn open_decoder_input(
         &REMOTE_SAMPLE_RATE.to_string(),
         "-ac",
         "2",
+        "-flush_packets",
+        "1",
         "pipe:1",
     ]);
     crate::child::quiet(&mut command);
