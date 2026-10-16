@@ -24,6 +24,16 @@ const LOCAL_MAX_CHANNELS: usize = 2;
 const LOCAL_RING_FRAMES: usize = REMOTE_SAMPLE_RATE as usize / 4;
 const FFMPEG_STDERR_LIMIT: usize = 16 * 1024;
 
+fn log_startup_timing(stage: &str, source: &str, started: Instant) {
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[tempo startup] stage={stage} source={source} elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+    #[cfg(not(debug_assertions))]
+    let _ = (stage, source, started);
+}
+
 pub(super) type AudioSource = Box<dyn Source<Item = f32> + Send + 'static>;
 
 pub struct PreparedAudio {
@@ -62,6 +72,7 @@ pub(super) fn prepare_input(
     settings: OutputSettings,
     bin_dir: PathBuf,
 ) -> Result<PreparedAudio, String> {
+    let prepare_started = Instant::now();
     let position = if position.is_finite() {
         position.max(0.0)
     } else {
@@ -74,47 +85,65 @@ pub(super) fn prepare_input(
     let source: AudioSource;
     let duration_sec;
     if let Some(url) = remote_url(&spec.location)? {
+        let helper_started = Instant::now();
         let ffmpeg = ensure_ffmpeg(&bin_dir)?;
+        log_startup_timing("ffmpeg_ready", "remote", helper_started);
+        let decoder_started = Instant::now();
         let (remote_source, control, status) =
             open_decoder_input(&ffmpeg, OsStr::new(&url), position, spec.duration_sec)?;
+        log_startup_timing("decoder_start", "remote", decoder_started);
         duration_sec = valid_duration(spec.duration_sec);
         source = Box::new(remote_source);
         buffering = Some(status.buffering.clone());
         remote = Some(control);
     } else {
         let path = PathBuf::from(&spec.location);
+        let open_started = Instant::now();
         let file = File::open(&path)
             .map_err(|error| format!("Could not open audio file '{}': {error}", path.display()))?;
         let byte_len = file
             .metadata()
             .map_err(|error| format!("Could not read audio file metadata: {error}"))?
             .len();
+        log_startup_timing("local_open_and_metadata", "local", open_started);
+        let decoder_started = Instant::now();
         let decoder = Decoder::builder()
             .with_data(BufReader::with_capacity(64 * 1024, file))
             .with_byte_len(byte_len)
             .with_seekable(true)
             .build();
+        log_startup_timing("decoder_build", "local", decoder_started);
         match decoder {
             Ok(mut decoder) => {
+                let duration_started = Instant::now();
                 let decoder_duration = decoder
                     .total_duration()
                     .map(|duration| duration.as_secs_f64());
+                log_startup_timing("decoder_duration", "local", duration_started);
                 // Check seek support before handing the decoder to its worker,
                 // including at zero so later UI seeks do not discover an
                 // unsupported decoder only after playback has started.
+                let seek_started = Instant::now();
                 let seek_result = decoder.try_seek(Duration::from_secs_f64(position));
+                log_startup_timing("decoder_initial_seek", "local", seek_started);
                 if seek_result.is_ok() && decoder.channels().get() as usize <= LOCAL_MAX_CHANNELS {
                     duration_sec = valid_duration(spec.duration_sec).or(decoder_duration);
+                    let worker_started = Instant::now();
                     let (local_source, control, status) = open_local_buffered(decoder, position)?;
+                    log_startup_timing("local_worker_start", "local", worker_started);
                     source = Box::new(local_source);
                     buffering = Some(status.buffering.clone());
                     local = Some(control);
                 } else {
+                    let helper_started = Instant::now();
                     let ffmpeg = ensure_ffmpeg(&bin_dir).map_err(|error| {
                         format!("Could not prepare local audio with the native decoder and the managed decoder is unavailable: {error}")
                     })?;
+                    log_startup_timing("ffmpeg_ready", "local", helper_started);
+                    let decoder_started = Instant::now();
                     let (remote_source, control, status) =
                         open_decoder_input(&ffmpeg, path.as_os_str(), position, spec.duration_sec)?;
+                    log_startup_timing("decoder_start", "local_ffmpeg", decoder_started);
                     duration_sec = valid_duration(spec.duration_sec).or(decoder_duration);
                     source = Box::new(remote_source);
                     buffering = Some(status.buffering.clone());
@@ -122,14 +151,18 @@ pub(super) fn prepare_input(
                 }
             }
             Err(decode_error) => {
+                let helper_started = Instant::now();
                 let ffmpeg = ensure_ffmpeg(&bin_dir).map_err(|error| {
                     format!(
                         "Could not decode '{}' ({decode_error}); the managed decoder is unavailable: {error}",
                         path.display()
                     )
                 })?;
+                log_startup_timing("ffmpeg_ready", "local", helper_started);
+                let decoder_started = Instant::now();
                 let (remote_source, control, status) =
                     open_decoder_input(&ffmpeg, path.as_os_str(), position, spec.duration_sec)?;
+                log_startup_timing("decoder_start", "local_ffmpeg", decoder_started);
                 duration_sec = valid_duration(spec.duration_sec);
                 source = Box::new(remote_source);
                 buffering = Some(status.buffering.clone());
@@ -143,6 +176,8 @@ pub(super) fn prepare_input(
     if source_rate == 0 || source_channels == 0 {
         return Err("Audio source reported an invalid sample format".into());
     }
+    let source_kind = if remote.is_some() { "ffmpeg" } else { "local" };
+    log_startup_timing("input_prepare_total", source_kind, prepare_started);
     let clock = Arc::new(PositionClock::new(position, source_rate, source_channels));
     Ok(PreparedAudio {
         spec,
@@ -193,7 +228,10 @@ fn ensure_ffmpeg(bin_dir: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(&install_dir)
         .map_err(|error| format!("Could not create audio helper directory: {error}"))?;
     let final_path = install_dir.join(ffmpeg_name());
-    if is_usable_ffmpeg(&final_path) {
+    let validation_started = Instant::now();
+    let already_installed = is_usable_ffmpeg(&final_path);
+    log_startup_timing("ffmpeg_existing_validation", "helper", validation_started);
+    if already_installed {
         return Ok(final_path);
     }
 
@@ -208,6 +246,7 @@ fn ensure_ffmpeg(bin_dir: &Path) -> Result<PathBuf, String> {
         .and_then(|()| fs::create_dir_all(&extract_dir))
         .map_err(|error| format!("Could not create FFmpeg staging directory: {error}"))?;
 
+    let install_started = Instant::now();
     let install = (|| {
         let url = ffmpeg_sidecar::download::ffmpeg_download_url().map_err(|error| {
             format!("No FFmpeg download is available for this platform: {error}")
@@ -244,6 +283,7 @@ fn ensure_ffmpeg(bin_dir: &Path) -> Result<PathBuf, String> {
         Ok(final_path.clone())
     })();
     let _ = fs::remove_dir_all(&stage);
+    log_startup_timing("ffmpeg_install", "helper", install_started);
     install
 }
 
@@ -363,12 +403,14 @@ fn open_decoder_input(
         "pipe:1",
     ]);
     crate::child::quiet(&mut command);
+    let spawn_started = Instant::now();
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("Could not start the audio stream decoder: {error}"))?;
+    log_startup_timing("ffmpeg_spawn", "helper", spawn_started);
     let Some(stdout) = child.stdout.take() else {
         let _ = child.kill();
         let _ = child.wait();
@@ -536,6 +578,8 @@ fn pump_local<D>(mut decoder: D, mut producer: Producer<LocalFrame>, state: Arc<
 where
     D: Source<Item = f32> + Send + 'static,
 {
+    let worker_started = Instant::now();
+    let mut first_frame_logged = false;
     let channels = decoder.channels().get() as usize;
     let mut generation = state.generation.load(Ordering::Acquire);
     loop {
@@ -607,7 +651,13 @@ where
                 break;
             }
             match producer.push(pending) {
-                Ok(()) => break,
+                Ok(()) => {
+                    if !first_frame_logged {
+                        log_startup_timing("local_first_frame", "local", worker_started);
+                        first_frame_logged = true;
+                    }
+                    break;
+                }
                 Err(rtrb::PushError::Full(frame)) => {
                     pending = frame;
                     thread::sleep(Duration::from_millis(2));
@@ -708,6 +758,8 @@ fn pump_remote(
     state: Arc<RemoteState>,
     stderr_worker: Option<JoinHandle<()>>,
 ) {
+    let worker_started = Instant::now();
+    let mut first_frame_logged = false;
     let mut bytes = [0u8; 8];
     let mut read_error = None;
     'reader: loop {
@@ -726,7 +778,13 @@ fn pump_remote(
                         break 'reader;
                     }
                     match producer.push(pending) {
-                        Ok(()) => break,
+                        Ok(()) => {
+                            if !first_frame_logged {
+                                log_startup_timing("remote_first_frame", "ffmpeg", worker_started);
+                                first_frame_logged = true;
+                            }
+                            break;
+                        }
                         Err(rtrb::PushError::Full(frame)) => {
                             pending = frame;
                             thread::sleep(Duration::from_millis(2));

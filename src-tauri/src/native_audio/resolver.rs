@@ -1,12 +1,23 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::time::Instant;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::models::{NativeSettings, TrackPayload};
 use super::output::{self, OutputSettings, PreparedAudio, SourceSpec};
+
+fn log_startup_timing(stage: &str, source: &str, started: Instant) {
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[tempo startup] stage={stage} source={source} elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+    #[cfg(not(debug_assertions))]
+    let _ = (stage, source, started);
+}
 
 pub struct PreparedTrack {
     pub audio: PreparedAudio,
@@ -28,12 +39,20 @@ pub fn prepare_track(
     position: f64,
     force_soundcloud_ytdlp: bool,
 ) -> Result<PreparedTrack, String> {
+    let prepare_started = Instant::now();
     let mut track = TrackPayload::parse(payload)?.0;
     let source = track
         .get("source")
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let source_kind = match source.as_str() {
+        "local" => "local",
+        "soundcloud" => "soundcloud",
+        "youtube" => "youtube",
+        _ => "other",
+    };
+    let resolver_started = Instant::now();
     let source_id = track
         .get("sourceId")
         .and_then(Value::as_str)
@@ -142,6 +161,7 @@ pub fn prepare_track(
                     .and_then(Value::as_str)
                     .map(str::to_string);
                 let root = crate::soundcloud_store::cache_dir(&db, &sc_cache_dir);
+                let playback_started = Instant::now();
                 let playback =
                     tauri::async_runtime::block_on(crate::soundcloud_store::get_playback(
                         db.clone(),
@@ -154,7 +174,22 @@ pub fn prepare_track(
                         force_soundcloud_ytdlp,
                         Some(app.clone()),
                         settings.cache_before_play,
-                    ))?;
+                    ));
+                let resolved_kind = playback
+                    .as_ref()
+                    .ok()
+                    .map(|playback| {
+                        if playback.cached_path.is_some() {
+                            "cache_hit"
+                        } else if playback.url.is_some() {
+                            "stream"
+                        } else {
+                            "empty"
+                        }
+                    })
+                    .unwrap_or("error");
+                log_startup_timing("soundcloud_resolve", resolved_kind, playback_started);
+                let playback = playback?;
                 let location = if let Some(path) = playback.cached_path {
                     path
                 } else if let Some(url) = playback.url {
@@ -204,7 +239,13 @@ pub fn prepare_track(
                 }
                 std::fs::create_dir_all(&yt_cache_dir)
                     .map_err(|error| format!("YouTube cache directory: {error}"))?;
+                let cache_lookup_started = Instant::now();
                 let cached = find_youtube_cache(&yt_cache_dir, &safe);
+                log_startup_timing(
+                    "youtube_cache_lookup",
+                    if cached.is_some() { "hit" } else { "miss" },
+                    cache_lookup_started,
+                );
                 let path = match cached {
                     Some(path) => path,
                     None => {
@@ -216,12 +257,18 @@ pub fn prepare_track(
                         match find_youtube_cache(&yt_cache_dir, &safe) {
                             Some(path) => path,
                             None => {
+                                let download_started = Instant::now();
                                 crate::ytdlp::download(
                                     &settings.ytdlp_path,
                                     &bin_dir,
                                     &format!("https://www.youtube.com/watch?v={safe}"),
                                     &destination,
                                 )?;
+                                log_startup_timing(
+                                    "youtube_download",
+                                    source_kind,
+                                    download_started,
+                                );
                                 find_youtube_cache(&yt_cache_dir, &safe).ok_or(
                                     "yt-dlp reported success but no finalized audio file was found",
                                 )?
@@ -243,9 +290,10 @@ pub fn prepare_track(
                     .to_string();
                 let mut final_duration = duration;
                 if artist.trim().is_empty() || album.trim().is_empty() {
-                    if let Ok(Some(extra)) =
-                        crate::ytdlp::resolve_one(&settings.ytdlp_path, &bin_dir, &safe)
-                    {
+                    let metadata_started = Instant::now();
+                    let extra = crate::ytdlp::resolve_one(&settings.ytdlp_path, &bin_dir, &safe);
+                    log_startup_timing("youtube_metadata_probe", source_kind, metadata_started);
+                    if let Ok(Some(extra)) = extra {
                         if let Some(value) = extra.artist.filter(|value| !value.trim().is_empty()) {
                             artist = value;
                         }
@@ -302,7 +350,17 @@ pub fn prepare_track(
         equalizer_enabled: settings.equalizer_enabled,
         equalizer_gains: settings.equalizer_gains,
     };
+    log_startup_timing("resolver_complete", source_kind, resolver_started);
+    let input_kind =
+        if spec.location.starts_with("http://") || spec.location.starts_with("https://") {
+            "remote"
+        } else {
+            "local"
+        };
+    let decoder_started = Instant::now();
     let audio = output::prepare(spec, position.max(0.0), output_settings, bin_dir)?;
+    log_startup_timing("output_prepare", input_kind, decoder_started);
+    log_startup_timing("prepare_track_total", source_kind, prepare_started);
     Ok(PreparedTrack { audio, track })
 }
 

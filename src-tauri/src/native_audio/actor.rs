@@ -307,7 +307,28 @@ impl Actor {
     fn handle(&mut self, message: ActorMessage) {
         match message {
             ActorMessage::Command { value, reply } => {
+                #[cfg(debug_assertions)]
+                let timing = (
+                    Instant::now(),
+                    value
+                        .get("op")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                );
                 let result = self.command(value);
+                #[cfg(debug_assertions)]
+                if matches!(
+                    timing.1.as_str(),
+                    "replace" | "play" | "toggle" | "next" | "previous"
+                ) {
+                    eprintln!(
+                        "[tempo startup] stage=actor_command op={} queue_items={} elapsed_ms={}",
+                        timing.1,
+                        self.persisted.queue.len(),
+                        timing.0.elapsed().as_millis()
+                    );
+                }
                 let _ = reply.send(result);
             }
             ActorMessage::Prepared(message) => self.on_prepared(message),

@@ -28,6 +28,16 @@ const INITIAL_RECONNECT_DELAY: Duration = Duration::from_millis(500);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(10);
 const STALL_AFTER: Duration = Duration::from_secs(2);
 
+fn log_startup_timing(stage: &str, source: &str, started: Instant) {
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[tempo startup] stage={stage} source={source} elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+    #[cfg(not(debug_assertions))]
+    let _ = (stage, source, started);
+}
+
 #[derive(Clone, Debug)]
 pub struct OutputSettings {
     pub volume: f32,
@@ -129,6 +139,8 @@ struct ActiveTrack {
     fade: Option<Fade>,
     last_progress_position: f64,
     last_progress_at: Instant,
+    startup_started: Instant,
+    startup_reported: bool,
     error_reported: bool,
 }
 
@@ -220,7 +232,9 @@ impl OutputEngine {
     /// remains alive and retries in the background through `tick`.
     pub fn new() -> Result<Self, String> {
         let device_error = Arc::new(AtomicBool::new(false));
+        let device_started = Instant::now();
         let sink = open_device(device_error.clone()).ok();
+        log_startup_timing("output_device_open", "device", device_started);
         let reconnect_at = sink
             .is_none()
             .then(|| Instant::now() + INITIAL_RECONNECT_DELAY);
@@ -296,12 +310,19 @@ impl OutputEngine {
         playing: bool,
         fade_sec: f64,
     ) -> Result<(), String> {
+        let attach_started = Instant::now();
+        let source_kind = if audio.remote.is_some() {
+            "ffmpeg"
+        } else {
+            "local"
+        };
         let Some(sink) = self.sink.as_ref() else {
             self.pending = Some(PendingInstall {
                 audio,
                 playing,
                 fade_sec: 0.0,
             });
+            log_startup_timing("output_attach_deferred", source_kind, attach_started);
             return Ok(());
         };
         let source = audio
@@ -345,9 +366,12 @@ impl OutputEngine {
             }),
             last_progress_position: audio.clock.position(),
             last_progress_at: now,
+            startup_started: attach_started,
+            startup_reported: false,
             error_reported: false,
         });
         audio.shutdown();
+        log_startup_timing("output_attach", source_kind, attach_started);
         Ok(())
     }
 
@@ -588,6 +612,23 @@ impl OutputEngine {
         self.poll_recovery()?;
         self.try_reconnect();
         self.install_pending()?;
+        if let Some(track) = self.active.as_mut() {
+            let started = track.requested_playing
+                && !track.is_buffering()
+                && track
+                    .player
+                    .as_ref()
+                    .is_some_and(|player| !player.is_paused() && !player.empty());
+            if started && !track.startup_reported {
+                let source_kind = if track.remote.is_some() {
+                    "ffmpeg"
+                } else {
+                    "local"
+                };
+                log_startup_timing("output_first_audio", source_kind, track.startup_started);
+                track.startup_reported = true;
+            }
+        }
         self.advance_fades();
         self.report_input_error()
     }
@@ -685,14 +726,21 @@ impl OutputEngine {
         if self.sink.is_some() || !self.reconnect_at.is_some_and(|when| Instant::now() >= when) {
             return;
         }
+        let reconnect_started = Instant::now();
         match open_device(self.device_error.clone()) {
             Ok(sink) => {
                 self.sink = Some(sink);
                 self.reconnect_at = None;
                 self.reconnect_delay = INITIAL_RECONNECT_DELAY;
                 self.device_error.store(false, Ordering::Release);
+                log_startup_timing("output_device_reconnect", "device", reconnect_started);
             }
             Err(_) => {
+                log_startup_timing(
+                    "output_device_reconnect_failed",
+                    "device",
+                    reconnect_started,
+                );
                 self.reconnect_at = Some(Instant::now() + self.reconnect_delay);
                 self.reconnect_delay = (self.reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
             }
