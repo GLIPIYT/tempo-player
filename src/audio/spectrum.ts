@@ -60,6 +60,9 @@ let lastSampleAt = 0
 let silentForMs = 0
 let nativeUnlisten: UnlistenFn | null = null
 let nativeStartPromise: Promise<void> | null = null
+const nativeTarget = new Float32Array(SPECTRUM_BINS)
+let nativeReceivedAt = 0
+let nativeRenderedAt = 0
 
 /**
  * Folds the analyser's linearly spaced bins into `SPECTRUM_BINS` log-spaced
@@ -124,6 +127,21 @@ function emit(): void {
 
 /** One sample. Returns true while there is still something to hear. */
 function sample(): boolean {
+  if (isNativePlayback()) {
+    const now = performance.now()
+    const elapsed = nativeRenderedAt > 0 ? Math.min(250, now - nativeRenderedAt) : SAMPLE_INTERVAL_MS
+    const keep = SMOOTH_KEEP ** (elapsed / SAMPLE_INTERVAL_MS)
+    nativeRenderedAt = now
+    const fresh = now - nativeReceivedAt < 300
+    let peak = 0
+    for (let i = 0; i < SPECTRUM_BINS; i += 1) {
+      const target = fresh ? nativeTarget[i] : 0
+      bins[i] = bins[i] * keep + target * (1 - keep)
+      peak = Math.max(peak, target)
+    }
+    emit()
+    return peak >= ENERGY_PEAK / BYTE_SCALE
+  }
   const analyser = getEngine()?.getAnalyser() ?? null
   let peak = 0
   // No analyser means nothing is routed - a streamed track, or the graph was
@@ -233,13 +251,21 @@ export function subscribeSpectrum(listener: SpectrumListener): () => void {
 function startNative(): void {
   if (nativeUnlisten || nativeStartPromise) return
   nativeStartPromise = listen<number[]>('native-audio://fft', event => {
+    if (listeners.size === 0) return
     const values = event.payload
     if (!Array.isArray(values) || values.length !== SPECTRUM_BINS) return
     for (let i = 0; i < SPECTRUM_BINS; i += 1) {
       const value = Number.isFinite(values[i]) ? Math.max(0, Math.min(1, values[i])) : 0
-      bins[i] = bins[i] * SMOOTH_KEEP + value * SMOOTH_NEW
+      nativeTarget[i] = value
     }
-    emit()
+    nativeReceivedAt = performance.now()
+    // IPC supplies targets at the native analysis rate; display interpolation
+    // uses rAF, so delayed/bunched packets cannot jump whole bars in one frame.
+    if (rafId === 0 && values.some(value => value > ENERGY_PEAK / BYTE_SCALE)) {
+      if (pollId !== 0) window.clearTimeout(pollId)
+      pollId = 0
+      start()
+    }
   }).then(unlisten => {
     if (listeners.size === 0) {
       unlisten()
@@ -247,6 +273,7 @@ function startNative(): void {
     }
     nativeUnlisten = unlisten
     getNativePlayerController().setSpectrumEnabled(true)
+    start()
   }).catch(error => {
     console.warn('[tempo native spectrum] listener failed', error)
   }).finally(() => {
@@ -258,7 +285,9 @@ function stopNative(): void {
   const wasListening = nativeUnlisten !== null
   nativeUnlisten?.()
   nativeUnlisten = null
-  bins.fill(0)
-  raw.fill(0)
+  stop()
+  nativeTarget.fill(0)
+  nativeReceivedAt = 0
+  nativeRenderedAt = 0
   if (wasListening) getNativePlayerController().setSpectrumEnabled(false)
 }
