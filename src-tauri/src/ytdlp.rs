@@ -873,7 +873,7 @@ fn download_with_options(
         "--no-warnings",
         "--no-progress",
         "-f",
-        "bestaudio[ext=m4a]/bestaudio",
+        "bestaudio[ext=m4a][format_id!*=preview]/bestaudio[format_id!*=preview]",
         "-o",
         template.as_str(),
     ];
@@ -906,7 +906,12 @@ fn find_downloaded_file(destination: &Path) -> Option<PathBuf> {
         .find(|path| {
             path.is_file()
                 && path.file_stem().and_then(|value| value.to_str()) == Some(stem)
-                && path.extension().and_then(|value| value.to_str()) != Some("part")
+                && path.extension().and_then(|value| value.to_str()).is_some_and(|extension| {
+                    matches!(extension.to_ascii_lowercase().as_str(),
+                        "mp3" | "m4a" | "mp4" | "aac" | "ogg" | "oga" | "opus"
+                        | "webm" | "mka" | "flac" | "wav")
+                })
+                && path.metadata().is_ok_and(|metadata| metadata.len() > 0)
         })
 }
 
