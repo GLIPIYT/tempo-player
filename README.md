@@ -83,13 +83,15 @@ GitHub Actions runs the frontend type check, Vitest tests, hook-order check, ESL
 | Frontend | React 18, TypeScript and Vite |
 | Native services | Rust commands for scanning, metadata, networking and system integration |
 | Storage | SQLite; local music files remain in their original folders |
-| Audio | HTML audio playback and `hls.js` for SoundCloud streams |
+| Audio | Native Rust playback with rodio, DSP and managed FFmpeg for streams and additional formats |
 
 The frontend calls the Rust core through typed wrappers in `src/api/`. See [ARCHITECTURE.md](ARCHITECTURE.md) for the application structure and data flows.
 
 ## Local data and online services
 
 Tempo does not require an account for your local library. Library data, playlists and listening history are stored on the device. Online search, streams, lyrics, recommendations and update checks need an internet connection and depend on the relevant provider being available.
+
+Streaming and some file formats, including Opus, use an FFmpeg decoder downloaded automatically on first use. That initial download needs internet access; the decoder is then kept on the device for offline playback of supported local and cached files.
 
 ## Project links
 

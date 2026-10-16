@@ -1,8 +1,9 @@
 # Tempo — Architecture
 
 Local-first desktop music player. Tauri 2 + React 18 + TypeScript + Vite on the front, Rust + SQLite
-(`rusqlite`) underneath. No Electron, no backend server, no telemetry. Everything works offline;
-network access is opt-in per feature (SoundCloud search, online lyrics, Discord cover hosting).
+(`rusqlite`) underneath. No Electron, no backend server, no telemetry. Local library data stays on
+the device. Online features need network access; streaming and additional formats also acquire
+their managed decoder on first use.
 
 This document describes how the pieces fit together and which invariants the code relies on. For a
 feature-level tour see [README.md](README.md).
@@ -11,20 +12,18 @@ feature-level tour see [README.md](README.md).
 
 Four things run at once:
 
-1. **The main webview** — the whole UI, plus playback. `AudioEngine` owns the local and stream HTML5
-   audio elements inside a module-level singleton, not React, so playback survives re-renders and
-   route changes.
-2. **The mini player webview** — a second, transparent, always-on-top window that renders a
-   compact view of the player. It owns no state of its own: it draws what the main window sends and
-   sends commands back. See [Mini player](#mini-player).
-3. **The Rust core** — the SQLite database, filesystem scanner, tag/cover extraction, and network
-   calls that need native access (SoundCloud, lyrics providers, YouTube through yt-dlp, image
-   hosting).
-4. **Background work** — library scans, SoundCloud downloads and YouTube collection operations run
-   outside the UI's render path. Long-running YouTube jobs report progress through Tauri events.
+1. **The main webview** — React UI and the desktop `NativePlayerController` facade. It
+   renders native snapshots and sends commands; it does not own desktop audio or queue progression.
+2. **The mini player webview** — a transparent, always-on-top view. Appearance comes from the
+   main window, while desktop snapshots and transport commands connect directly to Rust.
+3. **The Rust core** — SQLite, scanning, metadata, network providers and the native audio actor.
+   The actor owns playback, queue order, repeat/shuffle, source resolution and listening sessions.
+4. **Background work** — decoding, network preparation, scans and downloads run away from UI
+   rendering. The audio callback consumes prepared data; remote decoding feeds a bounded buffer.
 
-The frontend never touches SQLite or the filesystem directly. Every crossing goes through a Tauri
-command, wrapped once in `src/api/client.ts`.
+The frontend never touches SQLite or the filesystem directly. Calls cross Tauri commands,
+normally wrapped in `src/api/client.ts`; native playback adapters use their dedicated command and
+event contract.
 
 ## Repository layout
 
@@ -56,6 +55,8 @@ src-tauri/src/            Rust core
   ytdlp.rs                  yt-dlp lifecycle, YouTube search, browse and downloads
   lyrics.rs                 online lyrics providers and LRC assembly
   discord.rs                Rich Presence over the local IPC pipe
+  native_audio/             native playback actor, queue, input, output, DSP and history
+  native_media.rs           OS media controls connected directly to native playback
   tray.rs + updater.rs      system tray and app updates
   models.rs                 shared Rust types mirrored in types/models.ts
   lib.rs                    app setup, state and command registration
@@ -425,47 +426,42 @@ interface PlayerApi {
 }
 ```
 
-A module-level `PlayerController` singleton owns the `<audio>` element and a `QueueController` — a
-pure class holding the order, the shuffle permutation and the repeat mode (`off` / `all` / `one`).
-React context only mirrors state through a subscription, so playback never depends on the component
-tree staying mounted.
+#### Desktop native service
 
-#### Two audio channels
+`src-tauri/src/native_audio/` owns authoritative playback state. The dedicated actor sequences
+the queue and controls a rodio output engine. Native `next`, repeat and shuffle do not wait for
+JavaScript. Provider resolution and input preparation run outside the actor so pause, clear and
+replacement commands remain available while a request is loading. A generation check discards
+stale preparation results before they can become audible.
 
-`AudioEngine` keeps one element per channel and picks per track:
+- `native_audio_command` accepts transport, queue and partial settings commands.
+- `native_audio_snapshot` returns the current queue, track, position and controls.
+- `native-audio://state` publishes versioned authoritative state; listeners attach before the
+  initial snapshot and discard older responses.
+- `native-audio://fft` carries 64 normalized visualizer bins. Subscribers enable analysis only
+  while needed; this display path does not own playback.
+- `native-audio://analysis` carries the source position and 512 linear FFT bins while the synced
+  lyric editor requests vocal timing analysis. It uses the native tap without creating Web Audio.
 
-| Channel | Routed through | Used for |
-|---|---|---|
-| `local` | `AudioContext` → five EQ filters → `GainNode` → destination | local files, cached SoundCloud and YouTube, HLS |
-| `stream` | nothing | progressive remote SoundCloud streams |
+`src/player/nativeController.ts` implements the existing player API for the desktop UI. It
+migrates legacy localStorage state only when the native service reports `initialized: false`.
+Reloading a renderer therefore reconnects to live playback rather than restarting its saved queue.
+Visible position interpolation follows native source time and stops while paused or buffering.
 
-The split exists because `createMediaElementSource` routes an element **permanently**, and a
-cross-origin source without CORS headers comes out as **silence** once routed. Uncached SoundCloud
-tracks play from a remote URL — `toScPlayback` reports that as `cached: false` — so they must stay
-off the graph. Cached files are local, and HLS reaches the element through MediaSource (a blob URL),
-which is same-origin and therefore safe.
+Local/cached audio is decoded on a background worker into a bounded 250 ms buffer. Remote inputs
+and formats unsupported by the direct decoder (including Opus) use a managed FFmpeg runtime with
+an eight-second PCM buffer. FFmpeg is acquired on demand and launched without a console window.
+The DSP path preserves ten-band EQ, loudness gain, playback speed/pitch preservation, crossfade
+and spectrum analysis. Runtime acquisition needs network access if no suitable helper is present.
 
-The graph is built lazily for loudness normalisation, the visualizer or the equalizer. Ten biquad
-filters provide the EQ, followed by a gain node and a compressor used as a peak guard when the EQ
-curve adds gain. This leaves the overall level unchanged instead of reducing it by the curve's
-maximum boost. The gain node supports levels above 1.0 for normalization and crossfade. If the
-context cannot start, the local path falls back to plain volume. Uncached SoundCloud streams remain
-outside the graph, so they do not receive EQ.
+Native state and listening checkpoints are persisted on the device. Queue-end continuation
+can request a candidate from the existing JS recommendation service; when the renderer cannot
+answer, the actor can consume the previously ranked stored feed. This is a finite local reservoir,
+not a separate implementation of the full recommendation-ranking pipeline.
 
-Playback rate is stored by `PlayerController` and applied to both audio channels and the element
-fading out during a crossfade. The pitch-preservation switch maps to the media element's native
-support. The player's time and synced lyrics continue to use media `currentTime`, so rate changes do
-not need a separate lyric clock.
-
-The equalizer has low-shelf, eight peaking and high-shelf bands with a ±18 dB range, built-in curves
-and up to 12 named user presets. Original five-band settings and saved curves are expanded with five
-zero-gain bands, keeping the existing filter settings. `AudioEngine` measures the combined filter
-response across logarithmic frequency points, then enables strong compression only when the curve
-has positive gain. The player bar puts the vertical EQ bands beside a 0.5×–2× playback slider with
-0.05× increments.
-
-Every element handler checks `isActive()` before doing anything, so a parked element cannot drive the
-UI, and loading on one channel silences the other so two elements never play at once.
+The native service lives in the Tauri host process. It isolates playback from renderer failures;
+terminating the host ends playback. The retained `PlayerController` / HTMLAudioElement engine is
+used by the browser frontend path, not as a silent desktop fallback.
 
 #### Loudness normalisation
 
@@ -498,26 +494,16 @@ Two traps live here, both found by the test suite:
 
 #### System integration
 
-`tray.rs` builds the tray icon and its menu (show, play/pause, previous, next, quit). It owns no
-playback state: menu items are emitted to the webview as `tray://command`, which is the only place
-that knows the queue, and the frontend pushes translated labels back so the menu follows the UI
-language.
+`tray.rs` routes transport directly to the native audio actor. The frontend supplies translated
+menu labels and preferences. `native_media.rs` connects OS media controls to the same sequencer
+and updates system metadata from native snapshots. The mini player also calls the service directly.
 
-Closing the main window hides it instead of quitting when "stay in tray" is on, so playback and the
-mini player keep running. The flag lives in Rust because the `CloseRequested` hook needs it; the
-frontend owns the saved preference and pushes it over. Launch-at-login uses
-`tauri-plugin-autostart`, touched only when the OS actually disagrees with the setting.
+Close-to-tray hides the main window while the native actor continues running. Quit requests a
+bounded native shutdown that finalizes listening state and releases audio/helper resources before
+the process exits. Launch-at-login still uses `tauri-plugin-autostart`.
 
-Enabling `tray-icon` does **not** pull in `common-controls-v6` — that is an optional enhancement
-applied only when both features are on, and this crate builds with `default-features = false`. That
-matters because `common-controls-v6` imports `TaskDialogIndirect`, whose manifest `tauri-build` embeds
-into binaries only, so test binaries fail to load and CI runs `cargo test`.
-
-Local files are resolved with `convertFileSrc(path)`; SoundCloud HLS goes through `hls.js`.
-
-Stat writes happen on well-defined edges: `bumpPlayCount(dbId)` when a local track starts,
-`recordHistory(dbId, dur, true, false)` on natural end, and `recordHistory(..., skipped = true)` on
-a manual skip after at least 10 seconds listened.
+The crate keeps Tauri `common-controls-v6` disabled because test binaries do not receive the
+Common Controls manifest from `tauri-build` and would fail to load `TaskDialogIndirect`.
 
 ### Provider abstraction
 
@@ -607,24 +593,21 @@ look like a jump.
 and would otherwise steal focus from whatever is being typed in the main window. Nothing is created
 while the feature is off.
 
-**The main window is the only source of truth.** The two webviews share no JS context, so everything
-crosses as a Tauri event, all defined in `mini-player/contract.ts`:
+**Playback state comes from Rust.** `mini-player/nativePlayback.ts` subscribes to native state
+and requests an initial snapshot after attaching. Play, pause, next, previous, seek, repeat,
+shuffle and volume use native commands, so a stalled main renderer does not gate mini transport.
+The main-window bridge continues to supply appearance, likes and automatic expansion events:
 
 | Event | Direction | Payload |
 |---|---|---|
-| `mini-player:state` | main → mini | `MiniPlayerState` (slim track, flags, theme, language) |
-| `mini-player:tick` | main → mini | current position in seconds |
-| `mini-player:peek` | main → mini | expand for N ms (track change) |
-| `mini-player:action` | mini → main | `MiniPlayerAction` |
-| `mini-player:ready` | mini → main | the window came up; main answers with a full sync |
+| `mini-player:state` | main → mini | appearance, slim track and flags |
+| `mini-player:tick` | main → mini | compatibility position update |
+| `mini-player:peek` | main → mini | expand for N ms |
+| `mini-player:action` | mini → main | UI actions not handled by native transport |
+| `mini-player:ready` | mini → main | request a full appearance sync |
 
-**State and position are deliberately separate channels.** `PlayerController.emit()` fires about
-sixty times a second while playing, because `AudioEngine` drives a `requestAnimationFrame` ticker and
-every emit rebuilds the whole snapshot including the queue. Mirroring that directly would push sixty
-full payloads per second over IPC. Instead the bridge compares a cheap signature of the fields the
-window actually draws and sends state only on a real change, while position gets its own event
-throttled to 180 ms playing / 900 ms paused. Note that `PlayerSnapshot.version` must **not** be used
-as the change signal — it increments on every audio frame, not on every track change.
+The bridge compares displayed fields before sending full state. Native playback events have
+monotonic versions; a delayed initial response cannot overwrite a more recent event.
 
 **Covers are sent resolved, and preloaded.** The payload carries an already-converted
 `convertFileSrc` URL plus the artwork of the *next* queue entry, so the window can warm that image
@@ -644,10 +627,8 @@ needed.
 
 **Two pieces of configuration exist because of this window:**
 
-- `tauri.conf.json` sets `backgroundThrottling: "disabled"` on the main window. Tauri's default
-  policy is `suspend`, which freezes a minimised webview outright; since the position ticker runs on
-  `requestAnimationFrame`, the mini player's progress would simply stop while the main window is
-  minimised.
+- `tauri.conf.json` retains `backgroundThrottling: "disabled"` for UI behavior on supported
+  platforms. Desktop audio and mini transport no longer depend on this WebView policy.
 - `lib.rs` excludes `mini-player` from `tauri-plugin-window-state` via `with_denylist`. That plugin
   remembers the geometry of every window and would otherwise restore the pill at whatever size it was
   last left — expanded, or off-screen.
