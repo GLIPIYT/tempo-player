@@ -1,7 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Check, ChevronDown, Clock3, GripVertical, MicVocal, MoreHorizontal, Pause, Play, Plus, Save, Search, SkipBack, SkipForward, Trash2 } from 'lucide-react'
 import { subscribeSpectrum } from '../../audio/spectrum'
+import { subscribeNativeAnalysis } from '../../audio/nativeAnalysis'
 import { getEngine } from '../../player/engine'
+import { getNativePlayerController, isNativePlayback } from '../../player/nativeController'
 import { useT } from '../../i18n'
 import {
   fromPlainLyrics,
@@ -63,7 +65,9 @@ function formatTimecode(milliseconds: number | null): string {
 }
 
 function readPlaybackPositionMs(fallbackPositionSec: number): number {
-  const engineTime = getEngine()?.getCurrentTime()
+  const engineTime = isNativePlayback()
+    ? getNativePlayerController().getDisplayPosition()
+    : getEngine()?.getCurrentTime()
   const positionSec = Number.isFinite(engineTime) ? engineTime! : fallbackPositionSec
   return Number.isFinite(positionSec) ? Math.max(0, Math.round(positionSec * 1000)) : 0
 }
@@ -388,7 +392,7 @@ export default function LyricsEditorPanel({
     if (document.mode !== 'synced') return
     const positionMs = readPlaybackPositionMs(currentTimeSec)
     const engine = getEngine()
-    if (!engine || engine.getActiveChannel() !== 'local' || !engine.getAnalyser()) {
+    if (!isNativePlayback() && (!engine || engine.getActiveChannel() !== 'local' || !engine.getAnalyser())) {
       setActionError(t('Vocal correction requires a cached track'))
       return
     }
@@ -519,6 +523,23 @@ export default function LyricsEditorPanel({
 
   useEffect(() => {
     if (!isPlaying || document.mode !== 'synced') return
+    if (isNativePlayback()) {
+      return subscribeNativeAnalysis(frame => {
+        const positionMs = Math.round(frame.position * 1000)
+        const previous = vocalSamples.current.at(-1)
+        if (previous && (positionMs < previous.positionMs - 250 || positionMs - previous.positionMs > 1500)) {
+          vocalSamples.current = []
+        }
+        if (previous?.positionMs === positionMs) return
+        vocalSamples.current.push({ positionMs, score: estimateVocalActivity(
+          Uint8Array.from(frame.frequencyBins), frame.sampleRate, frame.minDecibels, frame.maxDecibels,
+        ) })
+        const cutoffMs = positionMs - 12_500
+        while (vocalSamples.current[0] && vocalSamples.current[0].positionMs < cutoffMs) {
+          vocalSamples.current.shift()
+        }
+      })
+    }
     const engine = getEngine()
     if (!engine) return
     let unsubscribe: (() => void) | null = null

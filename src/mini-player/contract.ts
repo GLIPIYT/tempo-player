@@ -11,11 +11,11 @@ import type { RepeatMode } from '../types/models'
 import type { ActiveTheme } from '../types/theme'
 
 /**
- * Contract between the main window (owns the audio and all state) and the
- * floating mini player (owns nothing but its own pixels).
+ * Appearance and UI events shared between the main window and mini player.
  *
  * The two are separate webviews with no shared JS context, so everything
- * crosses as a Tauri event. The main window is the single source of truth.
+ * crosses as a Tauri event. Desktop transport and playback state also connect
+ * directly to the native audio service, so controls survive a stalled main UI.
  */
 
 export const MINI_PLAYER_LABEL = 'mini-player'

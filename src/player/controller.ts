@@ -15,6 +15,7 @@ import { QueueController } from './queue'
 import { ListeningAccumulator } from './listeningSession'
 import { recommendationService, type RadioReservation } from '../features/recommendations/service'
 import type { ListeningEvent, ListeningEndReason, ListeningStartReason } from '../features/recommendations/types'
+import { getNativePlayerController, isNativePlayback, NativePlayerController } from './nativeController'
 
 export interface PlayerSnapshot {
   currentTrack: UnifiedTrack | null
@@ -1457,4 +1458,9 @@ export class PlayerController {
   }
 }
 
-export const playerController = new PlayerController()
+/** Browser builds keep the Web Audio controller; Tauri uses the native actor. */
+export const playerController: PlayerController | NativePlayerController = isNativePlayback()
+  ? getNativePlayerController()
+  : new PlayerController()
+
+export { isNativePlayback }

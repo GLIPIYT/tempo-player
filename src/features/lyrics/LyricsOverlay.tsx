@@ -3,6 +3,8 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { Check, ChevronDown, ChevronLeft, MicVocal, Music2, Pause, Pencil, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 import type { CSSProperties, TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from 'react'
 import { usePlayer } from '../../player'
+import { playerController } from '../../player/controller'
+import { getNativePlayerController, isNativePlayback } from '../../player/nativeController'
 import { useT } from '../../i18n'
 import { useSettings, type LyricProgressDirection } from '../../state/settings'
 import Cover from '../../components/common/Cover'
@@ -401,25 +403,34 @@ function SyncedView({
 
   useEffect(() => {
     if (segments.length === 0) return
-    // p.position already advances at the track playback rate. Keep the manual
-    // offset in seconds, then apply the independent lyrics multiplier around it.
-    const pos = p.position
-    const lyricsPosition = lyricTimeAtMediaPosition(pos, lyricsRate, offsetMs)
-    const { segmentIndex: found, progress } = lyricTimingAt(timing, lyricsPosition)
-    if (found !== segIdxRef.current) {
-      segIdxRef.current = found
-      setSegIdx(found)
-      if (!pausedRef.current) applyTransform(false)
+    let frame = 0
+    const native = isNativePlayback()
+    const update = () => {
+      if (!document.hidden) {
+        // Animate this small DOM surface at display cadence. Native clock
+        // interpolation does not require frame-rate updates of the React tree.
+        const pos = native
+          ? getNativePlayerController().getDisplayPosition()
+          : playerController.getSnapshot().position
+        const lyricsPosition = lyricTimeAtMediaPosition(pos, lyricsRate, offsetMs)
+        const { segmentIndex: found, progress } = lyricTimingAt(timing, lyricsPosition)
+        if (found !== segIdxRef.current) {
+          segIdxRef.current = found
+          setSegIdx(found)
+          if (!pausedRef.current) applyTransform(false)
+        }
+        const seg = found >= 0 ? segments[found] : null
+        const lineProgress = seg?.kind === 'line' && seg.endTimeSec > seg.timeSec
+          ? Math.max(0, Math.min(1, progress))
+          : 0
+        textRef.current?.style.setProperty('--lyr-fill', `${lineProgress * 100}%`)
+        if (underlineRef.current) underlineRef.current.style.transform = `scaleX(${fillEnabled ? lineProgress : 0})`
+      }
+      frame = requestAnimationFrame(update)
     }
-    const seg = found >= 0 ? segments[found] : null
-    const ul = underlineRef.current
-    const lineProgress = seg?.kind === 'line' && seg.endTimeSec > seg.timeSec
-      ? Math.max(0, Math.min(1, progress))
-      : 0
-    const tx = textRef.current
-    if (tx) tx.style.setProperty('--lyr-fill', `${lineProgress * 100}%`)
-    if (ul) ul.style.transform = `scaleX(${fillEnabled ? lineProgress : 0})`
-  }, [p.position, timing, segments, applyTransform, segIdx, lyricsRate, offsetMs, fillEnabled])
+    update()
+    return () => cancelAnimationFrame(frame)
+  }, [timing, segments, applyTransform, segIdx, lyricsRate, offsetMs, fillEnabled])
 
   const endPause = useCallback(() => {
     if (pauseTimerRef.current !== 0) {

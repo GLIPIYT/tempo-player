@@ -1,19 +1,14 @@
 //! Tray icon and close-to-tray behaviour.
 //!
-//! The tray owns no playback state: every command it produces is forwarded to
-//! the webview, which is the only place that knows about the queue and the
-//! audio element. That also keeps the tray menu labels translatable - the
-//! frontend pushes them in on mount and whenever the language changes.
+//! Transport commands go directly to the native audio actor. The frontend
+//! supplies translated labels, but is not required for playback control.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
-
-/// Event the webview listens on for tray commands ("toggle", "prev", "next").
-pub const TRAY_EVENT: &str = "tray://command";
+use tauri::{AppHandle, Manager, Runtime};
 
 const TRAY_ID: &str = "tempo-tray";
 
@@ -23,15 +18,20 @@ static CLOSE_TO_TRAY: AtomicBool = AtomicBool::new(false);
 static EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 static EXIT_READY: AtomicBool = AtomicBool::new(false);
 
-pub fn exit_ready() -> bool { EXIT_READY.load(Ordering::Acquire) }
+pub fn exit_ready() -> bool {
+    EXIT_READY.load(Ordering::Acquire)
+}
 
-/// Let the webview finalize actual media, with a bounded native fallback.
+/// Flush native listening state and release audio/helper resources before exit.
 pub fn request_exit<R: Runtime>(app: &AppHandle<R>) {
-    if EXIT_REQUESTED.swap(true, Ordering::AcqRel) { return; }
-    let _ = app.emit("listening://exit-request", ());
+    if EXIT_REQUESTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
     let app = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(5000));
+        if let Err(error) = crate::native_audio::shutdown(&app) {
+            eprintln!("[tempo native audio] shutdown: {error}");
+        }
         EXIT_READY.store(true, Ordering::Release);
         app.exit(0);
     });
@@ -120,10 +120,17 @@ fn on_menu<R: Runtime>(app: &AppHandle<R>, id: &str) {
             set_close_to_tray(false);
             request_exit(app);
         }
-        // everything else is playback, which only the webview can do
-        other => {
-            let _ = app.emit(TRAY_EVENT, other.to_string());
+        "toggle" | "prev" | "next" => {
+            let op = if id == "prev" { "previous" } else { id };
+            let command = serde_json::json!({ "op": op });
+            let app = app.clone();
+            std::thread::spawn(move || {
+                if let Err(error) = crate::native_audio::dispatch(&app, command) {
+                    eprintln!("[tempo native audio] tray: {error}");
+                }
+            });
         }
+        _ => {}
     }
 }
 

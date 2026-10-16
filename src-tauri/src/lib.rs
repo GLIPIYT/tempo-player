@@ -20,6 +20,8 @@ mod tray;
 mod updater;
 mod ytdlp;
 mod youtube_music;
+mod native_audio;
+mod native_media;
 
 use std::sync::Arc;
 
@@ -100,9 +102,13 @@ pub fn run() {
                 commands::startup_rescan(handle.clone());
             });
             artist_artwork::start_automatic_lookup(app.handle().clone());
+            native_audio::init(app.handle()).map_err(std::io::Error::other)?;
+            native_media::start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            native_audio::native_audio_command,
+            native_audio::native_audio_snapshot,
             recommendation_store::record_listening_session,
             recommendation_store::get_recommendation_context,
             recommendation_store::record_recommendation_impressions,
@@ -262,9 +268,7 @@ pub fn run() {
             updater::updater_discard
         ])
         .on_window_event(|window, event| {
-            // With "stay in tray" on, closing the main window parks it instead of
-            // quitting: the webview keeps running, so playback and the mini
-            // player carry on and the tray brings the window back.
+            // Parking the UI leaves the native audio actor and mini player alive.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" && tray::close_to_tray() {
                     api.prevent_close();

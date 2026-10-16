@@ -1,4 +1,6 @@
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getEngine } from '../player/engine'
+import { getNativePlayerController, isNativePlayback } from '../player/nativeController'
 
 /**
  * Live spectrum for the visualiser: 64 log-spaced bins, normalised to 0..1.
@@ -56,6 +58,8 @@ let pollId = 0
 let lastFrameAt = 0
 let lastSampleAt = 0
 let silentForMs = 0
+let nativeUnlisten: UnlistenFn | null = null
+let nativeStartPromise: Promise<void> | null = null
 
 /**
  * Folds the analyser's linearly spaced bins into `SPECTRUM_BINS` log-spaced
@@ -209,12 +213,52 @@ function stop(): void {
  */
 export function subscribeSpectrum(listener: SpectrumListener): () => void {
   listeners.add(listener)
-  // The tap needs a graph, and a graph is only ever built for the local
-  // channel. Asking for one here is what turns the visualiser on.
-  getEngine()?.enableGraph()
-  start()
+  if (isNativePlayback()) {
+    startNative()
+  } else {
+    // The tap needs a graph, and a graph is only ever built for the local
+    // channel. Asking for one here is what turns the visualiser on.
+    getEngine()?.enableGraph()
+    start()
+  }
   return () => {
     listeners.delete(listener)
-    if (listeners.size === 0) stop()
+    if (listeners.size === 0) {
+      if (isNativePlayback()) stopNative()
+      else stop()
+    }
   }
+}
+
+function startNative(): void {
+  if (nativeUnlisten || nativeStartPromise) return
+  nativeStartPromise = listen<number[]>('native-audio://fft', event => {
+    const values = event.payload
+    if (!Array.isArray(values) || values.length !== SPECTRUM_BINS) return
+    for (let i = 0; i < SPECTRUM_BINS; i += 1) {
+      const value = Number.isFinite(values[i]) ? Math.max(0, Math.min(1, values[i])) : 0
+      bins[i] = bins[i] * SMOOTH_KEEP + value * SMOOTH_NEW
+    }
+    emit()
+  }).then(unlisten => {
+    if (listeners.size === 0) {
+      unlisten()
+      return
+    }
+    nativeUnlisten = unlisten
+    getNativePlayerController().setSpectrumEnabled(true)
+  }).catch(error => {
+    console.warn('[tempo native spectrum] listener failed', error)
+  }).finally(() => {
+    nativeStartPromise = null
+  })
+}
+
+function stopNative(): void {
+  const wasListening = nativeUnlisten !== null
+  nativeUnlisten?.()
+  nativeUnlisten = null
+  bins.fill(0)
+  raw.fill(0)
+  if (wasListening) getNativePlayerController().setSpectrumEnabled(false)
 }

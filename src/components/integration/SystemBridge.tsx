@@ -5,8 +5,7 @@ import {
   isEnabled as isAutostartEnabled,
 } from '@tauri-apps/plugin-autostart'
 import { api } from '../../api/client'
-import { onTrayCommand } from '../../api/events'
-import { playerController } from '../../player/controller'
+import { syncNativeAudioSettings } from '../../player/nativeController'
 import { useSettings } from '../../state/settings'
 import { useT } from '../../i18n'
 
@@ -14,12 +13,13 @@ import { useT } from '../../i18n'
  * Wires the OS-level preferences: launch at login, stay in the tray, and the
  * tray menu.
  *
- * The tray itself is built in Rust, but it owns no playback state, so its
- * menu items arrive here as events and are applied to the player controller.
+ * Playback and tray controls are owned by the native service. This bridge
+ * syncs app-level audio preferences and OS settings.
  * Renders `null`; mounted once inside the app shell.
  */
 export default function SystemBridge(): null {
   const { settings } = useSettings()
+  const { audio, soundcloud, ytdlp } = settings
   const t = useT()
   // the translator is not stable across renders, and re-pushing the labels on
   // every render would be an IPC call per render
@@ -31,6 +31,12 @@ export default function SystemBridge(): null {
   useEffect(() => {
     void api.setCloseToTray(settings.system.closeToTray).catch(() => {})
   }, [settings.system.closeToTray])
+
+  // Send all app-owned audio preferences together. Partial transport updates
+  // such as volume and EQ then merge without losing loudness or cache options.
+  useEffect(() => {
+    syncNativeAudioSettings({ audio, soundcloud, ytdlp })
+  }, [audio, soundcloud, ytdlp])
 
   // Tray labels follow the UI language.
   useEffect(() => {
@@ -64,24 +70,6 @@ export default function SystemBridge(): null {
       cancelled = true
     }
   }, [settings.system.autostart])
-
-  // Playback commands from the tray menu.
-  useEffect(() => {
-    let unlisten: (() => void) | null = null
-    let disposed = false
-    void onTrayCommand((command) => {
-      if (command === 'toggle') void playerController.toggle()
-      else if (command === 'next') void playerController.next()
-      else if (command === 'prev') void playerController.previous()
-    }).then((fn) => {
-      if (disposed) fn()
-      else unlisten = fn
-    })
-    return () => {
-      disposed = true
-      unlisten?.()
-    }
-  }, [])
 
   return null
 }

@@ -26,6 +26,7 @@ import { fmtTime } from '../utils/format'
 import { applyTheme } from '../theme/engine'
 import { en } from '../i18n/en'
 import { ru } from '../i18n/ru'
+import { connectNativeMini, nativeMiniAction, nativeMiniState } from './nativePlayback'
 import {
   EV_ACTION,
   EV_PEEK,
@@ -124,6 +125,7 @@ export default function MiniPlayerApp() {
   const engagedRef = useRef(false)
   const stateRef = useRef(state)
   stateRef.current = state
+  const nativeSnapshotRef = useRef<import('../player/controller').PlayerSnapshot | null>(null)
   const seekLockRef = useRef(0)
   const visualRef = useRef(boot?.position ?? 0)
   const collapseTimerRef = useRef(0)
@@ -146,8 +148,17 @@ export default function MiniPlayerApp() {
   }, [state?.lang])
 
   const emitAction = useCallback((action: MiniPlayerAction) => {
-    void emitToMain(EV_ACTION, action).catch(() => {})
+    void nativeMiniAction(action, stateRef.current).then(handled => {
+      if (!handled) return emitToMain(EV_ACTION, action)
+    }).catch(error => console.warn('[tempo mini action]', error))
   }, [])
+
+  useEffect(() => connectNativeMini(snapshot => {
+    nativeSnapshotRef.current = snapshot
+    gotStateRef.current = true
+    setState(current => nativeMiniState(current, snapshot))
+    if (Date.now() >= seekLockRef.current) setPosition(snapshot.position)
+  }), [])
 
   // --- window shape -------------------------------------------------------
 
@@ -294,7 +305,8 @@ export default function MiniPlayerApp() {
     let disposed = false
     void listenFor<MiniPlayerState>(EV_STATE, (next) => {
       gotStateRef.current = true
-      setState(next)
+      const snapshot = nativeSnapshotRef.current
+      setState(snapshot ? nativeMiniState(next, snapshot) : next)
       applyTheme(next.theme)
     }).then((fn) => {
       if (disposed) fn()
