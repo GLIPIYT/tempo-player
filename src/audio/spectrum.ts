@@ -34,6 +34,11 @@ const PARK_AFTER_MS = 1200
 /** Poll period while parked - only cheap byte copies happen this slowly. */
 const POLL_MS = 250
 
+// IPC can pause briefly while the native actor or the webview is busy. Missing
+// frames are not silence; hold the last one, then fade if the feed stays stale.
+const NATIVE_HOLD_MS = 1200
+const NATIVE_FADE_MS = 600
+
 /** Peak of the raw byte spectrum treated as audible. */
 const ENERGY_PEAK = 4
 
@@ -132,10 +137,14 @@ function sample(): boolean {
     const elapsed = nativeRenderedAt > 0 ? Math.min(250, now - nativeRenderedAt) : SAMPLE_INTERVAL_MS
     const keep = SMOOTH_KEEP ** (elapsed / SAMPLE_INTERVAL_MS)
     nativeRenderedAt = now
-    const fresh = now - nativeReceivedAt < 300
+    const playing = getNativePlayerController().getSnapshot().isPlaying
+    const age = Math.max(0, now - nativeReceivedAt)
+    const gain = playing && nativeReceivedAt > 0
+      ? Math.exp(-Math.max(0, age - NATIVE_HOLD_MS) / NATIVE_FADE_MS)
+      : 0
     let peak = 0
     for (let i = 0; i < SPECTRUM_BINS; i += 1) {
-      const target = fresh ? nativeTarget[i] : 0
+      const target = nativeTarget[i] * gain
       bins[i] = bins[i] * keep + target * (1 - keep)
       peak = Math.max(peak, target)
     }

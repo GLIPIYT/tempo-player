@@ -26,6 +26,7 @@ struct VisualState {
     bins: Vec<f32>,
     written: u64,
     at: Option<Instant>,
+    last_sample_at: Option<Instant>,
     sample_rate: u32,
 }
 
@@ -43,6 +44,7 @@ impl SpectrumBuffer {
                 bins: vec![0.0; NUM_BINS],
                 written: 0,
                 at: None,
+                last_sample_at: None,
                 sample_rate: 48_000,
             }),
         })
@@ -106,11 +108,21 @@ impl SpectrumBuffer {
             return visual.bins.clone();
         };
         let now = Instant::now();
+        let fresh = written != visual.written;
+        if fresh {
+            visual.last_sample_at = Some(now);
+        } else if visual
+            .last_sample_at
+            .is_some_and(|at| now.duration_since(at).as_millis() < 120)
+        {
+            // Reading the same callback block twice is not a silent audio
+            // frame. Preserve it across scheduler/callback timing jitter.
+            return visual.bins.clone();
+        }
         let elapsed = visual
             .at
             .map_or(1.0 / 60.0, |at| now.duration_since(at).as_secs_f32());
         let keep = 0.8f32.powf(elapsed.min(0.25) * 60.0);
-        let fresh = written != visual.written;
         if sample_rate != visual.sample_rate {
             visual.magnitudes.fill(0.0);
         }
