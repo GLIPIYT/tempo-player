@@ -9,6 +9,11 @@
   const MAX_CHUNK_BYTES = 256 * 1024;
   const MAX_PULL_BYTES = 2 * 1024 * 1024;
   const MAX_PULL_RESPONSE_BYTES = 3 * 1024 * 1024;
+  // Prepare waits up to 25 s for audio readiness and 20 s for seek completion.
+  const PREPARE_FRAME_TIMEOUT_MS = 50000;
+  // Arm repeats the seek, with 5 s left for setup and the reply.
+  const ARM_FRAME_TIMEOUT_MS = 25000;
+  const RELEASE_FRAME_TIMEOUT_MS = 15000;
   const root = document.getElementById('widgets');
   const frames = new Map();
   const results = new Map();
@@ -355,15 +360,17 @@
             plan: frame.plan,
             perFrameLimit: 1024 * 1024,
             pullLimit: Math.floor(MAX_PULL_BYTES / frames.size),
-          }, 28000);
+          }, PREPARE_FRAME_TIMEOUT_MS);
           return snapshotResult(result);
         }));
         return { ok: true, parts };
       }
       case 'start': {
         if (!active) throw new Error('capture-not-initialized');
-        await Promise.all(Array.from(frames.values(), frame => requestFrame(frame, 'arm', {}, 15000)));
-        await Promise.all(Array.from(frames.values(), frame => requestFrame(frame, 'release', {}, 15000)));
+        await Promise.all(Array.from(frames.values(), frame =>
+          requestFrame(frame, 'arm', {}, ARM_FRAME_TIMEOUT_MS)));
+        await Promise.all(Array.from(frames.values(), frame =>
+          requestFrame(frame, 'release', {}, RELEASE_FRAME_TIMEOUT_MS)));
         return { ok: true, started: frames.size };
       }
       case 'pull': {

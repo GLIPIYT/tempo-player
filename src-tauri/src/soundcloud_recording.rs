@@ -35,6 +35,10 @@ const MAX_PULL_BYTES: usize = 2 * 1024 * 1024;
 const MAX_PULL_RESPONSE_BYTES: usize = 3 * 1024 * 1024;
 const MIN_AVAILABLE_MEMORY: u64 = 768 * 1024 * 1024;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+// Encloses the host's 50-second prepare deadline and native polling overhead.
+const PREPARE_TIMEOUT: Duration = Duration::from_secs(55);
+// Encloses host arm (25 s) + release (15 s) deadlines and polling overhead.
+const START_TIMEOUT: Duration = Duration::from_secs(45);
 const STALL_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -611,7 +615,7 @@ pub async fn capture(
 ) -> Result<(), String> {
     let parent = validate_input(track_id, expected_duration, output)?;
     let epoch = ACTIVE_EPOCH.load(Ordering::Acquire);
-    let permit = acquire_capture_permit(&cancelled, epoch).await?;
+    let _permit = acquire_capture_permit(&cancelled, epoch).await?;
     check_cancelled(&cancelled, &AtomicBool::new(false), epoch)?;
 
     // Do not race the audible player's first media/license requests with up to
@@ -624,6 +628,61 @@ pub async fn capture(
     let db = app.state::<crate::commands::AppState>().db.clone();
     let block_count = crate::soundcloud_capture_policy::selected_blocks(&db).await;
     let block_count = block_count.clamp(1, MAX_PARTS);
+    let attempt = capture_attempt(
+        app.clone(),
+        track_id,
+        expected_duration,
+        output,
+        cancelled.clone(),
+        progress.clone(),
+        parent.clone(),
+        block_count,
+        epoch,
+    )
+    .await;
+    if block_count > 1
+        && attempt
+            .as_ref()
+            .err()
+            .is_some_and(|error| error == "SoundCloud capture failed: capture-seek-timeout")
+    {
+        check_cancelled(&cancelled, &AtomicBool::new(false), epoch)?;
+        // Some protected MSE streams never finish seeking to particular remote
+        // segments. Retry once from zero, without requiring arbitrary seeks.
+        // The failed host, staged pieces and output guard have already dropped.
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "[tempo soundcloud capture] parallel_seek_failed blocks={block_count} retry_blocks=1"
+        );
+        capture_attempt(
+            app,
+            track_id,
+            expected_duration,
+            output,
+            cancelled,
+            progress,
+            parent,
+            1,
+            epoch,
+        )
+        .await
+    } else {
+        attempt
+    }
+}
+
+async fn capture_attempt(
+    app: AppHandle,
+    track_id: &str,
+    expected_duration: f64,
+    output: &Path,
+    cancelled: Arc<AtomicBool>,
+    progress: Arc<dyn Fn(f64) + Send + Sync>,
+    parent: PathBuf,
+    block_count: usize,
+    epoch: u64,
+) -> Result<(), String> {
+    check_cancelled(&cancelled, &AtomicBool::new(false), epoch)?;
     if crate::soundcloud_capture_policy::system_available_memory()
         .is_some_and(|available| available < MIN_AVAILABLE_MEMORY)
     {
@@ -643,7 +702,6 @@ pub async fn capture(
     let label = format!("{HOST_LABEL_PREFIX}{job_id:x}");
     let local_cancelled = Arc::new(AtomicBool::new(false));
     let _registration = JobRegistration::new(label.clone(), local_cancelled.clone());
-    let _permit = permit;
     let _temp_dir = TempDir::create(&parent)?;
     let mut output_guard = OutputGuard {
         path: output.to_path_buf(),
@@ -690,7 +748,7 @@ pub async fn capture(
     let prepared = native_call(
         &host.window,
         json!({ "op": "prepare" }),
-        STARTUP_TIMEOUT,
+        PREPARE_TIMEOUT,
         64 * 1024,
         &cancelled,
         &local_cancelled,
@@ -711,7 +769,7 @@ pub async fn capture(
     native_call(
         &host.window,
         json!({ "op": "start" }),
-        STARTUP_TIMEOUT,
+        START_TIMEOUT,
         64 * 1024,
         &cancelled,
         &local_cancelled,
