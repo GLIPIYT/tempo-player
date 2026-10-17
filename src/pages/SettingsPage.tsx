@@ -780,8 +780,8 @@ function UpdateCard() {
   const upToDate = !releases.loading && !releases.error && currentVersion !== null && latest !== null
     && compareVersions(currentVersion, latest) >= 0
   const previewRelease: ReleaseInfo = latestRelease ?? releases.data?.[0] ?? {
-    version: currentVersion ?? '1.0.0',
-    tag: `v${currentVersion ?? '1.0.0'}`,
+    version: currentVersion ?? '1.1.0',
+    tag: `v${currentVersion ?? '1.1.0'}`,
     name: t('Update preview'),
     notes: t('Example update notes'),
     publishedAt: '',
