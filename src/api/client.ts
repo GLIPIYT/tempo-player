@@ -52,9 +52,18 @@ import type {
 export interface SoundCloudSessionStatus {
   builtinConfigured: boolean
   builtinState: 'unconfigured' | 'unchecked' | 'valid' | 'expired'
+  personalState: 'missing' | 'unchecked' | 'valid' | 'expired'
   personalAvailable: boolean
+  browserAvailable: boolean
   loginOpen: boolean
 }
+
+export interface SoundCloudCaptureSettings {
+  automatic: boolean
+  blocks: number
+}
+
+export const SOUND_CLOUD_SESSION_CHANGED_EVENT = 'soundcloud-session-changed'
 
 function periodSinceSecs(period: AnalyticsPeriod): number | null {
   if (period === 'all') return null
@@ -293,6 +302,10 @@ export const api = {
 
   scSessionStatus: () => invoke<SoundCloudSessionStatus>('sc_session_status'),
   scSessionLogin: () => invoke<void>('sc_session_login'),
+  scSessionLogout: () => invoke<void>('sc_session_logout'),
+  scCaptureSettings: () => invoke<SoundCloudCaptureSettings>('sc_capture_settings'),
+  scSetCaptureSettings: (settings: SoundCloudCaptureSettings) =>
+    invoke<SoundCloudCaptureSettings>('sc_set_capture_settings', { settings }),
 
   scSearchPlaylists: (query: string, limit: number, offset: number) =>
     invoke<ScPlaylist[]>('sc_search_playlists', { query, limit, offset }),

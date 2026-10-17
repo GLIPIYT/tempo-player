@@ -14,6 +14,9 @@ mod scanner;
 mod soundcloud;
 mod soundcloud_web;
 mod soundcloud_session;
+mod soundcloud_capture_policy;
+mod soundcloud_browser;
+mod soundcloud_recording;
 mod soundcloud_store;
 mod recommendation_store;
 mod recommendation_audio;
@@ -32,6 +35,8 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol("tempo-sc-playback", |_, request| soundcloud_browser::host_response(&request))
+        .register_uri_scheme_protocol("tempo-sc-recording", |_, request| soundcloud_recording::host_response(&request))
         .plugin(
             // the saved window state must not resurrect native decorations
             // over the frameless windows configured in tauri.conf.json
@@ -219,6 +224,9 @@ pub fn run() {
             commands::sc_get_playback,
             commands::sc_session_status,
             commands::sc_session_login,
+            commands::sc_session_logout,
+            commands::sc_capture_settings,
+            commands::sc_set_capture_settings,
             commands::sc_get_cached_track_ids,
             commands::sc_precache,
             commands::sc_upsert_track,

@@ -20,8 +20,13 @@ fn log_startup_timing(stage: &str, source: &str, started: Instant) {
 }
 
 pub struct PreparedTrack {
-    pub audio: PreparedAudio,
+    pub transport: PreparedTransport,
     pub track: Value,
+}
+
+pub enum PreparedTransport {
+    Native(PreparedAudio),
+    Browser(crate::soundcloud_browser::BrowserDescriptor),
 }
 
 pub struct ReservoirResult {
@@ -190,6 +195,17 @@ pub fn prepare_track(
                     .unwrap_or("error");
                 log_startup_timing("soundcloud_resolve", resolved_kind, playback_started);
                 let playback = playback?;
+                if let Some(duration) = playback.browser_duration {
+                    return Ok(PreparedTrack {
+                        transport: PreparedTransport::Browser(
+                            crate::soundcloud_browser::BrowserDescriptor {
+                                track_id: source_id,
+                                duration,
+                            },
+                        ),
+                        track,
+                    });
+                }
                 let location = if let Some(path) = playback.cached_path {
                     path
                 } else if let Some(url) = playback.url {
@@ -361,7 +377,10 @@ pub fn prepare_track(
     let audio = output::prepare(spec, position.max(0.0), output_settings, bin_dir)?;
     log_startup_timing("output_prepare", input_kind, decoder_started);
     log_startup_timing("prepare_track_total", source_kind, prepare_started);
-    Ok(PreparedTrack { audio, track })
+    Ok(PreparedTrack {
+        transport: PreparedTransport::Native(audio),
+        track,
+    })
 }
 
 /// Returns one already-published SoundCloud recommendation in the JS-published

@@ -15,6 +15,12 @@ use crate::soundcloud::StreamInfo;
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(32);
 const SCRIPT: &str = include_str!("soundcloud_web.js");
 
+pub fn close_all(app: &AppHandle) {
+    for (label, window) in app.webview_windows() {
+        if label.starts_with("sc-web-fallback-") { let _ = window.close(); }
+    }
+}
+
 fn permits() -> &'static Semaphore {
     static PERMITS: OnceLock<Semaphore> = OnceLock::new();
     PERMITS.get_or_init(|| Semaphore::new(1))
@@ -59,17 +65,19 @@ impl Drop for TemporaryWindow {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct BrowserResult {
     url: Option<String>,
     format: Option<String>,
     error: Option<String>,
+    protected_duration: Option<f64>,
 }
 
-pub async fn resolve_stream(
+pub async fn resolve_track(
     app: AppHandle,
     track_id: &str,
     permalink: Option<&str>,
-) -> Result<StreamInfo, String> {
+) -> Result<crate::soundcloud::TrackStream, String> {
     if track_id.is_empty() || track_id.len() > 32 || !track_id.bytes().all(|b| b.is_ascii_digit()) {
         return Err("invalid SoundCloud track ID".into());
     }
@@ -159,6 +167,9 @@ pub async fn resolve_stream(
                         error.chars().take(400).collect::<String>()
                     ));
                 }
+                if let Some(duration) = result.protected_duration.filter(|duration| duration.is_finite() && *duration > 0.0 && *duration <= 604_800.0) {
+                    return Ok(crate::soundcloud::TrackStream::Protected { duration });
+                }
                 let url = result
                     .url
                     .filter(|url| url.len() < 16_384 && media_url(url))
@@ -169,7 +180,7 @@ pub async fn resolve_stream(
                     .ok_or_else(|| {
                         "SoundCloud browser returned an unsupported audio format".to_string()
                     })?;
-                return Ok(StreamInfo { url, format });
+                return Ok(crate::soundcloud::TrackStream::Clear(StreamInfo { url, format }));
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }

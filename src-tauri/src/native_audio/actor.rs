@@ -15,10 +15,11 @@ use super::models::{
 };
 use super::output::{OutputEngine, OutputSettings};
 use super::queue::QueueEntry;
-use super::resolver::{self, PreparedTrack, ReservoirResult};
+use super::resolver::{self, PreparedTrack, PreparedTransport, ReservoirResult};
 use super::{
     ActorMessage, ANALYSIS_EVENT, CLOCK_EVENT, CONTINUATION_EVENT, FFT_EVENT, STATE_EVENT,
 };
+use crate::soundcloud_browser::{BrowserEvent, BrowserPlayback, BrowserSettings};
 
 const ACTOR_TICK: Duration = Duration::from_millis(50);
 const CLOCK_INTERVAL: Duration = Duration::from_millis(100);
@@ -34,6 +35,24 @@ pub(crate) struct PreparedMessage {
     pub generation: u64,
     pub entry_id: String,
     pub result: Result<PreparedTrack, String>,
+}
+
+pub(crate) struct BrowserPreparedMessage {
+    pub generation: u64,
+    pub entry_id: String,
+    pub track: Value,
+    pub result: Result<(BrowserPlayback, Receiver<BrowserEvent>), String>,
+}
+
+struct BrowserOutput {
+    handle: BrowserPlayback,
+    events: Receiver<BrowserEvent>,
+    position: f64,
+    duration: f64,
+    playing: bool,
+    buffering: bool,
+    finished: bool,
+    bins: Vec<f64>,
 }
 
 pub(crate) struct PreloadMessage {
@@ -174,6 +193,7 @@ pub fn run(
         db,
         sender,
         engine,
+        browser: None,
         persisted,
         version: 0,
         current_error: None,
@@ -225,8 +245,8 @@ pub fn run(
 
     actor.finish_session("exit");
     actor.last_position = actor.current_position();
-    actor.engine.pause();
-    actor.engine.stop();
+    actor.pause_output();
+    actor.stop_output();
     actor.active_entry_id = None;
     actor.pending_start = None;
     actor.preloaded = None;
@@ -268,6 +288,7 @@ struct Actor {
     db: Arc<crate::database::Db>,
     sender: Sender<ActorMessage>,
     engine: OutputEngine,
+    browser: Option<BrowserOutput>,
     persisted: NativePersistedState,
     version: u64,
     current_error: Option<String>,
@@ -304,6 +325,225 @@ struct Actor {
 }
 
 impl Actor {
+    fn browser_settings(&self, track: Option<&Value>) -> BrowserSettings {
+        let settings = &self.persisted.settings;
+        BrowserSettings {
+            volume: settings.volume as f64,
+            playback_rate: settings.playback_rate as f64,
+            preserve_pitch: settings.preserve_pitch,
+            equalizer_enabled: settings.equalizer_enabled,
+            equalizer_gains: settings.equalizer_gains,
+            gain_db: track
+                .map(|track| TrackPayload(track.clone()).gain_db(settings.normalize))
+                .unwrap_or(0.0),
+            spectrum_enabled: (self.spectrum_enabled || self.analysis_enabled) && self.visible,
+        }
+    }
+
+    fn on_browser_prepared(&mut self, message: BrowserPreparedMessage) {
+        if !self.pending_start.as_ref().is_some_and(|pending| {
+            pending.generation == message.generation && pending.entry_id == message.entry_id
+        }) {
+            return;
+        }
+        let pending = self.pending_start.take().expect("matching browser start");
+        match message.result {
+            Ok((handle, events)) => {
+                if !pending.keep_session {
+                    self.finish_session("next");
+                }
+                let duration = TrackPayload(message.track.clone())
+                    .duration()
+                    .unwrap_or(0.0);
+                self.persisted
+                    .queue
+                    .update_entry(&pending.entry_id, message.track.clone());
+                self.engine.stop();
+                self.browser = Some(BrowserOutput {
+                    handle,
+                    events,
+                    position: pending.position,
+                    duration,
+                    playing: false,
+                    buffering: true,
+                    finished: false,
+                    bins: vec![0.0; 64],
+                });
+                self.active_entry_id = Some(pending.entry_id);
+                self.active_track = Some(message.track);
+                self.active_reason = pending.reason;
+                self.playing_intent = pending.playing;
+                self.last_position = pending.position;
+                self.current_error = None;
+                self.load_attempts = 0;
+                self.preloaded = None;
+                self.preload_requested = None;
+                let settings = self.browser_settings(self.active_track.as_ref());
+                if let Some(browser) = self.browser.as_ref() {
+                    if let Err(error) = browser.handle.configure(settings) {
+                        self.current_error = Some(error);
+                    }
+                }
+                if pending.playing {
+                    self.play_output();
+                }
+                self.persist_now();
+                self.emit_state();
+            }
+            Err(error) => {
+                self.current_error = Some(error);
+                self.finish_session("error");
+                self.stop_output();
+                self.active_entry_id = None;
+                self.active_track = None;
+                self.playing_intent = false;
+                self.emit_state();
+            }
+        }
+    }
+
+    fn poll_browser(&mut self) {
+        let mut failed = None;
+        if let Some(browser) = self.browser.as_mut() {
+            for _ in 0..64 {
+                let event = match browser.events.try_recv() {
+                    Ok(event) => event,
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        failed = Some(
+                            "SoundCloud browser playback stopped; sign in or retry the track"
+                                .to_string(),
+                        );
+                        break;
+                    }
+                };
+                match event {
+                    BrowserEvent::Ready { duration } => {
+                        browser.duration = duration;
+                    }
+                    BrowserEvent::Clock {
+                        position,
+                        duration,
+                        playing,
+                        buffering,
+                    } => {
+                        if !browser.finished {
+                            browser.position = finite_nonnegative(position);
+                            browser.duration = duration;
+                            browser.playing = playing;
+                            browser.buffering = buffering;
+                        }
+                    }
+                    BrowserEvent::Finished => {
+                        browser.finished = true;
+                        browser.position = browser.duration;
+                        browser.playing = false;
+                        browser.buffering = false;
+                        browser.bins.fill(0.0);
+                    }
+                    BrowserEvent::Failed(error) => {
+                        failed = Some(error);
+                        break;
+                    }
+                    BrowserEvent::Spectrum(bins) => {
+                        if bins.len() == 64
+                            && bins
+                                .iter()
+                                .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+                        {
+                            browser.bins = bins;
+                        }
+                    }
+                    BrowserEvent::Capabilities {
+                        equalizer,
+                        gain,
+                        spectrum,
+                        error,
+                    } => {
+                        let _ = self.app.emit("native-audio://browser-capabilities", json!({
+                            "equalizer": equalizer, "gain": gain, "spectrum": spectrum, "error": error,
+                        }));
+                    }
+                }
+            }
+        }
+        if let Some(error) = failed {
+            self.sample_listening();
+            self.finish_session("error");
+            self.last_position = self.current_position();
+            self.stop_output();
+            self.active_entry_id = None;
+            self.active_track = None;
+            self.playing_intent = false;
+            self.current_error = Some(error);
+            self.emit_state();
+        }
+    }
+
+    fn transport_position(&self) -> f64 {
+        self.browser
+            .as_ref()
+            .map_or_else(|| self.engine.position(), |browser| browser.position)
+    }
+    fn transport_duration(&self) -> Option<f64> {
+        self.browser
+            .as_ref()
+            .map_or_else(|| self.engine.duration(), |browser| Some(browser.duration))
+    }
+    fn transport_is_playing(&self) -> bool {
+        self.browser
+            .as_ref()
+            .map_or_else(|| self.engine.is_playing(), |browser| browser.playing)
+    }
+    fn transport_buffering(&self) -> bool {
+        self.browser
+            .as_ref()
+            .map_or_else(|| self.engine.buffering(), |browser| browser.buffering)
+    }
+    fn transport_ended(&self) -> bool {
+        self.browser
+            .as_ref()
+            .map_or_else(|| self.engine.ended(), |browser| browser.finished)
+    }
+    fn transport_has_source(&self) -> bool {
+        self.browser.is_some() || self.engine.has_source()
+    }
+    fn play_output(&mut self) {
+        if let Some(browser) = self.browser.as_mut() {
+            if let Err(error) = browser.handle.play() {
+                self.current_error = Some(error);
+            }
+        } else {
+            self.engine.play();
+        }
+    }
+    fn pause_output(&mut self) {
+        if let Some(browser) = self.browser.as_mut() {
+            if let Err(error) = browser.handle.pause() {
+                self.current_error = Some(error);
+            }
+            browser.playing = false;
+            browser.bins.fill(0.0);
+        } else {
+            self.engine.pause();
+        }
+    }
+    fn stop_output(&mut self) {
+        self.browser = None;
+        self.engine.stop();
+    }
+    fn seek_output(&mut self, position: f64) -> Result<(), String> {
+        if let Some(browser) = self.browser.as_mut() {
+            browser.handle.seek(position)?;
+            browser.position = position.min(browser.duration).max(0.0);
+            browser.finished = false;
+            browser.buffering = true;
+            Ok(())
+        } else {
+            self.engine.seek(position)
+        }
+    }
+
     fn handle(&mut self, message: ActorMessage) {
         match message {
             ActorMessage::Command { value, reply } => {
@@ -332,6 +572,7 @@ impl Actor {
                 let _ = reply.send(result);
             }
             ActorMessage::Prepared(message) => self.on_prepared(message),
+            ActorMessage::BrowserPrepared(message) => self.on_browser_prepared(message),
             ActorMessage::Preloaded(message) => self.on_preloaded(message),
             ActorMessage::ReservoirReady(message) => self.on_reservoir(message),
             ActorMessage::GenerationChanged(generation) => self.on_generation(generation),
@@ -398,7 +639,7 @@ impl Actor {
                         self.stop_current("select");
                     } else {
                         self.bump_generation();
-                        self.engine.stop();
+                        self.stop_output();
                         self.active_entry_id = None;
                         self.active_track = None;
                         self.active_reason = "manual".into();
@@ -520,7 +761,7 @@ impl Actor {
                         }
                     }
                     let was_empty = self.persisted.queue.is_empty();
-                    let was_exhausted = !self.playing_intent && self.engine.ended();
+                    let was_exhausted = !self.playing_intent && self.transport_ended();
                     let next = command
                         .get("next")
                         .and_then(Value::as_bool)
@@ -626,6 +867,14 @@ impl Actor {
                         self.engine.set_track_gain(
                             TrackPayload(track.clone()).gain_db(self.persisted.settings.normalize),
                         );
+                        if let Some(browser) = self.browser.as_ref() {
+                            if let Err(error) = browser
+                                .handle
+                                .configure(self.browser_settings(Some(&track)))
+                            {
+                                self.current_error = Some(error);
+                            }
+                        }
                         let _ = self.listening.update_metadata(&track);
                     }
                     changed = true;
@@ -675,9 +924,14 @@ impl Actor {
     }
 
     fn tick(&mut self) {
+        self.poll_browser();
         self.sample_fading_listening();
         let position_before_tick = self.current_position();
-        if let Err(error) = self.engine.tick() {
+        if let Err(error) = if self.browser.is_none() {
+            self.engine.tick()
+        } else {
+            Ok(())
+        } {
             if self.retry_current_soundcloud(&error) {
                 self.current_error =
                     Some("SoundCloud stream stopped; switching to a cached fallback…".into());
@@ -687,9 +941,9 @@ impl Actor {
             self.current_error = Some(error);
             if self.playing_intent
                 && self.pending_start.is_none()
-                && (self.engine.ended() || !self.engine.has_source())
+                && (self.transport_ended() || !self.transport_has_source())
             {
-                let engine_position = self.engine.position();
+                let engine_position = self.transport_position();
                 self.last_position = finite_nonnegative(if engine_position > 0.0 {
                     engine_position
                 } else {
@@ -698,7 +952,7 @@ impl Actor {
                 self.active_entry_id = None;
                 self.active_track = None;
                 self.finish_session("error");
-                self.engine.stop();
+                self.stop_output();
                 self.playing_intent = false;
                 self.persist_now();
             }
@@ -718,7 +972,7 @@ impl Actor {
             self.listening_writer.record(event);
         }
 
-        if self.engine.ended() && self.playing_intent && self.pending_start.is_none() {
+        if self.transport_ended() && self.playing_intent && self.pending_start.is_none() {
             self.advance_after_end();
         }
 
@@ -727,7 +981,7 @@ impl Actor {
         self.maybe_continue();
 
         let now = Instant::now();
-        let playing = self.playing_intent || self.engine.is_playing();
+        let playing = self.playing_intent || self.transport_is_playing();
         if playing && now.duration_since(self.last_clock_at) >= CLOCK_INTERVAL {
             self.emit_clock();
             self.last_clock_at = now;
@@ -745,8 +999,8 @@ impl Actor {
         if self.analysis_enabled
             && self.visible
             && self.pending_start.is_none()
-            && self.engine.is_playing()
-            && !self.engine.buffering()
+            && self.transport_is_playing()
+            && !self.transport_buffering()
             && now.duration_since(self.last_analysis_at) >= ANALYSIS_INTERVAL
         {
             self.emit_analysis();
@@ -769,9 +1023,50 @@ impl Actor {
         let pending = self.pending_start.take().expect("pending start checked");
         match message.result {
             Ok(prepared) => {
-                let PreparedTrack { audio, track } = prepared;
+                let PreparedTrack { transport, track } = prepared;
+                let audio = match transport {
+                    PreparedTransport::Native(audio) => audio,
+                    PreparedTransport::Browser(descriptor) => {
+                        if !pending.keep_session {
+                            self.finish_session("next");
+                        }
+                        self.stop_output();
+                        self.browser = None;
+                        let settings = self.browser_settings(Some(&track));
+                        let app = self.app.clone();
+                        let sender = self.sender.clone();
+                        let generation = pending.generation;
+                        let entry_id = pending.entry_id.clone();
+                        let position = pending.position;
+                        let guard = self.generation_guard.clone();
+                        self.pending_start = Some(pending);
+                        tauri::async_runtime::spawn(async move {
+                            let (events, receiver) = mpsc::channel();
+                            let result = crate::soundcloud_browser::start(
+                                app, descriptor, settings, position, false, generation, events,
+                            )
+                            .await
+                            .map(|handle| (handle, receiver));
+                            if guard.load(Ordering::Acquire) == generation {
+                                let _ = sender.send(ActorMessage::BrowserPrepared(
+                                    BrowserPreparedMessage {
+                                        generation,
+                                        entry_id,
+                                        track,
+                                        result,
+                                    },
+                                ));
+                            }
+                        });
+                        return;
+                    }
+                };
+                if self.browser.is_some() && !pending.keep_session {
+                    self.finish_session("next");
+                }
+                self.browser = None;
                 let outgoing_session =
-                    if pending.fade_sec > 0.0 && pending.playing && self.engine.is_playing() {
+                    if pending.fade_sec > 0.0 && pending.playing && self.transport_is_playing() {
                         self.sample_listening();
                         self.finish_fading_session("end");
                         Some(std::mem::take(&mut self.listening))
@@ -800,7 +1095,7 @@ impl Actor {
                     }
                     self.current_error = Some(error);
                     self.playing_intent = false;
-                    self.engine.stop();
+                    self.stop_output();
                     self.emit_state();
                     return;
                 }
@@ -815,7 +1110,7 @@ impl Actor {
                 self.load_attempts = 0;
                 self.preloaded = None;
                 self.preload_requested = None;
-                if self.engine.is_playing() && !self.engine.buffering() {
+                if self.transport_is_playing() && !self.transport_buffering() {
                     self.ensure_session();
                 }
                 self.persist_now();
@@ -830,7 +1125,7 @@ impl Actor {
                 }
                 self.current_error = Some(error.clone());
                 self.finish_session("error");
-                self.engine.stop();
+                self.stop_output();
                 self.active_entry_id = None;
                 self.active_track = None;
                 self.last_position = 0.0;
@@ -942,12 +1237,12 @@ impl Actor {
         }
         self.listening = ListeningAccumulator::default();
         self.fading_listening = None;
-        if self.engine.is_playing() && !self.engine.buffering() {
+        if self.transport_is_playing() && !self.transport_buffering() {
             if let Some(track) = self.active_track.as_ref() {
                 let _ = self.listening.begin(track, &self.active_reason, generation);
                 self.listening.sample(
-                    self.engine.position(),
-                    self.engine.duration(),
+                    self.transport_position(),
+                    self.transport_duration(),
                     self.persisted.settings.playback_rate as f64,
                     true,
                 );
@@ -962,8 +1257,11 @@ impl Actor {
             pending.playing = true;
         }
         if self.pending_start.is_none() {
-            if self.active_entry_id.is_some() && !self.engine.ended() {
-                self.engine.play();
+            if self.active_entry_id.is_some()
+                && self.transport_has_source()
+                && !self.transport_ended()
+            {
+                self.play_output();
                 if let Some(session) = self.fading_listening.as_mut() {
                     session.reanchor();
                 }
@@ -974,7 +1272,7 @@ impl Actor {
                 } else {
                     "manual"
                 };
-                let position = if self.engine.ended() {
+                let position = if self.transport_ended() {
                     0.0
                 } else {
                     self.last_position
@@ -992,7 +1290,7 @@ impl Actor {
         if let Some(pending) = self.pending_start.as_mut() {
             pending.playing = false;
         }
-        self.engine.pause();
+        self.pause_output();
         self.last_position = self.current_position();
         self.listening.reanchor();
         if let Some(session) = self.fading_listening.as_mut() {
@@ -1014,7 +1312,7 @@ impl Actor {
             self.request_current_prepare(position, true);
             return Ok(());
         }
-        match self.engine.seek(position) {
+        match self.seek_output(position) {
             Ok(()) => {}
             Err(_) => {
                 let Some(entry) = self.persisted.queue.current().cloned() else {
@@ -1052,7 +1350,7 @@ impl Actor {
             return;
         }
         self.sample_listening();
-        let playing = self.playing_intent || self.engine.is_playing();
+        let playing = self.playing_intent || self.transport_is_playing();
         self.finish_session(if reason == "end" { "end" } else { "next" });
         if let Some(entry) = self.persisted.queue.next(self.persisted.settings.repeat) {
             self.load_attempts = 0;
@@ -1069,7 +1367,7 @@ impl Actor {
             }
         } else {
             self.playing_intent = false;
-            self.engine.pause();
+            self.pause_output();
             self.last_position = self.current_position();
             if allow_continuation && reason == "end" {
                 self.request_continuation();
@@ -1079,9 +1377,9 @@ impl Actor {
 
     fn move_previous(&mut self) {
         self.sample_listening();
-        let playing = self.playing_intent || self.engine.is_playing();
+        let playing = self.playing_intent || self.transport_is_playing();
         self.finish_session("previous");
-        if self.engine.position() > 3.0 {
+        if self.transport_position() > 3.0 {
             if let Some(entry) = self.persisted.queue.current().cloned() {
                 if playing {
                     self.request_start(entry, 0.0, true, "queue", 0.0, false);
@@ -1117,7 +1415,7 @@ impl Actor {
     fn stop_output_keep_queue(&mut self) {
         self.bump_generation();
         self.pending_start = None;
-        self.engine.stop();
+        self.stop_output();
         self.active_entry_id = None;
         self.active_track = None;
         self.playing_intent = false;
@@ -1140,7 +1438,7 @@ impl Actor {
         self.pending_start = None;
         self.preloaded = None;
         self.preload_requested = None;
-        self.engine.stop();
+        self.stop_output();
         self.active_entry_id = None;
         self.active_track = None;
         self.playing_intent = false;
@@ -1186,8 +1484,18 @@ impl Actor {
         }
         self.sample_listening();
         self.sample_fading_listening();
+        if self.browser.is_some() {
+            if !keep_session {
+                self.finish_session("next");
+            }
+            self.last_position = self.transport_position();
+            self.browser = None;
+        }
+        // Invalidate an older asynchronous Widget startup immediately. Its
+        // paused result must not delay or replace this new selection.
+        crate::soundcloud_browser::close_all(&self.app);
         let generation = self.bump_generation();
-        self.engine.pause();
+        self.pause_output();
         self.playing_intent = playing;
         let pending = PendingStart {
             generation,
@@ -1317,7 +1625,7 @@ impl Actor {
         else {
             return false;
         };
-        let position = self.engine.position();
+        let position = self.transport_position();
         let reason = self.active_reason.clone();
         self.request_start_with_fallback(
             entry,
@@ -1394,14 +1702,15 @@ impl Actor {
 
     fn maybe_crossfade(&mut self) {
         let fade = self.persisted.settings.crossfade_sec;
-        if fade <= 0.0
+        if self.browser.is_some()
+            || fade <= 0.0
             || self.persisted.settings.repeat == RepeatMode::One
             || !self.playing_intent
             || self.pending_start.is_some()
         {
             return;
         }
-        let Some(duration) = self.engine.duration().filter(|value| *value > 0.0) else {
+        let Some(duration) = self.transport_duration().filter(|value| *value > 0.0) else {
             return;
         };
         let Some(entry) = self
@@ -1432,7 +1741,7 @@ impl Actor {
         if safe_fade < 0.2 {
             return;
         }
-        let remaining_wall = (duration - self.engine.position()) / playback_rate;
+        let remaining_wall = (duration - self.transport_position()) / playback_rate;
         if !remaining_wall.is_finite() || remaining_wall <= 0.0 || remaining_wall > safe_fade + 0.15
         {
             return;
@@ -1440,6 +1749,10 @@ impl Actor {
         let Some((id, prepared)) = self.preloaded.take() else {
             return;
         };
+        if matches!(prepared.transport, PreparedTransport::Browser(_)) {
+            self.preloaded = Some((id, prepared));
+            return;
+        }
         if id != entry.id {
             return;
         }
@@ -1614,6 +1927,14 @@ impl Actor {
         self.persisted.settings = settings;
         self.engine
             .configure(output_settings(&self.persisted.settings));
+        if let Some(browser) = self.browser.as_ref() {
+            if let Err(error) = browser
+                .handle
+                .configure(self.browser_settings(self.active_track.as_ref()))
+            {
+                self.current_error = Some(error);
+            }
+        }
         if let Some(track) = self.active_track.as_ref() {
             self.engine.set_track_gain(
                 TrackPayload(track.clone()).gain_db(self.persisted.settings.normalize),
@@ -1623,10 +1944,11 @@ impl Actor {
     }
 
     fn sample_listening(&mut self) {
-        let playing =
-            self.engine.is_playing() && !self.engine.buffering() && self.pending_start.is_none();
+        let playing = self.transport_is_playing()
+            && !self.transport_buffering()
+            && self.pending_start.is_none();
         let position = if self.active_entry_id.is_some() {
-            self.engine.position()
+            self.transport_position()
         } else {
             self.last_position
         };
@@ -1636,7 +1958,7 @@ impl Actor {
         }
         self.listening.sample(
             position,
-            self.engine.duration(),
+            self.transport_duration(),
             self.persisted.settings.playback_rate as f64,
             playing,
         );
@@ -1693,16 +2015,17 @@ impl Actor {
     }
 
     fn finish_session(&mut self, reason: &str) {
-        let playing =
-            self.engine.is_playing() && !self.engine.buffering() && self.pending_start.is_none();
+        let playing = self.transport_is_playing()
+            && !self.transport_buffering()
+            && self.pending_start.is_none();
         let position = if self.active_entry_id.is_some() {
-            self.engine.position()
+            self.transport_position()
         } else {
             self.last_position
         };
         self.listening.sample(
             position,
-            self.engine.duration(),
+            self.transport_duration(),
             self.persisted.settings.playback_rate as f64,
             playing,
         );
@@ -1732,7 +2055,7 @@ impl Actor {
                 .map(|pending| pending.position)
                 .unwrap_or(self.last_position)
         } else if self.active_entry_id.is_some() {
-            self.engine.position()
+            self.transport_position()
         } else {
             self.last_position
         }
@@ -1749,7 +2072,7 @@ impl Actor {
         let duration = track
             .as_ref()
             .and_then(|track| TrackPayload(track.clone()).duration())
-            .or_else(|| self.engine.duration().filter(|value| *value > 0.0))
+            .or_else(|| self.transport_duration().filter(|value| *value > 0.0))
             .unwrap_or(0.0);
         let snapshot = PlayerSnapshot {
             current_track: track,
@@ -1759,7 +2082,7 @@ impl Actor {
                 .pending_start
                 .as_ref()
                 .map(|pending| pending.playing)
-                .unwrap_or(self.playing_intent || self.engine.is_playing()),
+                .unwrap_or(self.playing_intent || self.transport_is_playing()),
             position: self.current_position(),
             duration,
             volume: self.persisted.settings.volume,
@@ -1768,7 +2091,7 @@ impl Actor {
             repeat: self.persisted.settings.repeat,
             shuffle: self.persisted.settings.shuffle,
             buffer_pct: None,
-            buffering: !preparing && self.engine.buffering(),
+            buffering: !preparing && self.transport_buffering(),
             preparing,
             version: self.version,
             error: self.current_error.clone(),
@@ -1795,20 +2118,24 @@ impl Actor {
             .current()
             .and_then(|entry| TrackPayload(entry.track.clone()).duration());
         let duration = track_duration
-            .or_else(|| self.engine.duration().filter(|value| *value > 0.0))
+            .or_else(|| self.transport_duration().filter(|value| *value > 0.0))
             .unwrap_or(0.0);
         let payload = json!({
             "position": self.current_position(),
             "duration": duration,
-            "isPlaying": self.pending_start.as_ref().map(|pending| pending.playing).unwrap_or(self.playing_intent || self.engine.is_playing()),
-            "buffering": self.pending_start.is_none() && self.engine.buffering(),
+            "isPlaying": self.pending_start.as_ref().map(|pending| pending.playing).unwrap_or(self.playing_intent || self.transport_is_playing()),
+            "buffering": self.pending_start.is_none() && self.transport_buffering(),
             "version": self.version,
         });
         let _ = self.app.emit(CLOCK_EVENT, payload);
     }
 
     fn emit_spectrum(&self) {
-        let bins = self.engine.spectrum();
+        let bins: Vec<f64> = self
+            .browser
+            .as_ref()
+            .map(|browser| browser.bins.clone())
+            .unwrap_or_else(|| self.engine.spectrum().into_iter().map(f64::from).collect());
         if bins.len() != 64 {
             return;
         }
@@ -1830,7 +2157,7 @@ impl Actor {
         };
         object.insert(
             "position".into(),
-            json!(finite_nonnegative(self.engine.position())),
+            json!(finite_nonnegative(self.transport_position())),
         );
         if let Err(error) = self.app.emit(ANALYSIS_EVENT, payload) {
             eprintln!("[tempo native audio] analysis event failed: {error}");
@@ -1840,6 +2167,14 @@ impl Actor {
     fn update_spectrum_capture(&mut self) {
         self.engine
             .set_spectrum_enabled((self.spectrum_enabled || self.analysis_enabled) && self.visible);
+        if let Some(browser) = self.browser.as_ref() {
+            if let Err(error) = browser
+                .handle
+                .configure(self.browser_settings(self.active_track.as_ref()))
+            {
+                self.current_error = Some(error);
+            }
+        }
     }
 
     fn persist_now(&mut self) {

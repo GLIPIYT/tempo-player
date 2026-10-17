@@ -49,6 +49,8 @@ pub struct ScPlayback {
     pub url: Option<String>,
     pub cached_path: Option<String>,
     pub format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_duration: Option<f64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -126,6 +128,7 @@ pub fn enforce_cache_limit(db: &Db, dir: &Path, limit: i64) {
 /// unflags rows whose files disappeared, then applies the cache limit.
 pub fn startup_maintenance(db: &Db, default_root: &Path, covers_dir: &Path) {
     let dir = cache_dir(db, default_root);
+    crate::soundcloud_recording::cleanup_abandoned(&dir);
     let _ = db.reconcile_sc_cache(&dir, covers_dir);
     enforce_cache_limit(db, &dir, cache_limit(db));
 }
@@ -243,7 +246,22 @@ pub async fn get_playback(
         resolve_cache_stream(app.as_ref(), track_id, permalink_url).await
     };
     let info = match stream_info {
-        Ok(info) => info,
+        Ok(crate::soundcloud::TrackStream::Clear(info)) => info,
+        Ok(crate::soundcloud::TrackStream::Protected { duration }) => {
+            // Playback must not wait for a full browser recording, even when
+            // cache-before-play is enabled. The common per-ID lock deduplicates
+            // this job with likes, playlist imports and recommendation caching.
+            if let Some(cache_app) = app.clone() {
+                let track_id = track_id.to_string();
+                let permalink = permalink_url.map(str::to_string);
+                tokio::spawn(async move {
+                    let _ = ensure_cached_file(db, dir, covers_dir, &track_id,
+                        permalink.as_deref(), CacheResolution::Protected(duration), options,
+                        Some(cache_app.clone()), None, true, Some(cache_app)).await;
+                });
+            }
+            return Ok(ScPlayback { url: None, cached_path: None, format: None, browser_duration: Some(duration) });
+        }
         Err(stream_error) => {
             let cached = ensure_cached_file(
                 db.clone(),
@@ -303,6 +321,7 @@ pub async fn get_playback(
                     url: Some(info.url),
                     cached_path: None,
                     format,
+                    browser_duration: None,
                 });
             }
         }
@@ -339,6 +358,7 @@ pub async fn get_playback(
         url: Some(remote_url),
         cached_path: None,
         format,
+        browser_duration: None,
     })
 }
 
@@ -346,8 +366,8 @@ async fn resolve_cache_stream(
     app: Option<&AppHandle>,
     track_id: &str,
     permalink_url: Option<&str>,
-) -> Result<crate::soundcloud::StreamInfo, String> {
-    match crate::soundcloud::get_stream_info(track_id).await {
+) -> Result<crate::soundcloud::TrackStream, String> {
+    match crate::soundcloud::get_track_stream(track_id).await {
         Ok(info) => Ok(info),
         Err(native_error) => match resolve_browser_stream(app, track_id, permalink_url).await {
             Ok(info) => Ok(info),
@@ -362,11 +382,11 @@ async fn resolve_browser_stream(
     app: Option<&AppHandle>,
     track_id: &str,
     permalink_url: Option<&str>,
-) -> Result<crate::soundcloud::StreamInfo, String> {
+) -> Result<crate::soundcloud::TrackStream, String> {
     let app = app.ok_or_else(|| {
         "SoundCloud browser stream fallback requires the application context".to_string()
     })?;
-    crate::soundcloud_web::resolve_stream(app.clone(), track_id, permalink_url).await
+    crate::soundcloud_web::resolve_track(app.clone(), track_id, permalink_url).await
 }
 
 fn local_playback(path: &Path) -> ScPlayback {
@@ -374,6 +394,7 @@ fn local_playback(path: &Path) -> ScPlayback {
         url: None,
         cached_path: Some(path.to_string_lossy().to_string()),
         format: None,
+        browser_duration: None,
     }
 }
 
@@ -442,6 +463,7 @@ enum CacheResolution {
     Resolve,
     Known(crate::soundcloud::StreamInfo),
     YtDlpOnly(String),
+    Protected(f64),
 }
 
 /// Downloads one ID once even when playback and queue prefetch reach it at the
@@ -534,10 +556,14 @@ async fn ensure_cached_file_locked(
     let mut attempted_urls = HashSet::new();
     let mut first_info = None;
     let try_browser_after_stream = match resolution {
-        CacheResolution::Resolve => match crate::soundcloud::get_stream_info(track_id).await {
-            Ok(info) => {
+        CacheResolution::Resolve => match crate::soundcloud::get_track_stream(track_id).await {
+            Ok(crate::soundcloud::TrackStream::Clear(info)) => {
                 first_info = Some(info);
                 true
+            }
+            Ok(crate::soundcloud::TrackStream::Protected { duration }) => {
+                return record_protected_cache(&db, &dir, &covers_dir, track_id, duration,
+                    library_track, notify_library, app.as_ref(), progress_app).await;
             }
             Err(error) => {
                 errors.push(error);
@@ -551,6 +577,10 @@ async fn ensure_cached_file_locked(
         CacheResolution::YtDlpOnly(error) => {
             errors.push(error);
             false
+        }
+        CacheResolution::Protected(duration) => {
+            return record_protected_cache(&db, &dir, &covers_dir, track_id, duration,
+                library_track, notify_library, app.as_ref(), progress_app).await;
         }
     };
 
@@ -577,10 +607,14 @@ async fn ensure_cached_file_locked(
 
     if try_browser_after_stream {
         if let Some(app_handle) = app.as_ref() {
-            match crate::soundcloud_web::resolve_stream(app_handle.clone(), track_id, permalink_url)
+            match crate::soundcloud_web::resolve_track(app_handle.clone(), track_id, permalink_url)
                 .await
             {
-                Ok(info) if attempted_urls.insert(info.url.clone()) => {
+                Ok(crate::soundcloud::TrackStream::Protected { duration }) => {
+                    return record_protected_cache(&db, &dir, &covers_dir, track_id, duration,
+                        library_track, notify_library, app.as_ref(), progress_app).await;
+                }
+                Ok(crate::soundcloud::TrackStream::Clear(info)) if attempted_urls.insert(info.url.clone()) => {
                     match cache_download::download_stream(
                         &info,
                         &dir,
@@ -632,6 +666,43 @@ async fn ensure_cached_file_locked(
     } else {
         errors.join("; ")
     })
+}
+
+async fn record_protected_cache(
+    db: &Db, dir: &Path, covers_dir: &Path, track_id: &str, duration: f64,
+    library_track: Option<&crate::soundcloud::ScTrack>, notify_library: bool,
+    app: Option<&AppHandle>, progress_app: Option<&AppHandle>,
+) -> Result<PathBuf, String> {
+    let app = app.ok_or("SoundCloud browser recording requires the running player")?;
+    let session = crate::soundcloud_session::status(app.clone()).await?;
+    if !session.browser_available {
+        return Err("Sign in to SoundCloud in Settings → About to cache this track".into());
+    }
+    let stage = cache_download::unique_stage_path(dir, track_id, "opus.part");
+    let progress_app = progress_app.cloned();
+    let progress_id = track_id.to_owned();
+    let progress = Arc::new(move |fraction: f64| {
+        if let Some(app) = progress_app.as_ref() {
+            let _ = app.emit(CACHE_TRACK_PROGRESS_EVENT, serde_json::json!({
+                "trackId": progress_id, "downloadedBytes": 0, "totalBytes": 0,
+                "state": "running", "progress": fraction.clamp(0.0, 0.99),
+                "phase": if fraction >= 0.9 { "finalizing" } else { "recording" }
+            }));
+        }
+    });
+    let result = crate::soundcloud_recording::capture(app.clone(), track_id, duration, &stage,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)), progress).await;
+    if let Err(error) = result {
+        let _ = tokio::fs::remove_file(&stage).await;
+        return Err(error);
+    }
+    let final_path = dir.join(format!("{track_id}.opus"));
+    if let Err(error) = cache_download::promote_staged_file(&stage, &final_path) {
+        let _ = tokio::fs::remove_file(&stage).await;
+        return Err(error);
+    }
+    finalize_completed_download(db, dir, covers_dir, track_id, final_path,
+        library_track, notify_library, Some(app))
 }
 
 fn finalize_completed_download(

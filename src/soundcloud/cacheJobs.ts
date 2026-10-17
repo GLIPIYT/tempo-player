@@ -50,6 +50,8 @@ export interface TrackCacheProgress {
   trackId: string
   downloadedBytes: number
   totalBytes: number
+  /** Coverage fraction for browser recordings; byte fields remain downloads only. */
+  progress?: number
   state: 'running' | 'done' | 'failed'
   error?: string
   exiting: boolean
@@ -85,6 +87,7 @@ interface TrackProgressPayload {
   trackId: string
   downloadedBytes: number
   totalBytes: number
+  progress?: number
   state: TrackCacheProgress['state']
   error?: string
 }

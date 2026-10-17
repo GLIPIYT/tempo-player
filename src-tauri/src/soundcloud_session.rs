@@ -5,13 +5,14 @@ use std::time::{Duration, Instant};
 use reqwest::header::{HeaderValue, AUTHORIZATION};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 include!(concat!(env!("OUT_DIR"), "/soundcloud_session.rs"));
 
 const TOKEN_ENV: &str = "TEMPO_SOUNDCLOUD_OAUTH_TOKEN";
 const LOGIN_WINDOW_LABEL: &str = "sc-session-login";
 const LOGIN_URL: &str = "https://soundcloud.com";
+pub const SESSION_CHANGED_EVENT: &str = "soundcloud-session-changed";
 const VALIDATION_TIMEOUT: Duration = Duration::from_secs(12);
 const VALID_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const UNCERTAIN_CACHE_TTL: Duration = Duration::from_secs(30);
@@ -27,12 +28,24 @@ pub enum BuiltinState {
     Expired,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PersonalState {
+    Missing,
+    Unchecked,
+    Valid,
+    Expired,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStatus {
     pub builtin_configured: bool,
     pub builtin_state: BuiltinState,
+    pub personal_state: PersonalState,
     pub personal_available: bool,
+    /// A validated cookie actually present in the shared browser profile.
+    pub browser_available: bool,
     pub login_open: bool,
 }
 
@@ -164,6 +177,15 @@ fn builtin_state(token: Option<&str>, validation: Option<TokenValidation>) -> Bu
     }
 }
 
+fn personal_state(token: Option<&str>, validation: Option<TokenValidation>) -> PersonalState {
+    match (token, validation) {
+        (None, _) => PersonalState::Missing,
+        (Some(_), Some(TokenValidation::Valid)) => PersonalState::Valid,
+        (Some(_), Some(TokenValidation::Expired)) => PersonalState::Expired,
+        (Some(_), Some(TokenValidation::Unchecked) | None) => PersonalState::Unchecked,
+    }
+}
+
 fn personal_token_from_main(app: &AppHandle) -> Result<Option<String>, String> {
     let Some(window) = app.get_webview_window("main") else {
         return Ok(None);
@@ -216,13 +238,96 @@ pub async fn status(app: AppHandle) -> Result<SessionStatus, String> {
     };
     let (personal_validation, builtin_validation) =
         tokio::join!(personal_validation, builtin_validation);
+    let browser_available = personal_validation == Some(TokenValidation::Valid);
+    let browser_uses_builtin = personal_token
+        .as_deref()
+        .zip(builtin_token.as_deref())
+        .is_some_and(|(cookie, builtin)| token_fingerprint(cookie) == token_fingerprint(builtin));
 
     Ok(SessionStatus {
         builtin_configured: builtin_token.is_some(),
         builtin_state: builtin_state(builtin_token.as_deref(), builtin_validation),
-        personal_available: personal_validation == Some(TokenValidation::Valid),
+        personal_state: if browser_uses_builtin {
+            PersonalState::Missing
+        } else {
+            personal_state(personal_token.as_deref(), personal_validation)
+        },
+        personal_available: browser_available && !browser_uses_builtin,
+        browser_available,
         login_open: app.get_webview_window(LOGIN_WINDOW_LABEL).is_some(),
     })
+}
+
+fn is_soundcloud_cookie(cookie: &tauri::webview::Cookie<'_>) -> bool {
+    cookie.domain().is_some_and(|domain| {
+        let domain = domain.trim_start_matches('.');
+        domain.eq_ignore_ascii_case("soundcloud.com")
+            || domain.to_ascii_lowercase().ends_with(".soundcloud.com")
+    })
+}
+
+fn clear_soundcloud_cookies(app: &AppHandle) -> Result<(), String> {
+    let Some(main) = app.get_webview_window("main") else {
+        return Err("Could not access the SoundCloud login session.".to_string());
+    };
+    let cookies = main
+        .cookies()
+        .map_err(|_| "Could not clear the SoundCloud login session.".to_string())?;
+
+    for cookie in cookies.into_iter().filter(is_soundcloud_cookie) {
+        main.delete_cookie(cookie)
+            .map_err(|_| "Could not clear the SoundCloud login session.".to_string())?;
+    }
+
+    let remaining = main
+        .cookies()
+        .map_err(|_| "Could not verify the SoundCloud logout.".to_string())?;
+    if remaining.iter().any(is_soundcloud_cookie) {
+        return Err("Could not clear the SoundCloud login session.".to_string());
+    }
+    Ok(())
+}
+
+/// Signs out of a personal SoundCloud cookie session without affecting the built-in session.
+pub async fn logout(app: AppHandle) -> Result<(), String> {
+    let cookie = personal_token(app.clone()).await?;
+    if cookie.is_none() {
+        return Err("No personal SoundCloud session is signed in.".to_string());
+    }
+    if cookie
+        .as_deref()
+        .zip(configured_builtin_token().as_deref())
+        .is_some_and(|(cookie, builtin)| token_fingerprint(cookie) == token_fingerprint(builtin))
+    {
+        return Err("The built-in SoundCloud session cannot be signed out.".into());
+    }
+
+    // Stop work and close every SoundCloud page before removing its shared cookies so no
+    // live page can continue using an already-authenticated JavaScript session.
+    crate::soundcloud_recording::cancel_all(&app);
+    crate::soundcloud_browser::close_all(&app);
+    crate::soundcloud_web::close_all(&app);
+    if let Some(login) = app.get_webview_window(LOGIN_WINDOW_LABEL) {
+        login
+            .close()
+            .map_err(|_| "Could not close the SoundCloud login window.".to_string())?;
+    }
+
+    // WebView2 cookie access waits for the UI thread, so keep both enumeration and deletion
+    // off the async executor and verify that no SoundCloud-domain cookies remain.
+    let app_for_clear = app.clone();
+    let clear_result =
+        tauri::async_runtime::spawn_blocking(move || clear_soundcloud_cookies(&app_for_clear))
+            .await
+            .unwrap_or_else(|_| Err("Could not clear the SoundCloud login session.".to_string()));
+
+    validation_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
+    // The unit payload is intentionally credential-free; listeners refresh the status.
+    let _ = app.emit(SESSION_CHANGED_EVENT, ());
+    clear_result
 }
 
 fn is_soundcloud_url(url: &tauri::Url) -> bool {

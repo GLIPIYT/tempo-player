@@ -49,7 +49,13 @@
     const track = (!authToken && hydratedTrack) || await request(metadataUrl.href, 'track metadata');
     if (String(track.id) !== trackId) throw new Error('track metadata mismatch');
     if (track.policy === 'BLOCK') throw new Error('track unavailable in this browser session');
-    if (track.policy === 'SNIP') throw new Error('only a preview is available');
+    const protectedOnly = (track.media?.transcodings || []).some(variant => !variant.snipped
+      && /encrypted|^ctr-|^cbc-/.test(String(variant.format?.protocol || '') + ' ' + String(variant.preset || '')));
+    const protectedDuration = Number(track.full_duration || track.duration) / 1000;
+    if (track.policy === 'SNIP') {
+      if (protectedOnly && Number.isFinite(protectedDuration) && protectedDuration > 0) return { protectedDuration };
+      throw new Error('only a preview is available');
+    }
     const variants = (track.media?.transcodings || []).map(variant => {
       const protocol = String(variant.format?.protocol || '').toLowerCase();
       const preset = String(variant.preset || '').toLowerCase();
@@ -62,7 +68,10 @@
         : protocol.includes('hls') || endpoint.pathname.includes('/hls') ? 'hls' : null;
       return format ? { endpoint, format } : null;
     }).filter(Boolean).sort((a, b) => Number(a.format === 'hls') - Number(b.format === 'hls'));
-    if (!variants.length) throw new Error('no full unencrypted audio variant is available');
+    if (!variants.length) {
+      if (protectedOnly && Number.isFinite(protectedDuration) && protectedDuration > 0) return { protectedDuration };
+      throw new Error('no full unencrypted audio variant is available');
+    }
     let lastError = 'audio variants unavailable';
     for (const { endpoint, format } of variants) {
       endpoint.searchParams.set('client_id', clientId);

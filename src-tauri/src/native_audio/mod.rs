@@ -26,6 +26,7 @@ pub(crate) enum ActorMessage {
         reply: Sender<Result<(), String>>,
     },
     Prepared(actor::PreparedMessage),
+    BrowserPrepared(actor::BrowserPreparedMessage),
     Preloaded(actor::PreloadMessage),
     ReservoirReady(actor::ReservoirMessage),
     GenerationChanged(i64),
@@ -148,6 +149,7 @@ pub fn transport<R: Runtime>(app: &AppHandle<R>, op: &str) {
 /// Finishes the active listening session, flushes both native stores, stops
 /// output/helper resources, and waits for the actor acknowledgement.
 pub fn shutdown<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    crate::soundcloud_recording::cancel_pending();
     let Some(handle) = app.try_state::<NativeAudioHandle>() else {
         return Ok(());
     };
@@ -159,9 +161,11 @@ pub fn shutdown<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     sender
         .send(ActorMessage::Shutdown(reply))
         .map_err(|error| error.to_string())?;
-    result
+    let shutdown_result = result
         .recv_timeout(Duration::from_secs(2))
-        .map_err(|error| format!("native audio shutdown timed out: {error}"))?
+        .map_err(|error| format!("native audio shutdown timed out: {error}"))?;
+    crate::soundcloud_recording::wait_for_idle(Duration::from_secs(1));
+    shutdown_result
 }
 
 /// Synchronous form for native OS integration threads. Tauri command handlers

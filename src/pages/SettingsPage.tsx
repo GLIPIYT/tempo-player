@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { convertFileSrc } from '@tauri-apps/api/core'
@@ -12,13 +13,19 @@ import {
   HardDrive,
   Info,
   LibraryBig,
+  LogOut,
   Palette,
   Plus,
   RefreshCw,
   RotateCcw,
   Trash2,
 } from 'lucide-react'
-import { api, type SoundCloudSessionStatus } from '../api/client'
+import {
+  api,
+  SOUND_CLOUD_SESSION_CHANGED_EVENT,
+  type SoundCloudCaptureSettings,
+  type SoundCloudSessionStatus,
+} from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useScanProgress } from '../hooks/useScanProgress'
@@ -219,6 +226,7 @@ function CommitSlider(props: {
   value: number
   format: (v: number) => string
   onCommit: (v: number) => void
+  disabled?: boolean
 }) {
   const t = useT()
   const [draft, setDraft] = useState<number | null>(null)
@@ -288,6 +296,7 @@ function CommitSlider(props: {
           max={props.max}
           step={props.step}
           value={shown}
+          disabled={props.disabled}
           onChange={onChange}
           onKeyDown={onKeyDown}
           onBlur={commit}
@@ -816,21 +825,28 @@ function UpdateCard() {
   )
 }
 
-function SoundCloudSessionCard() {
-  const t = useT()
+function useSoundCloudSessionStatus() {
   const [status, setStatus] = useState<SoundCloudSessionStatus | null>(null)
-  const [loginPending, setLoginPending] = useState(false)
   const mounted = useRef(false)
   const refreshing = useRef(false)
+  const refreshAgain = useRef(false)
 
   const refreshStatus = useCallback(async () => {
-    if (refreshing.current) return
+    if (refreshing.current) {
+      refreshAgain.current = true
+      return
+    }
     refreshing.current = true
     try {
-      const next = await api.scSessionStatus()
-      if (mounted.current) setStatus(next)
-    } catch {
-      // Status checks are opportunistic; keep About quiet when the command is unavailable.
+      do {
+        refreshAgain.current = false
+        try {
+          const next = await api.scSessionStatus()
+          if (mounted.current) setStatus(next)
+        } catch {
+          // Keep the last known state when a status check is temporarily unavailable.
+        }
+      } while (refreshAgain.current)
     } finally {
       refreshing.current = false
     }
@@ -838,12 +854,27 @@ function SoundCloudSessionCard() {
 
   useEffect(() => {
     mounted.current = true
+    let disposed = false
+    let unlisten: UnlistenFn | null = null
     const onFocus = () => void refreshStatus()
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void refreshStatus()
+    }
     window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    void listen(SOUND_CLOUD_SESSION_CHANGED_EVENT, () => void refreshStatus())
+      .then((stop) => {
+        if (disposed) stop()
+        else unlisten = stop
+      })
+      .catch(() => undefined)
     void refreshStatus()
     return () => {
+      disposed = true
       mounted.current = false
+      unlisten?.()
       window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [refreshStatus])
 
@@ -852,6 +883,27 @@ function SoundCloudSessionCard() {
     const timer = window.setInterval(() => void refreshStatus(), 1500)
     return () => window.clearInterval(timer)
   }, [refreshStatus, status?.loginOpen])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshStatus()
+    }, 30_000)
+    return () => window.clearInterval(timer)
+  }, [refreshStatus])
+
+  return { status, refreshStatus }
+}
+
+function SoundCloudSessionCard({
+  status,
+  refreshStatus,
+}: {
+  status: SoundCloudSessionStatus | null
+  refreshStatus: () => Promise<void>
+}) {
+  const t = useT()
+  const [loginPending, setLoginPending] = useState(false)
+  const [logoutPending, setLogoutPending] = useState(false)
 
   const signIn = async () => {
     setLoginPending(true)
@@ -866,30 +918,78 @@ function SoundCloudSessionCard() {
     }
   }
 
-  if (!status) return null
-  if (status.personalAvailable) {
-    return (
-      <Card title={t('SoundCloud')}>
-        <div className="set-note">{t('Signed in to SoundCloud')}</div>
-      </Card>
-    )
+  const signOut = async () => {
+    setLogoutPending(true)
+    try {
+      await api.scSessionLogout()
+      await refreshStatus()
+    } catch (error) {
+      const details = error instanceof Error && error.message ? `: ${error.message}` : ''
+      toast.show(`${t('Could not sign out of SoundCloud')}${details}`, 'error', 6000)
+    } finally {
+      setLogoutPending(false)
+    }
   }
-  const expired = status.builtinConfigured && status.builtinState === 'expired'
-  const personalSignInAvailable = !status.builtinConfigured
-  if (!expired && !personalSignInAvailable) return null
+
+  if (!status) return null
+
+  const personal = status.personalState
+  const builtin = status.builtinState
+  const personalPresent = personal !== 'missing'
+  const personalSignInAvailable = personalPresent || !status.browserAvailable
+  let message: string
+  if (personal === 'valid') {
+    message = t('Signed in to SoundCloud')
+  } else if (personal === 'expired') {
+    message = t('Your SoundCloud login expired. Sign in again to use account-only tracks.')
+  } else if (personal === 'unchecked') {
+    message = t('Could not verify the SoundCloud login. Check your connection and try again.')
+  } else if (status.browserAvailable && builtin === 'valid') {
+    message = t('Using the built-in SoundCloud session.')
+  } else if (builtin === 'expired') {
+    message = t('The built-in SoundCloud session expired. Sign in to continue.')
+  } else if (builtin === 'unchecked') {
+    message = t('Could not verify the built-in SoundCloud session. Check your connection and try again.')
+  } else {
+    message = t('SoundCloud is not signed in. Sign in to play and cache account-only tracks. Public tracks remain available.')
+  }
 
   return (
     <Card title={t('SoundCloud')}>
-      <div className={expired ? 'error-line' : 'set-note'}>
-        {expired
-          ? t('The built-in SoundCloud session expired. Sign in to continue.')
-          : t('Sign in to play tracks that require an account.')}
+      <div
+        role="status"
+        aria-live="polite"
+        className={status.browserAvailable ? 'set-note' : undefined}
+        style={status.browserAvailable
+          ? undefined
+          : {
+              border: '1px solid rgba(202, 157, 28, 0.8)',
+              background: 'rgba(202, 157, 28, 0.08)',
+              borderRadius: 8,
+              padding: '10px 12px',
+              color: 'var(--text)',
+              fontSize: 12,
+              fontWeight: 600,
+              lineHeight: 1.5,
+            }}
+      >
+        {message}
       </div>
-      <div className="set-actions">
-        <button className="btn" onClick={() => void signIn()} disabled={loginPending || status.loginOpen}>
-          {t('Sign in to SoundCloud')}
-        </button>
-      </div>
+      {personalSignInAvailable && personal !== 'valid' ? (
+        <div className="set-actions">
+          <button className="btn" onClick={() => void signIn()} disabled={loginPending || status.loginOpen || logoutPending}>
+            {t('Sign in to SoundCloud')}
+          </button>
+        </div>
+      ) : null}
+      {personalPresent ? (
+        <div className="set-actions">
+          <button className="btn" onClick={() => void signOut()} disabled={logoutPending || loginPending}>
+            <LogOut size={15} />
+            {t('Sign out of SoundCloud')}
+          </button>
+        </div>
+      ) : null}
     </Card>
   )
 }
@@ -966,6 +1066,7 @@ export default function SettingsPage() {
   const t = useT()
   const foldersApi = useFolders()
   const scan = useScanProgress()
+  const soundCloudSession = useSoundCloudSessionStatus()
 
   const settingsPageRef = useRef<HTMLDivElement>(null)
   const settingsContentRef = useRef<HTMLDivElement>(null)
@@ -975,8 +1076,45 @@ export default function SettingsPage() {
   const [sysFonts, setSysFonts] = useState<string[] | null>(null)
   const [fontBusy, setFontBusy] = useState(false)
   const [bgBusy, setBgBusy] = useState(false)
+  const [captureSettings, setCaptureSettings] = useState<SoundCloudCaptureSettings | null>(null)
+  const [captureLoading, setCaptureLoading] = useState(true)
+  const [captureLoadFailed, setCaptureLoadFailed] = useState(false)
+  const [captureSaving, setCaptureSaving] = useState(false)
+  const captureSavingRef = useRef(false)
   const activeCategory = NAV.find((item) => item.id === cat) ?? NAV[0]
   const ActiveCategoryIcon = activeCategory.Icon
+
+  const reloadCaptureSettings = useCallback(async () => {
+    setCaptureLoading(true)
+    setCaptureLoadFailed(false)
+    try {
+      setCaptureSettings(await api.scCaptureSettings())
+    } catch {
+      setCaptureLoadFailed(true)
+    } finally {
+      setCaptureLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void reloadCaptureSettings()
+  }, [reloadCaptureSettings])
+
+  const saveCaptureSettings = async (next: SoundCloudCaptureSettings) => {
+    if (captureSavingRef.current) return
+    captureSavingRef.current = true
+    setCaptureSaving(true)
+    try {
+      setCaptureSettings(await api.scSetCaptureSettings(next))
+    } catch {
+      toast.show(t('Could not save SoundCloud capture settings'), 'error')
+    } finally {
+      captureSavingRef.current = false
+      setCaptureSaving(false)
+    }
+  }
+
+  const hasUsableSoundCloudSession = soundCloudSession.status?.browserAvailable === true
 
   useEffect(() => {
     const page = settingsPageRef.current
@@ -1413,6 +1551,60 @@ export default function SettingsPage() {
                 <div className="set-note">{t('Closing the window keeps playback running in the tray.')}</div>
               </Card>
               <LoudnessCard />
+              {hasUsableSoundCloudSession ? (
+                <Card title={t('SoundCloud capture')}>
+                  {captureSettings ? (
+                    <>
+                      <div className="set-row">
+                        <span className="set-row-label">{t('Choose capture blocks automatically')}</span>
+                        <button
+                          className={captureSettings.automatic ? 'switch is-on' : 'switch'}
+                          role="switch"
+                          aria-checked={captureSettings.automatic}
+                          aria-label={t('Choose capture blocks automatically')}
+                          disabled={captureSaving}
+                          onClick={() => void saveCaptureSettings({
+                            ...captureSettings,
+                            automatic: !captureSettings.automatic,
+                          })}
+                        />
+                      </div>
+                      {captureSettings.automatic ? (
+                        <div className="set-note">
+                          {t('Automatic mode selects 1–8 blocks from current CPU load and available memory, while leaving resources for other apps.')}
+                        </div>
+                      ) : (
+                        <CommitSlider
+                          label={t('Concurrent capture blocks')}
+                          min={1}
+                          max={12}
+                          step={1}
+                          value={captureSettings.blocks}
+                          format={(value) => String(value)}
+                          disabled={captureSaving}
+                          onCommit={(blocks) => void saveCaptureSettings({
+                            ...captureSettings,
+                            blocks,
+                          })}
+                        />
+                      )}
+                    </>
+                  ) : (
+                    <div className="set-actions">
+                      <span className="set-note">
+                        {captureLoadFailed
+                          ? t('Could not load SoundCloud capture settings')
+                          : t('Loading…')}
+                      </span>
+                      {captureLoadFailed ? (
+                        <button className="btn" onClick={() => void reloadCaptureSettings()} disabled={captureLoading}>
+                          {t('Retry')}
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
+                </Card>
+              ) : null}
             </>
           ) : null}
 
@@ -2025,7 +2217,10 @@ export default function SettingsPage() {
                 </div>
               </Card>
               <UpdateCard />
-              <SoundCloudSessionCard />
+              <SoundCloudSessionCard
+                status={soundCloudSession.status}
+                refreshStatus={soundCloudSession.refreshStatus}
+              />
             </>
           ) : null}
         </div>

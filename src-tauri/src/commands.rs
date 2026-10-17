@@ -1491,6 +1491,23 @@ pub async fn sc_session_login(app: AppHandle) -> Result<(), String> {
         .await.map_err(|_| "SoundCloud sign-in window could not start".to_string())?
 }
 
+#[tauri::command]
+pub async fn sc_session_logout(app: AppHandle) -> Result<(), String> {
+    crate::soundcloud_session::logout(app).await
+}
+
+#[tauri::command]
+pub fn sc_capture_settings(state: State<'_, AppState>) -> crate::soundcloud_capture_policy::CaptureSettings {
+    crate::soundcloud_capture_policy::settings(&state.db)
+}
+
+#[tauri::command]
+pub fn sc_set_capture_settings(
+    state: State<'_, AppState>, settings: crate::soundcloud_capture_policy::CaptureSettings,
+) -> Result<crate::soundcloud_capture_policy::CaptureSettings, String> {
+    crate::soundcloud_capture_policy::set_settings(&state.db, settings)
+}
+
 /// Returns which requested SoundCloud IDs already exist in the local cache.
 /// This check is cache-only and never contacts SoundCloud or starts a download.
 #[tauri::command]

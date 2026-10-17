@@ -1,12 +1,12 @@
 # SoundCloud browser playback and Opus cache
 
-Date: 17 October 2026. Status: written design for user review; product integration has not started.
+Date: 17 October 2026. Status: implementation authorized after playback, recording, block-count experiments and the user's settings requirements.
 
 ## Goal and agreed choices
 
 Play SoundCloud tracks that expose only protected streams through the installed Windows WebView2 runtime, while keeping Tempo's queue, repeat, shuffle, lyrics and controls. Cache these tracks as ordinary local audio files when the browser exposes the authorized playback signal to Web Audio.
 
-The user selected **Opus, 192 kbit/s VBR** for the resulting files. This makes a new lossy encoding of browser-rendered audio. The first complete copy takes approximately the track's duration, plus startup and finalization. Starting playback must not wait for this recording, including when “cache before playback” is enabled.
+The user selected **Opus, 192 kbit/s VBR** for the resulting files. This makes a new lossy encoding of browser-rendered audio. Split a first copy into concurrent normal-speed recording blocks with overlapping boundaries, then align and encode once. Starting playback must not wait for recording, including when “cache before playback” is enabled.
 
 Reuse the existing SoundCloud login in About and the existing cache controls and progress indicators. Keep the browser transport hidden during playback. A sign-in window opens only through the existing explicit sign-in action. The built-in account remains unconfigured, as requested; do not package the diagnostic profile or its session.
 
@@ -62,7 +62,7 @@ All asynchronous commands and replies carry a transport generation and track ID.
 
 ### Browser transport
 
-Use a small local host page with one official SoundCloud iframe, controlled through Widget API. Install the frame-local enhancement script at document creation, before SoundCloud creates its media source. Reuse one foreground browser host across tracks and release it when no longer needed. Preserve the normal Wry autoplay configuration; do not ship a remote debugging port or depend on a synthetic user gesture.
+Use a small local host page with one official SoundCloud iframe, controlled through Widget API. Install the frame-local enhancement script at document creation, before SoundCloud creates its media source. Use one hidden foreground host for the active playback generation. Each generation has a unique native window label; delayed cleanup cannot close a newer host. Preserve the normal Wry autoplay configuration; do not ship a remote debugging port or depend on a synthetic user gesture.
 
 Map play, pause, seek and volume to the Widget controls. Read actual media position and buffering state rather than advancing a second unsynchronized clock. On seek, suppress older clock replies until the seek result is observed. The actor emits the existing state/clock events for both transports.
 
@@ -86,59 +86,50 @@ Check playback and audio-processing capabilities independently. If official play
 
 Capture SoundCloud's existing `MediaElementAudioSourceNode` at its creation. Do not create a second source for the same element. Insert the Tempo processing chain once, preserve SoundCloud's original downstream output, and dispose the old graph on replacement. Apply settings to every newly created source, not just the first track.
 
-- **Equalizer:** preserve the current native curve as the reference. Its ten bands are 32/64/125/250/500/1000/2000/4000/8000/16000 Hz, with low/high shelves at the ends. Share the native coefficient calculation/profile with the browser chain at its actual sample rate; do not reuse the different legacy frontend EQ curve. The saved ten gains retain their meaning.
+- **Equalizer:** preserve the current native curve as the reference. Its ten bands are 32/64/125/250/500/1000/2000/4000/8000/16000 Hz, with low/high shelves at the ends. Match the native band frequencies, filter types and Q values at the browser context sample rate; do not reuse the different legacy frontend EQ curve. The saved ten gains retain their meaning.
 - **Gain and clipping:** apply available track normalization gain and positive-EQ protection in the playback branch, with bounded validated values. Do not perform a new whole-track analysis before playback. Browser and native limiter algorithms may differ; verify headroom and disclose any audible mismatch rather than claiming bit-identical DSP.
 - **Rate/pitch:** map the existing 0.5–2.0 rate and preserve-pitch boolean to the actual media element. Apply them after source replacement as well as on user changes. There is no new independent semitone control.
 - **Spectrum:** sample the audible branch after processing; fold to the existing 64 finite bins in [0,1], with a maximum of 30 updates per second. Retain frontend smoothing and stale-frame behavior. Clear/decay correctly on pause and source replacement. Recording-only hosts never feed the foreground visualizer.
 
-## Real-time cache
+## Segmented cache: updated requirements
 
-### Scheduling and isolation
+The following requirements extend the original single-recorder design. The playback transport and completion guarantees still apply.
 
-Extend the shared SoundCloud cache entry point so likes, playlist import/copy, drag-and-drop, recommendations and explicit cache actions all reach the same per-track deduplication and completion logic. Metadata/artwork preparation and a queued job are not evidence of a complete audio cache.
+- One protected-track job uses a hidden host with independent official Widgets, `single_active=false`, at rate 1. Each adjacent pair shares 600 ms of audio. A start gate prevents upstream autoplay after seeking from advancing a prepared element before its recorder is armed. Verify actual start/end coverage for every block.
+- Stage bounded PCM WebM chunks per block on disk. Align only neighboring overlap windows using correlation, apply an 8 ms blend within shared audio, and encode the assembled full timeline to one Opus file. No reference recording is needed for assembly. Uncertain coverage/alignment fails the attempt rather than silently leaving a hole.
+- The last block ends on the matching official Widget FINISH; earlier blocks stop at their verified media boundary. Sum unique covered time, excluding overlaps, for progress; keep it below 100% until validation, promotion and metadata completion.
+- At the bottom of General, show “Automatically choose blocks”, enabled by default. Automatic selection is 1–8 based on current total CPU use and available memory, sampled away from the audio actor. When disabled, show an integer slider 1–12. Persist both the mode and manual value. Choose before starting a job; do not discard good audio if system load changes. Stop cleanly if memory falls below a hard safety reserve.
+- Show these controls only with a validated working personal or built-in session. A configured token or transient network failure alone does not establish browser capability. Settings and About share refreshed sanitized session state after login/logout/expiry.
+- Personal SoundCloud login exposes Sign out. Close personal browser playback/recorders and login views, remove only SoundCloud authentication state and invalidate validation results. Never remove library, settings or completed cache files. Built-in credentials have no sign-out action.
+- Without a usable session, About shows a yellow outlined warning with emphasized useful text. A transient unchecked session is described as unverified, not expired.
 
-Use one silent recording host and one active DRM recording job at a time. A job runs the track from zero, at rate 1 with pitch preservation enabled, independently of the user's playback position, volume and effects. Record a dry branch before Tempo effects and SoundCloud's user-volume controls. Silence the monitor branch without muting the recorded signal or suspending its AudioContext. Never record system loopback or microphone audio.
+The initial 139.186 s probe produced a joined three-block Opus recording; the user reported no audible joins. Later integration trials completed recording, joining, encoding and validation in 60.193 s with three blocks, 32.071 s with eight and 26.933 s with twelve. Each output decoded locally to 139.186479 s. Foreground playback continued during capture; the successful eight-block run peaked at about 709 MiB private resident memory including foreground playback. Comparison at seven reference positions found no accumulating drift, but the integrated outputs have not been auditioned by the user. These single-track Windows measurements do not establish a universal SoundCloud concurrency limit or timing guarantee.
 
-Foreground playback has priority. Configure Widgets to permit independent playback where supported, but verify simultaneous use in the production profile. If a second Widget pauses or interrupts the foreground track, stop the recording attempt and defer it while browser foreground playback is active. Do not enter a restart loop. The initial version may finish these deferred jobs when foreground playback is native or stopped; it must display them as pending rather than silently complete. This fallback is required because two independent hosts were not validated by the feasibility probe.
+## Cache scheduling and completion
 
-Cancel duplicate attempts by attaching callers to one shared job. A single caller's cancellation detaches that caller; a job is stopped when no requesters remain, on explicit global cancellation, or on an invalid recording. Playlist progress counts a track only after finalization; recording time is not counted as user listening history.
+All existing cache entry points continue through the shared per-track lock: playback, likes, recommendations, drag-and-drop and playlist imports. A completed local file is checked first and stays playable without a network/session check. Protected classification requires explicit encrypted variants and a full duration; an arbitrary HTTP error does not identify a protected track. Ordinary clear streams retain their downloader fallback.
 
-### Streaming and encoding
+One protected recording job runs at a time. Its host uses the same production browser profile as login and foreground playback, separate from the main UI renderer. Each official Widget records a planned normal-speed interval with a 300 ms margin on either side. Preparation holds playback during seeking; all recorders are armed before release. The last interval uses the matching Widget FINISH, while earlier intervals stop at their media boundary. User volume, rate and EQ do not alter the recording signal. Recording does not count as listening history and does not force an audible switch to the completed file.
 
-Use the verified `audio/webm;codecs=pcm` MediaRecorder path with approximately 500 ms chunks. Feed ordered PCM container chunks incrementally into the existing FFmpeg helper to encode **Ogg Opus, 192 kbit/s VBR**. Start FFmpeg hidden using the project's Windows process flags. Use the runtime's actual supported channel layout/sample rate and record the final values; do not silently substitute a different codec or bitrate. If PCM recording or the Opus encoder is unavailable, fail that cache attempt clearly and retain browser playback.
+Frame-local MediaRecorder produces PCM WebM data. Split its data into at most 64 KiB bridge chunks. Each frame retains at most 1 MiB awaiting acknowledgement, for at most 12 MiB with manual maximum concurrency. One native pull is capped at 2 MiB raw and 3 MiB serialized data; the host apportions that pull across frames in sequence order. Acknowledgement is compact and occurs only after native writes/flushes. Overflow, sequence gaps or invalid lengths fail the attempt rather than drop audio. This bounded queue replaces the initial design's smaller aggregate frame-retention limit, which was insufficient during real WebView2 scheduling delays.
 
-Bound the transport: split messages to at most 256 KiB of binary payload, permit at most eight unacknowledged messages and 2 MiB of queued binary payload, and acknowledge only after native code has accepted the bytes into its bounded writer. Include job ID, track ID, generation, monotonically increasing sequence and final-chunk marker. Reject duplicates, gaps and stale chunks. Base64/serialization overhead must also have a fixed cap. Do not retain the entire track in JavaScript, Rust memory or a JSON event.
+Write PCM pieces into a uniquely owned private staging directory on disk. Local FFmpeg decodes each piece to 48 kHz stereo float PCM. Align only neighboring overlap windows, blend an 8 ms seam within shared audio, and encode one Opus 192 kbit/s VBR file. Processing reads bounded windows and streams file ranges rather than retaining a whole song in memory. FFmpeg uses hidden child processes and local file protocols for this stage.
 
-Backpressure overflow fails the attempt and removes its partial output; it must not drop audio chunks or pause only the recorder while the song keeps advancing. Stop playback/recording and FFmpeg together on cancellation, bridge loss or write failure. Queued work cannot keep orphan WebViews or child processes alive.
+Require valid source identity/full duration, measured start/end coverage, at least one nonzero audio observation, complete chunk sequences and a full decode of the assembled Opus. The first marker must cover zero within 10 ms; other marker errors cannot exceed 250 ms, and the assembled/decoded duration cannot differ by more than 250 ms. Do not promote an interrupted recording or a preview. Uncertain overlap alignment fails visibly and can be retried through the existing cache action.
 
-### Timeline and completion
+Only after successful validation does the store atomically promote the unique `.opus.part`, finalize the existing library metadata/artwork path, set the cache marker and emit done. Partial files remain excluded from playback/cache lookup. Existing complete files are reused. Cleanup removes only this job's temporary files; startup also removes abandoned recording/join directories with reserved prefixes.
 
-Use a unique staging name under the existing SoundCloud cache root, ending in `.opus.part`. Final files use the validated SoundCloud ID and `.opus`, already supported by cache lookup. A partial file is never returned by normal playback or startup cache discovery.
+Automatic selection samples current total CPU load over 300 ms away from the audio actor, reserves foreground CPU capacity, and budgets available memory after a 1536 MiB reserve, 350 MiB host allowance and 128 MiB per block. It selects 1–8; manual preferences clamp to 1–12. If counters are unavailable, use one block. Before recording, check disk space for staged PCM/decoding/join/validation. Stop cleanly below 768 MiB available physical memory; this hard guard also applies to manual mode.
 
-The recording state machine is:
+The per-track event carries a recording coverage fraction and phase alongside the unchanged download byte fields. Coverage is the union of media intervals, excluding overlap; recording occupies 0–90%, finalization 90–99%, and normal store completion supplies 100%. Reuse the existing ring, percentage and fade.
 
-`queued -> preparing -> recording -> finalizing -> ready`
+Startup/frame requests have finite 30-second readiness budgets. A source stalled for 30 seconds or an attempt beyond its duration budget fails. Cancellation/logout/app shutdown invalidates active and queued capture work, closes owned hosts, cancels local processing and removes incomplete output. Batch cancellation retains the existing policy of finishing its current track before stopping subsequent tracks. Authentication/access failures require sign-in or explicit retry. No general remote Tauri IPC, credentials, license messages or CDM keys are part of the bridge.
 
-Any nonterminal state may end in `cancelled` or `failed`; deferred work returns to `queued` with its partial attempt discarded. Capture starts at media position zero. Keep a monotonic capture timeline and media-position observations so startup latency, buffering and the Widget's final reset cannot be mistaken for song audio. Freeze recording coverage during source stalls. Pause/resume the recorder with source readiness; if measured coverage is discontinuous or synchronization is uncertain, fail and retry from zero rather than splice an unverified gap.
+## Session controls
 
-Finalize only when all of these hold:
+`browserAvailable` requires a validated OAuth cookie actually present in the shared WebView profile. A built-in token that only authorizes API requests does not establish browser login, hide the sign-in action or reveal capture controls. If a browser cookie matches the configured built-in token, it is identified as built-in and has no sign-out action. Otherwise the personal session has a Sign out action, including when expired.
 
-1. The official Widget reports `FINISH` for the expected active track/generation, verified against `getCurrentSound` and the job descriptor. Do not wait only for `HTMLMediaElement.ended` and do not trust an unrelated position-zero event.
-2. The expected full duration is positive and agrees with Widget duration. A short preview does not satisfy this check. Cache preparation rejects unknown/full-duration mismatches instead of promoting a preview.
-3. Media-position coverage starts at zero, reaches the expected end and contains no seek, rate change, missing sequence or unexplained discontinuity. A source pause/stall may extend wall time but not the saved song timeline.
-4. Stop the recorder, drain its final data/stop events and acknowledge all chunks before closing the FFmpeg input. Trim only measured capture lead-in/trailing recording overhead, never intentional silence within the song. The production start/end alignment must be measured; the probe's explicit final trim is not an automatic solution.
-5. FFmpeg exits successfully. Validate a nonempty Ogg/Opus audio stream, codec/rate, decodability and decoded duration against the expected song duration. Initial acceptance allows at most 100 ms at either edge and 250 ms total duration difference, including codec padding. These bounds are acceptance targets, not results already established for production. Do not extend tolerances to accept an interrupted recording.
-6. Atomically promote the staging file, finalize normal track/album/artist metadata and artwork through the existing cache path, then set the database cache marker and emit `done`. Reuse a previously valid final file rather than overwrite it with an incomplete attempt.
-
-Cache status is recoverable across the rename/database boundary: a verified final file left by a database failure can be finalized on the next attempt, while `.part` files remain excluded. Startup removes stale staging files belonging to abandoned jobs. Completed files participate in existing cache-size limits and eviction.
-
-### Progress, resource limits and recovery
-
-Extend the per-track cache event with optional phase, progress basis, recorded milliseconds and expected milliseconds. Keep existing byte fields for ordinary downloads; do not pretend media time is downloaded bytes. The UI computes DRM recording progress from verified media coverage, capped below 100% until file/metadata finalization. Reuse the current ring/percentage/fade; queued/preparing/finalizing states remain distinguishable without adding a separate settings panel.
-
-Use bounded startup and stall timeouts: 30 seconds for Widget readiness, 30 seconds without media/ack progress, and a total attempt budget of `max(120 seconds, 2 * expected duration + 60 seconds)`. Finalization has a separate 30-second timeout. Report the failed phase; automatic retry is limited to one transient retry with backoff. Authentication/access errors wait for an explicit retry or session change. A playback transport crash may attempt one guarded reload at its last confirmed position; cache recording always restarts from zero.
-
-Release the recording host when its queue empties. Browser recording must not start a second native decoder or repeatedly measure loudness. Serialize expensive work and keep the actor responsive under memory pressure. Cancellation clears pending chunks, closes input pipes, terminates the owned encoder if needed and removes staging files without touching another job's or a valid final file.
+Logout closes login/playback/recording/resolver views before removing SoundCloud-domain cookies and clearing the validation cache. Completed local audio and Tempo's library/settings are preserved. About uses a yellow outlined, emphasized warning for absent/unverified login; status refreshes after login/logout, on focus and periodically while visible. General shows the capture controls only when `browserAvailable` is true.
 
 ## Code boundaries
 
@@ -148,7 +139,7 @@ Release the recording host when its queue empties. Browser recording must not st
 | `src-tauri/src/soundcloud_session.rs` | Existing production profile/login integration and sanitized session status. |
 | New focused `soundcloud_browser` Rust/JS modules and local host page | WebView lifecycle, Widget control, frame-local DSP/recording, validated bounded bridge and capabilities. Keep playback transport and recording jobs separate. |
 | `src-tauri/src/native_audio/{models,resolver,actor}.rs` | Prepared transport variant, actor commands/events, generation guards, shared queue/clock/end behavior and recovery. |
-| `src-tauri/src/native_audio/output/dsp.rs` and focused shared EQ definitions | Native-reference EQ coefficient/profile reuse; native output keeps current behavior. |
+| `src-tauri/src/native_audio/output/dsp.rs` and the browser frame processing graph | Native DSP remains the reference; the browser graph matches its band frequencies, filter types and Q values without changing native output. |
 | `src-tauri/src/soundcloud_store.rs` and `soundcloud_store/cache_download.rs` | Shared job/deduplication, recording dispatch, encoder/staging validation, metadata finalization and progress. Extract focused helpers if required instead of growing the store indefinitely. |
 | `src/player/nativeController.ts`, `src/audio/spectrum.ts` and shared cache progress UI/store | Consume existing player events plus explicit capabilities and additive progress fields. No second frontend-owned queue or independent DRM clock. |
 

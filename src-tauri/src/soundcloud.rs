@@ -60,6 +60,13 @@ pub struct StreamInfo {
     pub format: String,
 }
 
+/// A browser-only track is deliberately not represented as a fake media URL.
+#[derive(Debug, Clone)]
+pub enum TrackStream {
+    Clear(StreamInfo),
+    Protected { duration: f64 },
+}
+
 fn client() -> &'static Client {
     static CLIENT: OnceLock<Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
@@ -1010,16 +1017,13 @@ pub async fn user_releases_with_tracks(id: &str) -> Result<Vec<ScPlaylistDetail>
     Ok(out)
 }
 
-fn stream_cache() -> &'static tokio::sync::Mutex<HashMap<String, (StreamInfo, Instant)>> {
-    static CACHE: OnceLock<tokio::sync::Mutex<HashMap<String, (StreamInfo, Instant)>>> = OnceLock::new();
+fn stream_cache() -> &'static tokio::sync::Mutex<HashMap<String, (TrackStream, Instant)>> {
+    static CACHE: OnceLock<tokio::sync::Mutex<HashMap<String, (TrackStream, Instant)>>> = OnceLock::new();
     CACHE.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()))
 }
 
-async fn resolve_stream_info(track_id: &str) -> Result<StreamInfo, String> {
+async fn resolve_track_stream(track_id: &str) -> Result<TrackStream, String> {
     let meta = get_json_with_fresh_client(&format!("{API}/tracks/{track_id}?client_id=")).await?;
-    if meta.get("policy").and_then(Value::as_str) == Some("SNIP") {
-        return Err("only a SoundCloud preview is available in this session".into());
-    }
     let auth = meta
         .get("track_authorization")
         .and_then(|v| v.as_str())
@@ -1028,6 +1032,20 @@ async fn resolve_stream_info(track_id: &str) -> Result<StreamInfo, String> {
         .pointer("/media/transcodings")
         .and_then(|v| v.as_array())
         .ok_or_else(|| "no stream for this track".to_string())?;
+    let full_duration = meta.get("full_duration").or_else(|| meta.get("duration"))
+        .and_then(Value::as_f64).filter(|value| value.is_finite() && *value > 0.0)
+        .map(|value| value / 1000.0);
+    // An encrypted variant is explicit evidence; an HTTP failure or empty
+    // variant list alone must never send arbitrary tracks to this transport.
+    let protected = transcodings.iter().any(|variant| {
+        is_encrypted(variant) && !variant.get("snipped").and_then(Value::as_bool).unwrap_or(false)
+    });
+    if meta.get("policy").and_then(Value::as_str) == Some("SNIP") {
+        return if protected {
+            full_duration.map(|duration| TrackStream::Protected { duration })
+                .ok_or_else(|| "SoundCloud full duration is unavailable".to_string())
+        } else { Err("only a SoundCloud preview is available in this session".into()) };
+    }
     let mut candidates: Vec<_> = transcodings.iter().filter_map(|transcoding| {
         transcoding_protocol(transcoding).map(|protocol| (transcoding, protocol))
     }).collect();
@@ -1036,6 +1054,10 @@ async fn resolve_stream_info(track_id: &str) -> Result<StreamInfo, String> {
         TranscodingProtocol::Hls => 1,
     });
     if candidates.is_empty() {
+        if protected {
+            return full_duration.map(|duration| TrackStream::Protected { duration })
+                .ok_or_else(|| "SoundCloud full duration is unavailable".to_string());
+        }
         return Err("no stream for this track".to_string());
     }
     let client_id = get_client_id().await?;
@@ -1052,13 +1074,13 @@ async fn resolve_stream_info(track_id: &str) -> Result<StreamInfo, String> {
         match get_json(url.as_str()).await {
             Ok(value) => {
                 if let Some(final_url) = value.get("url").and_then(Value::as_str) {
-                    return Ok(StreamInfo {
+                    return Ok(TrackStream::Clear(StreamInfo {
                         url: final_url.to_string(),
                         format: match protocol {
                             TranscodingProtocol::Hls => "hls",
                             TranscodingProtocol::Progressive => "progressive",
                         }.to_string(),
-                    });
+                    }));
                 }
                 last_error = Some("media url missing".to_string());
             }
@@ -1073,7 +1095,10 @@ async fn resolve_stream_info(track_id: &str) -> Result<StreamInfo, String> {
     Err(last_error.unwrap_or_else(|| "no stream for this track".to_string()))
 }
 
-pub async fn get_stream_info(track_id: &str) -> Result<StreamInfo, String> {
+pub async fn get_track_stream(track_id: &str) -> Result<TrackStream, String> {
+    if track_id.is_empty() || track_id.len() > 32 || !track_id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("invalid SoundCloud track ID".into());
+    }
     {
         let cache = stream_cache().lock().await;
         if let Some((info, at)) = cache.get(track_id) {
@@ -1082,11 +1107,11 @@ pub async fn get_stream_info(track_id: &str) -> Result<StreamInfo, String> {
             }
         }
     }
-    let info = match resolve_stream_info(track_id).await {
+    let info = match resolve_track_stream(track_id).await {
         Ok(v) => v,
         Err(e) if e.starts_with("SC_CLIENT_ERROR") => {
             fetch_client_id().await?;
-            resolve_stream_info(track_id).await?
+            resolve_track_stream(track_id).await?
         }
         Err(e) if e.contains("no stream") => return Err(e),
         Err(e) => return Err(e),
@@ -1096,6 +1121,13 @@ pub async fn get_stream_info(track_id: &str) -> Result<StreamInfo, String> {
         .await
         .insert(track_id.to_string(), (info.clone(), Instant::now()));
     Ok(info)
+}
+
+pub async fn get_stream_info(track_id: &str) -> Result<StreamInfo, String> {
+    match get_track_stream(track_id).await? {
+        TrackStream::Clear(info) => Ok(info),
+        TrackStream::Protected { .. } => Err("SoundCloud track requires signed-in browser playback".into()),
+    }
 }
 
 pub async fn get_stream_url(track_id: &str) -> Result<String, String> {

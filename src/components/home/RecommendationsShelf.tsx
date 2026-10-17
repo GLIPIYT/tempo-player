@@ -205,6 +205,8 @@ export default function RecommendationsShelf({
           }
           const percent = progress.state === 'done'
             ? 100
+            : typeof progress.progress === 'number' && Number.isFinite(progress.progress)
+              ? Math.min(99, Math.max(0, Math.round(progress.progress * 100)))
             : progress.totalBytes > 0
               ? Math.min(99, Math.round(progress.downloadedBytes / progress.totalBytes * 100))
               : null

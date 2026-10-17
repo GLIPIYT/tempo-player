@@ -272,7 +272,7 @@ fn download_hls(
     result
 }
 
-fn unique_stage_path(cache_dir: &Path, track_id: &str, suffix: &str) -> PathBuf {
+pub(super) fn unique_stage_path(cache_dir: &Path, track_id: &str, suffix: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
