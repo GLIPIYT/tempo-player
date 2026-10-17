@@ -188,6 +188,8 @@ pub fn prepare_track(
                             "cache_hit"
                         } else if playback.url.is_some() {
                             "stream"
+                        } else if playback.browser_duration.is_some() {
+                            "browser"
                         } else {
                             "empty"
                         }

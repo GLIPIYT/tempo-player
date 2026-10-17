@@ -51,6 +51,7 @@ struct BrowserOutput {
     duration: f64,
     playing: bool,
     buffering: bool,
+    has_started: bool,
     finished: bool,
     bins: Vec<f64>,
 }
@@ -366,6 +367,7 @@ impl Actor {
                     duration,
                     playing: false,
                     buffering: true,
+                    has_started: false,
                     finished: false,
                     bins: vec![0.0; 64],
                 });
@@ -432,6 +434,7 @@ impl Actor {
                             browser.duration = duration;
                             browser.playing = playing;
                             browser.buffering = buffering;
+                            browser.has_started |= playing && !buffering;
                         }
                     }
                     BrowserEvent::Finished => {
@@ -2061,6 +2064,14 @@ impl Actor {
         }
     }
 
+    fn preparing(&self) -> bool {
+        self.pending_start.is_some()
+            || self
+                .browser
+                .as_ref()
+                .is_some_and(|browser| self.playing_intent && !browser.has_started)
+    }
+
     fn snapshot_value(&mut self) -> Result<Value, String> {
         self.version = self.version.wrapping_add(1);
         let track = self
@@ -2068,7 +2079,7 @@ impl Actor {
             .queue
             .current()
             .map(|entry| entry.track.clone());
-        let preparing = self.pending_start.is_some();
+        let preparing = self.preparing();
         let duration = track
             .as_ref()
             .and_then(|track| TrackPayload(track.clone()).duration())
@@ -2124,7 +2135,7 @@ impl Actor {
             "position": self.current_position(),
             "duration": duration,
             "isPlaying": self.pending_start.as_ref().map(|pending| pending.playing).unwrap_or(self.playing_intent || self.transport_is_playing()),
-            "buffering": self.pending_start.is_none() && self.transport_buffering(),
+            "buffering": !self.preparing() && self.transport_buffering(),
             "version": self.version,
         });
         let _ = self.app.emit(CLOCK_EVENT, payload);

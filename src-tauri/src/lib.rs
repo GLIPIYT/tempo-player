@@ -49,6 +49,14 @@ pub fn run() {
                 // (pill at the top edge); restoring a remembered geometry would
                 // bring it back expanded or off-screen
                 .with_denylist(&["mini-player"])
+                // These temporary WebViews must stay hidden. The plugin's
+                // default state for an unseen label is visible=true, and its
+                // restore path calls show() and set_focus() when VISIBLE is on.
+                .with_filter(|label| {
+                    !label.starts_with("tempo-soundcloud-playback-")
+                        && !label.starts_with("sc-recording-")
+                        && !label.starts_with("sc-web-fallback-")
+                })
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())

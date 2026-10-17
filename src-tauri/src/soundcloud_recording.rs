@@ -614,6 +614,13 @@ pub async fn capture(
     let permit = acquire_capture_permit(&cancelled, epoch).await?;
     check_cancelled(&cancelled, &AtomicBool::new(false), epoch)?;
 
+    // Do not race the audible player's first media/license requests with up to
+    // twelve background Widgets. Existing recordings keep their completed work.
+    while crate::soundcloud_browser::startup_waiting() {
+        check_cancelled(&cancelled, &AtomicBool::new(false), epoch)?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
     let db = app.state::<crate::commands::AppState>().db.clone();
     let block_count = crate::soundcloud_capture_policy::selected_blocks(&db).await;
     let block_count = block_count.clamp(1, MAX_PARTS);

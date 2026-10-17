@@ -248,6 +248,7 @@ pub async fn get_playback(
     let info = match stream_info {
         Ok(crate::soundcloud::TrackStream::Clear(info)) => info,
         Ok(crate::soundcloud::TrackStream::Protected { duration }) => {
+            crate::soundcloud_browser::reserve_startup();
             // Playback must not wait for a full browser recording, even when
             // cache-before-play is enabled. The common per-ID lock deduplicates
             // this job with likes, playlist imports and recommendation caching.

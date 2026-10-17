@@ -7,7 +7,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
@@ -26,6 +26,65 @@ const MAX_DURATION_SECONDS: f64 = 604_800.0;
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 static ACTIVE_SESSION: AtomicU64 = AtomicU64::new(0);
 static CLOSE_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+struct StartupPriority {
+    until: Instant,
+    waiting_for_media: bool,
+}
+
+fn startup_priority() -> &'static Mutex<Option<StartupPriority>> {
+    static PRIORITY: OnceLock<Mutex<Option<StartupPriority>>> = OnceLock::new();
+    PRIORITY.get_or_init(|| Mutex::new(None))
+}
+
+/// Give the audible player priority over starting another group of recording Widgets.
+/// The deadline also releases abandoned requests that never acquire a browser transport.
+pub fn reserve_startup() {
+    *startup_priority()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(StartupPriority {
+        until: Instant::now() + START_TIMEOUT,
+        waiting_for_media: true,
+    });
+}
+
+pub fn startup_waiting() -> bool {
+    startup_priority()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .is_some_and(|priority| Instant::now() < priority.until)
+}
+
+fn release_startup() {
+    // Let the first audible buffer settle before starting the background media instances.
+    if let Some(priority) = startup_priority()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_mut()
+    {
+        if priority.waiting_for_media {
+            priority.waiting_for_media = false;
+            priority.until = Instant::now() + Duration::from_millis(500);
+        }
+    }
+}
+
+fn clear_startup_priority() {
+    *startup_priority()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+}
+
+fn log_startup(stage: &str, started: Instant) {
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[tempo startup] stage={stage} source=soundcloud_browser elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+    #[cfg(not(debug_assertions))]
+    let _ = (stage, started);
+}
 
 fn start_lock() -> &'static AsyncMutex<()> {
     static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
@@ -176,10 +235,16 @@ pub struct BrowserPlayback {
 
 impl BrowserPlayback {
     pub fn play(&self) -> Result<(), String> {
-        self.send_command("play", None, None)
+        reserve_startup();
+        let result = self.send_command("play", None, None);
+        if result.is_err() {
+            clear_startup_priority();
+        }
+        result
     }
 
     pub fn pause(&self) -> Result<(), String> {
+        clear_startup_priority();
         self.send_command("pause", None, None)
     }
 
@@ -223,8 +288,12 @@ impl BrowserPlayback {
 
 impl Drop for BrowserPlayback {
     fn drop(&mut self) {
-        let _ =
-            ACTIVE_SESSION.compare_exchange(self.session, 0, Ordering::AcqRel, Ordering::Acquire);
+        if ACTIVE_SESSION
+            .compare_exchange(self.session, 0, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            clear_startup_priority();
+        }
         // Each playback owns a unique label, so an older drop can never close
         // a newer selection even while its native close is still queued.
         stop_window(&self.app, &self.window);
@@ -242,6 +311,7 @@ pub async fn start(
     generation: u64,
     events: std::sync::mpsc::Sender<BrowserEvent>,
 ) -> Result<BrowserPlayback, String> {
+    let started_at = Instant::now();
     validate_descriptor(&descriptor)?;
     let settings = settings.validated()?;
     if !position.is_finite() {
@@ -273,6 +343,7 @@ pub async fn start(
     };
 
     let window = ensure_window(app.clone(), session, cleanup.label.clone(), epoch).await?;
+    log_startup("browser_host_ready", started_at);
     check_session(session, epoch)?;
     let nonce = make_nonce(session);
     let config = StartConfig {
@@ -311,6 +382,7 @@ pub async fn start(
             expected_duration,
             poll_session,
             poll_epoch,
+            started_at,
         )
         .await;
     });
@@ -338,6 +410,7 @@ pub async fn start(
 /// Stop and invalidate the hidden Widget transport, including an in-progress
 /// startup. This is intended for session logout and application shutdown.
 pub fn close_all(app: &AppHandle) {
+    clear_startup_priority();
     CLOSE_EPOCH.fetch_add(1, Ordering::AcqRel);
     ACTIVE_SESSION.store(0, Ordering::Release);
     for (label, window) in app.webview_windows() {
@@ -591,10 +664,12 @@ async fn poll_host(
     expected_duration: f64,
     session: u64,
     epoch: u64,
+    started_at: Instant,
 ) {
     let mut ready_sender = Some(ready);
     let mut ready_duration = None;
     let mut finish_sent = false;
+    let mut first_media_seen = false;
     let mut capabilities_last: Option<(bool, bool, bool, Option<String>)> = None;
     let mut failures = 0u8;
     let deadline = tokio::time::Instant::now() + START_TIMEOUT;
@@ -670,6 +745,7 @@ async fn poll_host(
                         return;
                     }
                     if ready_duration.is_none() {
+                        log_startup("browser_metadata_ready", started_at);
                         ready_duration = Some(duration);
                         let _ = events.send(BrowserEvent::Ready { duration });
                         if let Some(sender) = ready_sender.take() {
@@ -692,6 +768,13 @@ async fn poll_host(
                     }
                     let duration = duration.clamp(0.0, expected_duration);
                     let position = position.clamp(0.0, duration.max(0.0));
+                    if playing && !buffering {
+                        release_startup();
+                        if !first_media_seen {
+                            first_media_seen = true;
+                            log_startup("browser_first_media", started_at);
+                        }
+                    }
                     let _ = events.send(BrowserEvent::Clock {
                         position,
                         duration,
@@ -779,7 +862,12 @@ fn report_failure(
 }
 
 fn close_session_window(window: &WebviewWindow, session: u64) {
-    let _ = ACTIVE_SESSION.compare_exchange(session, 0, Ordering::AcqRel, Ordering::Acquire);
+    if ACTIVE_SESSION
+        .compare_exchange(session, 0, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        clear_startup_priority();
+    }
     let _ = window.close();
 }
 
@@ -808,8 +896,12 @@ impl Drop for StartupCleanup {
         if !self.armed {
             return;
         }
-        let _ =
-            ACTIVE_SESSION.compare_exchange(self.session, 0, Ordering::AcqRel, Ordering::Acquire);
+        if ACTIVE_SESSION
+            .compare_exchange(self.session, 0, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            clear_startup_priority();
+        }
         if let Some(window) = self.app.get_webview_window(&self.label) {
             stop_window(&self.app, &window);
         }

@@ -171,10 +171,11 @@
     if (Math.abs(normalized - latestPosition) >= 0.025) {
       latestPosition = normalized;
       lastPositionChangeAt = now;
+      active.hasAdvanced = true;
     }
     const buffering = active.playing
       && latestPosition < active.duration
-      && now - lastPositionChangeAt > 1500;
+      && (!active.hasAdvanced || now - lastPositionChangeAt > 1500);
     post({
       type: 'clock',
       position: latestPosition,
@@ -237,10 +238,10 @@
     finishSent = false;
     failureSent = false;
     try {
-      widget.setVolume(0);
-      widget.pause();
-      widget.seekTo(Math.round(ticket.position * 1000));
       sendFrameControl('activate');
+      // A fresh Widget already starts paused at zero. Extra pause/seek commands
+      // here can restart its first protected-media request before Play arrives.
+      if (ticket.position > 0) widget.seekTo(Math.round(ticket.position * 1000));
       widget.setVolume(Math.round(ticket.settings.volume * 100));
       if (ticket.playingRequested) widget.play();
     } catch (_) {
@@ -368,6 +369,7 @@
       playingRequested: config.playing === true,
       playing: false,
       ready: false,
+      hasAdvanced: false,
       settings,
     };
     active = ticket;
@@ -379,6 +381,10 @@
     latestPosition = ticket.position;
     lastPositionChangeAt = Date.now();
 
+    // Fetch the player and its small control API concurrently on the first load.
+    // SC.Widget must still be constructed after the iframe has its official URL.
+    if (!widgetHasTrack) iframe.src = trackWidgetUrl(ticket.trackId);
+
     ensureWidget().then(() => {
       if (active !== ticket || failureSent) return;
       loadingTimer = setTimeout(() => {
@@ -389,7 +395,6 @@
         if (widgetHasTrack) {
           widget.load(trackUrl, { auto_play: false, single_active: false });
         } else {
-          iframe.src = trackWidgetUrl(ticket.trackId);
           widget = window.SC.Widget(iframe);
           bindWidgetEvents();
           widgetHasTrack = true;
