@@ -15,6 +15,7 @@ import { scTrackToUnified } from '../utils/unified'
 import { favoritePlaylist, requestPlaylistCache, requestTrackCache, type CacheRequestOutcome } from '../soundcloud/cacheJobs'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import { openExternalUrl } from '../utils/externalLinks'
+import { canPlaySoundCloudTrack } from '../soundcloud/playability'
 
 /**
  * A SoundCloud playlist or release, read live.
@@ -72,9 +73,8 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
   }
 
   const { playlist, tracks } = data
-  // A track that is not streamable, or that only offers an encrypted stream,
-  // cannot be played - it is listed but not offered.
-  const playable = tracks.filter((trk) => trk.streamable && (trk.hasProgressive || trk.hasHls))
+  // Include explicit protected variants; the browser session determines access at playback.
+  const playable = tracks.filter(canPlaySoundCloudTrack)
 
   const playFrom = (track: ScTrack): void => {
     const index = playable.findIndex((p) => p.id === track.id)
@@ -84,7 +84,7 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
   const onTrackContextMenu = (e: MouseEvent, track: ScTrack): void => {
     e.preventDefault()
     e.stopPropagation()
-    const playableHere = track.streamable && (track.hasProgressive || track.hasHls)
+    const playableHere = canPlaySoundCloudTrack(track)
     const cacheableHere = /^[1-9]\d*$/.test(track.id)
     const items: ContextMenuItem[] = [
       {
@@ -196,7 +196,7 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
       </div>
       <div className="sc-list">
         {tracks.map((trk) => {
-          const playableHere = trk.streamable && (trk.hasProgressive || trk.hasHls)
+          const playableHere = canPlaySoundCloudTrack(trk)
           return (
             <div
               key={trk.id}

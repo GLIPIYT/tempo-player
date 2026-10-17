@@ -35,6 +35,10 @@ pub struct ScTrack {
     pub has_progressive: bool,
     #[serde(default)]
     pub has_hls: bool,
+    /// An explicit full-length encrypted variant can be attempted in the official browser player.
+    /// This describes a transport, not a guarantee of account access.
+    #[serde(default)]
+    pub has_protected: bool,
     #[serde(default)]
     pub uploader_id: Option<String>,
     #[serde(default)]
@@ -191,6 +195,19 @@ fn transcoding_protocol(t: &Value) -> Option<TranscodingProtocol> {
     }
 }
 
+fn protected_track_duration(item: &Value) -> Option<f64> {
+    let variants = item.pointer("/media/transcodings")?.as_array()?;
+    if !variants.iter().any(|variant| {
+        is_encrypted(variant) && !variant.get("snipped").and_then(Value::as_bool).unwrap_or(false)
+    }) {
+        return None;
+    }
+    item.get("full_duration").or_else(|| item.get("duration"))
+        .and_then(Value::as_f64)
+        .filter(|duration| duration.is_finite() && *duration > 0.0)
+        .map(|duration| duration / 1000.0)
+}
+
 fn map_track(item: &Value) -> Option<ScTrack> {
     if item.get("kind").and_then(|k| k.as_str()) != Some("track") {
         return None;
@@ -202,7 +219,9 @@ fn map_track(item: &Value) -> Option<ScTrack> {
         .and_then(|v| v.as_str())
         .unwrap_or("Unknown")
         .to_string();
-    let duration_ms = item.get("duration").and_then(|v| v.as_i64()).unwrap_or(0);
+    let protected_duration = protected_track_duration(item);
+    let duration_ms = protected_duration.map(|duration| (duration * 1000.0).round() as i64)
+        .unwrap_or_else(|| item.get("duration").and_then(Value::as_i64).unwrap_or(0));
     let artwork_url = item.get("artwork_url").and_then(|v| v.as_str()).map(upscale_artwork);
     let artist_avatar_url = item
         .pointer("/user/avatar_url")
@@ -244,6 +263,7 @@ fn map_track(item: &Value) -> Option<ScTrack> {
         streamable,
         has_progressive,
         has_hls,
+        has_protected: protected_duration.is_some(),
         uploader_id: item.pointer("/user/id").and_then(Value::as_i64).map(|id| id.to_string()),
         uploader_name: item.pointer("/user/username").and_then(Value::as_str).map(str::to_string),
         metadata_artist: item.get("metadata_artist").and_then(Value::as_str)
@@ -619,7 +639,7 @@ pub async fn sc_recommendation_genre_search(
             retry_at: Some(saved), error: Some("SoundCloud cooldown".into()), status: Some(429), failed_endpoint: None });
     }
     let limit = limit.clamp(1, 50);
-    let cache_key = format!("sc-genre:v2:{}:{limit}", genre.to_lowercase());
+    let cache_key = format!("sc-genre:v3:{}:{limit}", genre.to_lowercase());
     if let Some(cached) = crate::recommendation_store::page(&state.db, &cache_key)? {
         if let Ok(page) = serde_json::from_value::<ScRelatedPage>(cached.data) {
             if page.error.is_none() && page.retry_at.is_none() && page.source == "genre" {
@@ -685,7 +705,7 @@ pub async fn sc_recommendation_page(
     if station_offset > 5000 || (source == "related" && station_offset != 0) {
         return Err("Invalid station slice cursor".into());
     }
-    let cache_key = format!("sc-page:v1:{source}:{seed_id}:{limit}:{url}");
+    let cache_key = format!("sc-page:v2:{source}:{seed_id}:{limit}:{url}");
     if let Some(cached) = crate::recommendation_store::page(&state.db, &cache_key)? {
         if let Ok(page) = serde_json::from_value::<ScRelatedPage>(cached.data) {
             if page.error.is_none() && page.retry_at.is_none() && page.source == source
@@ -747,7 +767,7 @@ pub async fn sc_recommendation_page(
         }
     }
     result.tracks = ordered.into_iter().filter_map(|id| tracks.remove(&id))
-        .filter(|track| track.id != seed_id && (track.has_progressive || track.has_hls)).collect();
+        .filter(|track| track.id != seed_id && (track.has_progressive || track.has_hls || track.has_protected)).collect();
     if source == "station" && station_offset + (limit as usize) < entries.len().min(5000) {
         let mut next = url.clone();
         let pairs: Vec<_> = next.query_pairs().filter(|(k, _)| k != "tempo_station_offset")
@@ -771,7 +791,7 @@ pub async fn sc_recommendation_page(
             result.error = Some("SoundCloud cursor loop".into());
             break;
         }
-        let key = format!("sc-page:v1:{source}:{seed_id}:{limit}:{cursor}");
+        let key = format!("sc-page:v2:{source}:{seed_id}:{limit}:{cursor}");
         next = crate::recommendation_store::page(&state.db, &key)?
             .and_then(|page| serde_json::from_value::<ScRelatedPage>(page.data).ok())
             .and_then(|page| page.next_cursor);
@@ -796,7 +816,7 @@ fn tracks_from_response(value: &Value) -> Vec<ScTrack> {
             items
                 .iter()
                 .filter_map(map_track)
-                .filter(|track| track.has_progressive || track.has_hls)
+                .filter(|track| track.has_progressive || track.has_hls || track.has_protected)
                 .collect()
         })
         .unwrap_or_default()
@@ -1032,19 +1052,12 @@ async fn resolve_track_stream(track_id: &str) -> Result<TrackStream, String> {
         .pointer("/media/transcodings")
         .and_then(|v| v.as_array())
         .ok_or_else(|| "no stream for this track".to_string())?;
-    let full_duration = meta.get("full_duration").or_else(|| meta.get("duration"))
-        .and_then(Value::as_f64).filter(|value| value.is_finite() && *value > 0.0)
-        .map(|value| value / 1000.0);
     // An encrypted variant is explicit evidence; an HTTP failure or empty
     // variant list alone must never send arbitrary tracks to this transport.
-    let protected = transcodings.iter().any(|variant| {
-        is_encrypted(variant) && !variant.get("snipped").and_then(Value::as_bool).unwrap_or(false)
-    });
+    let protected_duration = protected_track_duration(&meta);
     if meta.get("policy").and_then(Value::as_str) == Some("SNIP") {
-        return if protected {
-            full_duration.map(|duration| TrackStream::Protected { duration })
-                .ok_or_else(|| "SoundCloud full duration is unavailable".to_string())
-        } else { Err("only a SoundCloud preview is available in this session".into()) };
+        return protected_duration.map(|duration| TrackStream::Protected { duration })
+            .ok_or_else(|| "only a SoundCloud preview is available in this session".to_string());
     }
     let mut candidates: Vec<_> = transcodings.iter().filter_map(|transcoding| {
         transcoding_protocol(transcoding).map(|protocol| (transcoding, protocol))
@@ -1054,9 +1067,8 @@ async fn resolve_track_stream(track_id: &str) -> Result<TrackStream, String> {
         TranscodingProtocol::Hls => 1,
     });
     if candidates.is_empty() {
-        if protected {
-            return full_duration.map(|duration| TrackStream::Protected { duration })
-                .ok_or_else(|| "SoundCloud full duration is unavailable".to_string());
+        if let Some(duration) = protected_duration {
+            return Ok(TrackStream::Protected { duration });
         }
         return Err("no stream for this track".to_string());
     }

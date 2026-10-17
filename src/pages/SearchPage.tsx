@@ -31,6 +31,7 @@ import { fmtTime } from '../utils/format'
 import { scTrackToUnified, scTracksToUnified } from '../utils/unified'
 import { ytHitToUnified, ytdlpPath } from '../providers/youtubeProvider'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
+import { canPlaySoundCloudTrack } from '../soundcloud/playability'
 
 /** Emitted once per track as its metadata resolves. */
 const YT_ENRICH_EVENT = 'ytdlp://enriched'
@@ -647,7 +648,7 @@ export default function SearchPage() {
   const scAlbums = scPlaylists.filter((p) => p.isAlbum)
   const scPlaylistOnly = scPlaylists.filter((p) => !p.isAlbum)
 
-  const playableTracks = scTracks.filter(t => t.streamable && (t.hasProgressive || t.hasHls))
+  const playableTracks = scTracks.filter(canPlaySoundCloudTrack)
   const playableIdx = new Map<string, number>()
   playableTracks.forEach((t, i) => playableIdx.set(t.id, i))
   const [scNote, setScNote] = useState<string | null>(null)

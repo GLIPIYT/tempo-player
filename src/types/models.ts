@@ -14,6 +14,8 @@ export interface ScTrack {
   streamable: boolean
   hasProgressive: boolean
   hasHls: boolean
+  /** SoundCloud returned an explicit protected stream variant for browser playback. */
+  hasProtected?: boolean
   uploaderId?: string | null
   uploaderName?: string | null
   metadataArtist?: string | null

@@ -1,5 +1,6 @@
 import type { ScTrack } from '../../types/models'
 import type { RecordingIdentity } from './types'
+import { canPlaySoundCloudTrack } from '../../soundcloud/playability'
 
 export const RECORDING_FEATURE_VERSION = 1
 
@@ -89,7 +90,7 @@ export function duplicateConfidence(a: RecordingIdentity, b: RecordingIdentity):
 
 export function chooseRepresentative(group: readonly ScTrack[]): ScTrack {
   if (!group.length) throw new Error('Cannot choose a representative of an empty recording group')
-  const score = (track: ScTrack) => (track.streamable && (track.hasProgressive || track.hasHls) ? 100 : 0)
+  const score = (track: ScTrack) => (canPlaySoundCloudTrack(track) ? 100 : 0)
     + recordingIdentity(track).confidence * 10 + (track.isrc ? 2 : 0)
     + (track.hasProgressive ? 0.5 : 0) + (track.artworkUrl ? 0.1 : 0)
   return group.reduce((best, track) => score(track) > score(best) ? track : best)

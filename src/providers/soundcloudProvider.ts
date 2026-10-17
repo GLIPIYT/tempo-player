@@ -2,6 +2,7 @@ import { api } from '../api/client'
 import type { ScTrack, UnifiedTrack } from '../types/models'
 import type { MusicProvider, SearchHit } from './provider'
 import { rememberSoundCloudTrack } from '../soundcloud/cacheMetadata'
+import { canPlaySoundCloudTrack } from '../soundcloud/playability'
 
 export function scTrackToUnified(t: ScTrack): UnifiedTrack {
   rememberSoundCloudTrack(t)
@@ -17,7 +18,7 @@ export function scTrackToUnified(t: ScTrack): UnifiedTrack {
     album: null,
     durationSec: t.durationMs / 1000,
     coverPath: t.artworkUrl,
-    playable: t.streamable && (t.hasProgressive || t.hasHls),
+    playable: canPlaySoundCloudTrack(t),
     localPath: null,
     externalUrl: t.permalinkUrl,
     // streams are never levelled: the gain path is same-origin only

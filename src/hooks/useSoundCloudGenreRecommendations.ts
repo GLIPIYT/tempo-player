@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { libraryVersion } from '../utils/libraryVersion'
 import type { ScTrack } from '../types/models'
+import { canPlaySoundCloudTrack } from '../soundcloud/playability'
 
 interface FavoriteGenre {
   key: string
@@ -37,7 +38,7 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null) {
       if (result.error) throw new Error(result.error)
       const seen = new Set<string>()
       const next = result.tracks.filter((track) => {
-        if (!track.streamable || (!track.hasProgressive && !track.hasHls)) return false
+        if (!canPlaySoundCloudTrack(track)) return false
         if (seen.has(track.id)) return false
         seen.add(track.id)
         return true

@@ -61,6 +61,7 @@ export function compactScTrack(track: ScTrack): ScTrack {
     durationMs: track.durationMs, artworkUrl: text(track.artworkUrl, 512),
     artistAvatarUrl: text(track.artistAvatarUrl, 512), permalinkUrl: text(track.permalinkUrl, 512),
     streamable: track.streamable, hasProgressive: track.hasProgressive, hasHls: track.hasHls,
+    hasProtected: track.hasProtected,
     uploaderId: text(track.uploaderId, 64), uploaderName: text(track.uploaderName, 128),
     metadataArtist: text(track.metadataArtist, 128), genre: text(track.genre, 96), isrc: text(track.isrc, 32),
     tags: track.tags?.slice(0, 16).map(tag => tag.slice(0, 64)) ?? null,

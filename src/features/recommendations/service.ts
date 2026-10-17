@@ -13,6 +13,7 @@ import { buildTasteProfile, candidateLanguage, candidateScore, effectiveLanguage
 import { seedSchedulingPool, selectRecommendationBatch } from './scheduling'
 import { detectLyricLanguages, type LyricEvidenceSource } from './language'
 import { analyzeCachedRecommendationTrack } from './audio'
+import { canPlaySoundCloudTrack } from '../../soundcloud/playability'
 import { flushFeedbackOperations, stopFeedbackOperations, type ExplicitActionIntent } from './feedbackBridge'
 import { recommendationTrack, type ExplicitActionKind, type FeatureSectionUpdate, type LanguageEvidence, type ListeningEvent, type RecommendationTrack } from './types'
 
@@ -42,7 +43,7 @@ function recommendationLanguagePreference(): string | null {
   return null
 }
 const keyOf = (track: ScTrack) => `soundcloud:${track.id}`
-const playable = (track: ScTrack) => track.streamable && (track.hasProgressive || track.hasHls)
+const playable = canPlaySoundCloudTrack
 const isUnavailableRecommendationSource = (status: unknown, endpoint: unknown) =>
   (status === 400 || status === 404) && typeof endpoint === 'string' && RECOMMENDATION_ENDPOINTS.has(endpoint)
 const message = (cause: unknown): string => {

@@ -16,6 +16,7 @@ import { scTrackToUnified } from '../utils/unified'
 import { requestArtistCache, requestTrackCache } from '../soundcloud/cacheJobs'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import { openExternalUrl } from '../utils/externalLinks'
+import { canPlaySoundCloudTrack } from '../soundcloud/playability'
 
 /** SoundCloud returns a user's tracks in pages; one page is plenty to look at. */
 const TRACK_LIMIT = 50
@@ -83,7 +84,7 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
     )
   }
 
-  const playable = tracks.filter((trk) => trk.streamable && (trk.hasProgressive || trk.hasHls))
+  const playable = tracks.filter(canPlaySoundCloudTrack)
   const albums = releases.filter((r) => r.isAlbum)
   const playlists = releases.filter((r) => !r.isAlbum)
 
@@ -95,7 +96,7 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
   const onTrackContextMenu = (e: MouseEvent, track: ScTrack): void => {
     e.preventDefault()
     e.stopPropagation()
-    const playableHere = track.streamable && (track.hasProgressive || track.hasHls)
+    const playableHere = canPlaySoundCloudTrack(track)
     const cacheableHere = /^[1-9]\d*$/.test(track.id)
     const items: ContextMenuItem[] = [
       {
@@ -206,7 +207,7 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
           </div>
           <div className="sc-list">
             {tracks.map((trk) => {
-              const playableHere = trk.streamable && (trk.hasProgressive || trk.hasHls)
+              const playableHere = canPlaySoundCloudTrack(trk)
               return (
                 <div
                   key={trk.id}
