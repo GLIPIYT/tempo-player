@@ -76,10 +76,21 @@ fn client() -> &'static Client {
     CLIENT.get_or_init(|| {
         Client::builder()
             .user_agent(DESKTOP_UA)
+            .connect_timeout(Duration::from_secs(7))
             .timeout(Duration::from_secs(15))
             .build()
             .expect("reqwest client")
     })
+}
+
+fn request_failure(context: &str, error: reqwest::Error) -> String {
+    if error.is_timeout() {
+        let stage = if error.is_connect() { "connection" } else { "request" };
+        format!("{context}: {stage} timed out")
+    } else {
+        // API and media query strings can contain client IDs and signed tokens.
+        format!("{context}: {}", error.without_url())
+    }
 }
 
 fn client_id_slot() -> &'static RwLock<Option<String>> {
@@ -92,12 +103,12 @@ async fn fetch_client_id() -> Result<String, String> {
         .get(SITE)
         .send()
         .await
-        .map_err(|e| format!("soundcloud unreachable: {e}"))?
+        .map_err(|e| request_failure("SoundCloud unavailable", e))?
         .error_for_status()
-        .map_err(|e| format!("soundcloud page: {e}"))?
+        .map_err(|e| request_failure("SoundCloud page", e))?
         .text()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| request_failure("SoundCloud page", e))?;
     let re = Regex::new(r#""hydratable":"apiClient","data":\{"id":"([^"]+)""#).map_err(|e| e.to_string())?;
     let id = re
         .captures(&html)
@@ -120,7 +131,7 @@ async fn get_json(url: &str) -> Result<Value, String> {
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("request failed: {e}"))?;
+        .map_err(|e| request_failure("SoundCloud request failed", e))?;
     let status = resp.status();
     if status.is_client_error() {
         // The path is named so a failure says *which* endpoint refused, and the
@@ -129,10 +140,10 @@ async fn get_json(url: &str) -> Result<Value, String> {
         return Err(format!("SC_CLIENT_ERROR {} {path}", status.as_u16()));
     }
     resp.error_for_status()
-        .map_err(|e| format!("soundcloud api: {e}"))?
+        .map_err(|e| request_failure("SoundCloud API", e))?
         .json::<Value>()
         .await
-        .map_err(|e| format!("bad json: {e}"))
+        .map_err(|e| request_failure("SoundCloud invalid response", e))
 }
 
 async fn get_json_with_fresh_client(url: &str) -> Result<Value, String> {
@@ -509,10 +520,11 @@ async fn recommendation_body(url: &reqwest::Url) -> Result<String, Recommendatio
     // Never follow provider redirects to a different endpoint/host with credentials.
     static CLIENT: OnceLock<Client> = OnceLock::new();
     let response = CLIENT.get_or_init(|| Client::builder().user_agent(DESKTOP_UA)
+        .connect_timeout(Duration::from_secs(7))
         .timeout(Duration::from_secs(15)).redirect(reqwest::redirect::Policy::none())
         .build().expect("recommendation HTTP client"))
         .get(url.clone()).send().await
-        .map_err(|_| RecommendationFailure::new("SoundCloud recommendation request failed"))?;
+        .map_err(|error| RecommendationFailure::new(request_failure("SoundCloud recommendation request failed", error)))?;
     let status = response.status();
     if status.as_u16() == 429 {
         let now = now_ms();

@@ -35,7 +35,9 @@ sha2 = "0.10"
 rusqlite = { version = "0.32", features = ["bundled"] }
 walkdir = "2"
 lofty = "0.22"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "stream", "cookies"] }
+# Keep OS proxy discovery when disabling reqwest's default TLS/features. On
+# Windows the browser uses these settings even without *_PROXY environment vars.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "stream", "cookies", "system-proxy", "socks"] }
 tokio = { version = "1", features = ["time", "macros", "rt", "fs", "net", "sync"] }
 futures-util = "0.3"
 regex = "1"

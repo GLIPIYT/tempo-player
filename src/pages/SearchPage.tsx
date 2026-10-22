@@ -44,6 +44,7 @@ const YT_BROWSE_DONE_EVENT = 'ytdlp://browsed-done'
 // starting provider requests; keep SoundCloud and local search independently fast.
 const YT_SEARCH_DEBOUNCE_MS = 650
 const YT_REQUEST_MIN_INTERVAL_MS = 500
+const SC_SEARCH_DEBOUNCE_MS = 450
 
 let ytRequestQueue = Promise.resolve()
 let ytLastRequestStartedAt = 0
@@ -67,7 +68,21 @@ function scheduleYtProviderRequest<T>(
 }
 
 type ScStatus = 'idle' | 'loading' | 'error' | 'done'
+type ScSearchKind = 'tracks' | 'playlists' | 'artists'
 type YtCollectionSection = 'albums' | 'artists' | 'playlists'
+
+const SC_SEARCH_KINDS: ScSearchKind[] = ['tracks', 'playlists', 'artists']
+const SC_SEARCH_KIND_LABELS: Record<ScSearchKind, string> = {
+  tracks: 'Tracks',
+  playlists: 'Playlists',
+  artists: 'Artists',
+}
+
+const emptyScErrors = (): Record<ScSearchKind, string | null> => ({
+  tracks: null,
+  playlists: null,
+  artists: null,
+})
 
 const YT_COLLECTION_SECTIONS: YtCollectionSection[] = ['albums', 'artists', 'playlists']
 
@@ -116,6 +131,18 @@ const SEARCH_TABS: { id: SearchTab; label: string }[] = [
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
+}
+
+function sanitizeScSearchError(error: unknown): string | null {
+  const sanitized = errText(error)
+    .replace(/https?:\/\/[^\s"'<>]+/gi, '[URL]')
+    .replace(/\b(authorization)\s*:\s*(?:bearer|basic)\s+[^\s,;]+/gi, '$1: [redacted]')
+    .replace(/\b(cookie|set-cookie)\s*:\s*[^\r\n]+/gi, '$1: [redacted]')
+    .replace(/\b(client[_-]?id|track[_-]?authorization|authorization|cookie|set[_-]?cookie|access[_-]?token|token)\b\s*[:=]\s*["']?[^&\s,;}'"]+["']?/gi, '$1=[redacted]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return sanitized ? sanitized.slice(0, 160) : null
 }
 
 function ScRowMenu({ track }: { track: ScTrack }) {
@@ -324,9 +351,10 @@ export default function SearchPage() {
   const resultsForQuery = useRef<{ query: string; results: SearchResults | null }>({ query: '', results: null })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [scStatuses, setScStatuses] = useState<Record<'tracks' | 'playlists' | 'artists', ScStatus>>({
+  const [scStatuses, setScStatuses] = useState<Record<ScSearchKind, ScStatus>>({
     tracks: 'idle', playlists: 'idle', artists: 'idle',
   })
+  const [scErrors, setScErrors] = useState<Record<ScSearchKind, string | null>>(emptyScErrors)
   const [scTracks, setScTracks] = useState<ScTrack[]>([])
   const [ytHits, setYtHits] = useState<YtSearchHit[]>([])
   const [ytStatus, setYtStatus] = useState<ScStatus>('idle')
@@ -404,12 +432,14 @@ export default function SearchPage() {
   useEffect(() => {
     if (trimmed.length === 0 || source === 'youtube') {
       setScStatuses({ tracks: 'idle', playlists: 'idle', artists: 'idle' })
+      setScErrors(emptyScErrors())
       setScTracks([])
       setScPlaylists([])
       setScArtists([])
       return
     }
     setScStatuses({ tracks: 'loading', playlists: 'loading', artists: 'loading' })
+    setScErrors(emptyScErrors())
     setScTracks([])
     setScPlaylists([])
     setScArtists([])
@@ -417,22 +447,27 @@ export default function SearchPage() {
     const timer = window.setTimeout(() => {
       // Each kind appears as soon as it arrives; another kind's delay or error
       // must not hold back tracks and their artwork.
-      const status = (kind: 'tracks' | 'playlists' | 'artists', value: ScStatus) => {
+      const status = (kind: ScSearchKind, value: ScStatus) => {
         if (!cancelled) setScStatuses((previous) => ({ ...previous, [kind]: value }))
+      }
+      const fail = (kind: ScSearchKind, cause: unknown) => {
+        if (cancelled) return
+        setScErrors((previous) => ({ ...previous, [kind]: sanitizeScSearchError(cause) }))
+        status(kind, 'error')
       }
       void api.scSearchTracks(trimmed, 50, 0).then((tracks) => {
         if (!cancelled) setScTracks(tracks)
         status('tracks', 'done')
-      }).catch(() => status('tracks', 'error'))
+      }).catch((cause: unknown) => fail('tracks', cause))
       void api.scSearchPlaylists(trimmed, 24, 0).then((playlists) => {
         if (!cancelled) setScPlaylists(playlists)
         status('playlists', 'done')
-      }).catch(() => status('playlists', 'error'))
+      }).catch((cause: unknown) => fail('playlists', cause))
       void api.scSearchArtists(trimmed, 24, 0).then((artists) => {
         if (!cancelled) setScArtists(artists)
         status('artists', 'done')
-      }).catch(() => status('artists', 'error'))
-    }, 250)
+      }).catch((cause: unknown) => fail('artists', cause))
+    }, SC_SEARCH_DEBOUNCE_MS)
     return () => {
       cancelled = true
       window.clearTimeout(timer)
@@ -712,10 +747,26 @@ export default function SearchPage() {
   const localRelevant = source === 'all' && tab !== 'playlists'
   const localPending = localRelevant && (loading || (results === null && error === null))
   const scRelevant = source !== 'youtube'
-  const activeScStatuses = tab === 'all' ? Object.values(scStatuses)
-    : [scStatuses[tab === 'albums' ? 'playlists' : tab]]
+  const activeScKinds: ScSearchKind[] = tab === 'all' ? SC_SEARCH_KINDS
+    : [tab === 'albums' ? 'playlists' : tab]
+  const activeScStatuses = activeScKinds.map((kind) => scStatuses[kind])
+  const scErrorGroups = new Map<string, ScSearchKind[]>()
+  for (const kind of activeScKinds) {
+    if (scStatuses[kind] !== 'error') continue
+    const reason = scErrors[kind]
+    const kinds = scErrorGroups.get(reason ?? '') ?? []
+    kinds.push(kind)
+    scErrorGroups.set(reason ?? '', kinds)
+  }
+  const activeScErrors = Array.from(scErrorGroups, ([reason, kinds]) => {
+    const labels = kinds.map((kind) => t(SC_SEARCH_KIND_LABELS[kind])).join(', ')
+    return reason && kinds.length > 1 ? reason : reason ? `${labels}: ${reason}` : labels
+  })
   const scStatus: ScStatus = activeScStatuses.every((status) => status === 'error') ? 'error'
     : activeScStatuses.some((status) => status === 'loading' || status === 'idle') ? 'loading' : 'done'
+  const scFailureMessage = activeScErrors.length > 0
+    ? `${scStatus === 'error' && scCount === 0 ? `${t('SoundCloud is unavailable')}: ` : ''}${activeScErrors.join(' · ')}`
+    : null
   const scPending = scRelevant && scStatus === 'loading'
   const ytRelevant = ytTrackMode || ytCollectionMode
   const ytProviderPending =
@@ -724,7 +775,7 @@ export default function SearchPage() {
   const searchPending = localPending || scPending || ytProviderPending
   const searchError =
     (localRelevant && error !== null) ||
-    (scRelevant && scStatus === 'error') ||
+    (scRelevant && activeScStatuses.some((status) => status === 'error')) ||
     (ytRelevant && ((ytTrackMode && ytStatus === 'error') || ytCollectionSections.some((section) => ytCollStatus[section] === 'error')))
   const showNoResults = trimmed.length > 0 && !searchPending && currentCount === 0 && !searchError
 
@@ -861,89 +912,85 @@ export default function SearchPage() {
                 </section>
               ) : null}
 
-              {scRelevant && (scPending || scStatus === 'error' || scCount > 0) ? (
+              {scRelevant && (scPending || activeScErrors.length > 0 || scCount > 0) ? (
                 <section className="search-provider-group">
                   {providerHeading(t('SoundCloud'), scCount, 'soundcloud')}
-                  {scPending && scCount === 0 ? (
-                    searchSkeleton
-                  ) : scStatus === 'error' && scCount === 0 ? (
-                    <div className="search-provider-message muted">{t('SoundCloud is unavailable')}</div>
-                  ) : (
-                    <>
-                      {showTab('tracks') && scTracks.length > 0 ? (
-                        <section className="search-result-kind">
-                          {tab === 'all' ? <h3 className="search-kind-title">{t('Tracks')}</h3> : null}
-                          <div className="sc-list">
-                            {scTracks.map((track) => {
-                              const unified = scTrackToUnified(track)
-                              const idx = playableIdx.get(track.id)
-                              return (
-                                <div
-                                  key={track.id}
-                                  className={'sc-row' + (idx === undefined ? ' is-disabled' : '')}
-                                  onClick={() => playSoundCloud(track)}
+                  {scPending && scCount === 0 ? searchSkeleton : null}
+                  {scFailureMessage ? (
+                    <div className="search-provider-message error-line">{scFailureMessage}</div>
+                  ) : null}
+                  {showTab('tracks') && scTracks.length > 0 ? (
+                    <section className="search-result-kind">
+                      {tab === 'all' ? <h3 className="search-kind-title">{t('Tracks')}</h3> : null}
+                      <div className="sc-list">
+                        {scTracks.map((track) => {
+                          const unified = scTrackToUnified(track)
+                          const idx = playableIdx.get(track.id)
+                          return (
+                            <div
+                              key={track.id}
+                              className={'sc-row' + (idx === undefined ? ' is-disabled' : '')}
+                              onClick={() => playSoundCloud(track)}
+                            >
+                              <ScArtwork url={track.artworkUrl} title={track.title} compact />
+                              <div className="sc-meta">
+                                <span className="sc-title">{track.title}</span>
+                                <span className="sc-artist">{track.artist}</span>
+                              </div>
+                              {idx === undefined ? (
+                                <span className="sc-duration"><Lock size={13} /></span>
+                              ) : (
+                                <span className="sc-duration">{fmtTime(unified.durationSec)}</span>
+                              )}
+                              {unified.externalUrl ? (
+                                <button
+                                  className="icon-btn sc-open"
+                                  aria-label={t('Open on SoundCloud')}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    void openExternalUrl(unified.externalUrl ?? '').catch(() => toast.show(t('Could not open external link'), 'error'))
+                                  }}
                                 >
-                                  <ScArtwork url={track.artworkUrl} title={track.title} compact />
-                                  <div className="sc-meta">
-                                    <span className="sc-title">{track.title}</span>
-                                    <span className="sc-artist">{track.artist}</span>
-                                  </div>
-                                  {idx === undefined ? (
-                                    <span className="sc-duration"><Lock size={13} /></span>
-                                  ) : (
-                                    <span className="sc-duration">{fmtTime(unified.durationSec)}</span>
-                                  )}
-                                  {unified.externalUrl ? (
-                                    <button
-                                      className="icon-btn sc-open"
-                                      aria-label={t('Open on SoundCloud')}
-                                      onClick={(event) => {
-                                        event.stopPropagation()
-                                        void openExternalUrl(unified.externalUrl ?? '').catch(() => toast.show(t('Could not open external link'), 'error'))
-                                      }}
-                                    >
-                                      <ExternalLink size={14} />
-                                    </button>
-                                  ) : (
-                                    <span className="sc-open-spacer" />
-                                  )}
-                                  <ScRowMenu track={track} />
-                                </div>
-                              )
-                            })}
-                          </div>
-                        </section>
-                      ) : null}
+                                  <ExternalLink size={14} />
+                                </button>
+                              ) : (
+                                <span className="sc-open-spacer" />
+                              )}
+                              <ScRowMenu track={track} />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  ) : null}
 
-                      {showTab('albums') && scAlbums.length > 0 ? (
-                        <section className="search-result-kind">
-                          {tab === 'all' ? <h3 className="search-kind-title">{t('Albums')}</h3> : null}
-                          <div className="cards-grid cards-grid-tight">
-                            {scAlbums.map((playlist) => <ScPlaylistCard key={playlist.id} playlist={playlist} />)}
-                          </div>
-                        </section>
-                      ) : null}
+                  {showTab('albums') && scAlbums.length > 0 ? (
+                    <section className="search-result-kind">
+                      {tab === 'all' ? <h3 className="search-kind-title">{t('Albums')}</h3> : null}
+                      <div className="cards-grid cards-grid-tight">
+                        {scAlbums.map((playlist) => <ScPlaylistCard key={playlist.id} playlist={playlist} />)}
+                      </div>
+                    </section>
+                  ) : null}
 
-                      {showTab('playlists') && scPlaylistOnly.length > 0 ? (
-                        <section className="search-result-kind">
-                          {tab === 'all' ? <h3 className="search-kind-title">{t('Playlists')}</h3> : null}
-                          <div className="cards-grid cards-grid-tight">
-                            {scPlaylistOnly.map((playlist) => <ScPlaylistCard key={playlist.id} playlist={playlist} />)}
-                          </div>
-                        </section>
-                      ) : null}
+                  {showTab('playlists') && scPlaylistOnly.length > 0 ? (
+                    <section className="search-result-kind">
+                      {tab === 'all' ? <h3 className="search-kind-title">{t('Playlists')}</h3> : null}
+                      <div className="cards-grid cards-grid-tight">
+                        {scPlaylistOnly.map((playlist) => <ScPlaylistCard key={playlist.id} playlist={playlist} />)}
+                      </div>
+                    </section>
+                  ) : null}
 
-                      {showTab('artists') && scArtists.length > 0 ? (
-                        <section className="search-result-kind">
-                          {tab === 'all' ? <h3 className="search-kind-title">{t('Artists')}</h3> : null}
-                          <div className="arow-list">
-                            {scArtists.map((artist) => <ScArtistRow key={artist.id} artist={artist} />)}
-                          </div>
-                        </section>
-                      ) : null}
-                      {scNote ? <div className="sc-toast">{scNote}</div> : null}
-                    </>
-                  )}
+                  {showTab('artists') && scArtists.length > 0 ? (
+                    <section className="search-result-kind">
+                      {tab === 'all' ? <h3 className="search-kind-title">{t('Artists')}</h3> : null}
+                      <div className="arow-list">
+                        {scArtists.map((artist) => <ScArtistRow key={artist.id} artist={artist} />)}
+                      </div>
+                    </section>
+                  ) : null}
+                  {scNote ? <div className="sc-toast">{scNote}</div> : null}
                 </section>
               ) : null}
 
