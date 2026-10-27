@@ -91,6 +91,14 @@ export function markPendingUpdate(version: string): void {
   }
 }
 
+function clearPendingUpdate(version: string): void {
+  try {
+    if (localStorage.getItem(PENDING_KEY) === version) localStorage.removeItem(PENDING_KEY)
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 /** Reads and clears the marker, so the notice can only be shown once. */
 export function takePendingUpdate(): string | null {
   try {
@@ -109,6 +117,20 @@ export function downloadUpdate(url: string, version: string): Promise<string> {
 /** Starts the installer and quits - it cannot replace a running executable. */
 export function installUpdate(path: string): Promise<void> {
   return invoke<void>('updater_install', { path })
+}
+
+/** Keeps the next-launch notice only when the installer command starts successfully. */
+export async function installUpdateWithPendingMarker(
+  version: string,
+  install: () => Promise<void>,
+): Promise<void> {
+  markPendingUpdate(version)
+  try {
+    await install()
+  } catch (cause) {
+    clearPendingUpdate(version)
+    throw cause
+  }
 }
 
 export function discardUpdate(path: string): Promise<void> {

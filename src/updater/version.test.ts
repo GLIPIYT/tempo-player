@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { compareVersions, newerThan, parseVersion } from './version'
+import { checkReleaseAvailability, compareVersions, newerThan, parseVersion } from './version'
+
+function release(version: string, assetUrl: string | null = `https://example.test/${version}.exe`) {
+  return { version, assetUrl }
+}
 
 describe('parseVersion', () => {
   it('splits the dotted parts', () => {
@@ -68,5 +72,35 @@ describe('newerThan', () => {
 
   it('survives an empty list', () => {
     expect(newerThan([], '0.5.1')).toEqual([])
+  })
+})
+
+describe('checkReleaseAvailability', () => {
+  it('offers the newest release when its installer is available', () => {
+    const result = checkReleaseAvailability(
+      [release('1.9.0'), release('1.10.0'), release('1.8.0')],
+      '1.9.0',
+    )
+
+    expect(result).toEqual({ status: 'update-available', latest: release('1.10.0') })
+  })
+
+  it('does not call a newer release up to date when its installer is missing', () => {
+    const result = checkReleaseAvailability(
+      [release('1.9.0'), release('1.10.0', null)],
+      '1.9.0',
+    )
+
+    expect(result).toEqual({ status: 'installer-missing', latest: release('1.10.0', null) })
+  })
+
+  it('reports the newest release when the running version is current', () => {
+    const result = checkReleaseAvailability([release('1.9.0'), release('1.10.0')], '1.10.0')
+
+    expect(result).toEqual({ status: 'up-to-date', latest: release('1.10.0') })
+  })
+
+  it('distinguishes an empty release list from a current installation', () => {
+    expect(checkReleaseAvailability([], '1.10.0')).toEqual({ status: 'no-releases', latest: null })
   })
 })

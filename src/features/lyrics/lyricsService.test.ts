@@ -72,6 +72,38 @@ describe('shared lyrics selection', () => {
     await flush(); old.resolve(pin('old')); await flush()
     expect(lyricSliceAt(lyricsService.getCurrent()!.result, 1).text).toBe('new')
   })
+  it('reports the shared request as pending until a late plain result arrives', async () => {
+    const pending = deferred<{ plain: string | null; syncedLrc: string | null; copyright: string | null } | null>()
+    vi.mocked(api.getLyricsOverride).mockResolvedValueOnce(null)
+    vi.mocked(api.getTrackLyrics).mockResolvedValueOnce(null)
+    vi.mocked(api.fetchOnlineLyrics).mockReturnValueOnce(pending.promise)
+
+    lyricsService.ensure(track('A'), false)
+    expect(lyricsService.isLoading?.('A')).toBe(true)
+
+    pending.resolve({ plain: 'Fetched lyrics', syncedLrc: null, copyright: null })
+    await flush()
+
+    expect(lyricsService.isLoading?.('A')).toBe(false)
+    expect(lyricsService.getCurrent()?.result).toEqual({ kind: 'plain', text: 'Fetched lyrics' })
+  })
+  it('does not let a late provider result replace an explicit candidate selection', async () => {
+    const pending = deferred<{ plain: string | null; syncedLrc: string | null; copyright: string | null } | null>()
+    vi.mocked(api.getLyricsOverride).mockResolvedValueOnce(null)
+    vi.mocked(api.getTrackLyrics).mockResolvedValueOnce(null)
+    vi.mocked(api.fetchOnlineLyrics).mockReturnValueOnce(pending.promise)
+    const selected = { kind: 'plain' as const, text: 'Manually selected lyrics' }
+
+    lyricsService.ensure(track('A'), false)
+    expect(lyricsService.isLoading?.('A')).toBe(true)
+    lyricsService.setActiveCandidate('A', selected, 40, lyricSourceKey(selected, 'manual'), 0, 'manual')
+
+    pending.resolve({ plain: 'Late automatic lyrics', syncedLrc: null, copyright: null })
+    await flush()
+
+    expect(lyricsService.isLoading?.('A')).toBe(false)
+    expect(lyricsService.getCurrent()?.result).toEqual(selected)
+  })
   it('does not lead the actual start and releases the final phrase', () => {
     const result = { kind: 'synced' as const, lines: [{ timeSec: 10, endTimeSec: 12, text: 'one' }] }
     expect(lyricSliceAt(result, 9.8).text).toBeNull()

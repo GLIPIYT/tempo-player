@@ -33,6 +33,7 @@ let current: CurrentLyrics | null = null
 let currentKey = ''
 let requestedId = ''
 let requestedTrackKey = ''
+let loadingTrackId = ''
 const languageSourceHashes = new Map<string, string>()
 let generation = 0
 let version = 0
@@ -45,6 +46,7 @@ const listeners = new Set<() => void>()
 function emit(): void { version++; listeners.forEach(listener => listener()) }
 function activate(trackId: string, sourceResult: LyricsResult | null, durationSec: number | null,
   sourceLyricKey: string, offsetMs: number, provider: string): void {
+  loadingTrackId = ''
   durationSec = mediaDurationSec ?? durationSec
   const lyricKey = JSON.stringify([sourceLyricKey, offsetMs])
   if (current?.trackId === trackId && current.lyricKey === lyricKey && current.durationSec === durationSec) return
@@ -72,6 +74,7 @@ export const lyricsService = {
   subscribe: (listener: () => void): (() => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
   getVersion: (): number => version,
   getCurrent: (): CurrentLyrics | null => current,
+  isLoading: (trackId: string | null | undefined): boolean => Boolean(trackId && loadingTrackId === trackId),
   /** Actual loaded media wins over metadata and preserves candidate/pass identity. */
   setMediaDuration(trackId: string, durationSec: number): void {
     if (requestedId !== trackId || !Number.isFinite(durationSec) || durationSec <= 0) return
@@ -106,6 +109,7 @@ export const lyricsService = {
     if (currentKey === key) return
     const job = ++generation
     currentKey = key; requestedId = track.sourceId; current = null
+    loadingTrackId = track.sourceId
     requestedTrackKey = `${track.source ?? 'local'}:${track.source === 'local' ? track.dbId ?? track.sourceId : track.sourceId}`
     mediaDurationSec = null; latestAnalysis = null
     pass = createPlaybackTiming()
@@ -114,12 +118,17 @@ export const lyricsService = {
       if (job !== generation || key !== currentKey) return
       activate(track.sourceId, candidate.result, track.durationSec ?? null,
         lyricSourceKey(candidate.result, candidate.provider), candidate.offsetMs, candidate.provider)
-    }).catch(() => {})
+    }).catch(() => {
+      if (job !== generation || key !== currentKey) return
+      loadingTrackId = ''
+      emit()
+    })
   },
   invalidate(sourceId?: string): void {
     if (sourceId !== undefined && requestedId !== sourceId) return
     if (!currentKey && !current) return
     generation++; currentKey = ''; current = null; requestedId = ''; requestedTrackKey = ''
+    loadingTrackId = ''
     mediaDurationSec = null; latestAnalysis = null
     emit()
   },

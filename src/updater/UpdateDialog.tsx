@@ -5,9 +5,10 @@ import { toast } from '../components/common/Toast'
 import { useT } from '../i18n'
 import {
   downloadUpdate,
+  discardUpdate,
   formatBytes,
   installUpdate,
-  markPendingUpdate,
+  installUpdateWithPendingMarker,
   onDownloadProgress,
   skipVersion,
   type ReleaseInfo,
@@ -18,12 +19,12 @@ import ReleaseNotes from './ReleaseNotes'
 interface Props {
   releases: ReleaseInfo[]
   initialVersion: string
+  currentVersion?: string
   installedVersion?: string
   onDismiss: () => void
-  preview?: boolean
 }
 
-type Phase = 'offer' | 'downloading' | 'failed'
+type Phase = 'offer' | 'downloading' | 'installing' | 'failed'
 
 const CONFETTI_COLORS = ['#ff6b6b', '#ffd166', '#06d6a0', '#48bfe3', '#c77dff']
 
@@ -40,8 +41,8 @@ function emptyRelease(version: string): ReleaseInfo {
   }
 }
 
-/** Version picker and changelog for both an available update and an installed release. */
-export default function UpdateDialog({ releases, initialVersion, installedVersion, onDismiss, preview = false }: Props) {
+/** Version menu and changelog shared by manual and automatic update offers. */
+export default function UpdateDialog({ releases, initialVersion, currentVersion, installedVersion, onDismiss }: Props) {
   const t = useT()
   const [selectedVersion, setSelectedVersion] = useState(initialVersion)
   const [phase, setPhase] = useState<Phase>('offer')
@@ -49,21 +50,34 @@ export default function UpdateDialog({ releases, initialVersion, installedVersio
   const [error, setError] = useState<string | null>(null)
   const downloadedPath = useRef<string | null>(null)
   const confettiRef = useRef<HTMLDivElement | null>(null)
+  const mounted = useRef(false)
+  const progressUnlisten = useRef<(() => void) | null>(null)
+  const installerLaunchAttempted = useRef(false)
+  const operationRunning = useRef(false)
 
   const installableReleases = [...new Map(releases
     .filter(release => release.assetUrl !== null)
     .map(release => [release.version, release])).values()]
     .sort((a, b) => compareVersions(b.version, a.version))
-  const latestVersion = installableReleases[0]?.version ?? null
+  const latestRelease = [...releases].sort((a, b) => compareVersions(b.version, a.version))[0]
+  const latestVersion = latestRelease?.version ?? null
   const versionChoices = [...installableReleases]
-  if (installedVersion && !versionChoices.some(release => release.version === installedVersion)) {
-    versionChoices.push(releases.find(release => release.version === installedVersion) ?? emptyRelease(installedVersion))
-    versionChoices.sort((a, b) => compareVersions(b.version, a.version))
+  if (latestRelease && latestRelease.assetUrl === null && !versionChoices.some(release => release.version === latestRelease.version)) {
+    versionChoices.push(latestRelease)
   }
+  const installedVersions = [...new Set([currentVersion, installedVersion].filter((version): version is string => Boolean(version)))]
+  for (const version of installedVersions) {
+    if (!versionChoices.some(release => release.version === version)) {
+      versionChoices.push(releases.find(release => release.version === version) ?? emptyRelease(version))
+    }
+  }
+  versionChoices.sort((a, b) => compareVersions(b.version, a.version))
   const release = versionChoices.find(item => item.version === selectedVersion)
     ?? releases.find(item => item.version === selectedVersion)
     ?? emptyRelease(selectedVersion)
   const isInstalled = installedVersion === release.version
+  const isCurrent = currentVersion === release.version || isInstalled
+  const busy = phase === 'downloading' || phase === 'installing'
   const percent = progress && progress.total > 0
     ? Math.min(100, Math.round((progress.downloaded / progress.total) * 100))
     : null
@@ -77,69 +91,108 @@ export default function UpdateDialog({ releases, initialVersion, installedVersio
     setPhase('offer')
     setProgress(null)
     setError(null)
-    downloadedPath.current = null
   }, [selectedVersion])
 
   useEffect(() => {
-    if (!installedVersion || preview) return
+    if (!installedVersion) return
     const timer = window.setTimeout(() => {
       confettiRef.current?.classList.add('is-active')
     }, 30)
     return () => window.clearTimeout(timer)
-  }, [installedVersion, preview])
+  }, [installedVersion])
 
   useEffect(() => {
-    if (phase !== 'downloading') return
-    let stop: (() => void) | null = null
-    let cancelled = false
-    void onDownloadProgress((p) => {
-      if (cancelled || p.version !== release.version) return
-      setProgress({ downloaded: p.downloaded, total: p.total })
-    })
-      .then((unlisten) => {
-        if (cancelled) unlisten()
-        else stop = unlisten
-      })
-      .catch(() => {})
+    mounted.current = true
     return () => {
-      cancelled = true
-      stop?.()
+      mounted.current = false
+      progressUnlisten.current?.()
+      progressUnlisten.current = null
+      const path = downloadedPath.current
+      downloadedPath.current = null
+      if (path && !installerLaunchAttempted.current) {
+        void discardUpdate(path).catch(() => {})
+      }
     }
-  }, [phase, release.version])
+  }, [])
+
+  const discardDownloadedInstaller = () => {
+    const path = downloadedPath.current
+    downloadedPath.current = null
+    if (path && !installerLaunchAttempted.current) {
+      void discardUpdate(path).catch(() => {})
+    }
+  }
+
+  const selectVersion = (version: string) => {
+    if (busy || version === selectedVersion) return
+    discardDownloadedInstaller()
+    setSelectedVersion(version)
+  }
 
   const begin = async () => {
-    if (preview) return
-    if (!release.assetUrl) {
-      setError(t('This release has no Windows installer attached.'))
-      setPhase('failed')
-      return
-    }
+    if (operationRunning.current || busy || !release.assetUrl) return
+    operationRunning.current = true
     setError(null)
-    setPhase('downloading')
-    setProgress({ downloaded: 0, total: release.assetSize ?? 0 })
+    let stop: (() => void) | null = null
+    let path = downloadedPath.current
     try {
-      const path = await downloadUpdate(release.assetUrl, release.version)
-      downloadedPath.current = path
-      markPendingUpdate(release.version)
-      await installUpdate(path)
+      if (!path) {
+        setProgress({ downloaded: 0, total: release.assetSize ?? 0 })
+        // Lock closing and version selection before async listener setup begins.
+        setPhase('downloading')
+        stop = await onDownloadProgress((p) => {
+          if (!mounted.current || p.version !== release.version) return
+          setProgress({ downloaded: p.downloaded, total: p.total })
+        })
+        progressUnlisten.current = stop
+        if (!mounted.current) return
+        path = await downloadUpdate(release.assetUrl, release.version)
+        downloadedPath.current = path
+        if (!mounted.current) {
+          downloadedPath.current = null
+          await discardUpdate(path).catch(() => {})
+          return
+        }
+      }
+
+      if (!path) throw new Error(t('This release has no Windows installer attached.'))
+      const installerPath = path
+      setPhase('installing')
+      installerLaunchAttempted.current = true
+      await installUpdateWithPendingMarker(release.version, () => installUpdate(installerPath))
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-      setPhase('failed')
+      if (mounted.current) {
+        installerLaunchAttempted.current = false
+        setError(cause instanceof Error ? cause.message : String(cause))
+        setPhase('failed')
+      }
+    } finally {
+      if (stop && progressUnlisten.current === stop) {
+        progressUnlisten.current = null
+        stop()
+      }
+      operationRunning.current = false
     }
   }
 
   const skip = () => {
-    if (preview || isInstalled) return
+    if (busy || isCurrent || !release.assetUrl) return
     skipVersion(release.version)
     toast.show(`${t('Skipped update')} ${release.version}`)
+    dismiss()
+  }
+
+  const dismiss = () => {
+    if (busy) return
+    discardDownloadedInstaller()
     onDismiss()
   }
 
-  const title = isInstalled ? t('Update installed') : t('Update available')
+  const title = isInstalled ? t('Update installed') : t('Updates')
 
   return (
-    <Modal open className="update-modal" title={`${title} — ${release.version}`} onClose={onDismiss}>
-      {installedVersion && !preview ? (
+    <Modal open className="update-modal" title={`${title} — ${release.version}`} onClose={dismiss} closeDisabled={busy}>
+      {installedVersion ? (
         <div className="update-confetti" ref={confettiRef} aria-hidden="true">
           {Array.from({ length: 18 }, (_, index) => (
             <i
@@ -159,7 +212,7 @@ export default function UpdateDialog({ releases, initialVersion, installedVersio
           <div className="update-version-picker-list">
             {versionChoices.map(item => {
               const selected = item.version === release.version
-              const current = installedVersion === item.version
+              const current = currentVersion === item.version || installedVersion === item.version
               const latest = latestVersion === item.version
               const unavailable = item.assetUrl === null && !current
               return (
@@ -168,8 +221,8 @@ export default function UpdateDialog({ releases, initialVersion, installedVersio
                   key={item.version}
                   className={`update-version-choice${selected ? ' is-selected' : ''}${latest ? ' is-latest' : ''}${current ? ' is-installed' : ''}`}
                   aria-pressed={selected}
-                  disabled={unavailable || phase === 'downloading'}
-                  onClick={() => setSelectedVersion(item.version)}
+                  disabled={unavailable || busy}
+                  onClick={() => selectVersion(item.version)}
                 >
                   <span className="update-version-choice-main">
                     <strong>{item.version}</strong>
@@ -188,7 +241,6 @@ export default function UpdateDialog({ releases, initialVersion, installedVersio
           <div className="update-summary">
             <div className="update-head">
               <span className="update-version">{release.name || release.tag}</span>
-              {preview ? <span className="update-preview-badge">{t('Preview only')}</span> : null}
               {release.assetSize ? <span className="muted update-size">{formatBytes(release.assetSize)}</span> : null}
               {isInstalled ? (
                 <span className="update-installed-message">
@@ -197,6 +249,9 @@ export default function UpdateDialog({ releases, initialVersion, installedVersio
                 </span>
               ) : null}
             </div>
+            {!isCurrent && !release.assetUrl ? (
+              <div className="error-line update-error">{t('This release has no Windows installer attached.')}</div>
+            ) : null}
             {phase === 'downloading' ? (
               <div className="update-download-state">
                 <div className="update-progress" role="progressbar" aria-valuenow={percent ?? 0}>
@@ -205,6 +260,12 @@ export default function UpdateDialog({ releases, initialVersion, installedVersio
                 <div className="muted settings-line" style={{ marginTop: 6 }}>
                   {percent === null ? t('Downloading…') : `${t('Downloading…')} ${percent}% · ${formatBytes(progress?.downloaded ?? 0)}`}
                 </div>
+                <div className="set-note">{t('Tempo will close and start again to finish installing.')}</div>
+              </div>
+            ) : null}
+            {phase === 'installing' ? (
+              <div className="update-download-state" role="status">
+                <div className="muted settings-line"><PackageCheck size={15} /> {t('Starting installer…')}</div>
                 <div className="set-note">{t('Tempo will close and start again to finish installing.')}</div>
               </div>
             ) : null}
@@ -221,10 +282,10 @@ export default function UpdateDialog({ releases, initialVersion, installedVersio
           </section>
         </section>
 
-        {phase !== 'downloading' ? (
+        {!busy ? (
           <div className="modal-actions update-dialog-actions">
-            {preview || isInstalled ? (
-              <button className="btn btn-primary" onClick={onDismiss}>{t('Close')}</button>
+            {isCurrent || !release.assetUrl ? (
+              <button className="btn btn-primary" onClick={dismiss}>{t('Close')}</button>
             ) : (
               <>
                 <button className="btn" onClick={skip}>{t('Skip this version')}</button>

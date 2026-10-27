@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
+import { api } from '../../api/client'
 import { fmtTime } from '../../utils/format'
 import { useT } from '../../i18n'
+import { cachedWaveformRequest, fallbackWaveformHeights, soundCloudWaveformHeights } from './waveform'
 
 interface WaveProgressProps {
   position: number
   duration: number
   seed: string
+  soundCloudTrackId: string | null
+  waveformEnabled: boolean
   onSeek: (sec: number) => void
 }
 
@@ -15,28 +19,47 @@ const BAR_COUNT = 90
 const BAR_SLOT_PX = 4
 /** below this many bars the waveform stops reading as one, so it is the floor */
 const BAR_COUNT_MIN = 24
+const WAVEFORM_REQUEST_CACHE_SIZE = 16
 
-function hashUnit(input: string): number {
-  let h = 2166136261
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i)
-    h = Math.imul(h, 16777619)
-  }
-  return (h >>> 0) / 4294967296
-}
-
-function bellWeight(t: number): number {
-  const sigma = 0.24
-  return Math.exp(-((t - 0.5) ** 2) / (2 * sigma * sigma))
-}
-
-export default function WaveProgress({ position, duration, seed, onSeek }: WaveProgressProps) {
+export default function WaveProgress({
+  position,
+  duration,
+  seed,
+  soundCloudTrackId,
+  waveformEnabled,
+  onSeek,
+}: WaveProgressProps) {
   const t = useT()
   const boxRef = useRef<HTMLDivElement | null>(null)
   const previewRef = useRef(0)
+  const waveformRequestsRef = useRef(new Map<string, Promise<number[]>>())
   const [scrubbing, setScrubbing] = useState(false)
   const [previewFrac, setPreviewFrac] = useState(0)
   const [barCount, setBarCount] = useState(BAR_COUNT)
+  const [loadedWaveform, setLoadedWaveform] = useState<{ trackId: string; samples: number[] } | null>(null)
+
+  useEffect(() => {
+    if (!waveformEnabled || !soundCloudTrackId || loadedWaveform?.trackId === soundCloudTrackId) return
+
+    let active = true
+    const request = cachedWaveformRequest(
+      waveformRequestsRef.current,
+      soundCloudTrackId,
+      () => api.scWaveform(soundCloudTrackId),
+    )
+    while (waveformRequestsRef.current.size > WAVEFORM_REQUEST_CACHE_SIZE) {
+      const oldest = waveformRequestsRef.current.keys().next().value
+      if (oldest === undefined) break
+      waveformRequestsRef.current.delete(oldest)
+    }
+    request.then(samples => {
+      if (active && Array.isArray(samples)) setLoadedWaveform({ trackId: soundCloudTrackId, samples })
+    }).catch(() => {
+      // SoundCloud may hide waveforms or be offline. The stable fallback below
+      // keeps seeking available without surfacing a player error.
+    })
+    return () => { active = false }
+  }, [waveformEnabled, soundCloudTrackId, loadedWaveform?.trackId])
 
   // Each bar has a 2px floor plus a 2px gap, so a fixed 90 bars need ~358px and
   // simply overflow below that - the row is not clipped. Measuring the real
@@ -59,16 +82,12 @@ export default function WaveProgress({ position, duration, seed, onSeek }: WaveP
   }, [])
 
   const heights = useMemo(() => {
-    const arr: number[] = []
-    for (let i = 0; i < barCount; i++) {
-      // sampled across the full seed range, so fewer bars still span the track
-      // instead of showing only its opening
-      const u = hashUnit(`${seed}:${Math.round((i * (BAR_COUNT - 1)) / Math.max(1, barCount - 1))}`)
-      const shaped = u ** 1.3 * (0.38 + 0.62 * bellWeight(i / Math.max(1, barCount - 1)))
-      arr.push(18 + shaped * 82)
+    if (soundCloudTrackId) {
+      const samples = loadedWaveform?.trackId === soundCloudTrackId ? loadedWaveform.samples : null
+      return soundCloudWaveformHeights(samples, barCount)
     }
-    return arr
-  }, [seed, barCount])
+    return fallbackWaveformHeights(seed, barCount)
+  }, [seed, barCount, soundCloudTrackId, loadedWaveform])
 
   const commit = useCallback(
     (frac: number) => {
@@ -115,6 +134,38 @@ export default function WaveProgress({ position, duration, seed, onSeek }: WaveP
     setScrubbing(true)
   }
 
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (duration <= 0) return
+    const step = 0.01
+    let next: number
+    switch (e.key) {
+      case 'ArrowLeft':
+      case 'ArrowDown':
+        next = frac - step
+        break
+      case 'ArrowRight':
+      case 'ArrowUp':
+        next = frac + step
+        break
+      case 'PageDown':
+        next = frac - step * 10
+        break
+      case 'PageUp':
+        next = frac + step * 10
+        break
+      case 'Home':
+        next = 0
+        break
+      case 'End':
+        next = 1
+        break
+      default:
+        return
+    }
+    e.preventDefault()
+    commit(next)
+  }
+
   const bars = useMemo(
     () =>
       heights.map((h, i) => <span key={i} className="wave-bar" style={{ height: `${h.toFixed(2)}%` }} />),
@@ -123,10 +174,13 @@ export default function WaveProgress({ position, duration, seed, onSeek }: WaveP
 
   return (
     <div
-      className="wave"
+      className={`wave${waveformEnabled ? '' : ' wave-is-minimized'}`}
       ref={boxRef}
-      onPointerDown={onPointerDown}
-      role="slider"
+      onPointerDown={waveformEnabled ? onPointerDown : undefined}
+      onKeyDown={waveformEnabled ? onKeyDown : undefined}
+      role={waveformEnabled ? 'slider' : undefined}
+      tabIndex={waveformEnabled ? 0 : -1}
+      aria-hidden={waveformEnabled ? undefined : true}
       aria-label={t('Seek')}
       aria-valuemin={0}
       aria-valuemax={Math.round(duration)}

@@ -1409,6 +1409,11 @@ pub async fn sc_stream_url(track_id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub async fn sc_waveform(track_id: String) -> Result<Vec<f32>, String> {
+    crate::soundcloud::get_waveform(&track_id).await
+}
+
+#[tauri::command]
 pub async fn fetch_online_lyrics(
     app: AppHandle,
     artist: String,

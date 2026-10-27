@@ -66,7 +66,7 @@ import {
   listReleases,
   type ReleaseInfo,
 } from '../updater/service'
-import { compareVersions } from '../updater/version'
+import { checkReleaseAvailability, type ReleaseAvailability } from '../updater/version'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { resolveBrandIcon } from '../theme/brandIcon'
 
@@ -768,26 +768,54 @@ function StorageCard() {
 
 function UpdateCard() {
   const t = useT()
-  const [showPreview, setShowPreview] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [checkResult, setCheckResult] = useState<ReleaseAvailability<ReleaseInfo> | null>(null)
+  const [checkError, setCheckError] = useState<string | null>(null)
+  const [dialog, setDialog] = useState<{
+    releases: ReleaseInfo[]
+    initialVersion: string
+    currentVersion: string
+  } | null>(null)
+  const mounted = useRef(false)
+  const requestId = useRef(0)
   const current = useAsync(() => appVersion(), [])
-  const releases = useAsync(() => listReleases(), [])
-
   const currentVersion = current.data
-  const installableReleases = (releases.data ?? []).filter(release => release.assetUrl !== null)
-    .sort((a, b) => compareVersions(b.version, a.version))
-  const latestRelease = installableReleases[0]
-  const latest = latestRelease?.version ?? null
-  const upToDate = !releases.loading && !releases.error && currentVersion !== null && latest !== null
-    && compareVersions(currentVersion, latest) >= 0
-  const previewRelease: ReleaseInfo = latestRelease ?? releases.data?.[0] ?? {
-    version: currentVersion ?? '1.1.0',
-    tag: `v${currentVersion ?? '1.1.0'}`,
-    name: t('Update preview'),
-    notes: t('Example update notes'),
-    publishedAt: '',
-    assetName: null,
-    assetUrl: null,
-    assetSize: null,
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      requestId.current += 1
+    }
+  }, [])
+
+  const checkForUpdates = async () => {
+    if (checking) return
+    if (!currentVersion) {
+      current.reload()
+      return
+    }
+
+    const id = ++requestId.current
+    setChecking(true)
+    setCheckResult(null)
+    setCheckError(null)
+    try {
+      const releases = await listReleases()
+      if (!mounted.current || requestId.current !== id) return
+      const result = checkReleaseAvailability(releases, currentVersion)
+      setCheckResult(result)
+      if (result.status !== 'no-releases') {
+        const initialVersion = result.status === 'up-to-date' ? currentVersion : result.latest.version
+        setDialog({ releases, initialVersion, currentVersion })
+      }
+    } catch (cause) {
+      if (mounted.current && requestId.current === id) {
+        setCheckError(cause instanceof Error ? cause.message : String(cause))
+      }
+    } finally {
+      if (mounted.current && requestId.current === id) setChecking(false)
+    }
   }
 
   return (
@@ -799,26 +827,37 @@ function UpdateCard() {
         </div>
         <div className="set-row" style={{ marginTop: 6 }}>
           <span className="set-row-label">{t('Latest available')}</span>
-          <span className="muted">{releases.error ? t('Could not check') : (latest ?? '…')}</span>
+          <span className="muted">{checkResult ? (checkResult.latest?.version ?? '—') : '…'}</span>
         </div>
 
-        {releases.error ? <div className="error-line">{releases.error}</div> : null}
-        {upToDate ? (
+        {current.error ? <div className="error-line">{t('Could not check')}: {current.error}</div> : null}
+        {checkError ? <div className="error-line">{t('Could not check')}: {checkError}</div> : null}
+        {checkResult?.status === 'up-to-date' ? (
           <div className="set-note">{t('You are on the newest release.')}</div>
+        ) : null}
+        {checkResult?.status === 'no-releases' ? (
+          <div className="set-note">{t('No installable versions.')}</div>
+        ) : null}
+        {checkResult?.status === 'update-available' ? (
+          <div className="set-note">{t('Update available')} · {checkResult.latest.version}</div>
+        ) : null}
+        {checkResult?.status === 'installer-missing' ? (
+          <div className="set-note">{t('This release has no Windows installer attached.')}</div>
         ) : null}
 
         <div className="set-actions" style={{ marginTop: 16 }}>
-          <button className="btn" onClick={() => setShowPreview(true)}>
-            {t('Preview update dialog')}
+          <button className="btn" disabled={checking || current.loading} onClick={() => void checkForUpdates()}>
+            <RefreshCw size={14} className={checking || current.loading ? 'spin' : undefined} />
+            {t(checking || current.loading ? 'Checking…' : 'Open update menu')}
           </button>
         </div>
       </Card>
-      {showPreview ? (
+      {dialog ? (
         <UpdateDialog
-          releases={releases.data?.length ? releases.data : [previewRelease]}
-          initialVersion={previewRelease.version}
-          preview
-          onDismiss={() => setShowPreview(false)}
+          releases={dialog.releases}
+          initialVersion={dialog.initialVersion}
+          currentVersion={dialog.currentVersion}
+          onDismiss={() => setDialog(null)}
         />
       ) : null}
     </>

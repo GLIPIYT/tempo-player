@@ -227,6 +227,7 @@ pub fn run() {
             commands::sc_artist_releases,
             commands::sc_import_artist,
             commands::sc_stream_url,
+            commands::sc_waveform,
             commands::fetch_online_lyrics,
             commands::fetch_online_lyrics_all,
             commands::sc_get_playback,

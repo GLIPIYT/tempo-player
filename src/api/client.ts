@@ -300,6 +300,9 @@ export const api = {
   scSearchTracks: (query: string, limit: number, offset: number) =>
     invoke<ScTrack[]>('sc_search_tracks', { query, limit, offset }),
 
+  /** Loads bounded public waveform peaks for one SoundCloud track. */
+  scWaveform: (trackId: string) => invoke<number[]>('sc_waveform', { trackId }),
+
   scSessionStatus: () => invoke<SoundCloudSessionStatus>('sc_session_status'),
   scSessionLogin: () => invoke<void>('sc_session_login'),
   scSessionLogout: () => invoke<void>('sc_session_logout'),

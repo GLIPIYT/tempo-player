@@ -31,14 +31,11 @@ export const ru: Record<string, string> = {
   'Set background': 'Поставить',
   'Saved backgrounds': 'Сохранённые фоны',
   'Could not load saved backgrounds': 'Не удалось загрузить сохранённые фоны',
-  'Preview update dialog': 'Предпросмотр окна обновления',
   'Available versions': 'Доступные версии',
   Latest: 'Последняя',
   Installed: 'Установлена',
   'No installable versions.': 'Нет версий, доступных для установки.',
-  'Preview only': 'Только предпросмотр',
-  'Update preview': 'Предпросмотр обновления',
-  'Example update notes': 'Обновлённый интерфейс и улучшения библиотеки и воспроизведения.',
+  'Open update menu': 'Открыть меню обновлений',
   'Background provider unavailable': 'Источник сейчас недоступен',
   'Image preview unavailable': 'Превью недоступно',
   'Show safe images only': 'Показывать только SFW',
@@ -801,6 +798,7 @@ export const ru: Record<string, string> = {
   'Downloading…': 'Загрузка…',
   'Tempo will close and start again to finish installing.':
     'Tempo закроется и запустится заново, чтобы завершить установку.',
+  'Starting installer…': 'Запуск установщика…',
   'Update installed': 'Обновление установлено',
   'Tempo updated successfully. Now running version':
     'Tempo успешно обновился. Сейчас запущена версия',

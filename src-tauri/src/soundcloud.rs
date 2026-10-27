@@ -13,6 +13,12 @@ const API: &str = "https://api-v2.soundcloud.com";
 const DESKTOP_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
 const STREAM_TTL: Duration = Duration::from_secs(20 * 60);
+const WAVEFORM_TTL: Duration = Duration::from_secs(12 * 60 * 60);
+const WAVEFORM_CACHE_MAX: usize = 128;
+const MAX_WAVEFORM_BYTES: usize = 2 * 1024 * 1024;
+const MAX_WAVEFORM_SAMPLES: usize = 512;
+const MAX_WAVEFORM_IMAGE_WIDTH: u32 = 4096;
+const MAX_WAVEFORM_IMAGE_HEIGHT: u32 = 512;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +86,19 @@ fn client() -> &'static Client {
             .timeout(Duration::from_secs(15))
             .build()
             .expect("reqwest client")
+    })
+}
+
+fn waveform_client() -> &'static Client {
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        Client::builder()
+            .user_agent(DESKTOP_UA)
+            .connect_timeout(Duration::from_secs(3))
+            .timeout(Duration::from_secs(8))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("waveform HTTP client")
     })
 }
 
@@ -1158,6 +1177,182 @@ pub async fn get_stream_url(track_id: &str) -> Result<String, String> {
     Ok(get_stream_info(track_id).await?.url)
 }
 
+fn waveform_cache() -> &'static Mutex<HashMap<String, (Vec<f32>, Instant)>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, (Vec<f32>, Instant)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn waveform_slots() -> &'static Semaphore {
+    static SLOTS: OnceLock<Semaphore> = OnceLock::new();
+    SLOTS.get_or_init(|| Semaphore::new(2))
+}
+
+fn validate_waveform_url(raw: &str) -> Result<reqwest::Url, String> {
+    let url = reqwest::Url::parse(raw).map_err(|_| "invalid SoundCloud waveform URL".to_string())?;
+    if url.scheme() != "https"
+        || url.host_str() != Some("wave.sndcdn.com")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some_and(|port| port != 443)
+    {
+        return Err("untrusted SoundCloud waveform URL".into());
+    }
+    Ok(url)
+}
+
+fn normalized_waveform_samples(samples: Vec<f32>) -> Result<Vec<f32>, String> {
+    let clean: Vec<f32> = samples
+        .into_iter()
+        .map(|sample| if sample.is_finite() { sample.abs() } else { 0.0 })
+        .collect();
+    let peak = clean.iter().copied().fold(0.0_f32, f32::max);
+    if clean.is_empty() || peak <= f32::EPSILON {
+        return Err("SoundCloud waveform has no usable peaks".into());
+    }
+
+    let normalized: Vec<f32> = clean.into_iter().map(|sample| (sample / peak).clamp(0.0, 1.0)).collect();
+    if normalized.len() <= MAX_WAVEFORM_SAMPLES {
+        return Ok(normalized);
+    }
+
+    Ok((0..MAX_WAVEFORM_SAMPLES)
+        .map(|index| {
+            let start = index * normalized.len() / MAX_WAVEFORM_SAMPLES;
+            let end = ((index + 1) * normalized.len() + MAX_WAVEFORM_SAMPLES - 1)
+                / MAX_WAVEFORM_SAMPLES;
+            normalized[start..end.max(start + 1)]
+                .iter()
+                .copied()
+                .fold(0.0_f32, f32::max)
+        })
+        .collect())
+}
+
+fn parse_waveform_payload(bytes: &[u8]) -> Result<Vec<f32>, String> {
+    if let Some(first) = bytes.iter().copied().find(|byte| !byte.is_ascii_whitespace()) {
+        if first == b'{' {
+            let value: Value = serde_json::from_slice(bytes)
+                .map_err(|_| "invalid SoundCloud waveform JSON".to_string())?;
+            let samples = value
+                .get("samples")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "SoundCloud waveform samples are missing".to_string())?
+                .iter()
+                .map(|sample| sample.as_f64().unwrap_or_default() as f32)
+                .collect();
+            return normalized_waveform_samples(samples);
+        }
+    }
+
+    const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+    if bytes.len() < 24 || !bytes.starts_with(PNG_SIGNATURE) {
+        return Err("unsupported SoundCloud waveform format".into());
+    }
+    let width = u32::from_be_bytes(bytes[16..20].try_into().unwrap_or_default());
+    let height = u32::from_be_bytes(bytes[20..24].try_into().unwrap_or_default());
+    if width == 0
+        || height < 2
+        || width > MAX_WAVEFORM_IMAGE_WIDTH
+        || height > MAX_WAVEFORM_IMAGE_HEIGHT
+        || width.saturating_mul(height) > MAX_WAVEFORM_IMAGE_WIDTH * MAX_WAVEFORM_IMAGE_HEIGHT
+    {
+        return Err("SoundCloud waveform image dimensions are invalid".into());
+    }
+
+    let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+        .map_err(|_| "could not decode SoundCloud waveform image".to_string())?
+        .to_rgba8();
+    let has_transparency = image.pixels().any(|pixel| pixel[3] < 250);
+    let background = image.get_pixel(width / 2, 0).0;
+    let center = (height - 1) as f32 / 2.0;
+    let half_height = center.max(f32::EPSILON);
+    let samples = (0..width)
+        .map(|x| {
+            let mut radius = 0.0_f32;
+            for y in 0..height {
+                let pixel = image.get_pixel(x, y).0;
+                let is_waveform = if has_transparency {
+                    pixel[3] > 16
+                } else {
+                    (0..3).map(|channel| pixel[channel].abs_diff(background[channel]) as u16).sum::<u16>() > 36
+                };
+                if is_waveform {
+                    radius = radius.max((y as f32 - center).abs());
+                }
+            }
+            (radius / half_height).clamp(0.0, 1.0)
+        })
+        .collect();
+    normalized_waveform_samples(samples)
+}
+
+async fn resolve_waveform(track_id: &str) -> Result<Vec<f32>, String> {
+    let metadata = get_json_with_fresh_client(&format!("{API}/tracks/{track_id}?client_id=")).await?;
+    let raw_url = metadata
+        .get("waveform_url")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "SoundCloud waveform is unavailable".to_string())?;
+    let url = validate_waveform_url(raw_url)?;
+    let response = waveform_client()
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| request_failure("SoundCloud waveform request failed", error))?;
+    if !response.status().is_success() {
+        return Err(format!("SoundCloud waveform unavailable ({})", response.status().as_u16()));
+    }
+    if response.content_length().is_some_and(|length| length > MAX_WAVEFORM_BYTES as u64) {
+        return Err("SoundCloud waveform response is too large".into());
+    }
+
+    let mut body = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(|error| request_failure("SoundCloud waveform request failed", error))?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_WAVEFORM_BYTES {
+            return Err("SoundCloud waveform response is too large".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    parse_waveform_payload(&bytes)
+}
+
+/// Loads the public SoundCloud waveform only when the player asks for it.
+/// The response is bounded and cached so track changes do not repeat requests.
+pub async fn get_waveform(track_id: &str) -> Result<Vec<f32>, String> {
+    if track_id.is_empty() || track_id.len() > 32 || !track_id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("invalid SoundCloud track ID".into());
+    }
+    {
+        let mut cache = waveform_cache().lock().await;
+        cache.retain(|_, (_, at)| at.elapsed() < WAVEFORM_TTL);
+        if let Some((samples, _)) = cache.get(track_id) {
+            return Ok(samples.clone());
+        }
+    }
+
+    let _permit = waveform_slots()
+        .acquire()
+        .await
+        .map_err(|_| "SoundCloud waveform request gate closed".to_string())?;
+    {
+        let cache = waveform_cache().lock().await;
+        if let Some((samples, _)) = cache.get(track_id) {
+            return Ok(samples.clone());
+        }
+    }
+
+    let samples = resolve_waveform(track_id).await?;
+    let mut cache = waveform_cache().lock().await;
+    if cache.len() >= WAVEFORM_CACHE_MAX {
+        if let Some(oldest) = cache.iter().min_by_key(|(_, (_, at))| *at).map(|(id, _)| id.clone()) {
+            cache.remove(&oldest);
+        }
+    }
+    cache.insert(track_id.to_string(), (samples.clone(), Instant::now()));
+    Ok(samples)
+}
+
 fn queryencode(s: &str) -> String {
     let mut out = String::new();
     for b in s.as_bytes() {
@@ -1186,6 +1381,55 @@ mod tests {
     fn queryencode_encodes_spaces_and_cyrillic() {
         assert_eq!(queryencode("a b"), "a%20b");
         assert_eq!(queryencode("эпп"), "%D1%8D%D0%BF%D0%BF");
+    }
+
+    #[test]
+    fn parses_and_bounds_public_json_waveform_samples() {
+        let samples = (0..1024)
+            .map(|index| (index % 256).to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let payload = format!(r#"{{"samples":[{samples}]}}"#);
+
+        let parsed = parse_waveform_payload(payload.as_bytes()).unwrap();
+
+        assert_eq!(parsed.len(), MAX_WAVEFORM_SAMPLES);
+        assert!(parsed.iter().all(|sample| (0.0..=1.0).contains(sample)));
+        assert_eq!(parsed.iter().copied().fold(0.0_f32, f32::max), 1.0);
+    }
+
+    #[test]
+    fn reads_amplitudes_from_soundcloud_png_waveform() {
+        use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+        use std::io::Cursor;
+
+        let radii = [0_i32, 1, 2];
+        let image = ImageBuffer::from_fn(3, 5, |x, y| {
+            let distance = (y as i32 - 2).abs();
+            if distance <= radii[x as usize] {
+                Rgba([255, 255, 255, 255])
+            } else {
+                Rgba([0, 0, 0, 0])
+            }
+        });
+        let mut bytes = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(image)
+            .write_to(&mut bytes, ImageFormat::Png)
+            .unwrap();
+
+        let parsed = parse_waveform_payload(bytes.get_ref()).unwrap();
+
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0], 0.0);
+        assert!((parsed[1] - 0.5).abs() < 0.01);
+        assert_eq!(parsed[2], 1.0);
+    }
+
+    #[test]
+    fn rejects_waveform_urls_outside_soundcloud_wave_cdn() {
+        assert!(validate_waveform_url("https://wave.sndcdn.com/peaks.png").is_ok());
+        assert!(validate_waveform_url("http://wave.sndcdn.com/peaks.png").is_err());
+        assert!(validate_waveform_url("https://example.com/peaks.png").is_err());
     }
 
     #[test]

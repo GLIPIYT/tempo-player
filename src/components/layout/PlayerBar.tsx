@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { usePlayer } from '../../player'
+import { useDisplayPosition } from '../../player/useDisplayPosition'
 import { useLikes } from '../../hooks/useLikes'
 import { useSettings } from '../../state/settings'
 import { useT } from '../../i18n'
@@ -81,6 +82,7 @@ export default function PlayerBar() {
 
 function PlayerBarContent() {
   const p = usePlayer()
+  const displayPosition = useDisplayPosition(p)
   const setEqualizer = p.setEqualizer
   const { settings, update } = useSettings()
   // In the modern layout the progress line runs along the bar's top edge, so
@@ -103,7 +105,7 @@ function PlayerBarContent() {
   const [scrubVal, setScrubVal] = useState<number | null>(null)
   const dur = p.duration > 0 ? p.duration : (p.currentTrack?.durationSec ?? 0)
   const maxDur = dur > 0 ? dur : 1
-  const livePos = Math.min(Math.max(0, p.position), maxDur)
+  const livePos = Math.min(Math.max(0, displayPosition), maxDur)
   const sliderVal = scrubbing && scrubVal !== null ? Math.min(scrubVal, maxDur) : livePos
   const pct = (sliderVal / maxDur) * 100
   const volPct = Math.round(p.volume * 100)
@@ -333,7 +335,7 @@ function PlayerBarContent() {
         <div className="pb-controls">
           {modern ? (
             <span className="pb-time pb-time-cur">
-              {fmtTime(scrubbing && scrubVal !== null ? Math.min(scrubVal, maxDur) : p.position)}
+              {fmtTime(scrubbing && scrubVal !== null ? Math.min(scrubVal, maxDur) : livePos)}
             </span>
           ) : null}
           <button
@@ -384,23 +386,27 @@ function PlayerBarContent() {
         <div className="pb-progress">
           {modern ? null : (
             <span className="pb-time pb-time-cur">
-              {fmtTime(scrubbing && scrubVal !== null ? Math.min(scrubVal, maxDur) : p.position)}
+              {fmtTime(scrubbing && scrubVal !== null ? Math.min(scrubVal, maxDur) : livePos)}
             </span>
           )}
-          {settings.player.waveform ? (
+          <div className={`pb-progress-control${settings.player.waveform ? ' is-waveform' : ''}`}>
             <WaveProgress
               seed={p.currentTrack?.sourceId ?? 'none'}
+              soundCloudTrackId={p.currentTrack?.source === 'soundcloud' ? p.currentTrack.sourceId : null}
+              waveformEnabled={settings.player.waveform}
               position={livePos}
               duration={maxDur}
               onSeek={p.seek}
             />
-          ) : (
             <input
+              className="pb-wave-seek"
               type="range"
               min={0}
               max={maxDur}
-              step={0.1}
+              step={0.001}
               value={sliderVal}
+              aria-hidden={settings.player.waveform ? true : undefined}
+              tabIndex={settings.player.waveform ? -1 : 0}
               onPointerDown={() => {
                 setScrubbing(true)
                 setScrubVal(livePos)
@@ -416,7 +422,7 @@ function PlayerBarContent() {
               style={{ '--fill': `${pct}%` } as CSSProperties}
               aria-label={t('Seek')}
             />
-          )}
+          </div>
           {modern ? null : <span className="pb-time">{fmtTime(dur)}</span>}
         </div>
 

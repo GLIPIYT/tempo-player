@@ -42,3 +42,22 @@ export function newerThan<T extends { version: string }>(releases: T[], current:
     .filter((release) => compareVersions(release.version, current) > 0)
     .sort((a, b) => compareVersions(b.version, a.version))
 }
+
+export type ReleaseAvailability<T> =
+  | { status: 'update-available' | 'installer-missing'; latest: T }
+  | { status: 'up-to-date'; latest: T }
+  | { status: 'no-releases'; latest: null }
+
+/** Classifies the newest published release against the running version. */
+export function checkReleaseAvailability<T extends { version: string; assetUrl: string | null }>(
+  releases: T[],
+  current: string,
+): ReleaseAvailability<T> {
+  const latest = [...releases].sort((a, b) => compareVersions(b.version, a.version))[0]
+  if (!latest) return { status: 'no-releases', latest: null }
+  if (compareVersions(latest.version, current) <= 0) return { status: 'up-to-date', latest }
+  return {
+    status: latest.assetUrl === null ? 'installer-missing' : 'update-available',
+    latest,
+  }
+}

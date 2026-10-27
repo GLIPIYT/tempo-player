@@ -12,6 +12,7 @@ import { compareVersions, newerThan } from './version'
 interface UpdateDialogState {
   releases: ReleaseInfo[]
   initialVersion: string
+  currentVersion: string
   installedVersion?: string
 }
 
@@ -37,14 +38,14 @@ export default function UpdateWatcher() {
         releases = await listReleases()
       } catch {
         if (updateLanded && !cancelled) {
-          setDialog({ releases, initialVersion: current, installedVersion: current })
+          setDialog({ releases, initialVersion: current, currentVersion: current, installedVersion: current })
         }
         return
       }
       if (cancelled) return
 
       if (updateLanded) {
-        setDialog({ releases, initialVersion: current, installedVersion: current })
+        setDialog({ releases, initialVersion: current, currentVersion: current, installedVersion: current })
         return
       }
 
@@ -52,7 +53,7 @@ export default function UpdateWatcher() {
       const candidate = newerThan(releases, current).find(
         release => release.assetUrl !== null && !skipped.has(release.version),
       )
-      if (candidate) setDialog({ releases, initialVersion: candidate.version })
+      if (candidate) setDialog({ releases, initialVersion: candidate.version, currentVersion: current })
     })()
     return () => { cancelled = true }
   }, [])
@@ -62,6 +63,7 @@ export default function UpdateWatcher() {
     <UpdateDialog
       releases={dialog.releases}
       initialVersion={dialog.initialVersion}
+      currentVersion={dialog.currentVersion}
       installedVersion={dialog.installedVersion}
       onDismiss={() => setDialog(null)}
     />

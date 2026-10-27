@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { Check, ChevronDown, ChevronLeft, MicVocal, Music2, Pause, Pencil, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 import type { CSSProperties, TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from 'react'
@@ -34,6 +34,7 @@ import LyricsEditorPanel from './LyricsEditorPanel'
 import { fromLrc, fromPlainLyrics, toLrclibLyricsfile, toPlainText, toPlaybackLrc } from './editorDocument'
 import type { LyricsEditorDocument } from './editorDocument'
 import { resolveLyricProgressGeometry } from './progressGeometry'
+import { lyricsOverlayMode, manualLyricsSearchReducer, manualLyricsTrackIdentity } from './lyricsOverlayState'
 import './lyrics.css'
 
 interface LyricsOverlayProps {
@@ -972,6 +973,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   const t = useT()
   const track = p.currentTrack
   const trackKey = track ? `${track.source}|${track.sourceId}|${track.title}|${track.artists.join(',')}` : ''
+  const manualTrackIdentity = manualLyricsTrackIdentity(track)
   const [candidates, setCandidates] = useState<LyricsCandidate[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [candidatesTrackKey, setCandidatesTrackKey] = useState('')
@@ -982,9 +984,12 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   useSyncExternalStore(lyricsService.subscribe, lyricsService.getVersion)
   const [loading, setLoading] = useState(false)
   const [unavailableHint, setUnavailableHint] = useState(false)
-  const [showManual, setShowManual] = useState(false)
-  const [manualArtist, setManualArtist] = useState(track?.artists[0] ?? '')
-  const [manualTitle, setManualTitle] = useState(track?.title ?? '')
+  const [manualSearch, dispatchManualSearch] = useReducer(manualLyricsSearchReducer, {
+    trackIdentity: manualTrackIdentity,
+    artist: track?.artists[0] ?? '',
+    title: track?.title ?? '',
+    visible: false,
+  })
   const [searching, setSearching] = useState(false)
   const [pinned, setPinned] = useState<LyricsOverride | null>(null)
   const [editedVersion, setEditedVersion] = useState<PersistedEditedVersion | null>(null)
@@ -1093,16 +1098,16 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
 
   useEffect(() => {
     const tr = p.currentTrack
-    if (tr) {
-      setManualArtist(tr.artists[0] ?? '')
-      setManualTitle(tr.title)
-    } else {
-      setManualArtist('')
-      setManualTitle('')
-    }
-    setShowManual(false)
+    dispatchManualSearch({
+      type: 'trackChanged',
+      trackIdentity: manualTrackIdentity,
+      artist: tr?.artists[0] ?? '',
+      title: tr?.title ?? '',
+    })
     setSearchedAs(null)
-  }, [trackKey, p.currentTrack])
+    // Manual fields follow source identity; same-track metadata updates must keep user edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manualTrackIdentity])
 
   useEffect(() => {
     let cancelled = false
@@ -1313,7 +1318,13 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
     setLyricsRateState({ key: lyricsRateKey, value: rate })
   }, [lyricsRateKey])
   const mode: OverlayMode =
-    activeLyrics?.result?.kind ?? (loading && viewCandidates.length === 0 ? 'loading' : 'empty')
+    lyricsOverlayMode({
+      activeResult: activeLyrics?.result ?? null,
+      candidatesLoading: loading,
+      sharedRequestLoading: lyricsService.isLoading(track?.sourceId),
+      manualSearchLoading: searching,
+      candidateCount: viewCandidates.length,
+    })
   const durationMs = track?.durationSec != null ? track.durationSec * 1000 : null
   const editorSourceOptions = useMemo(
     () => {
@@ -1482,6 +1493,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       const request = ++candidateRequest.current
       const searchTrackKey = trackKey
       setSearching(true)
+      dispatchManualSearch({ type: 'visibilityChanged', visible: true })
       setUnavailableHint(false)
       try {
         const raw = await api.fetchOnlineLyricsAll(a, tt)
@@ -1646,23 +1658,25 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       <div className="lyr-manual-row">
         <input
           className="lyr-manual-input"
-          value={manualArtist}
-          onChange={(e) => setManualArtist(e.target.value)}
+          value={manualSearch.artist}
+          onFocus={() => dispatchManualSearch({ type: 'visibilityChanged', visible: true })}
+          onChange={(e) => dispatchManualSearch({ type: 'artistChanged', value: e.target.value })}
           placeholder={t('Artist')}
           aria-label={t('Artist')}
         />
         <input
           className="lyr-manual-input"
-          value={manualTitle}
-          onChange={(e) => setManualTitle(e.target.value)}
+          value={manualSearch.title}
+          onFocus={() => dispatchManualSearch({ type: 'visibilityChanged', visible: true })}
+          onChange={(e) => dispatchManualSearch({ type: 'titleChanged', value: e.target.value })}
           placeholder={t('Title')}
           aria-label={t('Title')}
         />
       </div>
       <button
         className="lyr-manual-btn"
-        onClick={() => void handleManualSearch(manualArtist, manualTitle)}
-        disabled={searching || !manualArtist.trim() || !manualTitle.trim()}
+        onClick={() => void handleManualSearch(manualSearch.artist, manualSearch.title)}
+        disabled={searching || !manualSearch.artist.trim() || !manualSearch.title.trim()}
       >
         <Search size={14} />
         {searching ? t('Searching…') : t('Search')}
@@ -1727,25 +1741,33 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
             />
           ) : (
             <>
-              {(viewCandidates.length > 0 || mode !== 'empty') && (!canPin || pinnedLoaded) && (
-                <div className="lyr-head">
-                  {canPin && pinned !== null && <PinnedBadge />}
-                  {viewCandidates.length > 0 ? (
-                    <ProviderDropdown
-                      candidates={viewCandidates}
-                      selectedIndex={viewSelectedIndex}
-                      onSelect={handleSelect}
-                      onReset={handleResetPin}
-                      pinnedIndex={viewPinnedIndex}
-                      canPin={canPin}
-                    />
-                  ) : null}
-                  <button className="lyr-manual-toggle" onClick={() => setShowManual((v) => !v)}>
-                    {showManual ? t('Hide') : t('Search manually')}
-                  </button>
-                  {showManual && manualForm}
-                </div>
-              )}
+              {mode === 'empty' && <EmptyLyrics unavailable={unavailableHint} />}
+              <div className="lyr-head" key="lyrics-search-panel">
+                {(!canPin || pinnedLoaded) && (
+                  <>
+                    {canPin && pinned !== null && <PinnedBadge />}
+                    {viewCandidates.length > 0 ? (
+                      <ProviderDropdown
+                        candidates={viewCandidates}
+                        selectedIndex={viewSelectedIndex}
+                        onSelect={handleSelect}
+                        onReset={handleResetPin}
+                        pinnedIndex={viewPinnedIndex}
+                        canPin={canPin}
+                      />
+                    ) : null}
+                    {(viewCandidates.length > 0 || mode !== 'empty') && (
+                      <button className="lyr-manual-toggle" onClick={() => dispatchManualSearch({
+                        type: 'visibilityChanged',
+                        visible: !manualSearch.visible,
+                      })}>
+                        {manualSearch.visible ? t('Hide') : t('Search manually')}
+                      </button>
+                    )}
+                  </>
+                )}
+                {(mode === 'empty' || manualSearch.visible) && manualForm}
+              </div>
               {selected?.copyright?.trim() && (
                 <div className="lyr-copyright">{selected.copyright}</div>
               )}
@@ -1764,12 +1786,6 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
               )}
               {activeLyrics?.result?.kind === 'plain' && <PlainView text={activeLyrics.result.text} />}
               {mode === 'loading' && !searching && <LoadingMark />}
-              {mode === 'empty' && (
-                <>
-                  <EmptyLyrics unavailable={unavailableHint} />
-                  {searching ? <LoadingMark /> : manualForm}
-                </>
-              )}
             </>
           )}
         </section>
