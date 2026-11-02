@@ -984,8 +984,6 @@
 }
 
 .lyr-track {
-  --lyr-line-pad-top: 12px;
-  --lyr-line-pad-bottom: 14px;
   will-change: transform;
   transition: transform 0.55s cubic-bezier(0.25, 0.46, 0.45, 0.94);
   display: flex;
@@ -995,7 +993,7 @@
 
 .lyr-line {
   position: relative;
-  padding: var(--lyr-line-pad-top) 2px var(--lyr-line-pad-bottom);
+  padding: 12px 2px 14px;
   font-size: var(--lyr-text-size, 21px);
   font-weight: 480;
   line-height: 1.4;
@@ -1070,6 +1068,7 @@
 
 .lyr-notes {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   height: 58px;
   overflow: hidden;
@@ -1083,14 +1082,10 @@
   transition: height 0.3s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.3s ease;
 }
 
-/* Compact pauses animate a separate row inside the existing lyric gap. */
-.lyr-notes.is-skip-pool {
-  position: relative;
+/* Compact pauses expand into a real row only while they are active. */
+.lyr-notes.is-skip-pool:not(.is-active) {
   height: 0;
   min-height: 0;
-  overflow: visible;
-  padding: 0;
-  transition: opacity 0.3s ease;
 }
 
 .lyr-notes-row {
@@ -1101,21 +1096,6 @@
   gap: 9px;
   width: 100%;
   height: 100%;
-}
-
-.lyr-notes.is-skip-pool .lyr-notes-row {
-  position: absolute;
-  top: calc(0px - var(--lyr-line-pad-bottom));
-  left: 0;
-  height: 0;
-  min-height: 0;
-  overflow: hidden;
-  pointer-events: none;
-  transition: height 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-
-.lyr-notes.is-skip-pool.is-active .lyr-notes-row {
-  height: calc(var(--lyr-line-pad-top) + var(--lyr-line-pad-bottom));
 }
 
 .lyr-notes.is-active {
