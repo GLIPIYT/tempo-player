@@ -69,20 +69,26 @@ export function toLyricsCandidates(raw: OnlineLyricsCandidateData[]): LyricsCand
 export async function fetchOnlineLyricsCandidates(
   artist: string,
   title: string,
-  _track?: UnifiedTrack,
+  track?: UnifiedTrack,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<LyricsCandidate[]> {
-  const album = _track?.album ?? null
-  const durationSec = _track?.durationSec ?? null
+  const album = track?.album ?? null
+  const durationSec = track?.durationSec ?? null
   const key = candidateKey(artist, title, album, durationSec)
-  if (candidateCache.has(key)) return candidateCache.get(key) ?? []
+  const forceRefresh = options.forceRefresh === true
+  if (!forceRefresh && candidateCache.has(key)) return candidateCache.get(key) ?? []
   let raw: OnlineLyricsCandidateData[]
   try {
     raw = await api.fetchOnlineLyricsAll(artist, title, album, durationSec)
   } catch {
+    if (forceRefresh) candidateCache.delete(key)
     return []
   }
   const out = toLyricsCandidates(raw)
-  storeCandidates(key, out)
+  // Empty provider results can be transient and should not block a later
+  // automatic lookup or an explicit manual re-search during this app session.
+  if (out.length > 0) storeCandidates(key, out)
+  else candidateCache.delete(key)
   return out
 }
 

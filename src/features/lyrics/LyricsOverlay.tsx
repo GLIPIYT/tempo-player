@@ -12,7 +12,7 @@ import { fmtTime } from '../../utils/format'
 import { api } from '../../api/client'
 import type { LyricsEditedVersion, LyricsOverride, LrclibPublishRequest } from '../../types/models'
 import { EmbeddedTagsLyricsProvider } from './embeddedProvider'
-import { fetchOnlineLyricsCandidates, toLyricsCandidates } from './onlineProvider'
+import { fetchOnlineLyricsCandidates } from './onlineProvider'
 import type { LyricsCandidate } from './onlineProvider'
 import type { LyricsResult } from './types'
 import { formatLrc, shiftLyricsLines } from './lrc'
@@ -34,7 +34,7 @@ import LyricsEditorPanel from './LyricsEditorPanel'
 import { fromLrc, fromPlainLyrics, toLrclibLyricsfile, toPlainText, toPlaybackLrc } from './editorDocument'
 import type { LyricsEditorDocument } from './editorDocument'
 import { resolveLyricProgressGeometry } from './progressGeometry'
-import { lyricsOverlayMode, manualLyricsSearchReducer, manualLyricsTrackIdentity } from './lyricsOverlayState'
+import { lyricsOverlayMode, manualLyricsSearchReducer, manualLyricsTrackIdentity, mergeManualLyricsCandidates } from './lyricsOverlayState'
 import './lyrics.css'
 
 interface LyricsOverlayProps {
@@ -276,6 +276,14 @@ function SyncedView({
   const touchYRef = useRef(0)
   const [segIdx, setSegIdx] = useState(-1)
   const [paused, setPaused] = useState(false)
+  const setUnderlineRef = useCallback((el: HTMLSpanElement | null) => {
+    if (underlineRef.current === el) return
+    underlineRef.current = el
+    if (el) {
+      el.classList.remove('has-progress')
+      el.style.transform = 'scaleX(0)'
+    }
+  }, [])
   const seekToLyricTime = useCallback((timeSec: number) => {
     seek(mediaPositionAtLyricTime(timeSec, lyricsRate, offsetMs))
   }, [seek, lyricsRate, offsetMs])
@@ -414,7 +422,7 @@ function SyncedView({
           ? getNativePlayerController().getDisplayPosition()
           : playerController.getSnapshot().position
         const lyricsPosition = lyricTimeAtMediaPosition(pos, lyricsRate, offsetMs)
-        const { segmentIndex: found, progress } = lyricTimingAt(timing, lyricsPosition)
+        const { segmentIndex: found, progress, underlineProgress } = lyricTimingAt(timing, lyricsPosition)
         if (found !== segIdxRef.current) {
           segIdxRef.current = found
           setSegIdx(found)
@@ -425,7 +433,11 @@ function SyncedView({
           ? Math.max(0, Math.min(1, progress))
           : 0
         textRef.current?.style.setProperty('--lyr-fill', `${lineProgress * 100}%`)
-        if (underlineRef.current) underlineRef.current.style.transform = `scaleX(${fillEnabled ? lineProgress : 0})`
+        if (underlineRef.current) {
+          const progress = fillEnabled ? underlineProgress : 0
+          underlineRef.current.classList.toggle('has-progress', progress > 0)
+          underlineRef.current.style.transform = `scaleX(${progress})`
+        }
       }
       frame = requestAnimationFrame(update)
     }
@@ -544,18 +556,12 @@ function SyncedView({
                     ? 'right center'
                     : 'left center',
               }}
-              ref={
-                i === segIdx
-                  ? (el) => {
-                      underlineRef.current = el
-                    }
-                  : null
-              }
+              ref={i === segIdx ? setUnderlineRef : null}
             />
           </div>
         )
       }),
-    [segments, segIdx, seekToLyricTime, t, endPause, measureAll, measureProgressGeometry, progressDirection],
+    [segments, segIdx, seekToLyricTime, t, endPause, measureAll, measureProgressGeometry, progressDirection, setUnderlineRef],
   )
 
   return (
@@ -1496,12 +1502,19 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       dispatchManualSearch({ type: 'visibilityChanged', visible: true })
       setUnavailableHint(false)
       try {
-        const raw = await api.fetchOnlineLyricsAll(a, tt)
+        const searchTrack = p.currentTrack ?? undefined
+        const currentEmbedded = candidates.find((candidate) => candidate.provider === 'embedded')
+          ?? (activeServiceCandidate?.provider === 'embedded' ? activeServiceCandidate : null)
+        const savedLocalLyricsRequest = currentEmbedded
+          ? Promise.resolve(currentEmbedded.result)
+          : searchTrack ? EmbeddedTagsLyricsProvider.getLyrics(searchTrack).catch(() => null) : Promise.resolve(null)
+        const [savedLocalLyrics, out] = await Promise.all([
+          savedLocalLyricsRequest,
+          fetchOnlineLyricsCandidates(a, tt, searchTrack, { forceRefresh: true }),
+        ])
         if (currentTrackKey.current !== searchTrackKey || request !== candidateRequest.current) return
         setCandidatesTrackKey(searchTrackKey)
-        const out = toLyricsCandidates(raw)
-        const embeddedOnly = candidates.filter((c) => c.provider === 'embedded')
-        const combined = [...embeddedOnly, ...out]
+        const combined = mergeManualLyricsCandidates(candidates, out, savedLocalLyrics)
         setSearchedAs({ artist: a, title: tt })
         if (combined.length === 0) {
           setCandidates([])
@@ -1529,7 +1542,7 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
         if (currentTrackKey.current === searchTrackKey && request === candidateRequest.current) setSearching(false)
       }
     },
-    [candidates, p.currentTrack, trackKey],
+    [activeServiceCandidate, candidates, p.currentTrack, trackKey],
   )
 
   const selectedEditorSource = (sourceId: string | null): LyricsCandidate | null => {

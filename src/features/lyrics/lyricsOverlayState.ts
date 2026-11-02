@@ -1,5 +1,7 @@
 import type { LyricsResult } from './types'
 import type { UnifiedTrack } from '../../types/models'
+import type { LyricsCandidate } from './onlineProvider'
+import { formatLrc } from './lrc'
 
 export type LyricsOverlayMode = LyricsResult['kind'] | 'empty' | 'loading'
 
@@ -18,6 +20,24 @@ export type ManualLyricsSearchAction =
 
 export function manualLyricsTrackIdentity(track: Pick<UnifiedTrack, 'source' | 'sourceId'> | null): string {
   return track ? `${track.source}|${track.sourceId}` : ''
+}
+
+/** Keep saved local-tag lyrics available if manual search races the initial candidate read. */
+export function mergeManualLyricsCandidates(
+  existing: readonly LyricsCandidate[],
+  searched: readonly LyricsCandidate[],
+  savedLocalLyrics: LyricsResult | null,
+): LyricsCandidate[] {
+  const embedded = existing.filter((candidate) => candidate.provider === 'embedded')
+  const fallback = embedded.length > 0 || !savedLocalLyrics
+    ? []
+    : [{
+        provider: 'embedded',
+        result: savedLocalLyrics,
+        plain: savedLocalLyrics.kind === 'plain' ? savedLocalLyrics.text : null,
+        syncedLrc: savedLocalLyrics.kind === 'synced' ? formatLrc(savedLocalLyrics.lines) : null,
+      }]
+  return [...(embedded.length > 0 ? embedded : fallback), ...searched]
 }
 
 export function lyricsOverlayMode({

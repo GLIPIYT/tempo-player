@@ -21,6 +21,8 @@ export interface LyricSegment {
   text: string
   seekToSec: number
   lineIndices: number[]
+  /** Keep author-marked blank rows at their full visual height. */
+  explicitPause?: boolean
   skipPool?: boolean
 }
 
@@ -33,6 +35,7 @@ export interface LyricTimingPosition {
   segmentIndex: number
   lineIndices: number[]
   progress: number
+  underlineProgress: number
 }
 
 interface PhraseWork {
@@ -48,7 +51,7 @@ interface LineGroup {
 
 const CONFIDENT = 0.8
 const MIN_AUTHORED_INTERLINE_PAUSE_SEC = 0.75
-const NO_POSITION: LyricTimingPosition = { segmentIndex: -1, lineIndices: [], progress: 0 }
+const NO_POSITION: LyricTimingPosition = { segmentIndex: -1, lineIndices: [], progress: 0, underlineProgress: 0 }
 
 function phraseWork(text: string): PhraseWork {
   const words = text.match(/[\p{L}\p{N}]+/gu) ?? []
@@ -132,6 +135,7 @@ export function resolveLyricTiming(
     if (segment.kind === 'notes' && previous?.kind === 'notes' && previous.endTimeSec >= segment.timeSec) {
       previous.endTimeSec = segment.endTimeSec
       previous.seekToSec = segment.seekToSec
+      previous.explicitPause = previous.explicitPause === true || segment.explicitPause === true
     } else segments.push(segment)
   }
   if (groups.length > 0 && groups[0].timeSec > 0) {
@@ -194,7 +198,7 @@ export function resolveLyricTiming(
     resolved.push(...groupLines)
     if (singing.length === 0) {
       addSegment({ kind: 'notes', timeSec: group.timeSec, endTimeSec: limit, text: '',
-        seekToSec: nextStart ?? group.timeSec, lineIndices: [] })
+        seekToSec: nextStart ?? group.timeSec, lineIndices: [], explicitPause: true })
       continue
     }
     const phraseEnd = Math.min(Math.max(...singing.map((line) => line.endTimeSec)), limit)
@@ -221,7 +225,8 @@ export function resolveLyricTiming(
       && (!Number.isFinite(limit) || remainingGap >= (limit - group.timeSec) * 0.2)
     if (showShortPause || pauseBeforeExplicit || longInterLineBreak || outroBreak) {
       addSegment({ kind: 'notes', timeSec: phraseEnd, endTimeSec: limit, text: '',
-        seekToSec: nextStart ?? group.timeSec, lineIndices: [] })
+        seekToSec: nextStart ?? group.timeSec, lineIndices: [],
+        ...(nextIsExplicitPause ? { explicitPause: true } : {}) })
     }
   }
   // Only pauses surrounded by sung lines establish the local short-gap pool.
@@ -237,7 +242,7 @@ export function resolveLyricTiming(
     const q1 = durations[lower] + (durations[Math.ceil(quartileIndex)] - durations[lower]) * (quartileIndex - lower)
     const cutoff = Math.min(3.5, q1 * 1.1)
     for (const segment of internalNotes) {
-      if (segment.endTimeSec - segment.timeSec <= cutoff) segment.skipPool = true
+      if (!segment.explicitPause && segment.endTimeSec - segment.timeSec <= cutoff) segment.skipPool = true
     }
   }
   return { lines: resolved, segments }
@@ -257,7 +262,11 @@ export function lyricTimingAt(timing: ResolvedLyricsTiming, positionSec: number)
   const segment = timing.segments[found]
   if (positionSec >= (segment.displayEndTimeSec ?? segment.endTimeSec)) return NO_POSITION
   const span = segment.endTimeSec - segment.timeSec
+  const progress = segment.kind === 'line' && Number.isFinite(span) && span > 0
+    ? Math.max(0, Math.min(1, (positionSec - segment.timeSec) / span)) : 0
   return { segmentIndex: found, lineIndices: segment.lineIndices,
-    progress: segment.kind === 'line' && Number.isFinite(span) && span > 0
-      ? Math.max(0, Math.min(1, (positionSec - segment.timeSec) / span)) : 0 }
+    progress,
+    // A displayed line can remain on screen after its phrase ends. Keep its
+    // text filled, but clear the progress underline at the actual phrase end.
+    underlineProgress: segment.kind === 'line' && positionSec < segment.endTimeSec ? progress : 0 }
 }

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use dom_query::Document;
 use futures_util::future::select_all;
-use regex::Regex;
 use reqwest::Client;
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -349,22 +349,21 @@ fn build_variants(artist: &str, title: &str) -> Vec<(String, String)> {
     out
 }
 
-fn decode_entities(s: &str) -> String {
-    s.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#x27;", "'")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
-}
-
-fn strip_tags(s: &str) -> String {
-    let re = Regex::new(r"<[^>]+>").ok();
-    match re {
-        Some(re) => re.replace_all(s, "").to_string(),
-        None => s.to_string(),
+async fn first_nonempty_query_variant<F, Fut>(
+    variants: Vec<(String, String)>,
+    mut query: F,
+) -> Vec<OnlineLyricsCandidate>
+where
+    F: FnMut(String, String) -> Fut,
+    Fut: Future<Output = Vec<OnlineLyricsCandidate>>,
+{
+    for (artist, title) in variants {
+        let candidates = query(artist, title).await;
+        if !candidates.is_empty() {
+            return candidates;
+        }
     }
+    Vec::new()
 }
 
 async fn get_json(url: &str) -> Result<Value, String> {
@@ -642,33 +641,44 @@ async fn lyrics_ovh_provider(artist: String, title: String) -> Option<OnlineLyri
 }
 
 fn extract_genius_lyrics(html: &str) -> Option<String> {
-    let re = Regex::new(r#"<div[^>]*data-lyrics-container="true"[^>]*>(?s)(.*?)</div>"#).ok()?;
-    let br_re = Regex::new(r"(?i)<br\s*/?>").ok()?;
-    let block_re = Regex::new(r"(?i)</(?:p|div)[^>]*>").ok()?;
-    let nl_re = Regex::new(r"\n{3,}").ok()?;
+    let document = Document::from(html);
+
+    // Genius renders this header inside the lyrics subtree on some song pages.
+    // The old regex stopped at the first nested </div>, so it could not remove
+    // the header reliably or extract the complete lyrics block.
+    document.select(r#"[class*="LyricsHeader"]"#).remove();
+    document
+        .select("[data-exclude-from-selection]")
+        .remove();
+
     let mut parts = Vec::new();
-    for cap in re.captures_iter(html) {
-        let raw = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        let with_br = br_re.replace_all(raw, "\n");
-        let with_blocks = block_re.replace_all(&with_br, "\n\n");
-        let stripped = strip_tags(&with_blocks);
-        let decoded = decode_entities(&stripped);
-        let trimmed = decoded.split('\n').map(|l| l.trim_end()).collect::<Vec<_>>().join("\n");
-        let collapsed = nl_re.replace_all(&trimmed, "\n\n").to_string();
-        parts.push(collapsed.trim().to_string());
-    }
-    if parts.is_empty() {
-        None
-    } else {
-        let joined = parts.join("\n\n");
-        let collapsed = nl_re.replace_all(&joined, "\n\n").to_string();
-        let trimmed = collapsed.trim().to_string();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
+    for container in document
+        .select(r#"[data-lyrics-container="true"]"#)
+        .iter()
+    {
+        let text = container.formatted_text();
+        let mut lines = Vec::new();
+        let mut previous_was_blank = true;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                if !previous_was_blank {
+                    lines.push("");
+                }
+                previous_was_blank = true;
+            } else {
+                lines.push(line);
+                previous_was_blank = false;
+            }
+        }
+        let part = lines.join("\n").trim().to_string();
+        if !part.is_empty() {
+            parts.push(part);
         }
     }
+
+    let lyrics = parts.join("\n\n");
+    (!lyrics.is_empty()).then_some(lyrics)
 }
 
 async fn genius_provider(artist: String, title: String) -> Option<OnlineLyrics> {
@@ -836,46 +846,65 @@ pub async fn fetch_online_lyrics_all(
     if title.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let (mut ca, mut ct) = clean_pair(artist, title);
-    if ct.trim().is_empty() {
-        ct = title.trim().to_string();
-    }
-    if ct.trim().is_empty() {
+    let variants = build_variants(artist.trim(), title.trim());
+    if variants.is_empty() {
         return Ok(Vec::new());
     }
-    ca = ca.trim().to_string();
-    ct = ct.trim().to_string();
-    let ca_lr = ca.clone();
-    let ct_lr = ct.clone();
-    let ca_tx = ca.clone();
-    let ct_tx = ct.clone();
-    let ca_mx = ca.clone();
-    let ct_mx = ct.clone();
-    let album_mx = album.unwrap_or_default().trim().to_string();
-    let token_cache_mx = token_cache_file;
-    let ca_ov = ca.clone();
-    let ct_ov = ct.clone();
-    let ca_ge = ca.clone();
-    let ct_ge = ct.clone();
+    let lr_variants = variants.clone();
+    let textyl_variants = variants.clone();
+    let mxm_variants = variants.clone();
+    let ovh_variants = variants.clone();
+    let genius_variants = variants;
+    let album_mxm = album.unwrap_or_default().trim().to_string();
+    let token_cache_mxm = token_cache_file;
     let mut handles: Vec<tokio::task::JoinHandle<(usize, Vec<OnlineLyricsCandidate>)>> = Vec::new();
     handles.push(tokio::spawn(async move {
-        (0usize, lrclib_candidates_provider(ca_lr, ct_lr).await)
+        let candidates = first_nonempty_query_variant(lr_variants, lrclib_candidates_provider).await;
+        (0usize, candidates)
     }));
     handles.push(tokio::spawn(async move {
-        let r = textyl_provider(ca_tx, ct_tx).await;
-        (1usize, r.map(|v| lyrics_variants("textyl", v)).unwrap_or_default())
+        let candidates = first_nonempty_query_variant(textyl_variants, |artist, title| async move {
+            textyl_provider(artist, title)
+                .await
+                .map(|lyrics| lyrics_variants("textyl", lyrics))
+                .unwrap_or_default()
+        })
+        .await;
+        (1usize, candidates)
     }));
     handles.push(tokio::spawn(async move {
-        let r = musixmatch_provider(ca_mx, ct_mx, album_mx, duration_sec, token_cache_mx).await;
-        (2usize, r.map(|v| vec![v.into_candidate()]).unwrap_or_default())
+        let candidates = first_nonempty_query_variant(mxm_variants, |artist, title| {
+            let album = album_mxm.clone();
+            let token_cache_file = token_cache_mxm.clone();
+            async move {
+                musixmatch_provider(artist, title, album, duration_sec, token_cache_file)
+                    .await
+                    .map(|lyrics| vec![lyrics.into_candidate()])
+                    .unwrap_or_default()
+            }
+        })
+        .await;
+        (2usize, candidates)
     }));
     handles.push(tokio::spawn(async move {
-        let r = lyrics_ovh_provider(ca_ov, ct_ov).await;
-        (3usize, r.map(|v| lyrics_variants("lyrics.ovh", v)).unwrap_or_default())
+        let candidates = first_nonempty_query_variant(ovh_variants, |artist, title| async move {
+            lyrics_ovh_provider(artist, title)
+                .await
+                .map(|lyrics| lyrics_variants("lyrics.ovh", lyrics))
+                .unwrap_or_default()
+        })
+        .await;
+        (3usize, candidates)
     }));
     handles.push(tokio::spawn(async move {
-        let r = genius_provider(ca_ge, ct_ge).await;
-        (4usize, r.map(|v| lyrics_variants("genius", v)).unwrap_or_default())
+        let candidates = first_nonempty_query_variant(genius_variants, |artist, title| async move {
+            genius_provider(artist, title)
+                .await
+                .map(|lyrics| lyrics_variants("genius", lyrics))
+                .unwrap_or_default()
+        })
+        .await;
+        (4usize, candidates)
     }));
     let deadline = tokio::time::Instant::now() + Duration::from_secs(18);
     let mut pending = handles;
@@ -953,13 +982,90 @@ mod tests {
         assert!(v.iter().any(|(a, _)| a.is_empty()));
     }
 
+    #[tokio::test]
+    async fn candidate_search_retries_original_and_title_only_variants_after_a_miss() {
+        let variants = build_variants("Artist (Live)", "A Song (Official Video)");
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let searched = calls.clone();
+        let candidates = first_nonempty_query_variant(variants, move |artist, title| {
+            let calls = searched.clone();
+            async move {
+                calls.lock().unwrap().push((artist.clone(), title.clone()));
+                if artist.is_empty() {
+                    vec![OnlineLyricsCandidate {
+                        provider: "lrclib".to_string(),
+                        plain: Some("matched title-only lyrics".to_string()),
+                        ..OnlineLyricsCandidate::default()
+                    }]
+                } else {
+                    Vec::new()
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].plain.as_deref(), Some("matched title-only lyrics"));
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![
+                ("Artist".to_string(), "A Song".to_string()),
+                ("Artist (Live)".to_string(), "A Song (Official Video)".to_string()),
+                (String::new(), "A Song".to_string()),
+            ]
+        );
+    }
+
     #[test]
-    fn genius_blocks_extract_and_clean() {
-        let html = r#"<div class="a"><div data-lyrics-container="true">Line &amp; one<br/>Line two</div></div><div data-lyrics-container="true">Part <b>two</b></div>"#;
+    fn genius_extract_ignores_page_chrome_and_preserves_lyrics_sections() {
+        let html = r#"
+            <!doctype html>
+            <html>
+              <body>
+                <header class="SongHeader__Container-sc-abc">
+                  <div>18 Contributors</div>
+                  <nav><span>Translations</span><span>English</span></nav>
+                </header>
+                <main class="SongPageGrid__Container-sc-abc">
+                  <div data-lyrics-container="true" class="Lyrics__Container-sc-abc">
+                    <div class="LyricsHeader__Container-sc-abc">
+                      <span>18 Contributors</span>
+                    </div>
+                    <div data-exclude-from-selection="true">
+                      <span>Translations</span><span>English</span>
+                    </div>
+                    <span>[Verse 1]</span><br />
+                    A <a href="/annotations/1"><span>quiet</span> signal</a> arrives.<br />
+                    It crosses the <em>room</em> &amp; fades.<br /><br />
+                    <span>[Chorus]</span><br />
+                    Keep the lights on.<br />
+                  </div>
+                  <div class="LyricsHeader__Metadata-sc-abc">12 Contributors</div>
+                  <div data-lyrics-container="true" class="Lyrics__Container-sc-def">
+                    <span>[Bridge: Guest]</span><br />
+                    We turn the page again.
+                  </div>
+                  <aside class="RightSidebar__Container-sc-abc">Recommended tracks</aside>
+                </main>
+              </body>
+            </html>
+        "#;
+
         let res = extract_genius_lyrics(html).unwrap();
-        assert!(res.contains("Line & one"));
-        assert!(res.contains("Line two"));
-        assert!(res.contains("Part two"));
-        assert!(!res.contains('<'));
+        assert_eq!(
+            res,
+            "[Verse 1]\nA quiet signal arrives.\nIt crosses the room & fades.\n\n[Chorus]\nKeep the lights on.\n\n[Bridge: Guest]\nWe turn the page again."
+        );
+        assert!(!res.contains("18 Contributors"));
+        assert!(!res.contains("12 Contributors"));
+        assert!(!res.contains("Translations"));
+        assert!(!res.contains("English"));
+        assert!(!res.contains("Recommended tracks"));
+    }
+
+    #[test]
+    fn genius_extract_returns_none_when_page_has_no_lyrics_containers() {
+        let html = r#"<html><body><div class="LyricsHeader__Metadata">18 Contributors</div><p>Translations English</p></body></html>"#;
+        assert_eq!(extract_genius_lyrics(html), None);
     }
 }

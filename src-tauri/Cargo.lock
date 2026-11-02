@@ -4995,11 +4995,12 @@ dependencies = [
 
 [[package]]
 name = "tempo"
-version = "1.1.1"
+version = "1.2.0"
 dependencies = [
  "base64 0.22.1",
  "biquad",
  "chrono",
+ "dom_query",
  "ffmpeg-sidecar",
  "futures-util",
  "image",

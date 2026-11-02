@@ -77,6 +77,53 @@ describe('resolveLyricTiming', () => {
     expect(lyricTimingAt(timing, 6).lineIndices).toEqual([])
   })
 
+  it('clears the underline after a phrase while preserving the displayed line through a small gap', () => {
+    const timing = resolveLyricTiming([
+      { timeSec: 0, text: 'one', endTimeSec: 2.5, endSource: 'source' },
+      { timeSec: 3, text: 'two', endTimeSec: 5, endSource: 'source' },
+    ], 10)
+    const beforePhraseEnd = lyricTimingAt(timing, 2.49)
+    const displayedGap = lyricTimingAt(timing, 2.75)
+
+    expect(beforePhraseEnd.underlineProgress).toBeCloseTo(beforePhraseEnd.progress)
+    expect(displayedGap.lineIndices).toEqual([0])
+    expect(displayedGap.progress).toBe(1)
+    expect(displayedGap.underlineProgress).toBe(0)
+  })
+
+  it('keeps short inferred pauses compact and leaves authored pauses full height', () => {
+    const inferred = resolveLyricTiming([
+      { timeSec: 0, text: 'one', endTimeSec: 2.2, endSource: 'source' },
+      { timeSec: 3, text: 'two', endTimeSec: 5.2, endSource: 'source' },
+      { timeSec: 6, text: 'three', endTimeSec: 8.2, endSource: 'source' },
+      { timeSec: 9, text: 'four', endTimeSec: 11.2, endSource: 'source' },
+      { timeSec: 12, text: 'five', endTimeSec: 14.2, endSource: 'source' },
+      { timeSec: 15, text: 'six', endTimeSec: 17, endSource: 'source' },
+    ], 18)
+    const inferredPauses = inferred.segments.filter(segment => segment.kind === 'notes'
+      && segment.timeSec < 15 && segment.endTimeSec <= 15)
+    expect(inferredPauses).toHaveLength(5)
+    expect(inferredPauses.every(segment => segment.skipPool)).toBe(true)
+
+    const authored = resolveLyricTiming([
+      { timeSec: 0, text: 'one', endTimeSec: 0.8, endSource: 'source' },
+      { timeSec: 1, text: '', explicitPause: true },
+      { timeSec: 3, text: 'two', endTimeSec: 3.8, endSource: 'source' },
+      { timeSec: 4, text: '', explicitPause: true },
+      { timeSec: 6, text: 'three', endTimeSec: 6.8, endSource: 'source' },
+      { timeSec: 7, text: '', explicitPause: true },
+      { timeSec: 9, text: 'four', endTimeSec: 9.8, endSource: 'source' },
+      { timeSec: 10, text: '', explicitPause: true },
+      { timeSec: 12, text: 'five', endTimeSec: 12.8, endSource: 'source' },
+      { timeSec: 13, text: '', explicitPause: true },
+      { timeSec: 15, text: 'six', endTimeSec: 17, endSource: 'source' },
+    ], 18)
+    const authoredPauses = authored.segments.filter(segment => segment.kind === 'notes'
+      && segment.timeSec >= 0.8 && segment.timeSec < 15)
+    expect(authoredPauses).toHaveLength(5)
+    expect(authoredPauses.every(segment => segment.explicitPause && !segment.skipPool)).toBe(true)
+  })
+
   it('ends the last phrase and treats the remaining file as instrumental', () => {
     const timing = resolveLyricTiming([{ timeSec: 5, text: 'Good night' }], 40)
     expect(timing.lines[0].endTimeSec).toBeLessThan(15)

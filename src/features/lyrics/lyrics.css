@@ -1035,6 +1035,7 @@
   border-radius: 999px;
   background: var(--lyr-progress-bg, var(--lyr-progress-color, var(--accent)));
   opacity: var(--lyr-progress-opacity, 0.35);
+  visibility: hidden;
   transform: scaleX(0);
   transform-origin: left center;
   transition: transform 0.12s linear, opacity 0.12s ease;
@@ -1045,6 +1046,7 @@
 .lyr-progress-custom { --lyr-progress-bg: var(--lyr-progress-color); }
 
 .lyr-line.is-active .lyr-underline { opacity: var(--lyr-progress-opacity, 0.35); }
+.lyr-line.is-active .lyr-underline.has-progress { visibility: visible; }
 
 .lyr-notes {
   display: flex;
@@ -1062,9 +1064,12 @@
   transition: height 0.3s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.3s ease;
 }
 
-.lyr-notes.is-skip-pool:not(.is-active) {
+/* Compact micro-pauses in flow and let their pulse render over the lyric gap. */
+.lyr-notes.is-skip-pool {
   height: 0;
   min-height: 0;
+  overflow: visible;
+  transition: opacity 0.3s ease;
 }
 
 .lyr-notes.is-active {
@@ -1089,6 +1094,10 @@
 @media (prefers-reduced-motion: reduce) {
   .lyr-notes,
   .lyr-track {
+    transition: none;
+  }
+
+  .lyr-notes.is-skip-pool {
     transition: none;
   }
 

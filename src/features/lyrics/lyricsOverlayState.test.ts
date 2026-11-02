@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { lyricsOverlayMode, manualLyricsSearchReducer, manualLyricsTrackIdentity, type ManualLyricsSearchState } from './lyricsOverlayState'
+import {
+  lyricsOverlayMode,
+  manualLyricsSearchReducer,
+  manualLyricsTrackIdentity,
+  mergeManualLyricsCandidates,
+  type ManualLyricsSearchState,
+} from './lyricsOverlayState'
 
 describe('lyrics overlay state', () => {
   it('keeps the empty screen loading while the shared lyrics request is pending', () => {
@@ -107,5 +113,33 @@ describe('lyrics overlay state', () => {
 
     expect(manualLyricsTrackIdentity(original)).toBe(manualLyricsTrackIdentity(updatedMetadata))
     expect(manualLyricsTrackIdentity({ source: 'soundcloud', sourceId: 'sc-42' })).not.toBe(manualLyricsTrackIdentity(original))
+  })
+
+  it('keeps saved local lyrics visible when manual search finishes with no online results', () => {
+    const savedLocalLyrics = { kind: 'plain' as const, text: 'Lyrics saved with this local track' }
+
+    expect(mergeManualLyricsCandidates([], [], savedLocalLyrics)).toEqual([{
+      provider: 'embedded',
+      result: savedLocalLyrics,
+      plain: savedLocalLyrics.text,
+      syncedLrc: null,
+    }])
+  })
+
+  it('retains the already-loaded saved local candidate alongside manual search results', () => {
+    const local = {
+      provider: 'embedded',
+      result: { kind: 'plain' as const, text: 'Saved local lyrics' },
+      plain: 'Saved local lyrics',
+      syncedLrc: null,
+    }
+    const online = {
+      provider: 'lrclib',
+      result: { kind: 'plain' as const, text: 'Online lyrics' },
+      plain: 'Online lyrics',
+      syncedLrc: null,
+    }
+
+    expect(mergeManualLyricsCandidates([local], [online], null)).toEqual([local, online])
   })
 })
