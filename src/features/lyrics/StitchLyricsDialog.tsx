@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, FileText, LoaderCircle, Music2, Search, X } from 'lucide-react'
 import { api } from '../../api/client'
@@ -10,6 +10,7 @@ import './stitch-lyrics-dialog.css'
 
 type SearchSide = 'timed' | 'plain'
 type QueryField = 'artist' | 'title'
+type StitchStep = 'sources' | 'review'
 
 interface SearchState {
   artist: string
@@ -44,13 +45,44 @@ function candidateDuration(duration: number | null | undefined): string | null {
   return `${minutes}:${seconds}`
 }
 
+function plainLyricsLines(text: string | null | undefined): string[] {
+  const trimmed = text?.trim()
+  return trimmed ? trimmed.split(/\r\n|\r|\n/).filter((line) => line.trim().length > 0) : []
+}
+
 export default function StitchLyricsDialog({ onClose, onApply }: StitchLyricsDialogProps) {
   const t = useT()
   const id = useId()
   const dialogRef = useRef<HTMLElement | null>(null)
+  const titleRef = useRef<HTMLHeadingElement | null>(null)
+  const backButtonRef = useRef<HTMLButtonElement | null>(null)
+  const pendingRemoveFocusIndex = useRef<number | null>(null)
   const [searches, setSearches] = useState<SearchStates>(() => ({ timed: initialSearchState(), plain: initialSearchState() }))
   const [selected, setSelected] = useState<SelectedCandidates>({ timed: null, plain: null })
+  const [step, setStep] = useState<StitchStep>('sources')
+  const [reviewDrafts, setReviewDrafts] = useState<Map<LyricsCandidate, string[]>>(() => new Map())
+  const previousStep = useRef(step)
   const requestIds = useRef<Record<SearchSide, number>>({ timed: 0, plain: 0 })
+
+  const reviewLines = useMemo(() => selected.plain
+    ? reviewDrafts.get(selected.plain) ?? plainLyricsLines(selected.plain.plain)
+    : [], [reviewDrafts, selected.plain])
+  const reviewText = reviewLines.join('\n').trim()
+
+  useEffect(() => {
+    if (previousStep.current !== step) titleRef.current?.focus()
+    previousStep.current = step
+  }, [step])
+
+  useEffect(() => {
+    const focusIndex = pendingRemoveFocusIndex.current
+    if (focusIndex === null) return
+    const buttons = dialogRef.current?.querySelectorAll<HTMLButtonElement>('.stitch-lyrics-remove-line')
+    const nextIndex = Math.min(focusIndex, (buttons?.length ?? 0) - 1)
+    if (nextIndex >= 0) buttons?.[nextIndex]?.focus()
+    else backButtonRef.current?.focus()
+    pendingRemoveFocusIndex.current = null
+  }, [reviewLines])
 
   useEffect(() => () => {
     requestIds.current.timed += 1
@@ -113,9 +145,22 @@ export default function StitchLyricsDialog({ onClose, onApply }: StitchLyricsDia
 
   const apply = () => {
     const timedResult = selected.timed?.result
-    const plainText = selected.plain?.plain?.trim()
+    const plainText = reviewText
     if (timedResult?.kind !== 'synced' || !plainText) return
     onApply(timedResult, plainText)
+  }
+
+  const removeReviewLine = (lineIndex: number) => {
+    const candidate = selected.plain
+    if (!candidate) return
+    pendingRemoveFocusIndex.current = lineIndex
+    const sourceLines = plainLyricsLines(candidate.plain)
+    setReviewDrafts((current) => {
+      const lines = current.get(candidate) ?? sourceLines
+      const next = new Map(current)
+      next.set(candidate, lines.filter((_, index) => index !== lineIndex))
+      return next
+    })
   }
 
   const trapTab = (event: ReactKeyboardEvent<HTMLElement>) => {
@@ -264,33 +309,88 @@ export default function StitchLyricsDialog({ onClose, onApply }: StitchLyricsDia
       >
         <header className="stitch-lyrics-dialog-head">
           <div>
-            <h2 id={`${id}-title`}>{t('Stitch lyric timing')}</h2>
-            <p>{t('Select a timed source and a plain source. Applying replaces the current draft; close to keep it unchanged.')}</p>
+            <h2 id={`${id}-title`} ref={titleRef} tabIndex={-1}>
+              {step === 'review' ? t('Review lyric lines') : t('Stitch lyric timing')}
+            </h2>
+            <p>
+              {step === 'review'
+                ? t('Remove unwanted lines. The editor changes only after you apply.')
+                : t('Select a timed source and a plain source. Applying replaces the current draft; close to keep it unchanged.')}
+            </p>
           </div>
           <button type="button" className="stitch-lyrics-close" onClick={onClose} aria-label={t('Close dialog')}>
             <X size={17} aria-hidden="true" />
           </button>
         </header>
 
-        <div className="stitch-lyrics-sources">
-          {renderSearch('timed')}
-          {renderSearch('plain')}
-        </div>
+        {step === 'sources' ? (
+          <div className="stitch-lyrics-sources">
+            {renderSearch('timed')}
+            {renderSearch('plain')}
+          </div>
+        ) : (
+          <section className="stitch-lyrics-review-shell" aria-labelledby={`${id}-review-heading`}>
+            <h3 id={`${id}-review-heading`} className="stitch-lyrics-review-heading">{t('Lyrics lines')}</h3>
+            {reviewLines.length > 0 ? (
+              <ol className="stitch-lyrics-review-list">
+                {reviewLines.map((line, index) => (
+                  <li className="stitch-lyrics-review-row" key={index}>
+                    <div className="stitch-lyrics-review-row-content">
+                      <span className="stitch-lyrics-review-line">{line}</span>
+                      <button
+                        type="button"
+                        className="stitch-lyrics-remove-line"
+                        aria-label={`${t('Remove line')} ${index + 1}`}
+                        onClick={() => removeReviewLine(index)}
+                      >
+                        <X size={13} aria-hidden="true" />
+                        <span>{t('Remove line')}</span>
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <div className="stitch-lyrics-review-empty" role="status">{t('No lines left to apply')}</div>
+            )}
+          </section>
+        )}
 
         <footer className="stitch-lyrics-dialog-foot">
           <span className="stitch-lyrics-selection-summary" role="status">
-            {selected.timed && selected.plain ? t('Two sources selected') : t('Select one result from each source')}
+            {step === 'review'
+              ? `${t('Lines remaining')}: ${reviewLines.length}`
+              : selected.timed && selected.plain ? t('Two sources selected') : t('Select one result from each source')}
           </span>
           <div className="stitch-lyrics-dialog-actions">
-            <button type="button" className="stitch-lyrics-cancel" onClick={onClose}>{t('Cancel')}</button>
-            <button
-              type="button"
-              className="stitch-lyrics-apply"
-              onClick={apply}
-              disabled={selected.timed?.result.kind !== 'synced' || !selected.plain?.plain?.trim()}
-            >
-              {t('Apply to editor')}
-            </button>
+            {step === 'sources' ? (
+              <>
+                <button type="button" className="stitch-lyrics-cancel" onClick={onClose}>{t('Cancel')}</button>
+                <button
+                  type="button"
+                  className="stitch-lyrics-apply"
+                  onClick={() => setStep('review')}
+                  disabled={selected.timed?.result.kind !== 'synced' || !selected.plain?.plain?.trim()}
+                >
+                  {t('Review lines')}
+                </button>
+              </>
+            ) : (
+              <>
+                <button ref={backButtonRef} type="button" className="stitch-lyrics-cancel" onClick={() => setStep('sources')}>
+                  {t('Back to sources')}
+                </button>
+                <button type="button" className="stitch-lyrics-cancel" onClick={onClose}>{t('Cancel')}</button>
+                <button
+                  type="button"
+                  className="stitch-lyrics-apply"
+                  onClick={apply}
+                  disabled={selected.timed?.result.kind !== 'synced' || !reviewText}
+                >
+                  {t('Apply to editor')}
+                </button>
+              </>
+            )}
           </div>
         </footer>
       </section>

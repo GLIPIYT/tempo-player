@@ -78,6 +78,102 @@
   overscroll-behavior: contain;
 }
 
+.stitch-lyrics-review-shell {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 14px;
+  overflow: hidden;
+}
+
+.stitch-lyrics-review-heading {
+  flex: 0 0 auto;
+  margin: 0 2px 9px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.stitch-lyrics-review-list {
+  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 6px 2px 30px;
+  overflow-y: auto;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 13%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 27%, transparent);
+  overscroll-behavior: contain;
+}
+
+.stitch-lyrics-review-row {
+  display: list-item;
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-muted) 10%, transparent);
+}
+
+.stitch-lyrics-review-row-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 5px 5px 5px 2px;
+}
+
+.stitch-lyrics-review-row::marker {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.stitch-lyrics-review-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.stitch-lyrics-remove-line {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 29px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.stitch-lyrics-remove-line:hover {
+  border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+.stitch-lyrics-dialog button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 74%, var(--border));
+  outline-offset: 2px;
+}
+
+.stitch-lyrics-review-empty {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 100px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 13%, transparent);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .stitch-lyrics-source {
   display: flex;
   flex-direction: column;
@@ -375,6 +471,7 @@
   .stitch-lyrics-dialog { max-height: 96vh; }
   .stitch-lyrics-sources { grid-template-columns: minmax(0, 1fr); padding: 10px; }
   .stitch-lyrics-source { min-height: 310px; }
+  .stitch-lyrics-review-shell { padding: 10px; }
 }
 
 @media (max-width: 480px) {
@@ -384,6 +481,7 @@
   .stitch-lyrics-search { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .stitch-lyrics-search-button { grid-column: 1 / -1; }
   .stitch-lyrics-selection-summary { max-width: 130px; }
+  .stitch-lyrics-dialog-actions { flex-wrap: wrap; justify-content: flex-end; }
 }
 
 @media (prefers-reduced-motion: reduce) {
