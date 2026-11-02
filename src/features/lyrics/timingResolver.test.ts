@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { lyricTimingAt, resolveLyricTiming } from './timingResolver'
+import { lyricTimingAt, lyricAnchorIndex, resolveLyricTiming } from './timingResolver'
 import type { LyricsLine } from './types'
 import { parseLrc } from './lrc'
 
@@ -80,7 +80,7 @@ describe('resolveLyricTiming', () => {
   it('clears the underline after a phrase while preserving the displayed line through a small gap', () => {
     const timing = resolveLyricTiming([
       { timeSec: 0, text: 'one', endTimeSec: 2.5, endSource: 'source' },
-      { timeSec: 3, text: 'two', endTimeSec: 5, endSource: 'source' },
+      { timeSec: 2.9, text: 'two', endTimeSec: 5, endSource: 'source' },
     ], 10)
     const beforePhraseEnd = lyricTimingAt(timing, 2.49)
     const displayedGap = lyricTimingAt(timing, 2.75)
@@ -163,6 +163,37 @@ describe('resolveLyricTiming', () => {
     ], 10)
     expect(timing.segments.filter((s) => s.kind === 'notes')).toEqual([])
     expect(lyricTimingAt(timing, 4.8).lineIndices).toEqual([0])
+  })
+
+  it('shows a compact pause after a precise phrase with a 0.6 second gap, even for a long line', () => {
+    const timing = resolveLyricTiming([
+      { timeSec: 0, text: 'a long line', endTimeSec: 9.4, endSource: 'source' },
+      { timeSec: 10, text: 'next line' },
+    ], 20)
+    const pause = timing.segments.find(segment => segment.kind === 'notes' && segment.timeSec === 9.4)
+    expect(pause).toMatchObject({ endTimeSec: 10, skipPool: true })
+    const pauseIndex = lyricTimingAt(timing, 9.6).segmentIndex
+    expect(timing.segments[pauseIndex]?.kind).toBe('notes')
+    expect(lyricAnchorIndex(timing.segments, pauseIndex)).toBe(pauseIndex - 1)
+  })
+
+  it('shows a compact short pause when a confident vocal analysis provides the endpoint', () => {
+    const timing = resolveLyricTiming([
+      { timeSec: 0, text: 'first line' }, { timeSec: 5, text: 'next line' },
+    ], 10, { bpm: null, matchedEnds: [{ lineIndex: 0, endTimeSec: 4.4, confidence: 0.95 }] })
+    expect(timing.segments.find(segment => segment.kind === 'notes' && segment.timeSec === 4.4))
+      .toMatchObject({ endTimeSec: 5, skipPool: true })
+  })
+
+  it('shows a compact pause for a clearly inferred break in start-only lyrics', () => {
+    const timing = resolveLyricTiming([
+      { timeSec: 0, text: 'one' }, { timeSec: 4.5, text: 'a rather longer following lyric' },
+    ], 10)
+    const phrase = timing.lines[0]
+    expect(phrase.endSource).toBe('text')
+    expect(4.5 - phrase.endTimeSec).toBeGreaterThanOrEqual(0.75)
+    expect(timing.segments.find(segment => segment.kind === 'notes' && segment.timeSec === phrase.endTimeSec))
+      .toMatchObject({ endTimeSec: 4.5, skipPool: true })
   })
 
   it('retains a manual overlap while the next started group wins display', () => {

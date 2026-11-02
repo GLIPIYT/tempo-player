@@ -38,6 +38,13 @@ export interface LyricTimingPosition {
   underlineProgress: number
 }
 
+/** Compact pauses retain the preceding line's scroll anchor. */
+export function lyricAnchorIndex(segments: readonly LyricSegment[], index: number): number {
+  const segment = segments[index]
+  return segment?.kind === 'notes' && segment.skipPool && segments[index - 1]?.kind === 'line'
+    ? index - 1 : index
+}
+
 interface PhraseWork {
   units: number
   pause: number
@@ -50,7 +57,7 @@ interface LineGroup {
 }
 
 const CONFIDENT = 0.8
-const MIN_AUTHORED_INTERLINE_PAUSE_SEC = 0.75
+const MIN_PRECISE_INTERLINE_PAUSE_SEC = 0.5
 const NO_POSITION: LyricTimingPosition = { segmentIndex: -1, lineIndices: [], progress: 0, underlineProgress: 0 }
 
 function phraseWork(text: string): PhraseWork {
@@ -207,15 +214,14 @@ export function resolveLyricTiming(
     const nextIsExplicitPause = nextGroup !== undefined && nextGroup.entries.every(({ line }) => !line.text.trim())
     const shortInterLineGap = nextStart !== undefined && !nextIsExplicitPause
       && remainingGap < 3.5
-    const hasAuthoredEnd = singing.some((line) => line.endSource === 'manual' || line.endSource === 'source')
-    const showShortPause = shortInterLineGap && hasAuthoredEnd
-      && remainingGap >= MIN_AUTHORED_INTERLINE_PAUSE_SEC
-      && remainingGap >= (limit - group.timeSec) * 0.2
+    const hasPreciseEnd = singing.some((line) => line.endSource === 'manual' || line.endSource === 'source' || line.endSource === 'recognized')
+    const showShortPause = shortInterLineGap && (hasPreciseEnd
+      ? remainingGap >= MIN_PRECISE_INTERLINE_PAUSE_SEC
+      : remainingGap >= 0.75)
     const pauseBeforeExplicit = nextIsExplicitPause && remainingGap > 0
     const longInterLineBreak = nextStart !== undefined && !nextIsExplicitPause
       && remainingGap >= 3.5 && remainingGap >= (limit - group.timeSec) * 0.2
-    // Estimated phrase ends should flow into the next lyric. Exact authored
-    // endpoints can expose a short breath without turning timestamp noise into a pause.
+    // Inferred ends need a larger gap than precise endpoints to show a breath.
     const displayEnd = shortInterLineGap && !showShortPause ? limit : phraseEnd
     addSegment({ kind: 'line', timeSec: group.timeSec, endTimeSec: phraseEnd,
       ...(displayEnd > phraseEnd ? { displayEndTimeSec: displayEnd } : {}),
@@ -226,6 +232,7 @@ export function resolveLyricTiming(
     if (showShortPause || pauseBeforeExplicit || longInterLineBreak || outroBreak) {
       addSegment({ kind: 'notes', timeSec: phraseEnd, endTimeSec: limit, text: '',
         seekToSec: nextStart ?? group.timeSec, lineIndices: [],
+        ...(showShortPause ? { skipPool: true } : {}),
         ...(nextIsExplicitPause ? { explicitPause: true } : {}) })
     }
   }

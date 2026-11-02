@@ -29,7 +29,7 @@ import {
   writeLyricsRate,
 } from './lyricsRate'
 import { activeOverrideDocument, candidatePlaybackDocument as candidateDocument, overridePlaybackResult } from './playbackDocument'
-import { lyricTimingAt, type ResolvedLyricsTiming } from './timingResolver'
+import { lyricAnchorIndex, lyricTimingAt, type ResolvedLyricsTiming } from './timingResolver'
 import LyricsEditorPanel from './LyricsEditorPanel'
 import { fromLrc, fromPlainLyrics, toLrclibLyricsfile, toPlainText, toPlaybackLrc } from './editorDocument'
 import type { LyricsEditorDocument } from './editorDocument'
@@ -320,7 +320,7 @@ function SyncedView({
     const c = containerRef.current
     const stage = stageRef.current
     if (!c || !stage) return
-    const idx = segIdxRef.current
+    const idx = lyricAnchorIndex(segments, segIdxRef.current)
     const offsets = offsetsRef.current
     if (idx < 0 || !offsets[idx]) return
     const o = offsets[idx]
@@ -337,7 +337,7 @@ function SyncedView({
     } else if (c.style.transform !== target) {
       c.style.transform = target
     }
-  }, [])
+  }, [segments])
 
   const measureAll = useCallback(
     (instant: boolean) => {
