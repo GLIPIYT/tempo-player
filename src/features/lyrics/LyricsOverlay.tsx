@@ -1557,6 +1557,9 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   }
 
   const sourceMetadata = (sourceId: string | null) => {
+    if (sourceId === 'stitched') {
+      return { source: null, provider: 'manual', artist: track?.artists[0] ?? '', title: track?.title ?? '', offsetMs: 0 }
+    }
     const source = selectedEditorSource(sourceId)
     if (sourceId === 'edited' && editedVersion) {
       return {

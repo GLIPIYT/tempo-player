@@ -21,6 +21,8 @@ import type {
 } from './editorDocument'
 import { estimateVocalActivity, findVocalActivitySegments } from './vocalActivity'
 import type { VocalActivitySample } from './vocalActivity'
+import StitchLyricsDialog from './StitchLyricsDialog'
+import { stitchLyrics } from './stitchLyrics'
 import './lyrics-editor.css'
 
 export interface LyricsEditorSourceOption {
@@ -148,15 +150,15 @@ export default function LyricsEditorPanel({
   const id = useId()
   const publishMenuRef = useRef<HTMLDetailsElement>(null)
   const sourcePickerRef = useRef<HTMLDivElement>(null)
-  const initialDocumentJson = JSON.stringify(initialDocument)
   const [document, setDocument] = useState<LyricsEditorDocument>(() => cloneDocument(initialDocument))
   const [timeDrafts, setTimeDrafts] = useState<TimeDraft[]>(() => makeTimeDrafts(initialDocument))
-  const [selectedSourceId, setSelectedSourceId] = useState('')
+  const [selectedSourceId, setSelectedSourceId] = useState(initialSourceId ?? '')
   const [actionError, setActionError] = useState('')
   const [actionNotice, setActionNotice] = useState('')
   const [localAction, setLocalAction] = useState<LocalAction>(null)
   const [sourceOpen, setSourceOpen] = useState(false)
   const [sourceQuery, setSourceQuery] = useState('')
+  const [stitchOpen, setStitchOpen] = useState(false)
   const [dragOverLine, setDragOverLine] = useState<number | null>(null)
   const dragLineIndex = useRef<number | null>(null)
   const pointerDragCleanup = useRef<(() => void) | null>(null)
@@ -165,17 +167,6 @@ export default function LyricsEditorPanel({
   const initialPlaybackRate = useRef(playbackRate).current
 
   useEffect(() => () => pointerDragCleanup.current?.(), [])
-
-  useEffect(() => {
-    const next = JSON.parse(initialDocumentJson) as LyricsEditorDocument
-    setDocument(next)
-    setTimeDrafts(makeTimeDrafts(next))
-    setSelectedSourceId(initialSourceId ?? '')
-    setSourceOpen(false)
-    setSourceQuery('')
-    setActionError('')
-    setActionNotice('')
-  }, [initialDocumentJson, initialSourceId])
 
   useEffect(() => {
     if (!sourceOpen) return
@@ -206,6 +197,7 @@ export default function LyricsEditorPanel({
   const busy = saveBusy || publishBusy
   const invalidLineIndexes = new Set(issues.flatMap((issue) => issue.lineIndex === undefined ? [] : [issue.lineIndex]))
   const selectedSource = sourceOptions.find((source) => source.id === selectedSourceId)
+  const selectedSourceLabel = selectedSourceId === 'stitched' ? t('Stitched lyrics') : selectedSource?.label ?? t('Choose a source')
   const filteredSources = sourceOptions.filter((source) => source.label.toLocaleLowerCase().includes(sourceQuery.trim().toLocaleLowerCase()))
   const currentPositionMs = Number.isFinite(currentTimeSec) ? Math.max(0, Math.round(currentTimeSec * 1000)) : null
   const trackDurationMs = Number.isFinite(durationMs) && (durationMs ?? 0) > 0 ? Math.round(durationMs!) : null
@@ -616,11 +608,11 @@ export default function LyricsEditorPanel({
               className="lyr-editor-source-trigger"
               aria-haspopup="listbox"
               aria-expanded={sourceOpen}
-              aria-label={`${t('Source')}: ${selectedSource?.label ?? t('Choose a source')}`}
+              aria-label={`${t('Source')}: ${selectedSourceLabel}`}
               onClick={() => setSourceOpen((open) => !open)}
               disabled={busy}
             >
-              <span>{selectedSource?.label ?? t('Choose a source')}</span>
+              <span>{selectedSourceLabel}</span>
               <ChevronDown size={14} className={sourceOpen ? 'is-open' : ''} />
             </button>
             {sourceOpen ? (
@@ -866,12 +858,23 @@ export default function LyricsEditorPanel({
 
       <footer className="lyr-editor-footer">
         <div className="lyr-editor-more">
-          {onPublish ? (
             <details ref={publishMenuRef} className="lyr-editor-menu">
               <summary aria-label={t('More actions')} title={t('More actions')}>
                 <MoreHorizontal size={17} />
               </summary>
               <div className="lyr-editor-menu-popover" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    if (publishMenuRef.current) publishMenuRef.current.open = false
+                    setStitchOpen(true)
+                  }}
+                  disabled={busy}
+                >
+                  {t('Stitch lyric timing')}
+                </button>
+                {onPublish ? (
                 <button
                   type="button"
                   role="menuitem"
@@ -883,9 +886,9 @@ export default function LyricsEditorPanel({
                 >
                   {t('Publish to LRCLIB')}
                 </button>
+                ) : null}
               </div>
             </details>
-          ) : null}
         </div>
         <div className="lyr-editor-actions">
           <button type="button" className="lyr-editor-cancel" onClick={onCancel} disabled={busy}>
@@ -904,6 +907,33 @@ export default function LyricsEditorPanel({
           </button>
         </div>
       </footer>
+      {stitchOpen ? (
+        <StitchLyricsDialog
+          onClose={() => setStitchOpen(false)}
+          onApply={(timed, text) => {
+            if (timed.kind !== 'synced') return
+            const source: SyncedLyricsDocument = {
+              mode: 'synced',
+              lines: timed.lines.map(line => ({
+                text: line.text,
+                startMs: Math.round(line.timeSec * 1000),
+                endMs: line.endTimeSec === undefined ? null : Math.round(line.endTimeSec * 1000),
+                ...(line.endTimeSec === undefined ? {} : { endOrigin: line.endSource ?? 'source' }),
+                ...(line.explicitPause ? { explicitPause: true } : {}),
+              })),
+            }
+            try {
+              const result = stitchLyrics(source, text, durationMs)
+              replaceDocument(result)
+              setSelectedSourceId('stitched')
+              setStitchOpen(false)
+            } catch {
+              setStitchOpen(false)
+              setActionError(t('Could not stitch lyrics. Check the source timing and track duration.'))
+            }
+          }}
+        />
+      ) : null}
     </section>
   )
 }

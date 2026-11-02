@@ -1,0 +1,393 @@
+.stitch-lyrics-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: color-mix(in srgb, var(--bg) 74%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.stitch-lyrics-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(920px, 100%);
+  max-height: min(92vh, 760px);
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 22%, transparent);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--surface) 96%, var(--bg));
+  color: var(--text);
+  box-shadow: 0 24px 80px color-mix(in srgb, var(--bg) 78%, transparent), inset 0 1px color-mix(in srgb, white 5%, transparent);
+}
+
+.stitch-lyrics-dialog-head,
+.stitch-lyrics-dialog-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+}
+
+.stitch-lyrics-dialog-head {
+  flex: 0 0 auto;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-muted) 14%, transparent);
+}
+
+.stitch-lyrics-dialog-head h2 {
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.stitch-lyrics-dialog-head p {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.stitch-lyrics-close {
+  display: inline-flex;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-muted);
+}
+
+.stitch-lyrics-close:hover {
+  border-color: var(--border);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.stitch-lyrics-sources {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  padding: 14px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.stitch-lyrics-source {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 16%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--bg-elevated) 78%, var(--surface));
+}
+
+.stitch-lyrics-source-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-bottom: 11px;
+}
+
+.stitch-lyrics-source-icon {
+  display: inline-flex;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--accent-strong);
+}
+
+.stitch-lyrics-source-head h3 {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.stitch-lyrics-source-head p {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.stitch-lyrics-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 7px;
+}
+
+.stitch-lyrics-search label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.stitch-lyrics-search input {
+  width: 100%;
+  min-width: 0;
+  height: 31px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 22%, transparent);
+  border-radius: 7px;
+  outline: none;
+  background: color-mix(in srgb, var(--bg) 58%, var(--surface));
+  color: var(--text);
+  font-size: 11px;
+}
+
+.stitch-lyrics-search input::placeholder {
+  color: color-mix(in srgb, var(--text-muted) 75%, transparent);
+}
+
+.stitch-lyrics-search input:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+  outline: 2px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  outline-offset: 1px;
+}
+
+.stitch-lyrics-search-button,
+.stitch-lyrics-apply,
+.stitch-lyrics-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 31px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color 0.14s ease, border-color 0.14s ease, opacity 0.14s ease;
+}
+
+.stitch-lyrics-search-button {
+  background: color-mix(in srgb, var(--surface-hover) 82%, var(--bg));
+  color: var(--text);
+}
+
+.stitch-lyrics-search-button:hover:not(:disabled),
+.stitch-lyrics-cancel:hover {
+  border-color: color-mix(in srgb, var(--text-muted) 34%, var(--border));
+  background: var(--surface-hover);
+}
+
+.stitch-lyrics-search-button:disabled,
+.stitch-lyrics-apply:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.stitch-lyrics-results {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 150px;
+  margin-top: 9px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 13%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 27%, transparent);
+}
+
+.stitch-lyrics-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  padding: 5px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.stitch-lyrics-candidate {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.14s ease, border-color 0.14s ease;
+}
+
+.stitch-lyrics-candidate:hover {
+  background: color-mix(in srgb, var(--surface-hover) 68%, transparent);
+}
+
+.stitch-lyrics-candidate.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.stitch-lyrics-candidate > input {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  accent-color: var(--accent);
+}
+
+.stitch-lyrics-candidate-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.stitch-lyrics-candidate-title,
+.stitch-lyrics-candidate-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stitch-lyrics-candidate-title {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.stitch-lyrics-candidate-artist,
+.stitch-lyrics-candidate-meta {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.stitch-lyrics-candidate-snippet {
+  display: -webkit-box;
+  max-height: 28px;
+  margin-top: 3px;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--text-muted) 90%, var(--text));
+  font-size: 10px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.stitch-lyrics-candidate-meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding-top: 1px;
+}
+
+.stitch-lyrics-candidate-meta > span:first-child {
+  max-width: 82px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stitch-lyrics-candidate-meta svg {
+  color: var(--accent-strong);
+}
+
+.stitch-lyrics-status {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.stitch-lyrics-status.is-error {
+  flex-direction: column;
+  color: var(--danger);
+}
+
+.stitch-lyrics-status.is-error button {
+  color: var(--text);
+  font-size: 10px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.stitch-lyrics-status.is-error button:hover {
+  color: var(--accent-strong);
+}
+
+.stitch-lyrics-spin {
+  flex: 0 0 auto;
+  animation: stitch-lyrics-spin 0.85s linear infinite;
+}
+
+@keyframes stitch-lyrics-spin {
+  to { transform: rotate(360deg); }
+}
+
+.stitch-lyrics-dialog-foot {
+  flex: 0 0 auto;
+  border-top: 1px solid color-mix(in srgb, var(--text-muted) 14%, transparent);
+}
+
+.stitch-lyrics-selection-summary {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.stitch-lyrics-dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.stitch-lyrics-cancel {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.stitch-lyrics-apply {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  color: var(--text);
+}
+
+.stitch-lyrics-apply:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 28%, var(--surface));
+}
+
+@media (max-width: 720px) {
+  .stitch-lyrics-overlay { padding: 10px; }
+  .stitch-lyrics-dialog { max-height: 96vh; }
+  .stitch-lyrics-sources { grid-template-columns: minmax(0, 1fr); padding: 10px; }
+  .stitch-lyrics-source { min-height: 310px; }
+}
+
+@media (max-width: 480px) {
+  .stitch-lyrics-dialog-head,
+  .stitch-lyrics-dialog-foot { padding: 12px; }
+  .stitch-lyrics-dialog-head p { max-width: 34ch; }
+  .stitch-lyrics-search { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .stitch-lyrics-search-button { grid-column: 1 / -1; }
+  .stitch-lyrics-selection-summary { max-width: 130px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stitch-lyrics-dialog *,
+  .stitch-lyrics-dialog *::before,
+  .stitch-lyrics-dialog *::after { transition: none; animation-duration: 0.01ms; }
+}
