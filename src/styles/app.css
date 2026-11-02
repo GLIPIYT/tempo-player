@@ -1513,6 +1513,7 @@
    so it is not a fifth grid cell of the bar. */
 .pb-viz {
   position: absolute;
+  z-index: 2;
   left: 0;
   right: 0;
   bottom: 100%;
@@ -1539,8 +1540,8 @@
   z-index: 1;
   left: 16px;
   bottom: 100%;
-  width: 88px;
-  height: 88px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
   image-rendering: pixelated;
   pointer-events: none;

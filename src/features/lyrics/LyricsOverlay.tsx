@@ -10,6 +10,7 @@ import { useSettings, type LyricProgressDirection } from '../../state/settings'
 import Cover from '../../components/common/Cover'
 import { fmtTime } from '../../utils/format'
 import { api } from '../../api/client'
+import dancingCat from '../../assets/companions/dancing-cat.gif'
 import type { LyricsEditedVersion, LyricsOverride, LrclibPublishRequest } from '../../types/models'
 import { EmbeddedTagsLyricsProvider } from './embeddedProvider'
 import { fetchOnlineLyricsCandidates } from './onlineProvider'
@@ -1710,8 +1711,13 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       </button>
       <div className="lyr-body">
         <aside className="lyr-side">
-          <div className="lyr-cover">
-            <Cover path={track?.coverPath ?? null} label={track?.title ?? '?'} size={260} />
+          <div className="lyr-cover-shell">
+            <div className="lyr-cover">
+              <Cover path={track?.coverPath ?? null} label={track?.title ?? '?'} size={260} />
+            </div>
+            {settings.player.companionEnabled ? (
+              <img className="lyr-companion" src={dancingCat} alt="" aria-hidden="true" draggable={false} />
+            ) : null}
           </div>
           <h2 className="lyr-title">{track ? track.title : t('Nothing playing')}</h2>
           <p className="lyr-artists">{track ? track.artists.join(', ') || t('Unknown artist') : t('Unknown artist')}</p>

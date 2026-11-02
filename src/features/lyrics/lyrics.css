@@ -120,13 +120,31 @@
   margin-inline-start: -12px;
 }
 
-.lyr-cover {
+.lyr-cover-shell {
+  position: relative;
   width: min(320px, 100%);
+}
+
+.lyr-cover {
+  width: 100%;
   aspect-ratio: 1 / 1;
   border-radius: var(--radius);
   overflow: hidden;
   box-shadow: 0 24px 60px color-mix(in srgb, var(--bg) 80%, transparent);
   background: var(--surface);
+}
+
+.lyr-companion {
+  position: absolute;
+  z-index: 1;
+  left: 4px;
+  bottom: calc(100% - 5px);
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+  user-select: none;
 }
 
 .lyr-cover .cover {
@@ -1281,7 +1299,7 @@
     margin-inline-start: 0;
   }
 
-  .lyr-cover {
+  .lyr-cover-shell {
     width: min(150px, 42vw);
   }
 
@@ -1358,7 +1376,7 @@
 }
 
 @media (min-width: 901px) and (max-height: 600px) {
-  .lyr-cover {
+  .lyr-cover-shell {
     width: min(188px, 100%);
   }
 
