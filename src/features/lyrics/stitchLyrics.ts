@@ -29,17 +29,13 @@ export function stitchLyrics(
     throw new RangeError('Cannot stitch lyrics because the synced document has no timing rows.')
   }
 
-  const textLines = plainText.split(/\r\n|\n|\r/)
+  // Blank lines in plain lyrics usually separate verses; they do not describe
+  // when playback should pause. Only the timed source supplies pause rows.
+  const textLines = plainText.split(/\r\n|\n|\r/).filter((text) => text.trim().length > 0)
+  // External LRC files may contain empty timecodes used as padding. The
+  // playback parser does not treat those as explicit pauses or lyric lines.
   const timingRows = timed.lines.map((line, sourceIndex) => ({ line, sourceIndex }))
-  const pausesAreAlreadyMatched = textLines.length === timed.lines.length
-    && timingRows.every(({ line }, index) => line.explicitPause !== true || textLines[index]!.trim().length === 0)
-  if (pausesAreAlreadyMatched) {
-    return {
-      mode: 'synced',
-      lines: textLines.map((text, index) => withTiming(timed.lines[index]!, text)),
-    }
-  }
-
+    .filter(({ line }) => line.explicitPause === true || line.text.trim().length > 0)
   const activeRows = timingRows.filter(({ line }) => line.explicitPause !== true)
   if (activeRows.length === 0) {
     throw new RangeError('Cannot stitch lyrics because the synced document contains only explicit pauses.')

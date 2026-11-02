@@ -646,9 +646,10 @@ fn extract_genius_lyrics(html: &str) -> Option<String> {
     // Genius renders this header inside the lyrics subtree on some song pages.
     // The old regex stopped at the first nested </div>, so it could not remove
     // the header reliably or extract the complete lyrics block.
-    document.select(r#"[class*="LyricsHeader"]"#).remove();
     document
-        .select("[data-exclude-from-selection]")
+        .select(
+            r#"[class*="LyricsHeader"], [class*="Contributor"], [class*="Metadata"], [data-exclude-from-selection]"#,
+        )
         .remove();
 
     let mut parts = Vec::new();
@@ -659,13 +660,28 @@ fn extract_genius_lyrics(html: &str) -> Option<String> {
         let text = container.formatted_text();
         let mut lines = Vec::new();
         let mut previous_was_blank = true;
+        let mut skip_translation_language = false;
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() {
-                if !previous_was_blank {
+                if !skip_translation_language && !previous_was_blank {
                     lines.push("");
                 }
                 previous_was_blank = true;
+                continue;
+            }
+            if line.eq_ignore_ascii_case("translations") {
+                skip_translation_language = true;
+                continue;
+            }
+            if skip_translation_language {
+                skip_translation_language = false;
+                if line.eq_ignore_ascii_case("english") {
+                    continue;
+                }
+            }
+            if is_genius_chrome_line(line) {
+                continue;
             } else {
                 lines.push(line);
                 previous_was_blank = false;
@@ -679,6 +695,73 @@ fn extract_genius_lyrics(html: &str) -> Option<String> {
 
     let lyrics = parts.join("\n\n");
     (!lyrics.is_empty()).then_some(lyrics)
+}
+
+fn is_genius_chrome_line(line: &str) -> bool {
+    let line = line.trim();
+    if line.is_empty() {
+        return false;
+    }
+
+    let lower = line.to_lowercase();
+    let mut words = lower.split_whitespace();
+    let first = words.next().unwrap_or_default();
+    if first.parse::<u32>().is_ok()
+        && matches!(words.next(), Some("contributor" | "contributors"))
+        && words.next().is_none()
+    {
+        return true;
+    }
+    if lower == "contributor" || lower == "contributors" {
+        return true;
+    }
+    let (section, is_bracketed) = match line
+        .strip_prefix('[')
+        .and_then(|line| line.strip_suffix(']'))
+    {
+        Some(section) => (section.trim().to_lowercase(), true),
+        None => (line.to_lowercase(), false),
+    };
+    let section = section.trim_end_matches(':').trim();
+    let sections = [
+        "verse",
+        "chorus",
+        "pre-chorus",
+        "pre chorus",
+        "post-chorus",
+        "post chorus",
+        "bridge",
+        "hook",
+        "refrain",
+        "intro",
+        "outro",
+        "interlude",
+        "breakdown",
+        "instrumental",
+        "solo",
+        "куплет",
+        "припев",
+        "бридж",
+        "интро",
+        "аутро",
+        "вступление",
+        "финал",
+    ];
+
+    sections.iter().any(|name| {
+        if section == *name {
+            return true;
+        }
+
+        let Some(suffix) = section.strip_prefix(name) else {
+            return false;
+        };
+        if is_bracketed {
+            suffix.starts_with(' ') || suffix.starts_with(':')
+        } else {
+            suffix.trim().parse::<u32>().is_ok()
+        }
+    })
 }
 
 async fn genius_provider(artist: String, title: String) -> Option<OnlineLyrics> {
@@ -1017,7 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn genius_extract_ignores_page_chrome_and_preserves_lyrics_sections() {
+    fn genius_extract_removes_chrome_and_section_labels_but_preserves_lyrics() {
         let html = r#"
             <!doctype html>
             <html>
@@ -1034,16 +1117,31 @@ mod tests {
                     <div data-exclude-from-selection="true">
                       <span>Translations</span><span>English</span>
                     </div>
+                    <div class="Contributors__Container-sc-abc">18 Contributors</div>
                     <span>[Verse 1]</span><br />
                     A <a href="/annotations/1"><span>quiet</span> signal</a> arrives.<br />
                     It crosses the <em>room</em> &amp; fades.<br /><br />
                     <span>[Chorus]</span><br />
-                    Keep the lights on.<br />
+                    Keep the lights on.<br /><br />
+                    <span>12 Contributors</span><br />
+                    Contributors<br />
+                    Translations<br />
+                    English<br />
+                    <span>[Bridge: Guest]</span><br />
+                    We turn the page again.<br /><br />
+                    [Куплет 2]<br />
+                    We carry the signal home.<br /><br />
+                    [Припев]<br />
+                    Keep the lights on again.<br /><br />
+                    [Outro]<br />
+                    A final light remains.<br />
+                    The chorus is our last line.<br />
+                    English<br />
+                    A lyric in (ordinary parentheses) stays.
                   </div>
                   <div class="LyricsHeader__Metadata-sc-abc">12 Contributors</div>
                   <div data-lyrics-container="true" class="Lyrics__Container-sc-def">
-                    <span>[Bridge: Guest]</span><br />
-                    We turn the page again.
+                    [Instrumental]
                   </div>
                   <aside class="RightSidebar__Container-sc-abc">Recommended tracks</aside>
                 </main>
@@ -1054,18 +1152,38 @@ mod tests {
         let res = extract_genius_lyrics(html).unwrap();
         assert_eq!(
             res,
-            "[Verse 1]\nA quiet signal arrives.\nIt crosses the room & fades.\n\n[Chorus]\nKeep the lights on.\n\n[Bridge: Guest]\nWe turn the page again."
+            "A quiet signal arrives.\nIt crosses the room & fades.\n\nKeep the lights on.\n\nWe turn the page again.\n\nWe carry the signal home.\n\nKeep the lights on again.\n\nA final light remains.\nThe chorus is our last line.\nEnglish\nA lyric in (ordinary parentheses) stays."
         );
         assert!(!res.contains("18 Contributors"));
         assert!(!res.contains("12 Contributors"));
+        assert!(!res.contains("[Verse 1]"));
+        assert!(!res.contains("[Chorus]"));
+        assert!(!res.contains("[Bridge: Guest]"));
+        assert!(!res.contains("[Outro]"));
+        assert!(!res.contains("[Instrumental]"));
+        assert!(!res.contains("[Куплет 2]"));
+        assert!(!res.contains("[Припев]"));
         assert!(!res.contains("Translations"));
-        assert!(!res.contains("English"));
+        assert_eq!(res.lines().filter(|line| *line == "English").count(), 1);
         assert!(!res.contains("Recommended tracks"));
     }
 
     #[test]
     fn genius_extract_returns_none_when_page_has_no_lyrics_containers() {
         let html = r#"<html><body><div class="LyricsHeader__Metadata">18 Contributors</div><p>Translations English</p></body></html>"#;
+        assert_eq!(extract_genius_lyrics(html), None);
+    }
+
+    #[test]
+    fn genius_extract_returns_none_when_containers_only_have_metadata_and_section_labels() {
+        let html = r#"
+            <div data-lyrics-container="true">
+              <span>[Chorus]</span><br />
+              18 Contributors<br />
+              [Verse 1]
+            </div>
+        "#;
+
         assert_eq!(extract_genius_lyrics(html), None);
     }
 }

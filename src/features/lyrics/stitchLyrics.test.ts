@@ -3,6 +3,50 @@ import { stitchLyrics } from './stitchLyrics'
 import type { SyncedLyricsDocument } from './editorDocument'
 
 describe('stitchLyrics', () => {
+  it('ignores formatting blanks in plain lyrics when the timed source has no pauses', () => {
+    const timed: SyncedLyricsDocument = { mode: 'synced', lines: [
+      { text: 'first', startMs: 1000, endMs: null },
+      { text: 'second', startMs: 3000, endMs: null },
+      { text: 'third', startMs: 5000, endMs: null },
+    ] }
+
+    const result = stitchLyrics(timed, '\r\none\r\n  \r\ntwo\r\nthree\r\n')
+
+    expect(result.lines.map(({ text, startMs }) => [text, startMs])).toEqual([
+      ['one', 1000], ['two', 3000], ['three', 5000],
+    ])
+    expect(result.lines.every((line) => !line.explicitPause)).toBe(true)
+  })
+
+  it('uses only source pause positions even when plain verse breaks are elsewhere', () => {
+    const timed: SyncedLyricsDocument = { mode: 'synced', lines: [
+      { text: 'first', startMs: 0, endMs: null },
+      { text: 'second', startMs: 2000, endMs: null },
+      { text: '', startMs: 4000, endMs: null, explicitPause: true },
+      { text: 'third', startMs: 6000, endMs: null },
+    ] }
+
+    const result = stitchLyrics(timed, 'one\n\ntwo\nthree\n\n')
+
+    expect(result.lines.map(({ text, startMs, explicitPause }) => [text, startMs, explicitPause === true])).toEqual([
+      ['one', 0, false], ['two', 2000, false], ['', 4000, true], ['three', 6000, false],
+    ])
+  })
+
+  it('does not assign text to non-pause empty timecodes from external LRC', () => {
+    const timed: SyncedLyricsDocument = { mode: 'synced', lines: [
+      { text: 'first', startMs: 1000, endMs: null },
+      { text: '', startMs: 3000, endMs: null },
+      { text: 'second', startMs: 7000, endMs: null },
+    ] }
+
+    const result = stitchLyrics(timed, 'one\n\ntwo')
+
+    expect(result.lines.map(({ text, startMs }) => [text, startMs])).toEqual([
+      ['one', 1000], ['two', 7000],
+    ])
+  })
+
   it('replaces text positionally and drops word timings without mutating the source', () => {
     const timed: SyncedLyricsDocument = { mode: 'synced', lines: [
       { text: 'old first', startMs: 1000, endMs: 2400, endOrigin: 'source', words: [
