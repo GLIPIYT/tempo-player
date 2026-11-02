@@ -1,9 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { api } from '../../api/client'
 import { fmtTime } from '../../utils/format'
 import { useT } from '../../i18n'
-import { cachedWaveformRequest, fallbackWaveformHeights, soundCloudWaveformHeights } from './waveform'
+import {
+  cachedWaveformRequest,
+  fallbackWaveformHeights,
+  soundCloudWaveformHeights,
+  waveformBarCountForWidth,
+} from './waveform'
 
 interface WaveProgressProps {
   position: number
@@ -14,11 +19,6 @@ interface WaveProgressProps {
   onSeek: (sec: number) => void
 }
 
-const BAR_COUNT = 90
-/** each bar needs a 2px body plus the 2px gap after it to stay readable */
-const BAR_SLOT_PX = 4
-/** below this many bars the waveform stops reading as one, so it is the floor */
-const BAR_COUNT_MIN = 24
 const WAVEFORM_REQUEST_CACHE_SIZE = 16
 
 export default function WaveProgress({
@@ -35,7 +35,7 @@ export default function WaveProgress({
   const waveformRequestsRef = useRef(new Map<string, Promise<number[]>>())
   const [scrubbing, setScrubbing] = useState(false)
   const [previewFrac, setPreviewFrac] = useState(0)
-  const [barCount, setBarCount] = useState(BAR_COUNT)
+  const [barCount, setBarCount] = useState(0)
   const [loadedWaveform, setLoadedWaveform] = useState<{ trackId: string; samples: number[] } | null>(null)
 
   useEffect(() => {
@@ -61,24 +61,37 @@ export default function WaveProgress({
     return () => { active = false }
   }, [waveformEnabled, soundCloudTrackId, loadedWaveform?.trackId])
 
-  // Each bar has a 2px floor plus a 2px gap, so a fixed 90 bars need ~358px and
-  // simply overflow below that - the row is not clipped. Measuring the real
-  // width and dropping bars keeps the waveform inside its column at any size.
-  useEffect(() => {
+  // Use the rendered width so detail keeps growing with wide windows and UI
+  // zoom. The helper factors zoom out only for its fit check against the row's
+  // 2px minimum bar width and 2px gap, keeping the bars inside the row.
+  useLayoutEffect(() => {
     const el = boxRef.current
     if (!el) return
-    const apply = (w: number) => {
-      const fits = Math.floor(w / BAR_SLOT_PX)
-      const next = Math.max(BAR_COUNT_MIN, Math.min(BAR_COUNT, fits))
+    const appRoot = el.closest<HTMLElement>('.app-root')
+    const uiScale = () => {
+      if (!appRoot) return 1
+      const scale = Number.parseFloat(window.getComputedStyle(appRoot).zoom)
+      return Number.isFinite(scale) && scale > 0 ? scale : 1
+    }
+    const measure = () => {
+      const next = waveformBarCountForWidth(el.getBoundingClientRect().width, uiScale())
       setBarCount((prev) => (prev === next ? prev : next))
     }
-    apply(el.getBoundingClientRect().width)
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width
-      if (w !== undefined) apply(w)
-    })
+    const ro = new ResizeObserver(measure)
     ro.observe(el)
-    return () => ro.disconnect()
+    const zoomObserver = appRoot ? new MutationObserver(measure) : null
+    if (appRoot && zoomObserver) {
+      zoomObserver.observe(appRoot, { attributes: true, attributeFilter: ['style'] })
+    }
+    window.addEventListener('resize', measure)
+    window.visualViewport?.addEventListener('resize', measure)
+    measure()
+    return () => {
+      ro.disconnect()
+      zoomObserver?.disconnect()
+      window.removeEventListener('resize', measure)
+      window.visualViewport?.removeEventListener('resize', measure)
+    }
   }, [])
 
   const heights = useMemo(() => {

@@ -1,4 +1,29 @@
-const FALLBACK_BAR_COUNT = 90
+const FALLBACK_BAR_COUNT = 110
+const PREVIOUS_WAVEFORM_BAR_COUNT = 90
+const EXTRA_BARS_AT_REFERENCE_WIDTH = 20
+const REFERENCE_WIDTH_PX = 800
+const MIN_WAVEFORM_BAR_WIDTH_PX = 2
+const WAVEFORM_BAR_GAP_PX = 2
+const SOUNDCLOUD_HEIGHT_SCALE = 84
+
+/**
+ * Let the display grow past the old 90-bar plateau, adding about 20 bars at
+ * 800px and one more for each additional 40 rendered pixels. The final fit
+ * check accounts for CSS zoom so the 2px bars and gaps never overflow the row.
+ */
+export function waveformBarCountForWidth(width: number, scale = 1): number {
+  if (!Number.isFinite(width) || width <= 0) return 0
+
+  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1
+  const layoutWidth = width / safeScale
+  const maxThatFits = Math.floor(
+    (layoutWidth + WAVEFORM_BAR_GAP_PX) / (MIN_WAVEFORM_BAR_WIDTH_PX + WAVEFORM_BAR_GAP_PX),
+  )
+  const preferredCount = Math.floor(
+    PREVIOUS_WAVEFORM_BAR_COUNT + (width / REFERENCE_WIDTH_PX) * EXTRA_BARS_AT_REFERENCE_WIDTH,
+  )
+  return Math.max(0, Math.min(maxThatFits, preferredCount))
+}
 
 function hashUnit(input: string): number {
   let hash = 2166136261
@@ -49,7 +74,7 @@ export function soundCloudWaveformHeights(samples: readonly number[] | null, cou
   const targetCount = Math.max(0, Math.floor(count))
   if (targetCount === 0) return []
   const peaks = samples ? resampleWaveform(samples, targetCount) : null
-  return peaks ? peaks.map(peak => peak * 100) : Array.from({ length: targetCount }, () => 14)
+  return peaks ? peaks.map(peak => peak * SOUNDCLOUD_HEIGHT_SCALE) : Array.from({ length: targetCount }, () => 14)
 }
 
 /** Deduplicate in-flight fetches and allow a failed track to be retried. */

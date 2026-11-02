@@ -231,4 +231,7 @@ export const en: Record<string, string> = {
   'Could not stitch lyrics. Check the source timing and track duration.': 'Could not stitch lyrics. Check the source timing and track duration.',
   'Choose the song that has the timing': 'Choose the song that has the timing',
   'Choose the song that has the lyrics text': 'Choose the song that has the lyrics text',
+  Companion: 'Companion',
+  'Enable companion': 'Enable companion',
+  'Now you’re not alone <3': 'Now you’re not alone <3',
 }

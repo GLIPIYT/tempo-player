@@ -2164,6 +2164,19 @@ export default function SettingsPage() {
                   </div>
                 </div>
               </Card>
+              <Card title={t('Companion')}>
+                <div className="set-row">
+                  <span className="set-row-label">{t('Enable companion')}</span>
+                  <button
+                    className={settings.player.companionEnabled ? 'switch is-on' : 'switch'}
+                    role="switch"
+                    aria-checked={settings.player.companionEnabled}
+                    aria-label={t('Enable companion')}
+                    onClick={() => update({ player: { companionEnabled: !settings.player.companionEnabled } })}
+                  />
+                </div>
+                <div className="set-note">{t('Now you’re not alone <3')}</div>
+              </Card>
             </>
           ) : null}
 

@@ -510,9 +510,11 @@ function SyncedView({
               }}
               aria-label={t('Skip instrumental')}
             >
-              <Music2 size={17} className="lyr-note" />
-              <Music2 size={17} className="lyr-note" />
-              <Music2 size={17} className="lyr-note" />
+              <span className="lyr-notes-row" aria-hidden="true">
+                <Music2 size={17} className="lyr-note" />
+                <Music2 size={17} className="lyr-note" />
+                <Music2 size={17} className="lyr-note" />
+              </span>
             </button>
           )
         }

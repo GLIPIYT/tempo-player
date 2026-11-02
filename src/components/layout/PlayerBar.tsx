@@ -21,6 +21,7 @@ import {
   VolumeX,
 } from 'lucide-react'
 import { api } from '../../api/client'
+import dancingCat from '../../assets/companions/dancing-cat.gif'
 import { usePlayer } from '../../player'
 import { useDisplayPosition } from '../../player/useDisplayPosition'
 import { useLikes } from '../../hooks/useLikes'
@@ -262,6 +263,9 @@ function PlayerBarContent() {
     <>
       <footer className={'playerbar' + (modern ? ' pb-modern' : '')}>
         <PlayerVisualizer />
+        {settings.player.companionEnabled ? (
+          <img className="pb-companion" src={dancingCat} alt="" aria-hidden="true" draggable={false} />
+        ) : null}
         <div className="pb-now">
           {p.currentTrack ? (
             <>

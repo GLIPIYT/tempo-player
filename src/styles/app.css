@@ -1534,6 +1534,19 @@
   mask-composite: intersect;
 }
 
+.pb-companion {
+  position: absolute;
+  z-index: 1;
+  left: 16px;
+  bottom: 100%;
+  width: 88px;
+  height: 88px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+  user-select: none;
+}
+
 .pb-viz-canvas {
   display: block;
   width: 100%;

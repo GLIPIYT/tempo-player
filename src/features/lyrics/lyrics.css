@@ -282,8 +282,8 @@
 .lyr-stage-col.lyr-align-right .lyr-line { text-align: right; }
 .lyr-stage-col.lyr-align-center .lyr-plain { text-align: center; }
 .lyr-stage-col.lyr-align-right .lyr-plain { text-align: right; }
-.lyr-stage-col.lyr-align-center .lyr-notes { justify-content: center; }
-.lyr-stage-col.lyr-align-right .lyr-notes { justify-content: flex-end; }
+.lyr-stage-col.lyr-align-center .lyr-notes-row { justify-content: center; }
+.lyr-stage-col.lyr-align-right .lyr-notes-row { justify-content: flex-end; }
 
 .lyr-head {
   display: flex;
@@ -966,6 +966,8 @@
 }
 
 .lyr-track {
+  --lyr-line-pad-top: 12px;
+  --lyr-line-pad-bottom: 14px;
   will-change: transform;
   transition: transform 0.55s cubic-bezier(0.25, 0.46, 0.45, 0.94);
   display: flex;
@@ -975,7 +977,7 @@
 
 .lyr-line {
   position: relative;
-  padding: 12px 2px 14px;
+  padding: var(--lyr-line-pad-top) 2px var(--lyr-line-pad-bottom);
   font-size: var(--lyr-text-size, 21px);
   font-weight: 480;
   line-height: 1.4;
@@ -1051,7 +1053,6 @@
 .lyr-notes {
   display: flex;
   align-items: center;
-  gap: 9px;
   height: 58px;
   overflow: hidden;
   padding: 0 4px;
@@ -1064,12 +1065,39 @@
   transition: height 0.3s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.3s ease;
 }
 
-/* Compact micro-pauses in flow and let their pulse render over the lyric gap. */
+/* Compact pauses animate a separate row inside the existing lyric gap. */
 .lyr-notes.is-skip-pool {
+  position: relative;
   height: 0;
   min-height: 0;
   overflow: visible;
+  padding: 0;
   transition: opacity 0.3s ease;
+}
+
+.lyr-notes-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  width: 100%;
+  height: 100%;
+}
+
+.lyr-notes.is-skip-pool .lyr-notes-row {
+  position: absolute;
+  top: calc(0px - var(--lyr-line-pad-bottom));
+  left: 0;
+  height: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: height 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.lyr-notes.is-skip-pool.is-active .lyr-notes-row {
+  height: calc(var(--lyr-line-pad-top) + var(--lyr-line-pad-bottom));
 }
 
 .lyr-notes.is-active {
@@ -1093,6 +1121,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .lyr-notes,
+  .lyr-notes-row,
   .lyr-track {
     transition: none;
   }

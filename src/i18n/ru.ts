@@ -664,6 +664,9 @@ export const ru: Record<string, string> = {
   'Reset speed': 'Сбросить скорость',
   'Preserve pitch': 'Сохранять тональность',
   'Player bar layout': 'Вид плейбара',
+  Companion: 'Компаньон',
+  'Enable companion': 'Включить компаньона',
+  'Now you’re not alone <3': 'Теперь ты не один <3',
   Crossfade: 'Кроссфейд',
   Off: 'Выключено',
   'Fades the end of a track into the start of the next one, so they overlap instead of stopping and starting.':

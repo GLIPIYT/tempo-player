@@ -34,6 +34,26 @@ describe('persisted lyrics analysis choice', () => {
   })
 })
 
+describe('player companion setting', () => {
+  function loadPlayer(value: unknown) {
+    vi.stubGlobal('localStorage', { getItem: () => JSON.stringify(value) })
+    return loadSettings().player
+  }
+
+  it('defaults to off for existing settings without the preference', () => {
+    expect(defaultSettings.player.companionEnabled).toBe(false)
+    expect(loadPlayer({ player: { waveform: true } }).companionEnabled).toBe(false)
+  })
+
+  it.each([true, false])('preserves an explicit saved %s', value => {
+    expect(loadPlayer({ player: { companionEnabled: value } }).companionEnabled).toBe(value)
+  })
+
+  it.each(['true', 1, null])('treats invalid saved %j as disabled', value => {
+    expect(loadPlayer({ player: { companionEnabled: value } }).companionEnabled).toBe(false)
+  })
+})
+
 describe('settings hardware default update', () => {
   async function pendingDefault(recommended: boolean) {
     vi.resetModules()
