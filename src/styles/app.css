@@ -3918,6 +3918,12 @@ html.has-bg .app-content {
   color: var(--text);
 }
 
+.titlebar-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+  color: var(--text);
+}
+
 .titlebar-btn.titlebar-close:hover {
   background: #e81123;
   color: #fff;

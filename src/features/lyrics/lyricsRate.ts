@@ -3,12 +3,55 @@ import type { UnifiedTrack } from '../../types/models'
 export const LYRICS_RATE_MIN = 0.5
 export const LYRICS_RATE_MAX = 2
 export const LYRICS_RATE_STEP = 0.02
+export const LYRICS_RATE_INPUT_STEP = 0.01
+
+const LYRICS_RATE_MIN_CENTS = Math.round(LYRICS_RATE_MIN * 100)
+const LYRICS_RATE_MAX_CENTS = Math.round(LYRICS_RATE_MAX * 100)
+const LYRICS_RATE_STEP_CENTS = Math.round(LYRICS_RATE_STEP * 100)
+const POPULAR_RATE_STEP_CENTS = 5
+
+/**
+ * Keep the original 0.02 increments and add the common 0.05 increments.
+ * Integer hundredths avoid accumulating binary floating-point error.
+ */
+export const LYRICS_RATE_POINTS: readonly number[] = (() => {
+  const points = new Set<number>()
+  for (let cents = LYRICS_RATE_MIN_CENTS; cents <= LYRICS_RATE_MAX_CENTS; cents += LYRICS_RATE_STEP_CENTS) {
+    points.add(cents)
+  }
+  for (let cents = LYRICS_RATE_MIN_CENTS; cents <= LYRICS_RATE_MAX_CENTS; cents += POPULAR_RATE_STEP_CENTS) {
+    points.add(cents)
+  }
+  return [...points].sort((left, right) => left - right).map(cents => cents / 100)
+})()
 
 export function normalizeLyricsRate(value: number): number {
   if (!Number.isFinite(value)) return 1
-  const clamped = Math.min(LYRICS_RATE_MAX, Math.max(LYRICS_RATE_MIN, value))
-  const stepIndex = Math.round((clamped - LYRICS_RATE_MIN) / LYRICS_RATE_STEP)
-  return Number((LYRICS_RATE_MIN + stepIndex * LYRICS_RATE_STEP).toFixed(2))
+  const clampedCents = Math.min(
+    LYRICS_RATE_MAX_CENTS,
+    Math.max(LYRICS_RATE_MIN_CENTS, Math.round(value * 100)),
+  )
+  let nearestCents = LYRICS_RATE_MIN_CENTS
+  let nearestDistance = Number.POSITIVE_INFINITY
+
+  for (const rate of LYRICS_RATE_POINTS) {
+    const cents = Math.round(rate * 100)
+    const distance = Math.abs(cents - clampedCents)
+    if (distance < nearestDistance) {
+      nearestCents = cents
+      nearestDistance = distance
+    }
+  }
+
+  return nearestCents / 100
+}
+
+/** Return the adjacent supported rate in the requested direction. */
+export function stepLyricsRate(value: number, direction: -1 | 1): number {
+  const current = normalizeLyricsRate(value)
+  const currentIndex = LYRICS_RATE_POINTS.indexOf(current)
+  const nextIndex = Math.min(LYRICS_RATE_POINTS.length - 1, Math.max(0, currentIndex + direction))
+  return LYRICS_RATE_POINTS[nextIndex]
 }
 
 export function lyricsRateStorageKey(

@@ -1,4 +1,9 @@
 export const en: Record<string, string> = {
+  'Beta tester': 'Beta tester',
+  'Enter fullscreen': 'Enter fullscreen',
+  'Exit fullscreen': 'Exit fullscreen',
+  Maximize: 'Maximize',
+  Minimize: 'Minimize',
   Radio: 'Radio',
   'Continue with recommendations': 'Continue with recommendations',
   'No more recommendations': 'No more recommendations',

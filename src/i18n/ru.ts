@@ -1,4 +1,9 @@
 export const ru: Record<string, string> = {
+  'Beta tester': 'Бета-тестер',
+  'Enter fullscreen': 'Включить полноэкранный режим',
+  'Exit fullscreen': 'Выйти из полноэкранного режима',
+  Maximize: 'Развернуть',
+  Minimize: 'Свернуть',
   'Continue with recommendations': 'Продолжать рекомендациями',
   'No more recommendations': 'Больше рекомендаций нет',
   'Retry after cooldown': 'Повторить после паузы',

@@ -21,12 +21,13 @@ import { lyricSourceKey, lyricsService } from './lyricsService'
 import {
   LYRICS_RATE_MAX,
   LYRICS_RATE_MIN,
-  LYRICS_RATE_STEP,
+  LYRICS_RATE_INPUT_STEP,
   lyricTimeAtMediaPosition,
   lyricsRateStorageKey,
   mediaPositionAtLyricTime,
   normalizeLyricsRate,
   readLyricsRate,
+  stepLyricsRate,
   writeLyricsRate,
 } from './lyricsRate'
 import { activeOverrideDocument, candidatePlaybackDocument as candidateDocument, overridePlaybackResult } from './playbackDocument'
@@ -950,9 +951,24 @@ function LyricsEditMenu({
                 type="range"
                 min={LYRICS_RATE_MIN}
                 max={LYRICS_RATE_MAX}
-                step={LYRICS_RATE_STEP}
+                step={LYRICS_RATE_INPUT_STEP}
                 value={lyricsRate}
                 onChange={(event) => onLyricsRateChange(Number(event.currentTarget.value))}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
+                    event.preventDefault()
+                    onLyricsRateChange(stepLyricsRate(lyricsRate, -1))
+                  } else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
+                    event.preventDefault()
+                    onLyricsRateChange(stepLyricsRate(lyricsRate, 1))
+                  } else if (event.key === 'Home') {
+                    event.preventDefault()
+                    onLyricsRateChange(LYRICS_RATE_MIN)
+                  } else if (event.key === 'End') {
+                    event.preventDefault()
+                    onLyricsRateChange(LYRICS_RATE_MAX)
+                  }
+                }}
                 style={{
                   '--fill': `${((lyricsRate - LYRICS_RATE_MIN) / (LYRICS_RATE_MAX - LYRICS_RATE_MIN)) * 100}%`,
                 } as CSSProperties}

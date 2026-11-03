@@ -2266,6 +2266,9 @@ export default function SettingsPage() {
                 <div className="muted settings-line" style={{ marginTop: 8 }}>
                   {t('Author')}: gl1pi (@GLIPIYT)
                 </div>
+                <div className="muted settings-line">
+                  {t('Beta tester')}: maslopodsolnechnoe
+                </div>
                 <div className="set-actions">
                   <button
                     className="btn"
