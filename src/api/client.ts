@@ -254,7 +254,7 @@ export const api = {
     window.dispatchEvent(new CustomEvent('tempo:listening-feedback', { detail: event }))
   },
   mergeRecommendationFeatureSections: (updates: FeatureSectionUpdate[]) => invoke<RecommendationFeature[]>('merge_recommendation_feature_sections', { updates }),
-  getRecommendationAudioFeature: (request: { jobId: string; trackId: number | null; source: string; sourceId: string; durationSec: number | null; versionKey: string }) =>
+  getRecommendationAudioFeature: (request: { jobId: string; trackId: number | null; source: string; sourceId: string; durationSec: number | null; versionKey: string; allowOnlinePreview?: boolean }) =>
     invoke<AudioRecordingFeature | null>('recommendation_audio_feature', request),
   cancelRecommendationAudioFeature: (jobId: string) => invoke<void>('cancel_recommendation_audio_feature', { jobId }),
   recordRecommendationAction: (action: { id: string; trackKey: string; dbId?: number; action: string; intent: string; at: number; generation: number; playlistId?: number; provenance?: RecommendationProvenance }) =>

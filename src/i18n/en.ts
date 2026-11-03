@@ -59,6 +59,8 @@ export const en: Record<string, string> = {
     'Hidden files stay on disk and are skipped during scans.',
   'Downloads first and enables SoundCloud spectrum analysis.':
     'Downloads first and enables SoundCloud spectrum analysis.',
+  'Analyze online recommendations': 'Analyze online recommendations',
+  'Temporarily downloads short SoundCloud audio fragments to improve recommendations.': 'Temporarily downloads short SoundCloud audio fragments to improve recommendations.',
   Pulse: 'Pulse',
   Orbit: 'Orbit',
   'Not downloaded': 'Not downloaded',

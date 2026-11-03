@@ -1535,6 +1535,21 @@
   mask-composite: intersect;
 }
 
+/* The modern waveform straddles the bar's top edge. Fade only the part of
+   the spectrum behind those peaks, leaving the rest of the visualizer intact. */
+.pb-viz-behind-waveform .pb-viz {
+  -webkit-mask-image:
+    linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%),
+    linear-gradient(to top, black 0%, black 45%, transparent 100%),
+    linear-gradient(to top, rgb(0 0 0 / 0.28) 0px, rgb(0 0 0 / 0.28) 13px, black 24px);
+  mask-image:
+    linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%),
+    linear-gradient(to top, black 0%, black 45%, transparent 100%),
+    linear-gradient(to top, rgb(0 0 0 / 0.28) 0px, rgb(0 0 0 / 0.28) 13px, black 24px);
+  -webkit-mask-composite: source-in, source-in;
+  mask-composite: intersect, intersect;
+}
+
 .pb-companion {
   position: absolute;
   z-index: 1;
@@ -1723,6 +1738,7 @@
    centred on the edge so its peaks do not get flattened to the 4px line. */
 .pb-modern .pb-progress-control {
   position: absolute;
+  z-index: 3;
   top: -13px;
   left: 0;
   right: 0;

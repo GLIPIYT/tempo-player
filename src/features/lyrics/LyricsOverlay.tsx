@@ -36,6 +36,7 @@ import { fromLrc, fromPlainLyrics, toLrclibLyricsfile, toPlainText, toPlaybackLr
 import type { LyricsEditorDocument } from './editorDocument'
 import { resolveLyricProgressGeometry } from './progressGeometry'
 import { lyricsOverlayMode, manualLyricsSearchReducer, manualLyricsTrackIdentity, mergeManualLyricsCandidates } from './lyricsOverlayState'
+import { lyricsPaneWidthAtPointer, readLyricsPaneWidth, writeLyricsPaneWidth } from './lyricsPaneWidth'
 import './lyrics.css'
 
 interface LyricsOverlayProps {
@@ -983,6 +984,15 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
   const track = p.currentTrack
   const trackKey = track ? `${track.source}|${track.sourceId}|${track.title}|${track.artists.join(',')}` : ''
   const manualTrackIdentity = manualLyricsTrackIdentity(track)
+  const [sideWidth, setSideWidth] = useState(readLyricsPaneWidth)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const updateSideWidth = (clientX: number) => {
+    const body = bodyRef.current
+    if (!body || body.offsetWidth <= 24) return
+    const bounds = body.getBoundingClientRect()
+    setSideWidth(lyricsPaneWidthAtPointer(clientX, bounds.left, bounds.width, body.offsetWidth))
+  }
+  useEffect(() => { writeLyricsPaneWidth(sideWidth) }, [sideWidth])
   const [candidates, setCandidates] = useState<LyricsCandidate[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [candidatesTrackKey, setCandidatesTrackKey] = useState('')
@@ -1709,8 +1719,8 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       <button className="lyr-close" onClick={onClose} aria-label={t('Close')}>
         <X size={20} />
       </button>
-      <div className="lyr-body">
-        <aside className="lyr-side">
+      <div className="lyr-body" ref={bodyRef} style={{ '--lyr-side-ratio': sideWidth / 100 } as CSSProperties}>
+        <aside className="lyr-side" id="lyrics-player-pane">
           <div className="lyr-cover-shell">
             <div className="lyr-cover">
               <Cover path={track?.coverPath ?? null} label={track?.title ?? '?'} size={260} />
@@ -1735,6 +1745,39 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
           </div>
           <LyricsVolumeRow />
         </aside>
+        <div className="lyr-divider-wrap">
+          <div
+            className="lyr-divider"
+            role="separator"
+            tabIndex={0}
+            aria-label={t('Player width')}
+            aria-controls="lyrics-player-pane"
+            aria-orientation="vertical"
+            aria-valuemin={25}
+            aria-valuemax={65}
+            aria-valuenow={sideWidth}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return
+              event.preventDefault()
+              event.currentTarget.focus()
+              event.currentTarget.setPointerCapture(event.pointerId)
+              updateSideWidth(event.clientX)
+            }}
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) updateSideWidth(event.clientX)
+            }}
+            onKeyDown={(event) => {
+              const delta = event.key === 'ArrowLeft' ? -2 : event.key === 'ArrowRight' ? 2 : 0
+              if (delta) {
+                event.preventDefault()
+                setSideWidth(value => clamp(value + delta, 25, 65))
+              } else if (event.key === 'Home' || event.key === 'End') {
+                event.preventDefault()
+                setSideWidth(event.key === 'Home' ? 25 : 65)
+              }
+            }}
+          />
+        </div>
         <section
           className={`lyr-stage-col lyr-align-${settings.lyrics.alignment}${settings.lyrics.progressClipToText ? ' lyr-progress-clip-to-text' : ''}${settings.lyrics.progressColorMode === 'theme' ? ' lyr-progress-theme' : ' lyr-progress-custom'}${editingLyrics ? ' lyr-stage-col-editing' : ''}`}
           style={{
@@ -1812,17 +1855,17 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
               {mode === 'loading' && !searching && <LoadingMark />}
             </>
           )}
+          {canPin && pinnedLoaded && !editingLyrics && (
+            <LyricsEditMenu
+              offsetMs={offsetMs}
+              lyricsRate={activeLyrics?.result?.kind === 'synced' ? lyricsRate : null}
+              onNudge={handleNudgeOffset}
+              onLyricsRateChange={handleLyricsRateChange}
+              onEdit={startLyricsEditing}
+            />
+          )}
         </section>
       </div>
-      {canPin && pinnedLoaded && !editingLyrics && (
-        <LyricsEditMenu
-          offsetMs={offsetMs}
-          lyricsRate={activeLyrics?.result?.kind === 'synced' ? lyricsRate : null}
-          onNudge={handleNudgeOffset}
-          onLyricsRateChange={handleLyricsRateChange}
-          onEdit={startLyricsEditing}
-        />
-      )}
     </div>
   )
 }

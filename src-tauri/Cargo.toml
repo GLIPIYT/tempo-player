@@ -42,6 +42,9 @@ tokio = { version = "1", features = ["time", "macros", "rt", "fs", "net", "sync"
 futures-util = "0.3"
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+sonara = { git = "https://github.com/kkollsga/sonara.git", rev = "15fb81d34e4e6ca856508e5520a84b1a4ab42b6e" }
+ndarray = "0.17"
+rayon = "1.11"
 rusty-chromaprint = "=0.3.0"
 symphonia = { version = "=0.5.5", default-features = false, features = ["aac", "alac", "flac", "isomp4", "mkv", "mp3", "ogg", "pcm", "vorbis", "wav"] }
 rodio = { version = "=0.22.2", default-features = false, features = ["playback", "symphonia-aac", "symphonia-flac", "symphonia-isomp4", "symphonia-mkv", "symphonia-mp3", "symphonia-ogg", "symphonia-pcm", "symphonia-vorbis", "symphonia-wav"] }

@@ -101,13 +101,9 @@
   flex: 1;
   min-height: 0;
   width: 100%;
-  max-width: 1480px;
-  margin-inline: auto;
   display: grid;
-  grid-template-columns: minmax(236px, 332px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, calc((100% - 24px) * var(--lyr-side-ratio, 0.4))) 24px minmax(0, 1fr);
   align-items: stretch;
-  gap: clamp(44px, 6vw, 92px);
-  padding: clamp(28px, 5vh, 52px) clamp(32px, 6vw, 72px);
 }
 
 .lyr-side {
@@ -115,9 +111,43 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
-  margin-inline-start: -12px;
+  justify-content: safe center;
+  align-items: center;
+  overflow-y: auto;
+  padding: 54px clamp(20px, 4vw, 60px) 32px;
+}
+
+.lyr-divider-wrap {
+  position: relative;
+  min-height: 0;
+}
+
+.lyr-divider {
+  position: absolute;
+  inset: 32px 0;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.lyr-divider::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: 1px;
+  background: color-mix(in srgb, var(--text) 20%, transparent);
+  transition: background-color 0.15s ease;
+}
+
+.lyr-divider:hover::before,
+.lyr-divider:focus-visible::before {
+  background: var(--accent);
+}
+
+.lyr-divider:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+  border-radius: 4px;
 }
 
 .lyr-cover-shell {
@@ -285,11 +315,12 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  padding: 54px clamp(20px, 4vw, 60px) 32px;
 }
 
 .lyr-stage-col-editing {
   justify-content: center;
-  padding-block: 12px;
+  padding-block: 54px 32px;
 }
 
 .lyr-stage-col.lyr-align-center .lyr-synced,
@@ -1268,15 +1299,24 @@
   .lyr-body {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
-    gap: 18px;
-    padding: 64px 24px 20px;
+    gap: 0;
+    padding: 0;
+    overflow-y: auto;
   }
 
   .lyr-side {
     justify-content: flex-start;
     align-items: center;
     text-align: center;
-    margin-inline-start: 0;
+    overflow: visible;
+    padding: 64px 24px 20px;
+  }
+
+  .lyr-divider-wrap { display: none; }
+
+  .lyr-stage-col {
+    min-height: 420px;
+    padding: 0 24px 32px;
   }
 
   .lyr-cover-shell {

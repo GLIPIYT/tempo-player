@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { ActiveTheme } from '../types/theme'
 import { DEFAULT_EQUALIZER_SETTINGS, normalizeEqualizer, type EqualizerSettings } from '../audio/equalizer'
 import { initializeDeepAnalysisDefault } from '../features/lyrics/analysis/hardwareDefault'
@@ -103,6 +103,7 @@ export interface AppSettings {
      * graph - instead of streaming past it.
      */
     cacheBeforePlay: boolean
+    recommendationPreviewAnalysis: boolean
   }
   ytdlp: {
     /**
@@ -168,7 +169,7 @@ export const defaultSettings: AppSettings = {
   audio: { normalize: false, crossfadeSec: 0, equalizer: DEFAULT_EQUALIZER_SETTINGS },
   // off by default: streaming starts immediately, which is what most people
   // expect from a search result
-  soundcloud: { cacheBeforePlay: false },
+  soundcloud: { cacheBeforePlay: false, recommendationPreviewAnalysis: false },
   // Empty by default: most people already have yt-dlp on PATH, and asking for
   // a path before anything works would be a poor first impression.
   ytdlp: { path: '' },
@@ -332,6 +333,7 @@ export function loadSettings(): AppSettings {
       },
       soundcloud: {
         cacheBeforePlay: parsed.soundcloud?.cacheBeforePlay ?? defaultSettings.soundcloud.cacheBeforePlay,
+        recommendationPreviewAnalysis: parsed.soundcloud?.recommendationPreviewAnalysis === true,
       },
       ytdlp: { ...defaultSettings.ytdlp, ...parsed.ytdlp },
       visualizer: clampVisualizer(parsed.visualizer ?? {}),
@@ -360,6 +362,7 @@ const SettingsContext = createContext<SettingsApi | null>(null)
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
+  const previousPreviewSetting = useRef(settings.soundcloud.recommendationPreviewAnalysis)
 
   useEffect(() => {
     if (settings.lyrics.deepAnalysisEnabled !== null) return
@@ -378,6 +381,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
     } catch {
       /* storage full or unavailable */
+    }
+    if (previousPreviewSetting.current !== settings.soundcloud.recommendationPreviewAnalysis) {
+      previousPreviewSetting.current = settings.soundcloud.recommendationPreviewAnalysis
+      window.dispatchEvent(new CustomEvent('tempo:recommendation-preview-setting', { detail: { enabled: previousPreviewSetting.current } }))
     }
   }, [settings])
 

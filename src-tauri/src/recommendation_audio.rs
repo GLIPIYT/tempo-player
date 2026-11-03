@@ -18,10 +18,11 @@ use std::time::{Duration, Instant};
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::errors::Error as DecodeError;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
+use symphonia::core::units::Time;
 use symphonia::default::{get_codecs, get_probe};
 use tauri::State;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -48,7 +49,7 @@ CREATE INDEX idx_recommendation_audio_content
  WHERE supported=1 AND content_hash IS NOT NULL;
 "#;
 
-const ALGORITHM_VERSION: &str = "chromaprint-test2-symphonia-0.5.5-v1";
+const ALGORITHM_VERSION: &str = "chromaprint-test2-sonara-15fb81d-windows-v3";
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_DURATION_SEC: f64 = 6.0 * 60.0 * 60.0;
 const MAX_DECODE_SEC: f64 = 90.0;
@@ -66,6 +67,14 @@ const MIN_MATCH_COVERAGE: f64 = 0.65;
 const MAX_WORK_TIME: Duration = Duration::from_secs(20);
 const RETAINED_FINGERPRINTS: i64 = 5000;
 
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SonaraEmbedding {
+    version: u32,
+    window_schema: u32,
+    windows: Vec<Vec<f32>>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AudioRecordingFeature {
@@ -76,6 +85,7 @@ pub struct AudioRecordingFeature {
     pub version_key: String,
     pub supported: bool,
     pub match_group: Option<String>,
+    pub sonara: Option<SonaraEmbedding>,
 }
 
 #[derive(Clone)]
@@ -90,6 +100,7 @@ struct FingerprintRow {
     duration_sec: Option<f64>,
     version_key: String,
     supported: bool,
+    sonara: Option<SonaraEmbedding>,
 }
 
 struct DecodedAudio {
@@ -104,18 +115,20 @@ pub struct RecommendationAudioStore {
     db: Arc<Db>,
     sc_root: PathBuf,
     yt_root: PathBuf,
+    bin_dir: PathBuf,
     permit: Arc<Semaphore>,
     jobs: Mutex<HashMap<String, Arc<AtomicBool>>>,
     cancelled_jobs: Mutex<HashSet<String>>,
 }
 
 impl RecommendationAudioStore {
-    pub fn new(db: Arc<Db>, sc_root: PathBuf, yt_root: PathBuf) -> Self {
+    pub fn new(db: Arc<Db>, sc_root: PathBuf, yt_root: PathBuf, bin_dir: PathBuf) -> Self {
         Self {
             db,
             sc_root,
             yt_root,
-            permit: Arc::new(Semaphore::new(1)),
+            bin_dir,
+            permit: Arc::new(Semaphore::new(2)),
             jobs: Mutex::new(std::collections::HashMap::new()),
             cancelled_jobs: Mutex::new(HashSet::new()),
         }
@@ -123,7 +136,7 @@ impl RecommendationAudioStore {
 
     fn begin_job(&self, id: &str, cancel: Arc<AtomicBool>) -> Result<bool, String> {
         let mut jobs = self.jobs.lock().map_err(|_| "audio job mutex poisoned")?;
-        if jobs.contains_key(id) || !jobs.is_empty() {
+        if jobs.contains_key(id) || jobs.len() >= 2 {
             return Ok(false);
         }
         // Keep the check and active-job insertion behind the same lock used by
@@ -250,7 +263,7 @@ impl RecommendationAudioStore {
                     Ok(FingerprintRow {
                         track_key: row.get(0)?, file_identity: row.get(1)?, algorithm_version: row.get(2)?,
                         content_hash: row.get(3)?, fingerprint, sampled_sec: row.get(5)?, signal_sec: row.get(6)?,
-                        duration_sec: row.get(7)?, version_key: row.get(8)?, supported: row.get::<_,i64>(9)? == 1,
+                        duration_sec: row.get(7)?, version_key: row.get(8)?, supported: row.get::<_,i64>(9)? == 1, sonara: None,
                     })
                 },
             ).optional().map_err(|error| format!("recommendation audio cache: {error}"))
@@ -281,7 +294,7 @@ impl RecommendationAudioStore {
                 Ok(FingerprintRow {
                     track_key: row.get(0)?, file_identity: row.get(1)?, algorithm_version: row.get(2)?,
                     content_hash: row.get(3)?, fingerprint, sampled_sec: row.get(5)?, signal_sec: row.get(6)?,
-                    duration_sec: row.get(7)?, version_key: row.get(8)?, supported: row.get::<_,i64>(9)? == 1,
+                    duration_sec: row.get(7)?, version_key: row.get(8)?, supported: row.get::<_,i64>(9)? == 1, sonara: None,
                 })
             }).map_err(|error| format!("recommendation audio cache: {error}"))?;
             let mut rows = Vec::new();
@@ -401,6 +414,7 @@ impl RecommendationAudioStore {
                 "supported": record.supported,
                 "hasFingerprint": record.fingerprint.is_some(),
                 "matchGroup": match_group,
+                "sonara": record.sonara,
             });
             recommendation_store::merge_feature_section_conn(&tx, FeatureSectionUpdate {
                 track_key: record.track_key.clone(), section: "audio".into(), data: feature_data,
@@ -410,6 +424,49 @@ impl RecommendationAudioStore {
                 .map_err(|error| error.to_string())?;
             tx.commit().map_err(|error| error.to_string())
         })
+    }
+
+    fn analyze_preview(
+        &self,
+        paths: [&Path; 2],
+        source_id: &str,
+        duration_sec: Option<f64>,
+        version_key: &str,
+        cancel: &AtomicBool,
+    ) -> Result<Option<AudioRecordingFeature>, String> {
+        let Some(first) = extract_window(paths[0], 0.0, None, cancel) else {
+            return Ok(None);
+        };
+        let Some(second) = extract_window(paths[1], 0.0, None, cancel) else {
+            return Ok(None);
+        };
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let sonara = SonaraEmbedding {
+            version: sonara::similarity::SIMILARITY_VERSION,
+            window_schema: WINDOW_SCHEMA,
+            windows: vec![first, second],
+        };
+        let track_key = format!("soundcloud:{source_id}");
+        let identity = format!("preview:{source_id}");
+        let feature_data = json!({"fileIdentity": identity, "algorithmVersion": ALGORITHM_VERSION, "sampledSec": WINDOW_SECONDS * 2.0, "durationSec": duration_sec, "versionKey": version_key, "supported": true, "matchGroup": null, "sonara": sonara, "preview": true});
+        self.db.with_conn(|conn| {
+            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+            let old: i64 = tx.query_row("SELECT COALESCE(json_extract(data_json,'$.sectionUpdatedAt.audio'),0) FROM recommendation_features WHERE track_key=?1", [&track_key], |row| row.get(0)).optional().map_err(|e| e.to_string())?.unwrap_or(0);
+            recommendation_store::merge_feature_section_conn(&tx, FeatureSectionUpdate { track_key, section: "audio".into(), data: feature_data, updated_at: now_ms().max(old.saturating_add(1)) })?;
+            tx.commit().map_err(|e| e.to_string())
+        })?;
+        Ok(Some(AudioRecordingFeature {
+            file_identity: identity,
+            algorithm_version: ALGORITHM_VERSION.into(),
+            sampled_sec: WINDOW_SECONDS * 2.0,
+            duration_sec,
+            version_key: version_key.into(),
+            supported: true,
+            match_group: None,
+            sonara: Some(sonara),
+        }))
     }
 
     fn analyze(
@@ -434,12 +491,27 @@ impl RecommendationAudioStore {
             return Ok(None);
         }
         let cached = self.cached(&track_key, &file_identity)?;
+        let cached_sonara: Option<SonaraEmbedding> = self.db.with_conn(|conn| {
+            let value: Option<String> = conn.query_row("SELECT json_extract(data_json, '$.audio.sonara') FROM recommendation_features WHERE track_key=?1 AND json_extract(data_json, '$.audio.fileIdentity')=?2 AND json_extract(data_json, '$.audio.algorithmVersion')=?3", params![track_key, file_identity, ALGORITHM_VERSION], |row| row.get(0)).optional().map_err(|e| e.to_string())?.flatten();
+            Ok(value.and_then(|s| serde_json::from_str(&s).ok()))
+        })?;
         let mut row = if let Some(mut record) = cached {
+            record.sonara = if record.duration_sec == duration_sec {
+                cached_sonara
+            } else {
+                None
+            };
+            if record.sonara.is_none() {
+                record.sonara = duration_sec.and_then(|duration| {
+                    extract_local_windows(Path::new(&absolute_path), duration, cancel)
+                });
+            }
             record.version_key = version_key.to_owned();
             record.duration_sec = duration_sec.or(record.duration_sec);
             record
         } else {
-            let decoded = decode_fingerprint(&PathBuf::from(&absolute_path), cancel)?;
+            let decoded =
+                decode_fingerprint(&PathBuf::from(&absolute_path), cancel, MIN_SIGNAL_SEC)?;
             if cancel.load(Ordering::Relaxed) {
                 return Ok(None);
             }
@@ -460,6 +532,9 @@ impl RecommendationAudioStore {
                 duration_sec,
                 version_key: version_key.into(),
                 supported: decoded.supported,
+                sonara: duration_sec.and_then(|duration| {
+                    extract_local_windows(Path::new(&absolute_path), duration, cancel)
+                }),
             }
         };
         // Damaged persisted JSON cannot be trusted as a matching signature.
@@ -494,6 +569,7 @@ impl RecommendationAudioStore {
             version_key: row.version_key,
             supported: row.supported,
             match_group,
+            sonara: row.sonara,
         }))
     }
 }
@@ -507,6 +583,7 @@ pub async fn recommendation_audio_feature(
     source_id: String,
     duration_sec: Option<f64>,
     version_key: String,
+    allow_online_preview: Option<bool>,
 ) -> Result<Option<AudioRecordingFeature>, String> {
     let store = state.inner().clone();
     validate_job_id(&job_id)?;
@@ -519,12 +596,58 @@ pub async fn recommendation_audio_feature(
     if !store.begin_job(&job_id, cancel.clone())? {
         return Ok(None);
     }
+    let use_preview = if allow_online_preview.unwrap_or(false) && source == "soundcloud" {
+        match store.resolve_path(track_id, &source, &source_id) {
+            Ok(path) => path.is_none(),
+            Err(error) => {
+                store.end_job(&job_id);
+                return Err(error);
+            }
+        }
+    } else {
+        false
+    };
+    let preview = if use_preview {
+        let Some(duration) = duration_sec.filter(|duration| *duration >= 28.0) else {
+            store.end_job(&job_id);
+            return Ok(None);
+        };
+        let download = crate::recommendation_preview::download_preview(
+            &source,
+            &source_id,
+            duration,
+            &store.bin_dir,
+        );
+        tokio::pin!(download);
+        loop {
+            tokio::select! {
+                result = &mut download => match result {
+                    Ok(file) if !cancel.load(Ordering::Relaxed) => break Some(file),
+                    _ => { store.end_job(&job_id); return Ok(None); }
+                },
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    if cancel.load(Ordering::Relaxed) { store.end_job(&job_id); return Ok(None); }
+                }
+            }
+        }
+    } else {
+        None
+    };
     let job_store = store.clone();
     let source_for_job = source.clone();
     let source_id_for_job = source_id.clone();
     let version_for_job = version_key.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let _permit: OwnedSemaphorePermit = permit;
+        if let Some(preview) = preview {
+            return job_store.analyze_preview(
+                preview.paths(),
+                &source_id_for_job,
+                duration_sec,
+                &version_for_job,
+                &cancel,
+            );
+        }
         job_store.analyze(
             track_id,
             &source_for_job,
@@ -600,7 +723,11 @@ fn validate_request(
     Ok(())
 }
 
-fn decode_fingerprint(path: &Path, cancel: &AtomicBool) -> Result<DecodedAudio, String> {
+fn decode_fingerprint(
+    path: &Path,
+    cancel: &AtomicBool,
+    min_signal_sec: f64,
+) -> Result<DecodedAudio, String> {
     let started = Instant::now();
     let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_FILE_BYTES {
@@ -842,7 +969,7 @@ fn decode_fingerprint(path: &Path, cancel: &AtomicBool) -> Result<DecodedAudio, 
     let sampled_sec = total_frames as f64 / f64::from(rate);
     let mut fingerprint = None;
     let mut content_hash_value = None;
-    if sampled_sec >= MIN_SIGNAL_SEC && signal_sec >= MIN_SIGNAL_SEC {
+    if sampled_sec >= min_signal_sec && signal_sec >= min_signal_sec {
         fingerprinter.finish();
         let values = fingerprinter.fingerprint().to_vec();
         if (100..=MAX_FINGERPRINT_ITEMS).contains(&values.len()) {
@@ -859,6 +986,187 @@ fn decode_fingerprint(path: &Path, cancel: &AtomicBool) -> Result<DecodedAudio, 
     })
 }
 
+// All similarity vectors use two independent 8-second windows at 20% and 60%
+// of the seekable range. Never compare these with the previous 30-second schema.
+const WINDOW_SECONDS: f64 = 8.0;
+const WINDOW_SCHEMA: u32 = 1;
+fn extract_local_windows(
+    path: &Path,
+    duration: f64,
+    cancel: &AtomicBool,
+) -> Option<SonaraEmbedding> {
+    if !duration.is_finite() || duration < 28.0 || duration > MAX_DURATION_SEC {
+        return None;
+    }
+    let available = duration - WINDOW_SECONDS;
+    let first = extract_window(path, available * 0.2, Some(duration), cancel)?;
+    let second = extract_window(path, available * 0.6, Some(duration), cancel)?;
+    Some(SonaraEmbedding {
+        version: sonara::similarity::SIMILARITY_VERSION,
+        window_schema: WINDOW_SCHEMA,
+        windows: vec![first, second],
+    })
+}
+
+fn extract_window(
+    path: &Path,
+    offset: f64,
+    expected_duration: Option<f64>,
+    cancel: &AtomicBool,
+) -> Option<Vec<f32>> {
+    let started = Instant::now();
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_FILE_BYTES {
+        return None;
+    }
+    let stream = MediaSourceStream::new(Box::new(File::open(path).ok()?), Default::default());
+    let mut format = get_probe()
+        .format(
+            &Hint::new(),
+            stream,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .ok()?
+        .format;
+    let track = format.default_track()?;
+    let id = track.id;
+    let params = track.codec_params.clone();
+    let rate = params
+        .sample_rate
+        .filter(|r| *r > 0 && *r <= MAX_SAMPLE_RATE)?;
+    if let Some(expected) = expected_duration {
+        let actual = params.n_frames? as f64 / f64::from(rate);
+        if (actual - expected).abs() > 2.0_f64.max(expected * 0.01) {
+            return None;
+        }
+    }
+    let channels = params.channels?.count();
+    if channels == 0
+        || channels > MAX_CHANNELS
+        || params
+            .max_frames_per_packet
+            .is_some_and(|n| n > MAX_PACKET_FRAMES)
+    {
+        return None;
+    }
+    let mut decoder = get_codecs()
+        .make(&params, &DecoderOptions::default())
+        .ok()?;
+    let mut skip = 0_usize;
+    if offset > 0.0 {
+        let time_base = params.time_base?;
+        let whole = offset.floor() as u64;
+        let seeked = format
+            .seek(
+                SeekMode::Accurate,
+                SeekTo::Time {
+                    time: Time::new(whole, offset - whole as f64),
+                    track_id: Some(id),
+                },
+            )
+            .ok()?;
+        if seeked.actual_ts > seeked.required_ts {
+            return None;
+        }
+        let delta = time_base.calc_time(seeked.required_ts - seeked.actual_ts);
+        let seconds = delta.seconds as f64 + delta.frac;
+        if seconds > 30.0 {
+            return None;
+        }
+        skip = (seconds * rate as f64).round() as usize;
+        decoder.reset();
+    }
+    let target = (rate as f64 * WINDOW_SECONDS).round() as usize;
+    let mut samples = Vec::with_capacity(target);
+    for _ in 0..MAX_PACKET_COUNT {
+        if cancel.load(Ordering::Relaxed) || started.elapsed() > MAX_WORK_TIME {
+            return None;
+        }
+        let packet = format.next_packet().ok()?;
+        if packet.data.len() > MAX_PACKET_BYTES {
+            return None;
+        }
+        if packet.track_id() != id {
+            continue;
+        }
+        let decoded = match decoder.decode(&packet) {
+            Ok(value) => value,
+            Err(DecodeError::DecodeError(_)) => continue,
+            Err(_) => return None,
+        };
+        let spec = *decoded.spec();
+        let count = spec.channels.count();
+        if spec.rate != rate
+            || count == 0
+            || count > MAX_CHANNELS
+            || decoded.capacity() > MAX_PACKET_FRAMES as usize * MAX_CHANNELS
+        {
+            return None;
+        }
+        let mut buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+        buffer.copy_interleaved_ref(decoded);
+        for frame in buffer.samples().chunks_exact(count) {
+            if skip > 0 {
+                skip -= 1;
+                continue;
+            }
+            let mono = frame
+                .iter()
+                .map(|v| {
+                    if v.is_finite() {
+                        v.clamp(-1.0, 1.0)
+                    } else {
+                        0.0
+                    }
+                })
+                .sum::<f32>()
+                / count as f32;
+            samples.push(mono);
+            if samples.len() == target {
+                break;
+            }
+        }
+        if samples.len() == target {
+            break;
+        }
+    }
+    if samples.len() != target || cancel.load(Ordering::Relaxed) {
+        return None;
+    }
+    let rms = (samples.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / target as f64).sqrt();
+    if rms < 0.002 {
+        return None;
+    }
+    let input = ndarray::Array1::from_vec(samples);
+    let resampled = sonara::core::audio::resample(input.view(), rate, 22_050).ok()?;
+    if cancel.load(Ordering::Relaxed) {
+        return None;
+    }
+    static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
+    let pool = POOL
+        .get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(2).build().ok())
+        .as_ref()?;
+    let config = sonara::analyze::AnalysisConfig {
+        features: Some(["embedding".to_string()].into_iter().collect()),
+        ..Default::default()
+    };
+    let result = pool
+        .install(|| sonara::analyze::analyze_signal(resampled.view(), 22_050, &config))
+        .ok()?;
+    if cancel.load(Ordering::Relaxed)
+        || result.embedding_version != Some(sonara::similarity::SIMILARITY_VERSION)
+    {
+        return None;
+    }
+    let embedding = result.embedding?;
+    (embedding.len() == sonara::similarity::EMBEDDING_DIM
+        && embedding
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(v)))
+    .then_some(embedding)
+}
+
 fn to_i16(value: f32) -> i16 {
     (value.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16
 }
@@ -868,4 +1176,88 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|time| time.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod sonara_tests {
+    use super::*;
+    use std::io::Write;
+    #[test]
+    fn extracts_both_windows_and_rejects_missing_or_silent_audio() {
+        let rate = 22_050_u32;
+        let n = rate * 30;
+        let path = std::env::temp_dir().join(format!(
+            "tempo-sonara-test-{}-{}.wav",
+            std::process::id(),
+            now_ms()
+        ));
+        let write_wave = |silent: bool| {
+            let mut f = File::create(&path).unwrap();
+            f.write_all(b"RIFF").unwrap();
+            f.write_all(&(36 + n * 2).to_le_bytes()).unwrap();
+            f.write_all(b"WAVEfmt ").unwrap();
+            f.write_all(&16_u32.to_le_bytes()).unwrap();
+            f.write_all(&1_u16.to_le_bytes()).unwrap();
+            f.write_all(&1_u16.to_le_bytes()).unwrap();
+            f.write_all(&rate.to_le_bytes()).unwrap();
+            f.write_all(&(rate * 2).to_le_bytes()).unwrap();
+            f.write_all(&2_u16.to_le_bytes()).unwrap();
+            f.write_all(&16_u16.to_le_bytes()).unwrap();
+            f.write_all(b"data").unwrap();
+            f.write_all(&(n * 2).to_le_bytes()).unwrap();
+            for i in 0..n {
+                let value = if silent {
+                    0_i16
+                } else {
+                    ((i as f32 * if i < rate * 12 { 220.0 } else { 880.0 } * std::f32::consts::TAU
+                        / rate as f32)
+                        .sin()
+                        * 12_000.0) as i16
+                };
+                f.write_all(&value.to_le_bytes()).unwrap();
+            }
+        };
+        write_wave(false);
+        let cancel = AtomicBool::new(false);
+        let result =
+            extract_local_windows(&path, 30.0, &cancel).expect("both local windows decode");
+        assert_eq!(result.window_schema, WINDOW_SCHEMA);
+        assert_eq!(result.windows.len(), 2);
+        assert_ne!(
+            result.windows[0], result.windows[1],
+            "separate offsets must sample different audio"
+        );
+        assert!(extract_local_windows(&path, 100.0, &cancel).is_none());
+        write_wave(true);
+        assert!(extract_local_windows(&path, 30.0, &cancel).is_none());
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn permits_two_jobs_and_cancels_them_independently() {
+        let root = std::env::temp_dir().join(format!(
+            "tempo-sonara-jobs-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        {
+            let db = Arc::new(Db::open_at(&root.join("test.db")).unwrap());
+            let store = RecommendationAudioStore::new(db, root.clone(), root.clone(), root.clone());
+            let one = Arc::new(AtomicBool::new(false));
+            let two = Arc::new(AtomicBool::new(false));
+            assert!(store.begin_job("one", one.clone()).unwrap());
+            assert!(store.begin_job("two", two.clone()).unwrap());
+            assert!(!store
+                .begin_job("three", Arc::new(AtomicBool::new(false)))
+                .unwrap());
+            store.cancel_job("one");
+            assert!(one.load(Ordering::Relaxed));
+            assert!(!two.load(Ordering::Relaxed));
+            store.end_job("one");
+            assert!(store
+                .begin_job("three", Arc::new(AtomicBool::new(false)))
+                .unwrap());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

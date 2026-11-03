@@ -717,6 +717,14 @@ function StorageCard() {
         <div className="set-note" style={{ marginTop: 6 }}>
           {t('Downloads first and enables SoundCloud spectrum analysis.')}
         </div>
+        <div className="set-row">
+          <span className="set-row-label">{t('Analyze online recommendations')}</span>
+          <button className={settings.soundcloud.recommendationPreviewAnalysis ? 'switch is-on' : 'switch'}
+            role="switch" aria-checked={settings.soundcloud.recommendationPreviewAnalysis}
+            aria-label={t('Analyze online recommendations')}
+            onClick={() => update({ soundcloud: { recommendationPreviewAnalysis: !settings.soundcloud.recommendationPreviewAnalysis } })} />
+        </div>
+        <div className="set-note">{t('Temporarily downloads short SoundCloud audio fragments to improve recommendations.')}</div>
         <CommitSlider
           label={t('Cache limit')}
           min={0}

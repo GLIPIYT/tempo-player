@@ -162,6 +162,7 @@ export interface AudioRecordingFeature {
   versionKey: string
   supported: boolean
   matchGroup: string | null
+  sonara: { version: number; windowSchema: number; windows: number[][] } | null
 }
 export interface LanguageEvidence {
   distribution: Record<string, number>; confidence: number; textHash: string

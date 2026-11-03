@@ -20,6 +20,7 @@ mod soundcloud_recording;
 mod soundcloud_store;
 mod recommendation_store;
 mod recommendation_audio;
+mod recommendation_preview;
 mod artist_artwork;
 mod tray;
 mod updater;
@@ -102,7 +103,7 @@ pub fn run() {
                     state.db.clone(), state.sc_cache_dir.clone(), state.yt_cache_dir.clone(),
                 )));
                 app.manage(Arc::new(recommendation_audio::RecommendationAudioStore::new(
-                    state.db.clone(), state.sc_cache_dir.clone(), state.yt_cache_dir.clone(),
+                    state.db.clone(), state.sc_cache_dir.clone(), state.yt_cache_dir.clone(), state.bin_dir.clone(),
                 )));
             }
             // The frontend resolves the persisted hardware/manual choice. No

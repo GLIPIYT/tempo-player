@@ -345,6 +345,37 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
   return profile
 }
 
+// Sonara 0.3.6 embedding v2 default weights and calibration. Missing or
+// incompatible audio contributes zero; it never excludes a streamed candidate.
+const SONARA_WEIGHTS = [0.4,1,1,1,1,1,0.8,0.8,0.8,0.6,0.6,0.6,0.6,
+  ...Array(12).fill(0.7), ...Array(6).fill(0.7), 1,0.8,0.8,0.8,2,1,1,0.6,0.3,0.6,0.6,0.6,1,1,0.5,1,0.7]
+function sonaraWindows(feature: RecommendationContext['features'][number] | undefined): number[][] | null {
+  const audio = feature?.data.audio as { sonara?: { version?: unknown; windowSchema?: unknown; windows?: unknown } } | undefined
+  const value = audio?.sonara
+  if (value?.version !== 2 || value.windowSchema !== 1 || !Array.isArray(value.windows) || value.windows.length !== 2) return null
+  if (!value.windows.every(window => Array.isArray(window) && window.length === 48
+    && window.every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1))) return null
+  return value.windows as number[][]
+}
+export function acousticAffinity(candidateKey: string, profile: TasteProfile): number | null {
+  const candidate = sonaraWindows(profile.features.get(candidateKey))
+  if (!candidate) return null
+  let sum = 0, total = 0
+  const weightSum = SONARA_WEIGHTS.reduce((acc, weight) => acc + weight, 0)
+  for (const seed of profile.tracks) {
+    if (seed.track.trackKey === candidateKey) continue
+    const windows = sonaraWindows(profile.features.get(seed.track.trackKey))
+    if (!windows) continue
+    const similarity = candidate.reduce((acc, vector, index) => {
+      const distance = Math.sqrt(SONARA_WEIGHTS.reduce((value, weight, i) => value + weight * (vector[i] - windows[index][i]) ** 2, 0) / weightSum)
+      return acc + Math.max(0, 1 - distance / 0.38) / 2
+    }, 0)
+    const weight = seed.weight * seed.confidence
+    sum += similarity * weight; total += weight
+  }
+  return total > 0 ? sum / total : null
+}
+
 export function candidateScore(candidate: Readonly<FeedCandidate>, profile: TasteProfile): number {
   const max = (values: Record<string, number>) => Math.max(...Object.values(values), 0.001)
   const relative = (values: Record<string, number>, value: string | null | undefined) => value ? (values[norm(value)] ?? 0) / max(values) : 0
@@ -363,6 +394,8 @@ export function candidateScore(candidate: Readonly<FeedCandidate>, profile: Tast
   affinityScore += relative(profile.versions, candidate.identity.version) * 0.1
   if (profile.tempo && candidate.track.bpm) affinityScore += Math.max(0, 1 - Math.abs(candidate.track.bpm - profile.tempo) / 60) * 0.1
   score += affinityScore * profile.confidence
+  const acoustic = acousticAffinity(`soundcloud:${candidate.track.id}`, profile)
+  if (acoustic !== null) score += 0.2 * (acoustic - 0.5) * profile.confidence
   const language = candidateLanguage(candidate, profile)
   if (language) {
     const preferenceEvidence = Math.max(profile.languageConfidence, profile.languagePreference ? 0.35 : 0)

@@ -1,5 +1,5 @@
 import { api } from '../../api/client'
-import { withAnalysisLane } from '../../audio/analysisLane'
+import { getSettings } from '../../state/settings'
 import { RECORDING_VERSION_MARKER_SOURCE } from './identity'
 import type { AudioRecordingFeature, RecommendationTrack } from './types'
 
@@ -30,14 +30,16 @@ export async function analyzeCachedRecommendationTrack(
   const cancel = () => { void api.cancelRecommendationAudioFeature(jobId).catch(() => undefined) }
   signal.addEventListener('abort', cancel, { once: true })
   try {
-    return await withAnalysisLane(signal, () => api.getRecommendationAudioFeature({
+    signal.throwIfAborted()
+    return await api.getRecommendationAudioFeature({
       jobId,
       trackId: track.dbId,
       source: track.source,
       sourceId: track.sourceId,
       durationSec: track.durationSec,
       versionKey: audioVersionKey(track),
-    }))
+      allowOnlinePreview: getSettings().soundcloud.recommendationPreviewAnalysis === true,
+    })
   } finally {
     signal.removeEventListener('abort', cancel)
   }

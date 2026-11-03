@@ -55,7 +55,7 @@ export default function RecommendationsShelf({
   onSectionMenu,
 }: RecommendationsShelfProps) {
   const t = useT()
-  const genreRecommendations = useSoundCloudGenreRecommendations(favoriteGenre)
+  const genreRecommendations = useSoundCloudGenreRecommendations(favoriteGenre, tracks)
   const cacheProgresses = useSyncExternalStore(subscribeCacheJobs, getTrackCacheProgresses, getTrackCacheProgresses)
   const favoriteGenreTracks = genreRecommendations.tracks
   const genreCachedTrackIds = new Set([...cachedTrackIds, ...genreRecommendations.cachedTrackIds])
@@ -288,7 +288,7 @@ export default function RecommendationsShelf({
           {t(exhausted ? 'No more recommendations' : hasLoaded ? 'No recommendations yet' : 'SoundCloud recommendations will appear here.')}
         </div>
       )}
-      {favoriteGenre && (favoriteGenreTracks.length > 0 || genreRecommendations.loading || genreRecommendations.error) ? (
+      {favoriteGenre ? (
         <div className="home-favorite-genre">
           <div className="home-section-head">
             <div className="home-recommendations-title">
@@ -314,13 +314,15 @@ export default function RecommendationsShelf({
             <div className="home-recommendation-skeletons" role="status" aria-label={t('Loading…')}>
               {Array.from({ length: 5 }, (_, index) => <span className="home-recommendation-skeleton" key={index} />)}
             </div>
-          ) : genreRecommendations.error ? (
-            <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}: {genreRecommendations.error}</div>
           ) : favoriteGenreTracks.length > 0 ? (
             <div className="home-track-rail home-recommendation-rail" tabIndex={0} aria-label={`${favoriteGenre.label} · ${t('Recommended for you')}`}>
               {renderCards(favoriteGenreTracks, (index) => onPlayFavoriteGenre(favoriteGenreTracks, index), genreCachedTrackIds)}
             </div>
-          ) : null}
+          ) : genreRecommendations.error ? (
+            <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}: {genreRecommendations.error}</div>
+          ) : (
+            <div className="home-recommendation-empty" role="status">{t('No recommendations yet')}</div>
+          )}
         </div>
       ) : null}
       {error || persistenceError ? (

@@ -79,6 +79,8 @@ export const ru: Record<string, string> = {
     'Скрытые файлы остаются на диске и пропускаются при сканировании.',
   'Downloads first and enables SoundCloud spectrum analysis.':
     'Сначала скачивает трек и включает спектр SoundCloud.',
+  'Analyze online recommendations': 'Анализ онлайн-рекомендаций',
+  'Temporarily downloads short SoundCloud audio fragments to improve recommendations.': 'Временно скачивает короткие фрагменты SoundCloud для улучшения рекомендаций.',
   Pulse: 'Пульс',
   Orbit: 'Орбита',
   Accent: 'Акцент',
@@ -204,6 +206,7 @@ export const ru: Record<string, string> = {
   'Load more': 'Показать ещё',
   'Loading…': 'Загрузка…',
   Lyrics: 'Текст песни',
+  'Player width': 'Ширина панели плеера',
   'Lyrics search arrives with online sources': 'Поиск текстов появится вместе с онлайн-источниками',
   'More actions for': 'Ещё действия для',
   'Music folders': 'Музыкальные папки',

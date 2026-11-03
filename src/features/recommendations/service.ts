@@ -170,9 +170,7 @@ class RecommendationService {
   private audioQueue = new Map<string, RecommendationTrack>()
   private audioAttempted = new Set<string>()
   private audioTimer: ReturnType<typeof setTimeout> | null = null
-  private audioController: AbortController | null = null
-  private audioFlight: Promise<void> | null = null
-  private audioActiveKey: string | null = null
+  private audioActive = new Map<string, { controller: AbortController; flight: Promise<void> }>()
   private lastAudioStartedAt = 0
 
   constructor() {
@@ -185,6 +183,13 @@ class RecommendationService {
       if (this.closing) return
       const detail = (event as CustomEvent<{ trackKey: string; text: string; evidence: LyricEvidenceSource }>).detail
       this.observeLyrics(detail.trackKey, detail.text, detail.evidence)
+    })
+    window.addEventListener('tempo:recommendation-preview-setting', event => {
+      const enabled = (event as CustomEvent<{ enabled: boolean }>).detail?.enabled === true
+      if (!enabled) { for (const job of this.audioActive.values()) job.controller.abort(); this.audioQueue.clear() }
+      this.audioAttempted.clear()
+      if (this.context) this.scheduleContextAudioAnalysis(this.context)
+      for (const item of this.candidates) this.queueAudioAnalysis(recommendationTrack(this.toUnified(item.track)))
     })
     window.addEventListener('tempo:listening-feedback', event => {
       if (this.closing) return
@@ -598,18 +603,25 @@ class RecommendationService {
       this.queueAudioAnalysis(seed.track)
     }
   }
+  queueGenreAudioAnalysis = (tracks: ScTrack[]) => {
+    for (const track of tracks) this.queueAudioAnalysis(recommendationTrack(this.toUnified(track)))
+  }
   private queueAudioAnalysis(track: RecommendationTrack, refresh = false) {
     if (this.closing || !track.trackKey || !track.durationSec || track.durationSec < 30) return
     const key = track.trackKey
+    const persisted = this.features.get(key)
+    const audio = persisted?.data.audio as { preview?: boolean; sonara?: { version?: number; windowSchema?: number } } | undefined
+    const clocks = persisted?.data.sectionUpdatedAt as { audio?: number } | undefined
+    if (!refresh && audio?.preview && audio.sonara?.version === 2 && audio.sonara.windowSchema === 1 && clocks?.audio && Date.now() - clocks.audio < 7 * 86_400_000) return
     if (refresh) this.audioAttempted.delete(key)
-    if (this.audioAttempted.has(key) || this.audioQueue.has(key) || this.audioActiveKey === key || this.audioQueue.size >= 32) return
+    if (this.audioAttempted.has(key) || this.audioQueue.has(key) || this.audioActive.has(key) || this.audioQueue.size >= 32) return
     this.audioQueue.set(key, track)
     this.scheduleAudioDrain()
   }
   private scheduleAudioDrain() {
-    if (this.closing || this.audioTimer || this.audioFlight || !this.audioQueue.size) return
-    const delay = this.lastAudioStartedAt
-      ? Math.max(10_000, 30_000 - (Date.now() - this.lastAudioStartedAt))
+    if (this.closing || this.audioTimer || this.audioActive.size >= 2 || !this.audioQueue.size) return
+    const delay = this.audioActive.size ? 250 : this.lastAudioStartedAt
+      ? Math.max(250, 5_000 - (Date.now() - this.lastAudioStartedAt))
       : 8_000
     this.audioTimer = setTimeout(() => {
       this.audioTimer = null
@@ -617,21 +629,28 @@ class RecommendationService {
     }, delay)
   }
   private async drainAudioQueue() {
-    if (this.closing || this.audioFlight || !this.audioQueue.size) return
+    if (this.closing || this.audioActive.size >= 2 || !this.audioQueue.size) return
     const next = this.audioQueue.entries().next().value as [string, RecommendationTrack] | undefined
     if (!next) return
     const [trackKey, track] = next
     this.audioQueue.delete(trackKey)
-    this.audioActiveKey = trackKey
     const epoch = this.epoch
     const generation = this.generation
     const controller = new AbortController()
-    this.audioController = controller
     const flight = (async () => {
       this.lastAudioStartedAt = Date.now()
       const feature = await analyzeCachedRecommendationTrack(track, controller.signal)
       this.audioAttempted.add(trackKey)
       if (this.audioAttempted.size > 5000) this.audioAttempted.delete(this.audioAttempted.values().next().value!)
+      if (feature?.sonara && !controller.signal.aborted && !this.closing && epoch === this.epoch && generation === this.generation) {
+        // If another analysis is already refreshing, its DB snapshot may predate
+        // this write. Refresh again after it completes so neither result is lost.
+        if (this.contextFlight) await this.contextFlight
+        await this.refreshContext()
+        if (!controller.signal.aborted && !this.closing && epoch === this.epoch && generation === this.generation) {
+          window.dispatchEvent(new Event('tempo:recommendation-audio-updated'))
+        }
+      }
       if (!feature?.matchGroup || feature.matchGroup === trackKey || controller.signal.aborted
         || this.closing || epoch !== this.epoch || generation !== this.generation) return
       const matchedKey = feature.matchGroup
@@ -651,12 +670,11 @@ class RecommendationService {
         this.reportPersistenceError('Audio', cause)
       }
     }).finally(() => {
-      if (this.audioFlight === flight) this.audioFlight = null
-      if (this.audioController === controller) this.audioController = null
-      if (this.audioActiveKey === trackKey) this.audioActiveKey = null
+      this.audioActive.delete(trackKey)
       this.scheduleAudioDrain()
     })
-    this.audioFlight = flight
+    this.audioActive.set(trackKey, { controller, flight })
+    this.scheduleAudioDrain()
     await flight
   }
   private observeLyrics(trackKey: string, text: string, evidence: LyricEvidenceSource) {
@@ -878,8 +896,8 @@ class RecommendationService {
     if (this.audioTimer) clearTimeout(this.audioTimer)
     this.audioTimer = null
     this.audioQueue.clear()
-    this.audioController?.abort()
-    this.audioController = null
+    for (const job of this.audioActive.values()) job.controller.abort()
+    await Promise.allSettled([...this.audioActive.values()].map(job => job.flight))
     await flushFeedbackOperations()
     await this.flush()
   }
@@ -1277,6 +1295,7 @@ class RecommendationService {
         || this.cooldownUntil(groupKey) > Date.now() || this.candidates.length >= FEED_LIMITS.candidates) continue
       const item: FeedCandidate = { track, identity, groupKey, seedTrackKey: frontier.seed.track.trackKey, cursor, alternates: [], addedAt: Date.now() }
       this.candidates.push(item)
+      this.queueAudioAnalysis(recommendationTrack(this.toUnified(track)))
       if (frontier.discovered || (!frontier.seed.limitedEvidence && frontier.seed.evidence !== 'legacy' && frontier.seed.confidence >= 0.45)) {
         this.discoveryPool = [...this.discoveryPool.filter(entry => entry.identity.trackKey !== identity.trackKey), structuredClone(item)]
           .slice(-FEED_LIMITS.discoveryPool)

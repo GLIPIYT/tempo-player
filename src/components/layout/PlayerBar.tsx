@@ -261,7 +261,7 @@ function PlayerBarContent() {
 
   return (
     <>
-      <footer className={'playerbar' + (modern ? ' pb-modern' : '')}>
+      <footer className={'playerbar' + (modern ? ' pb-modern' : '') + (modern && settings.player.waveform ? ' pb-viz-behind-waveform' : '')}>
         <PlayerVisualizer />
         {settings.player.companionEnabled && !lyrics.open ? (
           <img className="pb-companion" src={dancingCat} alt="" aria-hidden="true" draggable={false} />

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ScTrack } from '../../types/models'
 import type { FeedCandidate } from './storage'
 import type { LanguageEvidence, RecommendationSeed, RecommendationTrack } from './types'
-import { rankCandidates, type TasteProfile } from './profile'
+import { acousticAffinity, rankCandidates, type TasteProfile } from './profile'
 
 const recommendationTrack = (key: string): RecommendationTrack => ({
   trackKey: key, source: 'soundcloud', sourceId: key.split(':')[1], dbId: null,
@@ -94,5 +94,31 @@ describe('recommendation diversity', () => {
     } as FeedCandidate & { supportingSeedTrackKeys: string[] }
 
     expect(rankCandidates([single, converged], profile)[0].track.id).toBe('converged')
+  })
+})
+
+
+describe('Sonara acoustic evidence', () => {
+  it('requires comparable measured vectors and ranks similar audio above different audio', () => {
+    const reference = seed('soundcloud:seed')
+    const profile = profileFor({}, [reference])
+    profile.tracks = [{ track: reference.track, weight: 1, confidence: 1, at: 1, bucket: 'steady' }]
+    const put = (key: string, version: number, embedding: number[]) => profile.features.set(key, {
+      trackKey: key, revision: 1, updatedAt: 1, data: { audio: { sonara: { version, windowSchema: 1, windows: [embedding, embedding] } } },
+    })
+    put(reference.track.trackKey, 2, Array(48).fill(0.4))
+    put('soundcloud:close', 2, Array(48).fill(0.4))
+    put('soundcloud:far', 2, Array(48).fill(0.9))
+    put('soundcloud:incompatible', 1, Array(48).fill(0.4))
+    expect(acousticAffinity('soundcloud:close', profile)).toBeCloseTo(1)
+    expect(acousticAffinity('soundcloud:far', profile)).toBeCloseTo(0)
+    expect(acousticAffinity('soundcloud:incompatible', profile)).toBeNull()
+    expect(acousticAffinity('soundcloud:unknown', profile)).toBeNull()
+    put('soundcloud:bad', 2, Array(47).fill(0.4))
+    expect(acousticAffinity('soundcloud:bad', profile)).toBeNull()
+    profile.features.set('soundcloud:old', { trackKey: 'soundcloud:old', revision: 1, updatedAt: 1, data: { audio: { sonara: { version: 2, embedding: Array(48).fill(0.4) } } } })
+    expect(acousticAffinity('soundcloud:old', profile)).toBeNull()
+    profile.features.set('soundcloud:single', { trackKey: 'soundcloud:single', revision: 1, updatedAt: 1, data: { audio: { sonara: { version: 2, windowSchema: 1, windows: [Array(48).fill(0.4)] } } } })
+    expect(acousticAffinity('soundcloud:single', profile)).toBeNull()
   })
 })
