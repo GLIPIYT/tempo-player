@@ -187,11 +187,6 @@ html.theme-gradient .lyr-time-cur {
   color: transparent;
 }
 
-html.theme-gradient .lyr-title {
-  width: fit-content;
-  max-width: 100%;
-}
-
 html.theme-gradient .home-mix-play {
   background: var(--tempo-gradient);
   color: #fff;

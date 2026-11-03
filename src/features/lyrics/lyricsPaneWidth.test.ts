@@ -5,10 +5,24 @@ afterEach(() => vi.unstubAllGlobals())
 
 describe('lyrics pane width', () => {
   it('keeps the divider aligned with the pointer at different zoom levels', () => {
-    expect(lyricsPaneWidthAtPointer(402.4, 0, 1000, 1000)).toBe(40)
-    expect(lyricsPaneWidthAtPointer(603.6, 0, 1500, 1000)).toBe(40)
+    expect(lyricsPaneWidthAtPointer(402.4, 0, 1000, 1000)).toBeCloseTo(40)
+    expect(lyricsPaneWidthAtPointer(603.6, 0, 1500, 1000)).toBeCloseTo(40)
     expect(lyricsPaneWidthAtPointer(0, 0, 1000, 1000)).toBe(25)
     expect(lyricsPaneWidthAtPointer(1000, 0, 1000, 1000)).toBe(65)
+  })
+
+  it('tracks sub-percent pointer movement and preserves fractional width', () => {
+    const first = lyricsPaneWidthAtPointer(402.4, 0, 1000, 1000)
+    const next = lyricsPaneWidthAtPointer(403.4, 0, 1000, 1000)
+    expect(next).toBeGreaterThan(first)
+    expect(next - first).toBeCloseTo(100 / 976)
+    const values = new Map<string, string>()
+    vi.stubGlobal('window', { localStorage: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    } })
+    writeLyricsPaneWidth(next)
+    expect(readLyricsPaneWidth()).toBe(next)
   })
 
   it('persists and validates its own setting', () => {

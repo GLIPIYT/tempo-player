@@ -135,13 +135,13 @@
   position: absolute;
   inset: 0 auto 0 50%;
   width: 1px;
-  background: color-mix(in srgb, var(--text) 20%, transparent);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
   transition: background-color 0.15s ease;
 }
 
 .lyr-divider:hover::before,
 .lyr-divider:focus-visible::before {
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .lyr-divider:focus-visible {
@@ -152,7 +152,7 @@
 
 .lyr-cover-shell {
   position: relative;
-  width: min(320px, 100%);
+  width: min(380px, 100%);
 }
 
 .lyr-cover {
@@ -187,6 +187,7 @@
 .lyr-title {
   margin-top: 26px;
   width: min(320px, 100%);
+  text-align: left;
   color: #fff;
   font-size: 21px;
   font-weight: 650;
@@ -199,6 +200,7 @@
 .lyr-artists {
   margin-top: 7px;
   width: min(320px, 100%);
+  text-align: left;
   font-size: 14px;
   color: var(--text-muted);
   text-shadow: 0 1px 20px color-mix(in srgb, var(--bg) 70%, transparent);
@@ -1320,7 +1322,7 @@
   }
 
   .lyr-cover-shell {
-    width: min(150px, 42vw);
+    width: min(180px, 42vw);
   }
 
   .lyr-title,
@@ -1397,7 +1399,7 @@
 
 @media (min-width: 901px) and (max-height: 600px) {
   .lyr-cover-shell {
-    width: min(188px, 100%);
+    width: min(220px, 100%);
   }
 
   .lyr-title {

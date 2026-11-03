@@ -5,7 +5,7 @@ const MAX_WIDTH = 65
 
 function normalizeWidth(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_WIDTH
-  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(value)))
+  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, value))
 }
 
 export function readLyricsPaneWidth(): number {
