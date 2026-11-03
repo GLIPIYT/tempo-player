@@ -1,7 +1,7 @@
 {
   "name": "tempo-player",
   "private": true,
-  "version": "1.2.1",
+  "version": "1.3.0",
   "type": "module",
   "scripts": {
     "prepare:asr": "node scripts/prepare-asr-runtime.mjs",
