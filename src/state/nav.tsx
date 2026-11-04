@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 import { useSettings } from './settings'
 import type { HourMix } from '../utils/hourMixes'
+import type { UnifiedTrack } from '../types/models'
 
-export type View =
+export type BaseView =
   | { name: 'home' }
   | { name: 'library' }
   | { name: 'albums' }
@@ -20,6 +21,8 @@ export type View =
   | { name: 'sc-artist'; id: string }
   /** YouTube Music collections, browsed live the same way. */
   | { name: 'yt-collection'; kind: 'album' | 'artist' | 'playlist'; id: string }
+
+export type View = BaseView | { name: 'track-details'; track: UnifiedTrack; previous: BaseView }
 
 interface NavState {
   view: View

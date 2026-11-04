@@ -3,6 +3,7 @@ import LyricsOverlay from './LyricsOverlay'
 import { usePlayer } from '../../player'
 import ArtworkView from '../../components/artwork-view/ArtworkView'
 import TrackDetails from '../../components/track-details/TrackDetails'
+import { useNav } from '../../state/nav'
 
 interface LyricsApi {
   open: boolean
@@ -16,14 +17,23 @@ const LyricsContext = createContext<LyricsApi | null>(null)
 
 export function LyricsContextProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
-  const [surface, setSurface] = useState<'artwork' | 'full' | 'compact' | null>(null)
+  const [surface, setSurface] = useState<'artwork' | 'compact' | null>(null)
   const player = usePlayer()
+  const { view, navigate } = useNav()
   const openLyrics = useCallback(() => setOpen(true), [])
   const closeLyrics = useCallback(() => { setOpen(false); setSurface(value => value === 'compact' ? null : value) }, [])
   const openArtwork = useCallback(() => setSurface('artwork'), [])
-  const openTrackDetails = useCallback((mode: 'full' | 'compact') => setSurface(mode), [])
+  const openFullDetails = useCallback(() => {
+    if (!player.currentTrack) return
+    navigate({ name: 'track-details', track: player.currentTrack, previous: view.name === 'track-details' ? view.previous : view })
+    setSurface(null)
+    setOpen(false)
+  }, [navigate, player.currentTrack, view])
+  const openTrackDetails = useCallback((mode: 'full' | 'compact') => {
+    if (mode === 'full') openFullDetails()
+    else setSurface('compact')
+  }, [openFullDetails])
   const closeSurface = useCallback(() => setSurface(null), [])
-  const openFullDetails = useCallback(() => setSurface('full'), [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -44,8 +54,8 @@ export function LyricsContextProvider({ children }: { children: ReactNode }) {
       {children}
       {open && <LyricsOverlay onClose={closeLyrics} onArtwork={openArtwork} onTrackDetails={() => openTrackDetails('compact')} />}
       {surface === 'artwork' && player.currentTrack && <ArtworkView track={player.currentTrack} onClose={closeSurface} />}
-      {(surface === 'full' || surface === 'compact') && player.currentTrack && (
-        <TrackDetails track={player.currentTrack} position={player.position} duration={player.duration} mode={surface} onClose={closeSurface} onOpenFull={openFullDetails} />
+      {surface === 'compact' && player.currentTrack && (
+        <TrackDetails track={player.currentTrack} position={player.position} duration={player.duration} mode="compact" onClose={closeSurface} onOpenFull={openFullDetails} />
       )}
     </LyricsContext.Provider>
   )

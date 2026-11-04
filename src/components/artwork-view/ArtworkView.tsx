@@ -11,7 +11,6 @@ interface ArtworkViewProps {
   onClose: () => void
 }
 
-/** A non-modal artwork view: the rest of the player remains interactive. */
 export default function ArtworkView({ track, onClose }: ArtworkViewProps) {
   const t = useT()
   const closeRef = useRef<HTMLButtonElement>(null)
@@ -24,6 +23,12 @@ export default function ArtworkView({ track, onClose }: ArtworkViewProps) {
     closeButton?.focus()
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        closeButton?.focus()
+        return
+      }
       if (event.key !== 'Escape' || event.isComposing) return
       event.preventDefault()
       event.stopImmediatePropagation()
@@ -32,14 +37,13 @@ export default function ArtworkView({ track, onClose }: ArtworkViewProps) {
     window.addEventListener('keydown', onKeyDown, true)
     return () => {
       window.removeEventListener('keydown', onKeyDown, true)
-      // Do not steal focus back after the user has interacted with the player.
-      if (document.activeElement === closeButton && previousFocus?.isConnected) previousFocus.focus()
+      if (previousFocus?.isConnected) previousFocus.focus()
     }
   }, [])
 
   return createPortal(
-    <div className="artwork-view">
-      <div className="artwork-view__backdrop" aria-hidden="true" />
+    <div className="artwork-view" role="dialog" aria-modal="true" aria-label={`${t('Artwork')}: ${track.title}`}>
+      <div className="artwork-view__backdrop" aria-hidden="true" onClick={onClose} />
       <div className="artwork-view__image" role="img" aria-label={`${t('Artwork')}: ${track.title}`}>
         <Cover path={track.coverPath} label={track.title} size={640} loading="eager" />
       </div>

@@ -49,9 +49,11 @@ import { getCurrentWebview } from '@tauri-apps/api/webview'
 import './styles/app.css'
 import './styles/collections.css'
 import './styles/home.css'
+import TrackDetails from './components/track-details/TrackDetails'
 
 function CurrentPage() {
-  const { view } = useNav()
+  const { view, navigate } = useNav()
+  const player = usePlayer()
   switch (view.name) {
     case 'home':
       return <HomePage />
@@ -83,6 +85,11 @@ function CurrentPage() {
       return <ScArtistPage key={view.id} artistId={view.id} />
     case 'yt-collection':
       return <YtCollectionPage key={`${view.kind}:${view.id}`} kind={view.kind} id={view.id} />
+    case 'track-details': {
+      const current = player.currentTrack
+      const isCurrent = current?.source === view.track.source && current.sourceId === view.track.sourceId
+      return <TrackDetails track={isCurrent ? current : view.track} position={isCurrent ? player.position : 0} duration={isCurrent ? player.duration : (view.track.durationSec ?? 0)} mode="full" onClose={() => navigate(view.previous)} onOpenFull={() => {}} />
+    }
   }
 }
 
