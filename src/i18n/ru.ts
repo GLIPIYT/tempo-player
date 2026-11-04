@@ -1,4 +1,11 @@
 export const ru: Record<string, string> = {
+  'View artwork': 'Посмотреть обложку',
+  'Track details': 'Информация о треке',
+  'Open full details': 'Открыть полную страницу',
+  'Local files': 'Локальные файлы',
+  Position: 'Позиция',
+  Version: 'Версия',
+  Tags: 'Теги',
   'Beta tester': 'Бета-тестер',
   'Enter fullscreen': 'Включить полноэкранный режим',
   'Exit fullscreen': 'Выйти из полноэкранного режима',

@@ -3568,8 +3568,26 @@ html.has-bg .app-content {
 
 .pb-cover-wrap {
   display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
   border-radius: var(--radius-sm);
 }
+
+.pb-title-button {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pb-title-button:hover { text-decoration: underline; }
+.pb-cover-wrap:focus-visible, .pb-title-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .pb-cover-wrap:hover .cover {
   box-shadow: 0 0 0 2px var(--accent-soft);

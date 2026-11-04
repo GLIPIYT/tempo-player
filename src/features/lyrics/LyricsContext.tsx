@@ -1,18 +1,29 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import LyricsOverlay from './LyricsOverlay'
+import { usePlayer } from '../../player'
+import ArtworkView from '../../components/artwork-view/ArtworkView'
+import TrackDetails from '../../components/track-details/TrackDetails'
 
 interface LyricsApi {
   open: boolean
   openLyrics: () => void
   closeLyrics: () => void
+  openArtwork: () => void
+  openTrackDetails: (mode: 'full' | 'compact') => void
 }
 
 const LyricsContext = createContext<LyricsApi | null>(null)
 
 export function LyricsContextProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
+  const [surface, setSurface] = useState<'artwork' | 'full' | 'compact' | null>(null)
+  const player = usePlayer()
   const openLyrics = useCallback(() => setOpen(true), [])
-  const closeLyrics = useCallback(() => setOpen(false), [])
+  const closeLyrics = useCallback(() => { setOpen(false); setSurface(value => value === 'compact' ? null : value) }, [])
+  const openArtwork = useCallback(() => setSurface('artwork'), [])
+  const openTrackDetails = useCallback((mode: 'full' | 'compact') => setSurface(mode), [])
+  const closeSurface = useCallback(() => setSurface(null), [])
+  const openFullDetails = useCallback(() => setSurface('full'), [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -26,12 +37,16 @@ export function LyricsContextProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const value = useMemo(() => ({ open, openLyrics, closeLyrics }), [open, openLyrics, closeLyrics])
+  const value = useMemo(() => ({ open, openLyrics, closeLyrics, openArtwork, openTrackDetails }), [open, openLyrics, closeLyrics, openArtwork, openTrackDetails])
 
   return (
     <LyricsContext.Provider value={value}>
       {children}
-      {open && <LyricsOverlay onClose={closeLyrics} />}
+      {open && <LyricsOverlay onClose={closeLyrics} onArtwork={openArtwork} onTrackDetails={() => openTrackDetails('compact')} />}
+      {surface === 'artwork' && player.currentTrack && <ArtworkView track={player.currentTrack} onClose={closeSurface} />}
+      {(surface === 'full' || surface === 'compact') && player.currentTrack && (
+        <TrackDetails track={player.currentTrack} position={player.position} duration={player.duration} mode={surface} onClose={closeSurface} onOpenFull={openFullDetails} />
+      )}
     </LyricsContext.Provider>
   )
 }

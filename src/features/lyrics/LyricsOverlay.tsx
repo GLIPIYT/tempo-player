@@ -42,6 +42,8 @@ import './lyrics.css'
 
 interface LyricsOverlayProps {
   onClose: () => void
+  onArtwork: () => void
+  onTrackDetails: () => void
 }
 
 type OverlayMode = 'synced' | 'plain' | 'empty' | 'loading'
@@ -992,7 +994,7 @@ function LyricsEditMenu({
   )
 }
 
-export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
+export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: LyricsOverlayProps) {
   const p = usePlayer()
   const playbackRate = p.playbackRate
   const setPlaybackRate = p.setPlaybackRate
@@ -1738,14 +1740,14 @@ export default function LyricsOverlay({ onClose }: LyricsOverlayProps) {
       <div className="lyr-body" ref={bodyRef} style={{ '--lyr-side-ratio': sideWidth / 100 } as CSSProperties}>
         <aside className="lyr-side" id="lyrics-player-pane">
           <div className="lyr-cover-shell">
-            <div className="lyr-cover">
+            <button type="button" className="lyr-cover lyr-cover-button" onClick={onArtwork} disabled={!track} aria-label={t('View artwork')}>
               <Cover path={track?.coverPath ?? null} label={track?.title ?? '?'} size={260} />
-            </div>
+            </button>
             {settings.player.companionEnabled ? (
               <img className="lyr-companion" src={dancingCat} alt="" aria-hidden="true" draggable={false} />
             ) : null}
           </div>
-          <h2 className="lyr-title">{track ? track.title : t('Nothing playing')}</h2>
+          <h2 className="lyr-title">{track ? <button type="button" className="lyr-title-button" onClick={onTrackDetails}>{track.title}</button> : t('Nothing playing')}</h2>
           <p className="lyr-artists">{track ? track.artists.join(', ') || t('Unknown artist') : t('Unknown artist')}</p>
           <SideTimeline />
           <div className="lyr-controls">

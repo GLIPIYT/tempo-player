@@ -164,6 +164,26 @@
   background: var(--surface);
 }
 
+.lyr-cover-button {
+  display: block;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+}
+
+.lyr-title-button {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.lyr-title-button:hover { text-decoration: underline; }
+.lyr-cover-button:focus-visible, .lyr-title-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
 .lyr-companion {
   position: absolute;
   z-index: 1;

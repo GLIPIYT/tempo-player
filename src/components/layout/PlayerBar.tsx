@@ -269,7 +269,7 @@ function PlayerBarContent() {
         <div className="pb-now">
           {p.currentTrack ? (
             <>
-              <div className="pb-cover-wrap" onDoubleClick={lyrics.openLyrics}>
+              <button type="button" className="pb-cover-wrap" onClick={lyrics.openArtwork} aria-label={t('View artwork')}>
                 <div className="pb-cover-box">
                   <Cover path={p.currentTrack.coverPath} label={p.currentTrack.title} size={48} />
                   {buffering ? (
@@ -303,11 +303,11 @@ function PlayerBarContent() {
                     </>
                   ) : null}
                 </div>
-              </div>
+              </button>
               <div className="pb-meta">
-                <span className="pb-title" title={p.currentTrack.title}>
+                <button type="button" className="pb-title pb-title-button" title={p.currentTrack.title} onClick={() => lyrics.openTrackDetails('full')}>
                   {p.currentTrack.title}
-                </span>
+                </button>
                 {p.preparing ? (
                   // Fetching the track before it can start. Saying so beats a
                   // bar that sits at 0:00 with no explanation.

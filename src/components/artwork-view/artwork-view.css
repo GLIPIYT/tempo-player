@@ -1,0 +1,57 @@
+.artwork-view {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.artwork-view__backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.artwork-view__image {
+  position: relative;
+  width: min(640px, calc(100vw - 64px), calc(100vh - 96px));
+  aspect-ratio: 1;
+  filter: drop-shadow(0 18px 45px rgb(0 0 0 / 45%));
+}
+
+.artwork-view__image .cover {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: var(--radius-sm);
+}
+
+.artwork-view__image .cover-fallback {
+  font-size: clamp(32px, 18vmin, 218px) !important;
+}
+
+.artwork-view__close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.artwork-view__close:hover {
+  background: var(--surface-hover);
+}
+
+.artwork-view__close:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
