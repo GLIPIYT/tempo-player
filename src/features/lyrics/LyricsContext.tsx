@@ -55,7 +55,7 @@ export function LyricsContextProvider({ children }: { children: ReactNode }) {
       {open && <LyricsOverlay onClose={closeLyrics} onArtwork={openArtwork} onTrackDetails={() => openTrackDetails('compact')} />}
       {surface === 'artwork' && player.currentTrack && <ArtworkView track={player.currentTrack} onClose={closeSurface} />}
       {surface === 'compact' && player.currentTrack && (
-        <TrackDetails track={player.currentTrack} position={player.position} duration={player.duration} mode="compact" onClose={closeSurface} onOpenFull={openFullDetails} />
+        <TrackDetails track={player.currentTrack} position={player.position} duration={player.duration} onClose={closeSurface} onOpenFull={openFullDetails} />
       )}
     </LyricsContext.Provider>
   )
