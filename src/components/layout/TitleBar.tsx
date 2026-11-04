@@ -5,6 +5,7 @@ import { useT } from '../../i18n'
 import { usePlayer } from '../../player'
 import { useSettings } from '../../state/settings'
 import { resolveBrandIcon } from '../../theme/brandIcon'
+import { createFullscreenTransition } from './fullscreenTransition'
 
 const ESCAPE_HANDLED_SURFACES = [
   '[aria-modal="true"]',
@@ -31,12 +32,17 @@ export default function TitleBar() {
   const [maximized, setMaximized] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const fullscreenRef = useRef(false)
+  const transitionPendingRef = useRef(false)
+  const transitionRef = useRef<((enter: boolean) => Promise<void>) | null>(null)
   const syncWindowStateRef = useRef<() => void>(() => {})
   const t = useT()
   const player = usePlayer()
   const { settings } = useSettings()
   const appIcon = resolveBrandIcon(settings.brandIconStyle, settings.theme)
   const win = getCurrentWindow()
+  if (!transitionRef.current) {
+    transitionRef.current = createFullscreenTransition(win, /Windows/i.test(navigator.userAgent))
+  }
   const now = player.currentTrack
     ? `${player.currentTrack.artists.join(', ')} — ${player.currentTrack.title}`
     : null
@@ -48,7 +54,7 @@ export default function TitleBar() {
     const syncWindowState = () => {
       const request = ++syncRequest
       void Promise.all([win.isMaximized(), win.isFullscreen()]).then(([isMaximized, isFullscreen]) => {
-        if (cancelled || request !== syncRequest) return
+        if (cancelled || request !== syncRequest || transitionPendingRef.current) return
         setMaximized(isMaximized)
         fullscreenRef.current = isFullscreen
         setFullscreen(isFullscreen)
@@ -72,12 +78,7 @@ export default function TitleBar() {
       event.preventDefault()
       event.stopPropagation()
       event.stopImmediatePropagation()
-      fullscreenRef.current = false
-      setFullscreen(false)
-      void win.setFullscreen(false).then(
-        () => syncWindowStateRef.current(),
-        () => syncWindowStateRef.current(),
-      )
+      changeFullscreen(false)
     }
     document.addEventListener('keydown', onEscape)
     return () => {
@@ -91,15 +92,19 @@ export default function TitleBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const toggleFullscreen = () => {
-    const next = !fullscreenRef.current
+  function changeFullscreen(next: boolean) {
+    if (transitionPendingRef.current) return
+    transitionPendingRef.current = true
     fullscreenRef.current = next
     setFullscreen(next)
-    void win.setFullscreen(next).then(
-      () => syncWindowStateRef.current(),
-      () => syncWindowStateRef.current(),
-    )
+    void transitionRef.current!(next).catch((error: unknown) => {
+      console.error('Could not change fullscreen mode', error)
+    }).finally(() => {
+      transitionPendingRef.current = false
+      syncWindowStateRef.current()
+    })
   }
+  const toggleFullscreen = () => changeFullscreen(!fullscreenRef.current)
   const fullscreenLabel = fullscreen ? t('Exit fullscreen') : t('Enter fullscreen')
 
   return (
@@ -144,7 +149,10 @@ export default function TitleBar() {
           className="titlebar-btn"
           aria-label={maximized ? t('Restore') : t('Maximize')}
           title={maximized ? t('Restore') : t('Maximize')}
-          onClick={() => void win.toggleMaximize().catch(() => {})}
+          disabled={fullscreen}
+          onClick={() => {
+            if (!transitionPendingRef.current) void win.toggleMaximize().catch(() => {})
+          }}
         >
           {maximized ? <Copy size={12} /> : <Square size={11} />}
         </button>
