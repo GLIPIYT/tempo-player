@@ -116,11 +116,9 @@ export default function MiniPlayerApp() {
 
   const gotStateRef = useRef(boot !== null)
   /**
-   * Set once the user touches the card. Every command sent from here changes the
-   * track, and the bridge answers a track change with a peek - which would
-   * restart the auto-collapse timer and re-show the "now playing" heading while
-   * the user is still driving. Once engaged, peeks are ignored until the card
-   * folds away.
+   * Set once the user touches the card. Ignore automatic end-of-track peeks
+   * until the card folds away, so playback cannot restart its timer or heading
+   * while the user is driving.
    */
   const engagedRef = useRef(false)
   const stateRef = useRef(state)

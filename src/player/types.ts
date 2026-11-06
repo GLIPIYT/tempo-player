@@ -1,6 +1,16 @@
 import type { RepeatMode, Track, UnifiedTrack } from '../types/models'
 import type { EqualizerSettings } from '../audio/equalizer'
 
+export type TrackChangeReason = 'manual' | 'next' | 'previous' | 'queue' | 'natural-end' | 'autoplay' | 'restore'
+
+export interface TrackChangeEvent {
+  /** `${source}:${sourceId}`, matching the player's stable track identity. */
+  trackKey: string
+  reason: TrackChangeReason
+  /** Monotonic within the active player controller. */
+  transitionId: number
+}
+
 export interface PlayerApi {
   currentTrack: UnifiedTrack | null
   queue: UnifiedTrack[]

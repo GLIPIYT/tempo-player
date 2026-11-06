@@ -14,7 +14,7 @@ use super::models::{
     NATIVE_STATE_SETTING,
 };
 use super::output::{OutputEngine, OutputSettings};
-use super::queue::QueueEntry;
+use super::queue::{NativeQueue, QueueEntry};
 use super::resolver::{self, PreparedTrack, PreparedTransport, ReservoirResult};
 use super::{
     ActorMessage, ANALYSIS_EVENT, CLOCK_EVENT, CONTINUATION_EVENT, FFT_EVENT, STATE_EVENT,
@@ -189,6 +189,10 @@ pub fn run(
             return;
         }
     };
+    let initial_track_change_key = persisted
+        .queue
+        .current()
+        .map(|entry| TrackPayload(entry.track.clone()).identity_key());
     let mut actor = Actor {
         app,
         db,
@@ -197,6 +201,10 @@ pub fn run(
         browser: None,
         persisted,
         version: 0,
+        last_track_change_key: initial_track_change_key,
+        track_change_id: 0,
+        last_track_change: None,
+        pending_track_change_reason: None,
         current_error: None,
         spectrum_enabled: false,
         analysis_enabled: false,
@@ -284,6 +292,13 @@ struct Continuation {
     deadline: Instant,
 }
 
+#[derive(Clone)]
+struct TrackChangeNotice {
+    track_key: String,
+    reason: String,
+    transition_id: u64,
+}
+
 struct Actor {
     app: AppHandle,
     db: Arc<crate::database::Db>,
@@ -292,6 +307,10 @@ struct Actor {
     browser: Option<BrowserOutput>,
     persisted: NativePersistedState,
     version: u64,
+    last_track_change_key: Option<String>,
+    track_change_id: u64,
+    last_track_change: Option<TrackChangeNotice>,
+    pending_track_change_reason: Option<String>,
     current_error: Option<String>,
     spectrum_enabled: bool,
     analysis_enabled: bool,
@@ -612,6 +631,7 @@ impl Actor {
                     let mut queue = self.persisted.queue.clone();
                     queue.set_shuffled(settings.shuffle);
                     queue.replace(tracks, index)?;
+                    self.pending_track_change_reason = Some("restore".into());
                     self.persisted.queue = queue;
                     self.apply_settings(settings);
                     self.persisted.initialized = true;
@@ -631,6 +651,7 @@ impl Actor {
                     let play = command.get("play").and_then(Value::as_bool).unwrap_or(true);
                     self.invalidate_continuation();
                     self.finish_session("select");
+                    self.pending_track_change_reason = Some("manual".into());
                     self.persisted.queue.replace(tracks, index)?;
                     self.persisted.initialized = true;
                     self.load_attempts = 0;
@@ -776,6 +797,11 @@ impl Actor {
                         self.remember_track_consumed(&track);
                     }
                     if was_empty {
+                        self.pending_track_change_reason = Some(if tagged {
+                            "autoplay".into()
+                        } else {
+                            "queue".into()
+                        });
                         self.load_attempts = 0;
                         self.request_start(
                             entry,
@@ -789,6 +815,11 @@ impl Actor {
                         if let Some(entry) =
                             self.persisted.queue.next(self.persisted.settings.repeat)
                         {
+                            self.pending_track_change_reason = Some(if tagged {
+                                "natural-end".into()
+                            } else {
+                                "queue".into()
+                            });
                             self.load_attempts = 0;
                             self.request_start(
                                 entry,
@@ -819,6 +850,7 @@ impl Actor {
                         .ok_or("queue index is out of range")?;
                     if removed {
                         self.finish_session("remove");
+                        self.pending_track_change_reason = Some("queue".into());
                         if was_playing {
                             if let Some(entry) = self.persisted.queue.current().cloned() {
                                 self.load_attempts = 0;
@@ -935,6 +967,16 @@ impl Actor {
         } else {
             Ok(())
         } {
+            if is_seek_failure(&error) {
+                if let Some(entry) = self.persisted.queue.current().cloned() {
+                    let position = self.last_position;
+                    let reason = self.active_reason.clone();
+                    self.current_error = None;
+                    self.request_start(entry, position, self.playing_intent, &reason, 0.0, true);
+                    self.emit_state();
+                    return;
+                }
+            }
             if self.retry_current_soundcloud(&error) {
                 self.current_error =
                     Some("SoundCloud stream stopped; switching to a cached fallback…".into());
@@ -1218,6 +1260,7 @@ impl Actor {
         match self.persisted.queue.append(candidate.track, false) {
             Ok(_) => {
                 if let Some(entry) = self.persisted.queue.next(self.persisted.settings.repeat) {
+                    self.pending_track_change_reason = Some("natural-end".into());
                     self.persisted.initialized = true;
                     self.load_attempts = 0;
                     self.request_start(entry, 0.0, true, "autoplay", 0.0, false);
@@ -1355,7 +1398,19 @@ impl Actor {
         self.sample_listening();
         let playing = self.playing_intent || self.transport_is_playing();
         self.finish_session(if reason == "end" { "end" } else { "next" });
-        if let Some(entry) = self.persisted.queue.next(self.persisted.settings.repeat) {
+        if let Some(entry) = advance_queue_and_reset_position(
+            &mut self.persisted.queue,
+            self.persisted.settings.repeat,
+            &mut self.last_position,
+        ) {
+            self.pending_track_change_reason = Some(if reason == "end" {
+                "natural-end".into()
+            } else {
+                "next".into()
+            });
+            // Queue navigation changes identity immediately, even while paused.
+            // Carrying the old saved position into play_current() starts the
+            // newly selected track at the previous track's timestamp.
             self.load_attempts = 0;
             if !playing {
                 self.stop_output_keep_queue();
@@ -1384,6 +1439,7 @@ impl Actor {
         self.finish_session("previous");
         if self.transport_position() > 3.0 {
             if let Some(entry) = self.persisted.queue.current().cloned() {
+                self.pending_track_change_reason = Some("previous".into());
                 if playing {
                     self.request_start(entry, 0.0, true, "queue", 0.0, false);
                 } else {
@@ -1398,6 +1454,7 @@ impl Actor {
             .queue
             .previous(self.persisted.settings.repeat)
         {
+            self.pending_track_change_reason = Some("previous".into());
             self.load_attempts = 0;
             if playing {
                 self.request_start(entry, 0.0, true, "queue", 0.0, false);
@@ -1406,6 +1463,7 @@ impl Actor {
                 self.stop_output_keep_queue();
             }
         } else if let Some(_entry) = self.persisted.queue.current().cloned() {
+            self.pending_track_change_reason = Some("previous".into());
             if playing {
                 self.request_start(_entry, 0.0, true, "queue", 0.0, false);
             } else {
@@ -1763,6 +1821,7 @@ impl Actor {
         let Some(entry) = self.persisted.queue.next(self.persisted.settings.repeat) else {
             return;
         };
+        self.pending_track_change_reason = Some("natural-end".into());
         let effective_fade = safe_fade.min(remaining_wall.max(0.0));
         self.install_transition(entry, prepared, true, effective_fade, "queue");
         self.persist_now();
@@ -2108,10 +2167,23 @@ impl Actor {
             error: self.current_error.clone(),
             initialized: self.persisted.initialized,
         };
-        serde_json::to_value(snapshot).map_err(|error| error.to_string())
+        let mut value = serde_json::to_value(snapshot).map_err(|error| error.to_string())?;
+        if let (Some(event), Some(object)) = (self.last_track_change.as_ref(), value.as_object_mut())
+        {
+            object.insert(
+                "trackChange".into(),
+                json!({
+                    "trackKey": event.track_key,
+                    "reason": event.reason,
+                    "transitionId": event.transition_id,
+                }),
+            );
+        }
+        Ok(value)
     }
 
     fn emit_state(&mut self) {
+        self.update_track_change();
         let Ok(snapshot) = self.snapshot_value() else {
             return;
         };
@@ -2119,6 +2191,29 @@ impl Actor {
         if let Err(error) = self.app.emit(STATE_EVENT, snapshot) {
             eprintln!("[tempo native audio] state event failed: {error}");
         }
+    }
+
+    fn update_track_change(&mut self) {
+        let current_key = self
+            .persisted
+            .queue
+            .current()
+            .map(|entry| TrackPayload(entry.track.clone()).identity_key());
+        if current_key != self.last_track_change_key {
+            if let Some(track_key) = current_key.as_ref() {
+                self.track_change_id = self.track_change_id.wrapping_add(1).max(1);
+                self.last_track_change = Some(TrackChangeNotice {
+                    track_key: track_key.clone(),
+                    reason: self
+                        .pending_track_change_reason
+                        .take()
+                        .unwrap_or_else(|| "queue".into()),
+                    transition_id: self.track_change_id,
+                });
+            }
+            self.last_track_change_key = current_key;
+        }
+        self.pending_track_change_reason = None;
     }
 
     fn emit_clock(&mut self) {
@@ -2234,9 +2329,60 @@ fn finite_nonnegative(value: f64) -> f64 {
     }
 }
 
+fn is_seek_failure(error: &str) -> bool {
+    error == "The active audio source rejected a seek request"
+        || error.starts_with("Could not seek local audio:")
+}
+
+fn advance_queue_and_reset_position(
+    queue: &mut NativeQueue,
+    repeat: RepeatMode,
+    last_position: &mut f64,
+) -> Option<QueueEntry> {
+    let entry = queue.next(repeat)?;
+    *last_position = 0.0;
+    Some(entry)
+}
+
 fn now_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{advance_queue_and_reset_position, is_seek_failure, NativeQueue, RepeatMode};
+    use serde_json::json;
+
+    #[test]
+    fn recognizes_only_source_seek_failures_for_targeted_recovery() {
+        assert!(is_seek_failure(
+            "The active audio source rejected a seek request"
+        ));
+        assert!(is_seek_failure("Could not seek local audio: unsupported seek"));
+        assert!(!is_seek_failure("Could not decode the current audio source"));
+    }
+
+    #[test]
+    fn advancing_to_another_track_clears_the_paused_track_position() {
+        let mut queue = NativeQueue::default();
+        queue
+            .replace(
+                vec![
+                    json!({"source":"local", "sourceId":"first", "title":"First"}),
+                    json!({"source":"local", "sourceId":"second", "title":"Second"}),
+                ],
+                0,
+            )
+            .expect("valid queue");
+        let mut last_position = 37.5;
+
+        let next = advance_queue_and_reset_position(&mut queue, RepeatMode::Off, &mut last_position)
+            .expect("next track exists");
+
+        assert_eq!(super::TrackPayload(next.track).source_id(), "second");
+        assert_eq!(last_position, 0.0);
+    }
 }

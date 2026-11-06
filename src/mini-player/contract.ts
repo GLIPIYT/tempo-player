@@ -62,7 +62,7 @@ export const EV_ACTION = 'mini-player:action'
 export const EV_READY = 'mini-player:ready'
 export const EV_PEEK = 'mini-player:peek'
 
-/** Main window asks the mini player to expand for a moment (track change). */
+/** Main window asks the mini player to expand after natural track completion. */
 export interface MiniPeek {
   /** Collapse again after this many ms; 0 means stay expanded. */
   autoCollapseMs: number

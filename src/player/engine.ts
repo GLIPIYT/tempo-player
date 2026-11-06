@@ -279,6 +279,8 @@ export class AudioEngine {
     this.contextHeld = false
     this.stopHealthChecks()
     this.loadGeneration += 1
+    // Invalidate any time callback already queued by the outgoing element.
+    this.epoch += 1
     this.destroyHls()
     const wasFading = this.fading !== null
     this.detachFade()

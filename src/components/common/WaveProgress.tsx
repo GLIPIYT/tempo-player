@@ -16,6 +16,7 @@ interface WaveProgressProps {
   seed: string
   soundCloudTrackId: string | null
   waveformEnabled: boolean
+  disabled?: boolean
   onSeek: (sec: number) => void
 }
 
@@ -27,6 +28,7 @@ export default function WaveProgress({
   seed,
   soundCloudTrackId,
   waveformEnabled,
+  disabled = false,
   onSeek,
 }: WaveProgressProps) {
   const t = useT()
@@ -104,9 +106,9 @@ export default function WaveProgress({
 
   const commit = useCallback(
     (frac: number) => {
-      if (duration > 0 && Number.isFinite(frac)) onSeek(Math.max(0, frac * duration))
+      if (!disabled && duration > 0 && Number.isFinite(frac)) onSeek(Math.min(1, Math.max(0, frac)) * duration)
     },
-    [duration, onSeek],
+    [disabled, duration, onSeek],
   )
 
   useEffect(() => {
@@ -189,10 +191,11 @@ export default function WaveProgress({
     <div
       className={`wave${waveformEnabled ? '' : ' wave-is-minimized'}`}
       ref={boxRef}
-      onPointerDown={waveformEnabled ? onPointerDown : undefined}
-      onKeyDown={waveformEnabled ? onKeyDown : undefined}
+      onPointerDown={waveformEnabled && !disabled ? onPointerDown : undefined}
+      onKeyDown={waveformEnabled && !disabled ? onKeyDown : undefined}
       role={waveformEnabled ? 'slider' : undefined}
-      tabIndex={waveformEnabled ? 0 : -1}
+      tabIndex={waveformEnabled && !disabled ? 0 : -1}
+      aria-disabled={disabled || undefined}
       aria-hidden={waveformEnabled ? undefined : true}
       aria-label={t('Seek')}
       aria-valuemin={0}

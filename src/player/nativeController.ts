@@ -6,6 +6,7 @@ import { lyricsService } from '../features/lyrics/lyricsService'
 import { recommendationService, type RadioReservation } from '../features/recommendations/service'
 import { getSettings, loadSettings, type AppSettings } from '../state/settings'
 import type { RepeatMode, Track, UnifiedTrack } from '../types/models'
+import type { TrackChangeEvent, TrackChangeReason } from './types'
 import { trackToUnified } from '../utils/unified'
 import type { PlayerSnapshot } from './controller'
 
@@ -22,6 +23,7 @@ interface NativePlayerSnapshot extends PlayerSnapshot {
   initialized: boolean
   error?: string | null
   buffering?: boolean
+  trackChange?: TrackChangeEvent
 }
 
 interface ContinuationRequest {
@@ -68,6 +70,13 @@ interface QueuedCommand {
   command: NativeCommand
   resolve: () => void
   reject: (error: unknown) => void
+}
+
+interface PendingSeek {
+  sequence: number
+  position: number
+  rollbackPosition: number
+  baselineVersion: number
 }
 
 interface PendingReservation {
@@ -181,14 +190,19 @@ function snapshotUiSignature(snapshot: PlayerSnapshot): string {
  */
 export class NativePlayerController {
   private listeners = new Set<() => void>()
+  private trackChangeListeners = new Set<(event: TrackChangeEvent) => void>()
   private commandQueue: QueuedCommand[] = []
   private attached = false
   private flushing = false
   private latestVersion = -1
+  private initialSnapshotReceived = false
+  private lastTrackChangeId = 0
   private nativeInitialized = false
   private buffering = false
   private pendingShuffle: boolean | null = null
   private positionTimer: number | null = null
+  private seekSequence = 0
+  private pendingSeek: PendingSeek | null = null
   private basePosition = 0
   private baseAt = 0
   private snapshot: PlayerSnapshot = {
@@ -231,8 +245,14 @@ export class NativePlayerController {
 
   getSnapshot = (): PlayerSnapshot => this.snapshot
 
+  subscribeTrackChange = (listener: (event: TrackChangeEvent) => void): (() => void) => {
+    this.trackChangeListeners.add(listener)
+    return () => this.trackChangeListeners.delete(listener)
+  }
+
   /** Current source-clock time for UI animations without a React snapshot update. */
   getDisplayPosition(): number {
+    if (this.pendingSeek) return this.pendingSeek.position
     if (!this.snapshot.isPlaying || this.buffering || this.snapshot.preparing || this.baseAt <= 0) {
       return this.snapshot.position
     }
@@ -267,7 +287,33 @@ export class NativePlayerController {
   }
 
   seek(position: number): void {
-    if (Number.isFinite(position)) this.send({ op: 'seek', position })
+    if (!Number.isFinite(position)) return
+    const limit = this.snapshot.duration > 0 ? this.snapshot.duration : Number.POSITIVE_INFINITY
+    const target = Math.min(limit, Math.max(0, position))
+    const sequence = ++this.seekSequence
+    this.pendingSeek = {
+      sequence,
+      position: target,
+      rollbackPosition: this.pendingSeek?.rollbackPosition ?? this.getDisplayPosition(),
+      baselineVersion: this.latestVersion,
+    }
+    this.basePosition = target
+    this.baseAt = performance.now()
+    this.snapshot = { ...this.snapshot, position: target }
+    this.emit()
+    void this.enqueue({ op: 'seek', position: target }).then(() => {
+      void this.confirmPendingSeek(sequence)
+    }).catch(error => {
+      if (this.pendingSeek?.sequence !== sequence) return
+      const rollbackPosition = this.pendingSeek.rollbackPosition
+      this.pendingSeek = null
+      this.basePosition = rollbackPosition
+      this.baseAt = performance.now()
+      this.snapshot = { ...this.snapshot, position: rollbackPosition }
+      this.emit()
+      console.warn('[tempo native player] seek failed', error)
+    })
+    this.updatePositionTimer()
   }
 
   setVolume(volume: number): void {
@@ -347,6 +393,18 @@ export class NativePlayerController {
   }
 
   private enqueue(command: NativeCommand): Promise<void> {
+    if (command.op === 'seek') {
+      const queued = this.commandQueue.at(-1)
+      if (queued?.command.op === 'seek') {
+        queued.command = command
+        return new Promise((resolve, reject) => {
+          const previousResolve = queued.resolve
+          const previousReject = queued.reject
+          queued.resolve = () => { previousResolve(); resolve() }
+          queued.reject = error => { previousReject(error); reject(error) }
+        })
+      }
+    }
     return new Promise((resolve, reject) => {
       this.commandQueue.push({ command, resolve, reject })
       void this.flushCommands()
@@ -457,18 +515,38 @@ export class NativePlayerController {
       preparing: payload.preparing === true,
       version: payload.version,
     }
+    const currentTrackKey = previous.currentTrack ? queueKey(previous.currentTrack) : null
+    const nextTrackKey = next.currentTrack ? queueKey(next.currentTrack) : null
+    if (currentTrackKey !== nextTrackKey) this.pendingSeek = null
+    const effectivePosition = this.reconcilePendingSeek(
+      position,
+      payload.version,
+      typeof payload.error === 'string' && payload.error.trim().length > 0,
+    )
+    next.position = effectivePosition
+    const transition = this.readTrackChange(payload.trackChange)
+    const publishTrackChange = this.initialSnapshotReceived && transition !== null &&
+      transition.transitionId > this.lastTrackChangeId &&
+      transition.reason !== 'restore' &&
+      transition.trackKey === nextTrackKey
+    if (!this.initialSnapshotReceived) {
+      this.initialSnapshotReceived = true
+      if (transition) this.lastTrackChangeId = transition.transitionId
+    } else if (transition && transition.transitionId > this.lastTrackChangeId) {
+      this.lastTrackChangeId = transition.transitionId
+    }
     const expectedPosition = this.baseAt > 0
       ? this.basePosition + ((now - this.baseAt) / 1000) * previous.playbackRate
       : previousPosition
     const clockJumped = !next.isPlaying
-      ? Math.abs(position - previousPosition) > 0.02
-      : Math.abs(position - expectedPosition) > 0.2
+      ? Math.abs(effectivePosition - previousPosition) > 0.02
+      : Math.abs(effectivePosition - expectedPosition) > 0.2
 
     this.latestVersion = payload.version
     this.nativeInitialized = this.nativeInitialized || payload.initialized === true
     this.snapshot = next
     if (this.pendingShuffle !== null && next.shuffle === this.pendingShuffle) this.pendingShuffle = null
-    this.basePosition = position
+    this.basePosition = effectivePosition
     this.baseAt = now
 
     const error = typeof payload.error === 'string' && payload.error.trim() ? payload.error : null
@@ -484,7 +562,24 @@ export class NativePlayerController {
       this.lastUiSignature = nextSignature
       this.emit()
     }
+    if (publishTrackChange && transition) {
+      for (const listener of this.trackChangeListeners) listener(transition)
+    }
     this.updatePositionTimer()
+  }
+
+  private readTrackChange(value: unknown): TrackChangeEvent | null {
+    if (!value || typeof value !== 'object') return null
+    const event = value as Partial<TrackChangeEvent>
+    const reasons: TrackChangeReason[] = ['manual', 'next', 'previous', 'queue', 'natural-end', 'autoplay', 'restore']
+    if (
+      typeof event.trackKey !== 'string' ||
+      !Number.isFinite(event.transitionId) ||
+      !Number.isInteger(event.transitionId) ||
+      event.transitionId! < 1 ||
+      !reasons.includes(event.reason as TrackChangeReason)
+    ) return null
+    return event as TrackChangeEvent
   }
 
   private applyClock(payload: NativeClock): void {
@@ -496,17 +591,18 @@ export class NativePlayerController {
     const duration = Number.isFinite(payload.duration) ? Math.max(0, payload.duration as number) : previous.duration
     const isPlaying = payload.isPlaying === true
     const buffering = payload.buffering === true
+    const effectivePosition = this.reconcilePendingSeek(position, payload.version)
     const transportChanged = isPlaying !== previous.isPlaying || buffering !== this.buffering
     const durationChanged = duration !== previous.duration
     const positionChanged = Math.abs(position - previous.position) > 0.02
 
     this.latestVersion = payload.version
     this.buffering = buffering
-    this.basePosition = position
+    this.basePosition = effectivePosition
     this.baseAt = now
     this.snapshot = {
       ...previous,
-      position,
+      position: effectivePosition,
       duration,
       isPlaying,
       bufferPct: buffering ? previous.bufferPct ?? 0 : previous.bufferPct,
@@ -519,6 +615,30 @@ export class NativePlayerController {
 
   private emit(): void {
     for (const listener of this.listeners) listener()
+  }
+
+  private reconcilePendingSeek(position: number, version: number, failed = false): number {
+    const pending = this.pendingSeek
+    if (!pending) return position
+    if (failed && version > pending.baselineVersion) {
+      this.pendingSeek = null
+      return pending.rollbackPosition
+    }
+    if (version > pending.baselineVersion && Math.abs(position - pending.position) <= 0.2) {
+      this.pendingSeek = null
+      return position
+    }
+    return pending.position
+  }
+
+  private async confirmPendingSeek(sequence: number): Promise<void> {
+    if (this.pendingSeek?.sequence !== sequence) return
+    try {
+      const snapshot = await invoke<NativePlayerSnapshot>('native_audio_snapshot')
+      if (this.pendingSeek?.sequence === sequence) this.applySnapshot(snapshot)
+    } catch (error) {
+      console.warn('[tempo native player] seek confirmation failed', error)
+    }
   }
 
   private updatePositionTimer(): void {

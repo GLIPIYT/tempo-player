@@ -6,7 +6,7 @@ import { startDisplayPositionLoop } from './displayPositionLoop'
 /** Keep frame-rate updates local to the player bar, not the whole app. */
 export function useDisplayPosition(player: Pick<PlayerApi, 'position' | 'isPlaying' | 'preparing' | 'currentTrack'>): number {
   const trackKey = player.currentTrack ? `${player.currentTrack.source}:${player.currentTrack.sourceId}` : null
-  const [display, setDisplay] = useState<{ trackKey: string | null; position: number } | null>(null)
+  const [, setFramePosition] = useState(0)
   const native = isNativePlayback()
 
   useEffect(() => {
@@ -14,11 +14,12 @@ export function useDisplayPosition(player: Pick<PlayerApi, 'position' | 'isPlayi
     const controller = getNativePlayerController()
     return startDisplayPositionLoop(
       () => controller.getDisplayPosition(),
-      position => setDisplay(previous => previous?.trackKey === trackKey && previous.position === position
-        ? previous : { trackKey, position }),
+      setFramePosition,
     )
   }, [native, trackKey, player.isPlaying, player.preparing])
 
-  if (!native || !player.isPlaying || player.preparing || display?.trackKey !== trackKey) return player.position
-  return display.position
+  if (!native || !trackKey || !player.isPlaying || player.preparing) return player.position
+  // The frame loop schedules local renders. Read the current clock here so a
+  // same-track seek/repeat cannot render the sample from the previous frame.
+  return getNativePlayerController().getDisplayPosition()
 }

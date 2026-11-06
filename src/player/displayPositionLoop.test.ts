@@ -18,4 +18,18 @@ describe('display position animation', () => {
     stop()
     expect(frames.size).toBe(0)
   })
+
+  it('never publishes a queued frame from the previous track after a new loop starts', () => {
+    const frames: FrameRequestCallback[] = []
+    const positions: number[] = []
+    const request = (callback: FrameRequestCallback) => { frames.push(callback); return frames.length }
+    const stopPrevious = startDisplayPositionLoop(() => 87, value => positions.push(value), request, () => {})
+    const staleFrame = frames[0]
+    stopPrevious()
+
+    const stopCurrent = startDisplayPositionLoop(() => 0, value => positions.push(value), request, () => {})
+    staleFrame(0)
+    expect(positions).toEqual([87, 0])
+    stopCurrent()
+  })
 })

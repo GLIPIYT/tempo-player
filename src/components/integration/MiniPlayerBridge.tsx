@@ -8,6 +8,7 @@ import { useSettings } from '../../state/settings'
 import { resolveLang } from '../../i18n'
 import type { RepeatMode, UnifiedTrack } from '../../types/models'
 import type { ActiveTheme } from '../../types/theme'
+import { shouldAutoPeekForTrackChange } from '../../mini-player/autoShow'
 import {
   EV_ACTION,
   EV_PEEK,
@@ -48,7 +49,7 @@ function artworkUrl(path: string | null): string | null {
 
 function toMiniTrack(track: UnifiedTrack, next: UnifiedTrack | null): MiniTrack {
   return {
-    key: track.sourceId,
+    key: `${track.source}:${track.sourceId}`,
     dbId: track.dbId,
     title: track.title,
     artist: track.artists.filter((a) => a.trim()).join(', '),
@@ -163,9 +164,9 @@ export default function MiniPlayerBridge(): null {
     void emitToMini(EV_TICK, position).catch(() => {})
   }
 
-  const peek = (): void => {
+  const peek = (reason: string): void => {
     const current = settingsRef.current.miniPlayer
-    if (!current.enabled || !current.autoShowOnTrackChange) return
+    if (!shouldAutoPeekForTrackChange(reason, current.enabled, current.autoShowOnTrackChange)) return
     void emitToMini(EV_PEEK, { autoCollapseMs: current.autoShowDurationMs }).catch(() => {})
   }
 
@@ -277,20 +278,26 @@ export default function MiniPlayerBridge(): null {
     if (!enabled) return
     likesStore.ensureLoaded()
     syncState(true)
-    return playerController.subscribe(() => {
+    const unsubscribeState = playerController.subscribe(() => {
       if (!settingsRef.current.miniPlayer.enabled) return
       const snap = playerController.getSnapshot()
-      const key = snap.currentTrack?.sourceId ?? null
+      const key = snap.currentTrack
+        ? `${snap.currentTrack.source}:${snap.currentTrack.sourceId}`
+        : null
       if (key !== lastTrackKeyRef.current) {
         lastTrackKeyRef.current = key
         lastTickValueRef.current = -1
         syncState(true)
-        if (key !== null) peek()
       } else {
         syncState()
       }
       syncTick(snap.position, snap.isPlaying)
     })
+    const unsubscribeTrackChange = playerController.subscribeTrackChange(({ reason }) => peek(reason))
+    return () => {
+      unsubscribeState()
+      unsubscribeTrackChange()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled])
 

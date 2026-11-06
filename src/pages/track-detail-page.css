@@ -1,121 +1,207 @@
 .track-page {
   container-type: inline-size;
+  max-width: 1160px;
+  margin-inline: auto;
 }
 
-.track-page .editorial-detail-hero {
-  grid-template-columns: minmax(0, clamp(140px, 28cqi, 288px)) minmax(0, 1fr);
-  align-items: end;
-  min-height: 0;
-  gap: clamp(20px, 4cqi, 54px);
-  padding: clamp(20px, 3.5cqi, 42px);
+.track-page > .back-link {
+  margin-bottom: 18px;
 }
 
-.track-page .editorial-detail-art {
-  width: 100%;
-  border-radius: 12px;
+.track-page-sheet {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: clamp(24px, 4cqi, 48px);
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--bg-elevated) 76%, transparent);
+  backdrop-filter: blur(24px);
 }
 
-.track-page .editorial-detail-art .cover-fallback {
+.track-page-ambience {
+  position: absolute;
+  z-index: -1;
+  top: -160px;
+  left: 50%;
+  width: min(820px, 140%);
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+  opacity: .18;
+  filter: blur(95px);
+  pointer-events: none;
+  mask-image: linear-gradient(#000, transparent 90%);
+}
+
+.track-page-ambience .cover {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.track-page-header {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.track-page-artwork {
+  position: relative;
+  display: block;
+  width: clamp(160px, 29cqi, 300px);
+  aspect-ratio: 1;
+  border-radius: 14px;
+  box-shadow: 0 18px 55px #0005;
+}
+
+.track-page-artwork > .cover {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: inherit !important;
+  object-fit: cover;
+}
+
+.track-page-artwork > .cover-fallback {
   display: grid;
   place-items: center;
-  font-size: clamp(38px, 9cqi, 98px) !important;
+  font-size: clamp(42px, 9cqi, 100px) !important;
 }
 
-.track-page .editorial-detail-kind {
-  margin: 0 0 10px;
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 550;
-  letter-spacing: normal;
-  text-transform: none;
+.track-page-artwork-hint {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #ffffff25;
+  border-radius: 50%;
+  background: #0007;
+  color: #fff;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 150ms ease, transform 150ms ease;
 }
 
-.track-page .editorial-detail-title {
-  font-size: clamp(25px, 5cqi, 62px);
-  line-height: 1.06;
+.track-page-artwork:hover .track-page-artwork-hint,
+.track-page-artwork:focus-visible .track-page-artwork-hint {
+  opacity: 1;
+  transform: none;
 }
 
-.track-page .editorial-detail-meta {
-  margin-top: 10px;
-  font-size: clamp(14px, 1.65cqi, 20px);
+.track-page-artwork:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 5px;
+}
+
+.track-page-header h1 {
+  max-width: 940px;
+  margin: 26px 0 0;
+  font-size: clamp(27px, 4.6cqi, 54px);
+  font-weight: 740;
+  line-height: 1.12;
+  letter-spacing: -.035em;
   overflow-wrap: anywhere;
 }
 
-.track-page .editorial-detail-actions {
-  margin-top: clamp(16px, 3cqi, 36px);
+.track-page-artist {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: clamp(15px, 1.9cqi, 20px);
+  overflow-wrap: anywhere;
 }
 
-.track-page-timeline {
-  width: min(100%, 480px);
+.track-page-waveform {
+  position: relative;
+  margin-top: clamp(28px, 4cqi, 48px);
 }
 
-.track-page-timeline progress {
-  display: block;
-  width: 100%;
-  height: 5px;
-  overflow: hidden;
-  appearance: none;
-  border: 0;
-  border-radius: 99px;
+.track-page-waveform .wave {
+  height: clamp(84px, 13cqi, 144px);
 }
 
-.track-page-timeline progress::-webkit-progress-bar {
-  background: color-mix(in srgb, var(--text) 15%, transparent);
+.track-page-waveform .wave:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 8px;
+  border-radius: 4px;
 }
 
-.track-page-timeline progress::-webkit-progress-value {
-  border-radius: 99px;
-  background: var(--tempo-gradient, var(--accent));
+.track-page-waveform .wave[aria-disabled='true'] {
+  cursor: default;
+}
+
+.track-page-waveform .wave-bar {
+  background: color-mix(in srgb, var(--text) 18%, transparent);
+  border-radius: 3px;
+}
+
+.track-page-waveform .wave-accent .wave-bar {
+  background: var(--accent);
 }
 
 .track-page-times {
   display: flex;
   justify-content: space-between;
-  margin-top: 7px;
+  margin-top: 10px;
   color: var(--text-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
-.track-page-metadata {
+.track-page-facts {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
-  gap: 1px;
-  overflow: hidden;
-  border: 1px solid var(--border);
+  justify-content: center;
+  column-gap: clamp(24px, 4cqi, 56px);
+  row-gap: 26px;
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.track-page-fact {
+  position: relative;
+  min-width: 130px;
+  max-width: 100%;
+  min-height: 38px;
+  padding-left: 50px;
+}
+
+.track-page-fact-icon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
   border-radius: 12px;
-  background: var(--border);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-strong);
 }
 
-.track-page-metadata > div {
-  flex: 1 1 155px;
-  min-width: 0;
-  padding: 15px clamp(14px, 2cqi, 24px) 16px;
-  background: var(--bg-elevated);
-}
-
-.track-page-metadata dt {
+.track-page-facts dt {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
-.track-page-metadata dd {
-  margin-top: 4px;
+.track-page-facts dd {
+  margin-top: 3px;
+  font-size: 13px;
+  font-weight: 560;
   overflow-wrap: anywhere;
-  font-size: 14px;
-  font-weight: 550;
 }
 
-.track-page-metadata > .track-page-tags {
-  flex-basis: 100%;
+@container (max-width: 500px) {
+  .track-page-sheet { padding: 22px 18px; border-radius: 18px; }
+  .track-page-facts { justify-content: flex-start; gap: 22px; }
+  .track-page-fact { flex: 1 1 130px; }
 }
 
-@container (max-width: 460px) {
-  .track-page .editorial-detail-hero {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .track-page .editorial-detail-art {
-    width: min(100%, 208px);
-  }
+@media (prefers-reduced-motion: reduce) {
+  .track-page-artwork-hint { transition: none; }
 }

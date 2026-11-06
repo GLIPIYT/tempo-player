@@ -16,6 +16,7 @@ import { ListeningAccumulator } from './listeningSession'
 import { recommendationService, type RadioReservation } from '../features/recommendations/service'
 import type { ListeningEvent, ListeningEndReason, ListeningStartReason } from '../features/recommendations/types'
 import { getNativePlayerController, isNativePlayback, NativePlayerController } from './nativeController'
+import type { TrackChangeEvent, TrackChangeReason } from './types'
 
 export interface PlayerSnapshot {
   currentTrack: UnifiedTrack | null
@@ -291,6 +292,10 @@ export class PlayerController {
   private queueCtl = new QueueController()
   private engine = new AudioEngine()
   private listeners = new Set<() => void>()
+  private trackChangeListeners = new Set<(event: TrackChangeEvent) => void>()
+  private activeTrackKey: string | null = null
+  private trackChangeSequence = 0
+  private pendingTrackChangeReason: TrackChangeReason = 'restore'
   private isPlaying = false
   private position = 0
   private duration = 0
@@ -351,7 +356,8 @@ export class PlayerController {
     window.setInterval(() => this.checkpointListening(), 15_000)
     void listen('listening://exit-request', () => { void this.flushListeningExit() }).catch(() => {})
     window.addEventListener('tempo:listening-history-cleared', () => { void this.resetListeningFeedback() })
-    this.engine.onTime = t => {
+    this.engine.onTime = (t, epoch) => {
+      if (epoch !== this.engine.getSeekEpoch()) return
       this.position = t
       this.maybeCrossfade()
       this.emit()
@@ -400,11 +406,17 @@ export class PlayerController {
 
   getSnapshot = (): PlayerSnapshot => this.snapshot
 
+  subscribeTrackChange = (listener: (event: TrackChangeEvent) => void): (() => void) => {
+    this.trackChangeListeners.add(listener)
+    return () => this.trackChangeListeners.delete(listener)
+  }
+
   playTracks(tracks: UnifiedTrack[], startIndex = 0): void {
     this.cancelRadio()
     // switching tracks manually counts as a skip for the track that was playing
     this.finishListening('select')
     this.nextStartReason = 'manual'
+    this.pendingTrackChangeReason = 'manual'
     this.startSeq += 1
     this.crossfading = false
     this.engine.stop()
@@ -430,6 +442,7 @@ export class PlayerController {
     if (this.loadedSourceId !== cur.sourceId || !this.activeSessionId) {
       this.finishListening('select')
       this.engine.stop()
+      this.pendingTrackChangeReason = 'manual'
       this.beginTransition(cur)
       const seq = ++this.startSeq
       this.attemptedRadioUploads.clear()
@@ -449,6 +462,7 @@ export class PlayerController {
     this.cancelRadio()
     this.finishListening('next')
     this.nextStartReason = 'queue'
+    this.pendingTrackChangeReason = 'next'
     this.startSeq += 1
     this.crossfading = false
     this.engine.stop()
@@ -479,6 +493,7 @@ export class PlayerController {
     }
     this.finishListening('previous')
     this.nextStartReason = 'queue'
+    this.pendingTrackChangeReason = 'previous'
     this.startSeq += 1
     this.crossfading = false
     this.engine.stop()
@@ -578,6 +593,7 @@ export class PlayerController {
       // A removal changes queue.current immediately; terminate the actual media
       // identity first, then start the replacement at the resulting index.
       this.finishListening('remove')
+      this.pendingTrackChangeReason = 'queue'
       this.startSeq += 1
       this.engine.stop()
       this.loadedSourceId = null
@@ -608,6 +624,7 @@ export class PlayerController {
     this.preloadNext()
     this.engine.stop()
     this.loadedSourceId = null
+    this.activeTrackKey = null
     this.isPlaying = false
     this.position = 0
     this.duration = 0
@@ -894,7 +911,19 @@ export class PlayerController {
       api.bumpPlayCount(track.dbId).catch(() => {})
     }
     this.emit()
+    this.publishTrackChange(track, this.pendingTrackChangeReason)
+    this.pendingTrackChangeReason = 'queue'
     this.preloadNext()
+  }
+
+  private publishTrackChange(track: UnifiedTrack, reason: TrackChangeReason): void {
+    const trackKey = `${track.source}:${track.sourceId}`
+    if (trackKey === this.activeTrackKey) return
+    this.activeTrackKey = trackKey
+    // Restoring the saved queue is initial state, not a playback transition.
+    if (reason === 'restore') return
+    const event: TrackChangeEvent = { trackKey, reason, transitionId: ++this.trackChangeSequence }
+    for (const listener of this.trackChangeListeners) listener(event)
   }
 
   /** Warm the next four remote queue entries while the current track plays. */
@@ -1084,6 +1113,7 @@ export class PlayerController {
       if (this.repeat !== 'one') {
         const advanced = this.queueCtl.next(this.repeat)
         if (!advanced || advanced.sourceId !== incoming.sourceId) return
+        this.pendingTrackChangeReason = 'natural-end'
       }
       this.beginTransition(incoming)
       this.nextStartReason = this.repeat === 'one' ? 'repeat' : 'queue'
@@ -1200,6 +1230,7 @@ export class PlayerController {
         return
       }
     }
+    this.pendingTrackChangeReason = 'natural-end'
     const advanced = this.queueCtl.next(this.repeat)
     if (!advanced) {
       const picked = await this.autoPick()

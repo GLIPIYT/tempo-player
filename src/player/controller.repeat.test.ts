@@ -21,18 +21,22 @@ vi.mock('./engine', () => ({
     onFadeComplete: () => void = () => {}
     onPlaybackSample: () => void = () => {}
     onMediaFinished: () => void = () => {}
-    onTime: () => void = () => {}
+    onTime: (time: number, epoch: number) => void = () => {}
+    seekEpoch = 0
+    getSeekEpoch = vi.fn(() => this.seekEpoch)
+    setCurrentTime = vi.fn(() => { this.seekEpoch += 1 })
     onLoaded: () => void = () => {}
     onProgress: () => void = () => {}
     replay = vi.fn((_sessionId: string) => false)
     loadWithFormat = vi.fn(async (_url: string, _format: string | null, channel: 'local' | 'stream') => {
       this.activeChannel = channel
+      this.seekEpoch += 1
     })
     replaceStreamWithCachedFile = vi.fn(async (_url: string) => {
       this.activeChannel = 'local'
       return true
     })
-    stop = vi.fn()
+    stop = vi.fn(() => { this.seekEpoch += 1 })
     samplePlayback = vi.fn()
     play = vi.fn()
     pause = vi.fn()
@@ -77,6 +81,9 @@ vi.mock('../features/recommendations/service', () => ({
 type TestEngine = {
   activeChannel: 'local' | 'stream'
   onEnded: () => void | Promise<void>
+  onTime: (time: number, epoch: number) => void
+  seekEpoch: number
+  getSeekEpoch: ReturnType<typeof vi.fn>
   replay: ReturnType<typeof vi.fn>
   loadWithFormat: ReturnType<typeof vi.fn>
   replaceStreamWithCachedFile: ReturnType<typeof vi.fn>
@@ -260,5 +267,30 @@ describe('SoundCloud Search repeat-one', () => {
       expect.any(String),
     )
     expect(controller.getSnapshot().currentTrack?.sourceId).toBe('cache-repeat-2')
+  })
+
+  it('ignores a late time callback from the previous track after next', async () => {
+    mocks.api.scGetPlayback.mockImplementation(async (sourceId: string) => ({
+      url: `https://media.example/${sourceId}.mp3`,
+      cachedPath: null,
+      format: 'mp3',
+    }))
+    const controller = new PlayerController()
+    const engine = mocks.engines.at(-1) as TestEngine
+    controller.playTracks([searchTrack('stale-tick-first')])
+    await flushMicrotasks()
+    const previousEpoch = engine.seekEpoch
+
+    controller.playTracks([searchTrack('stale-tick-second')])
+    await flushMicrotasks()
+    const currentEpoch = engine.seekEpoch
+
+    engine.onTime(47, previousEpoch)
+    expect(controller.getSnapshot()).toMatchObject({
+      currentTrack: expect.objectContaining({ sourceId: 'stale-tick-second' }),
+      position: 0,
+    })
+    engine.onTime(0.5, currentEpoch)
+    expect(controller.getSnapshot().position).toBe(0.5)
   })
 })

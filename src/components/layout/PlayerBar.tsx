@@ -395,6 +395,7 @@ function PlayerBarContent() {
           )}
           <div className={`pb-progress-control${settings.player.waveform ? ' is-waveform' : ''}`}>
             <WaveProgress
+              key={p.currentTrack ? `${p.currentTrack.source}:${p.currentTrack.sourceId}` : 'none'}
               seed={p.currentTrack?.sourceId ?? 'none'}
               soundCloudTrackId={p.currentTrack?.source === 'soundcloud' ? p.currentTrack.sourceId : null}
               waveformEnabled={settings.player.waveform}
