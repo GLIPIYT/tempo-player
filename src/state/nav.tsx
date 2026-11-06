@@ -14,6 +14,7 @@ export type BaseView =
   | { name: 'search' }
   | { name: 'album'; id: number }
   | { name: 'artist'; id: number }
+  | { name: 'local-artist'; artistName: string; imagePath: string | null }
   | { name: 'playlist'; id: number }
   | { name: 'hour-mix'; mix: HourMix }
   /** SoundCloud pages, browsed live and not written to the library. */

@@ -4,6 +4,7 @@ import { libraryVersion } from '../utils/libraryVersion'
 import type { ScTrack } from '../types/models'
 import { buildTasteProfile, type TasteProfile } from '../features/recommendations/profile'
 import { rankGenreTracks } from '../features/recommendations/genre'
+import { refillGenreRecommendations } from '../features/recommendations/genreFeed'
 import { recommendationLanguagePreference, recommendationService } from '../features/recommendations/service'
 
 interface FavoriteGenre {
@@ -40,36 +41,18 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, f
     setError(null)
 
     try {
-      let cursor = startCursor
-      let firstPage = startCursor === null
-      let pages = 0
-      const initialCount = rankGenreTracks(providerTracksRef.current, genreKey, profileRef.current).length
-      const targetCount = initialCount + FILL_TARGET
-
-      while (pages < PAGE_BUDGET && (firstPage || cursor !== null)) {
-        if (generation !== generationRef.current) return
-        if (cursor && seenCursorsRef.current.has(cursor)) {
-          cursor = null
-          break
-        }
-        const requestedCursor = firstPage ? null : cursor
-        const page = await api.scRecommendationGenreSearch(genreLabel, requestedCursor, PAGE_SIZE)
-        if (generation !== generationRef.current) return
-        if (page.error) throw new Error(page.error)
-
-        // Commit each successful page before requesting its continuation. A later
-        // page failure must not discard this page or mark its data as unseen.
-        if (requestedCursor) seenCursorsRef.current.add(requestedCursor)
-        const fresh = page.tracks.filter(track => {
-          if (loadedIdsRef.current.has(track.id)) return false
-          loadedIdsRef.current.add(track.id)
-          return true
-        })
-        const accepted = rankGenreTracks(fresh, genreKey, profileRef.current)
-        const currentIds = new Set(providerTracksRef.current.map(track => track.id))
-        const appended = accepted.filter(track => !currentIds.has(track.id))
-        if (appended.length) {
-          const merged = [...providerTracksRef.current, ...appended]
+      await refillGenreRecommendations({
+        genreKey,
+        profile: profileRef.current,
+        tracks: providerTracksRef.current,
+        loadedTrackIds: loadedIdsRef.current,
+        seenCursors: seenCursorsRef.current,
+        startCursor,
+        fillTarget: FILL_TARGET,
+        pageBudget: PAGE_BUDGET,
+        fetchPage: (cursor) => api.scRecommendationGenreSearch(genreLabel, cursor, PAGE_SIZE),
+        isCurrent: () => generation === generationRef.current,
+        onAppend: async (merged, appended) => {
           providerTracksRef.current = merged
           setProviderTracks(merged)
           recommendationService.queueGenreAudioAnalysis(appended)
@@ -80,17 +63,12 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, f
             cached.forEach(id => next.add(id))
             return next
           })
-        }
-
-        cursor = page.nextCursor?.trim() ? page.nextCursor : null
-        if (cursor && seenCursorsRef.current.has(cursor)) cursor = null
-        nextCursorRef.current = cursor
-        setHasMore(cursor !== null)
-        firstPage = false
-        pages += 1
-
-        if (providerTracksRef.current.length >= targetCount || !cursor) break
-      }
+        },
+        onCursor: cursor => {
+          nextCursorRef.current = cursor
+          setHasMore(cursor !== null)
+        },
+      })
     } catch (cause: unknown) {
       if (generation === generationRef.current) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {

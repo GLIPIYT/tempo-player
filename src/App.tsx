@@ -16,6 +16,7 @@ import ArtistDetailPage from './pages/ArtistDetailPage'
 import PlaylistDetailPage from './pages/PlaylistDetailPage'
 import HourMixPage from './pages/HourMixPage'
 import TrackDetailPage from './pages/TrackDetailPage'
+import LocalArtistPage from './pages/LocalArtistPage'
 import Onboarding from './components/onboarding/Onboarding'
 import PresenceBridge from './components/integration/PresenceBridge'
 import LyricsAnalysisBridge from './components/integration/LyricsAnalysisBridge'
@@ -74,6 +75,8 @@ function CurrentPage() {
       return <AlbumDetailPage key={view.id} albumId={view.id} />
     case 'artist':
       return <ArtistDetailPage key={view.id} artistId={view.id} />
+    case 'local-artist':
+      return <LocalArtistPage key={view.artistName} name={view.artistName} imagePath={view.imagePath} />
     case 'playlist':
       return <PlaylistDetailPage key={view.id} playlistId={view.id} />
     case 'hour-mix':

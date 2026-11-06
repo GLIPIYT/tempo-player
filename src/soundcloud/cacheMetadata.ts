@@ -8,8 +8,12 @@ export function rememberSoundCloudTrack(track: ScTrack): void {
   const id = track.id.trim()
   if (!/^[1-9]\d*$/.test(id)) return
 
+  const previous = knownTracks.get(id)
   knownTracks.delete(id)
-  knownTracks.set(id, { ...track, id })
+  knownTracks.set(id, { ...previous, ...track, id,
+    uploaderId: track.uploaderId ?? previous?.uploaderId,
+    uploaderName: track.uploaderName ?? previous?.uploaderName,
+  })
   if (knownTracks.size > MAX_KNOWN_TRACKS) {
     const oldest = knownTracks.keys().next().value
     if (oldest !== undefined) knownTracks.delete(oldest)
@@ -30,6 +34,7 @@ export function rememberSoundCloudSourceTrack(track: Track | UnifiedTrack): void
     durationMs: Math.round(Math.max(0, (track.durationSec ?? 0) * 1000)),
     artworkUrl: /^https?:/.test(track.coverPath ?? '') ? track.coverPath : null,
     artistAvatarUrl: unified ? (track.artistAvatarUrl ?? null) : null,
+    uploaderId: unified ? track.artistSourceId : undefined,
     permalinkUrl: unified ? (track.externalUrl ?? null) : null,
     streamable: unified ? track.playable : true,
     hasProgressive: false,

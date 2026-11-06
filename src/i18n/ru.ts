@@ -1,4 +1,5 @@
 export const ru: Record<string, string> = {
+  'No saved tracks by this artist yet.': 'У этого исполнителя пока нет сохранённых треков.',
   'View artwork': 'Посмотреть обложку',
   'Track details': 'Информация о треке',
   'Open full details': 'Открыть полную страницу',

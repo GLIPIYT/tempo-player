@@ -511,15 +511,12 @@ fn matches_genre(track: &ScTrack, genre: &str) -> bool {
         || track.tags.as_ref().is_some_and(|tags| tags.iter().any(|value| normalize_genre_tag(value) == expected))
 }
 
-fn genre_search_url(genre: &str, limit: u32, filtered: bool) -> reqwest::Url {
+fn genre_search_url(genre: &str, limit: u32) -> reqwest::Url {
     let mut url = reqwest::Url::parse(&format!("{API}/search/tracks")).expect("genre search URL");
     url.query_pairs_mut().append_pair("q", genre)
         .append_pair("access", "playable")
         .append_pair("limit", &limit.clamp(1, 50).to_string())
         .append_pair("linked_partitioning", "true");
-    if filtered {
-        url.query_pairs_mut().append_pair("filter.genre_or_tag", genre);
-    }
     url
 }
 
@@ -543,7 +540,7 @@ fn genre_recommendation_cursor(raw: &str, genre: &str) -> Result<reqwest::Url, S
     let mut saw_query = false;
     for (key, value) in url.query_pairs() {
         if key == "client_id" { continue; }
-        if !matches!(key.as_ref(), "q" | "filter.genre_or_tag" | "access" | "limit" | "linked_partitioning" | "offset" | "cursor")
+        if !matches!(key.as_ref(), "q" | "filter.genre_or_tag" | "access" | "limit" | "linked_partitioning" | "offset" | "cursor" | "query_urn")
             || !keys.insert(key.to_string()) {
             return Err("Unexpected SoundCloud genre cursor parameter".into());
         }
@@ -556,10 +553,12 @@ fn genre_recommendation_cursor(raw: &str, genre: &str) -> Result<reqwest::Url, S
             "access" => return Err("SoundCloud genre cursor access changed".into()),
             "limit" if value.parse::<u32>().is_ok_and(|limit| (1..=50).contains(&limit)) => {},
             "limit" => return Err("Invalid SoundCloud genre cursor limit".into()),
-            "linked_partitioning" if value == "true" => {},
+            "linked_partitioning" if value == "true" || value == "1" => {},
             "linked_partitioning" => return Err("Invalid SoundCloud genre cursor pagination".into()),
             "offset" | "cursor" if !value.is_empty() && value.len() <= 1024 => {},
             "offset" | "cursor" => return Err("Invalid SoundCloud genre cursor position".into()),
+            "query_urn" if !value.is_empty() && value.len() <= 512 => {},
+            "query_urn" => return Err("Invalid SoundCloud genre query identity".into()),
             _ => unreachable!(),
         }
         pairs.push((key.into_owned(), value.into_owned()));
@@ -584,39 +583,18 @@ fn genre_page_next_cursor(value: &Value, current_url: &reqwest::Url, genre: &str
 async fn genre_search_tracks(
     genre: &str, cursor: Option<&str>, limit: u32,
 ) -> Result<(Vec<ScTrack>, Option<String>), RecommendationFailure> {
-    let initial_filtered = genre_search_url(genre, limit, true);
     let requested_url = cursor
         .map(|cursor| genre_recommendation_cursor(cursor, genre).map_err(RecommendationFailure::new))
         .transpose()?
-        .unwrap_or_else(|| initial_filtered.clone());
-    match recommendation_json(requested_url.clone()).await {
-        Ok(value) => {
-            let tracks: Vec<_> = tracks_from_response(&value).into_iter()
-                .filter(|track| matches_genre(track, genre)).take(limit as usize).collect();
-            let next = genre_page_next_cursor(&value, &requested_url, genre)
-                .map_err(RecommendationFailure::new)?;
-            if !tracks.is_empty() || cursor.is_some() { return Ok((tracks, next)); }
-            // Retry without the provider filter only when it yields no verified
-            // matches. Exact genre/tag validation prevents broad matches leaking.
-            let fallback_url = genre_search_url(genre, limit, false);
-            let fallback = recommendation_json(fallback_url.clone()).await?;
-            let tracks = tracks_from_response(&fallback).into_iter()
-                .filter(|track| matches_genre(track, genre)).take(limit as usize).collect();
-            let next = genre_page_next_cursor(&fallback, &fallback_url, genre)
-                .map_err(RecommendationFailure::new)?;
-            Ok((tracks, next))
-        }
-        Err(failure) if cursor.is_none() && matches!(failure.status, Some(400 | 404)) => {
-            let fallback_url = genre_search_url(genre, limit, false);
-            let fallback = recommendation_json(fallback_url.clone()).await?;
-            let tracks = tracks_from_response(&fallback).into_iter()
-                .filter(|track| matches_genre(track, genre)).take(limit as usize).collect();
-            let next = genre_page_next_cursor(&fallback, &fallback_url, genre)
-                .map_err(RecommendationFailure::new)?;
-            Ok((tracks, next))
-        }
-        Err(failure) => Err(failure),
-    }
+        .unwrap_or_else(|| genre_search_url(genre, limit));
+    let value = recommendation_json(requested_url.clone()).await?;
+    // Search by text to discover candidates, then enforce exact genre metadata
+    // locally. SoundCloud's provider-side genre filter hides many tagged tracks.
+    let tracks: Vec<_> = tracks_from_response(&value).into_iter()
+        .filter(|track| matches_genre(track, genre)).take(limit as usize).collect();
+    let next = genre_page_next_cursor(&value, &requested_url, genre)
+        .map_err(RecommendationFailure::new)?;
+    Ok((tracks, next))
 }
 fn server_retry_at(headers: &reqwest::header::HeaderMap, now: i64) -> Option<i64> {
     let retry = headers.get(reqwest::header::RETRY_AFTER).and_then(|v| v.to_str().ok())
@@ -774,9 +752,8 @@ pub async fn sc_recommendation_search(
     Ok(result)
 }
 
-/// Fetches a genre-specific SoundCloud page independently from personalized
-/// recommendation state. The documented public track-search `genres` filter
-/// keeps this shelf from inheriting the main feed's seeds or candidates.
+/// Fetches genre-search pages independently from personalized recommendation
+/// state. Exact track genre metadata is checked before results reach the shelf.
 #[tauri::command]
 pub async fn sc_recommendation_genre_search(
     state: tauri::State<'_, crate::commands::AppState>, genre: String, cursor: Option<String>, limit: u32,
@@ -786,7 +763,7 @@ pub async fn sc_recommendation_genre_search(
         return Err("Invalid SoundCloud genre".into());
     }
     let limit = limit.clamp(1, 50);
-    let cache_key = format!("sc-genre:v5:{}:{limit}:{}", genre.to_lowercase(), cursor.as_deref().unwrap_or("first"));
+    let cache_key = format!("sc-genre:v6:{}:{limit}:{}", genre.to_lowercase(), cursor.as_deref().unwrap_or("first"));
     if let Some(cached) = crate::recommendation_store::page(&state.db, &cache_key)? {
         if let Some(page) = cached_genre_page(cached.data) {
             if page.next_cursor.as_deref().is_none_or(|next| genre_recommendation_cursor(next, genre).is_ok()) {
@@ -1566,17 +1543,16 @@ mod tests {
     }
 
     #[test]
-    fn genre_search_urls_keep_the_fallback_query_bounded_and_encoded() {
-        let filtered = genre_search_url("deep house & garage", 500, true);
-        let params: HashMap<_, _> = filtered.query_pairs().map(|(key, value)| (key.into_owned(), value.into_owned())).collect();
+    fn genre_search_url_keeps_the_query_bounded_and_encoded() {
+        let search = genre_search_url("deep house & garage", 500);
+        let params: HashMap<_, _> = search.query_pairs().map(|(key, value)| (key.into_owned(), value.into_owned())).collect();
         assert_eq!(params.get("q").map(String::as_str), Some("deep house & garage"));
-        assert_eq!(params.get("filter.genre_or_tag").map(String::as_str), Some("deep house & garage"));
         assert_eq!(params.get("limit").map(String::as_str), Some("50"));
         assert_eq!(params.get("access").map(String::as_str), Some("playable"));
+        assert!(!params.contains_key("filter.genre_or_tag"));
 
-        let fallback = genre_search_url("deep house", 0, false);
-        assert!(!fallback.query_pairs().any(|(key, _)| key == "filter.genre_or_tag"));
-        assert_eq!(fallback.query_pairs().find(|(key, _)| key == "limit").map(|(_, value)| value.into_owned()).as_deref(), Some("1"));
+        let bounded = genre_search_url("deep house", 0);
+        assert_eq!(bounded.query_pairs().find(|(key, _)| key == "limit").map(|(_, value)| value.into_owned()).as_deref(), Some("1"));
     }
 
     #[test]
@@ -1602,6 +1578,25 @@ mod tests {
         assert!(!params.contains_key("client_id"));
         assert!(genre_recommendation_cursor(raw, "ambient").is_err());
         assert!(genre_recommendation_cursor("https://example.com/search/tracks?q=deep%20house", "deep house").is_err());
+
+        let linked_cursor = "https://api-v2.soundcloud.com/search/tracks?q=deep%20house&access=playable&limit=50&linked_partitioning=1&offset=50";
+        assert!(genre_recommendation_cursor(linked_cursor, "deep house").is_ok());
+        let current = genre_search_url("deep house", 50);
+        assert_eq!(genre_page_next_cursor(&serde_json::json!({"next_href": linked_cursor}), &current, "deep house").unwrap(),
+            Some(genre_recommendation_cursor(linked_cursor, "deep house").unwrap().to_string()));
+    }
+
+    #[test]
+    fn genre_cursor_accepts_search_query_identity_from_live_next_href() {
+        let next = "https://api-v2.soundcloud.com/search/tracks?query_urn=urn%3Asoundcloud%3Asearch%3Aexample&limit=50&offset=50&q=Indie";
+        let current = genre_search_url("Indie", 50);
+        let cursor = genre_page_next_cursor(&serde_json::json!({"next_href": next}), &current, "Indie")
+            .expect("SoundCloud query_urn is part of search continuation")
+            .expect("continuation exists");
+        let parsed = reqwest::Url::parse(&cursor).unwrap();
+        assert!(parsed.query_pairs().any(|(key, value)| key == "query_urn" && value == "urn:soundcloud:search:example"));
+        assert!(genre_recommendation_cursor(&cursor, "Ambient").is_err());
+        assert!(genre_recommendation_cursor(&next.replace("example", &"x".repeat(513)), "Indie").is_err());
     }
 
     #[test]
@@ -1611,7 +1606,7 @@ mod tests {
             source: "genre".into(), retry_at: None, error: None, status: None, failed_endpoint: None };
         assert!(cached_genre_page(serde_json::to_value(&page).unwrap()).is_some());
 
-        let url = genre_search_url("house", 50, false);
+        let url = genre_search_url("house", 50);
         let same = serde_json::json!({ "next_href": url.as_str() });
         assert!(genre_page_next_cursor(&same, &url, "house").is_err());
 

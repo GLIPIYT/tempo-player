@@ -1,29 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { api } from '../../api/client'
 import { useT } from '../../i18n'
-import { getKnownSoundCloudTrack } from '../../soundcloud/cacheMetadata'
-import { useNav, type BaseView } from '../../state/nav'
+import { useNav } from '../../state/nav'
 import type { UnifiedTrack } from '../../types/models'
-import { searchStore } from '../../utils/searchStore'
-
-const normalizedName = (name: string) => name.trim().normalize('NFKC').toLocaleLowerCase()
-
-async function artistView(track: UnifiedTrack, name: string): Promise<BaseView | null> {
-  const expected = normalizedName(name)
-  const local = await api.listArtists(name).catch(() => [])
-  const match = local.find(artist => normalizedName(artist.name) === expected)
-  if (match) return { name: 'artist', id: match.id }
-  if (track.source === 'soundcloud') {
-    const known = getKnownSoundCloudTrack(track.sourceId)
-    if (known?.uploaderId && normalizedName(known.uploaderName ?? known.artist) === expected) {
-      return { name: 'sc-artist', id: known.uploaderId }
-    }
-    const results = await api.scSearchArtists(name, 20, 0).catch(() => [])
-    const artist = results.find(result => normalizedName(result.username) === expected)
-    if (artist) return { name: 'sc-artist', id: artist.id }
-  }
-  return null
-}
+import { resolveArtistView } from '../../utils/artistNavigation'
 
 export default function ArtistLinks({ track, onNavigate }: { track: UnifiedTrack; onNavigate?: () => void }) {
   const t = useT()
@@ -41,13 +20,13 @@ export default function ArtistLinks({ track, onNavigate }: { track: UnifiedTrack
   const open = async (name: string) => {
     const sequence = ++request.current
     setPending(name)
-    const view = await artistView(track, name)
+    const originView = view
+    const destination = await resolveArtistView(track, name)
     if (sequence !== request.current) return
     setPending(null)
-    if (currentIdentity.current !== identity || currentView.current !== view) return
-    if (!view) searchStore.set(name)
+    if (currentIdentity.current !== identity || currentView.current !== originView) return
     onNavigate?.()
-    navigate(view ?? { name: 'search' })
+    navigate(destination)
   }
 
   if (!artists.length) return <>{t('Unknown artist')}</>

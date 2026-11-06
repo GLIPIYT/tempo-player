@@ -15,6 +15,8 @@ export function scTrackToUnified(t: ScTrack): UnifiedTrack {
     title: t.title,
     artists: [t.artist],
     artistAvatarUrl: t.artistAvatarUrl,
+    artistSourceId: t.uploaderId && (t.uploaderName?.trim() || t.artist).toLowerCase() === t.artist.trim().toLowerCase()
+      ? t.uploaderId : null,
     album: null,
     durationSec: t.durationMs / 1000,
     coverPath: t.artworkUrl,

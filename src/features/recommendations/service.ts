@@ -597,7 +597,7 @@ class RecommendationService {
       this.queueAudioAnalysis(event.track)
     }
     for (const action of (context.explicitActions ?? []).filter(item =>
-      item.action === 'cache' || item.action === 'collection-save' || item.action === 'playlist-add').slice(-4)) {
+      item.action === 'cache' || item.action === 'collection-save' || item.action === 'playlist-add').slice(0, 4)) {
       this.queueAudioAnalysis(action.track)
     }
     for (const seed of context.seedTracks.filter(item => item.evidence === 'like' || item.evidence === 'playlist').slice(0, 4)) {
