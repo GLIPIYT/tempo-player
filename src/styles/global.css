@@ -223,3 +223,26 @@ input[type='range'] {
   transition: box-shadow 0.15s ease;
 }
 
+
+.artist-link {
+  display: inline;
+  max-width: 100%;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  vertical-align: baseline;
+}
+.artist-link:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.artist-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+.artist-link[aria-busy='true'] { cursor: progress; }
+
+/* Keep the track readable while revealing its handle for interaction. */
+input[type='range']::-webkit-slider-thumb { opacity: 0 !important; transition: opacity 120ms ease; }
+input[type='range']::-moz-range-thumb { opacity: 0 !important; transition: opacity 120ms ease; }
+input[type='range']:hover::-webkit-slider-thumb,
+input[type='range']:active::-webkit-slider-thumb,
+input[type='range']:focus-visible::-webkit-slider-thumb { opacity: 1 !important; }
+input[type='range']:hover::-moz-range-thumb,
+input[type='range']:active::-moz-range-thumb,
+input[type='range']:focus-visible::-moz-range-thumb { opacity: 1 !important; }

@@ -14,6 +14,7 @@ import { seedSchedulingPool, selectRecommendationBatch } from './scheduling'
 import { detectLyricLanguages, type LyricEvidenceSource } from './language'
 import { analyzeCachedRecommendationTrack } from './audio'
 import { canPlaySoundCloudTrack } from '../../soundcloud/playability'
+import { hasSupportedRecommendationTitle } from './title'
 import { flushFeedbackOperations, stopFeedbackOperations, type ExplicitActionIntent } from './feedbackBridge'
 import { recommendationTrack, type ExplicitActionKind, type FeatureSectionUpdate, type LanguageEvidence, type ListeningEvent, type RecommendationTrack } from './types'
 
@@ -33,7 +34,7 @@ const LANGUAGE_LOOKUP_CACHE_TTL = 7 * DAY
 const MAX_PENDING_ACTIONS = 5000
 const MAX_LANGUAGE_JOBS = 5000
 const RECOMMENDATION_ENDPOINTS = new Set(['related', 'station', 'search', 'track-hydration'])
-function recommendationLanguagePreference(): string | null {
+export function recommendationLanguagePreference(): string | null {
   const setting = getSettings().lang
   const locale = setting === 'system'
     ? (typeof navigator === 'undefined' ? '' : navigator.language)
@@ -1074,12 +1075,14 @@ class RecommendationService {
       const catalog = catalogOf(feature)
       const track = catalog.playable as ScTrack | undefined
       const identity = catalog.identity as RecordingIdentity | undefined
-      if (!track || !identity || !/^\d{1,64}$/u.test(track.id) || !playable(track) || track.durationMs < 15_000
+      if (!track || !identity || !/^\d{1,64}$/u.test(track.id) || !playable(track)
+        || !hasSupportedRecommendationTitle(track.title) || track.durationMs < 15_000
         || typeof identity.trackKey !== 'string' || typeof catalog.recordingGroup !== 'string') continue
       const key = keyOf(track)
       if (candidates.has(key) || this.expandedSeedKeys.has(key)) continue
       candidates.set(key, { track, identity, groupKey: this.group(catalog.recordingGroup), seedTrackKey: feature.trackKey,
-        cursor: null, alternates: (catalog.alternates as ScTrack[] | undefined)?.slice(0, 3) ?? [], addedAt: feature.updatedAt })
+        cursor: null, alternates: ((catalog.alternates as ScTrack[] | undefined) ?? [])
+          .filter(alternate => hasSupportedRecommendationTitle(alternate.title)).slice(0, 3), addedAt: feature.updatedAt })
     }
     this.discoveryPool = [...candidates.values()]
       .sort((left, right) => candidateScore(right, this.profile!) - candidateScore(left, this.profile!) || right.addedAt - left.addedAt)
@@ -1228,7 +1231,7 @@ class RecommendationService {
     return this.fillFlight
   }
   private async accept(tracks: ScTrack[], frontier: SeedFrontier, cursor: string | null, epoch: number): Promise<number> {
-    const incoming = tracks.filter(playable)
+    const incoming = tracks.filter(track => playable(track) && hasSupportedRecommendationTitle(track.title))
     await this.resolveKeys(incoming.map(keyOf))
     if (this.closing || epoch !== this.epoch || !this.frontier.includes(frontier)) return 0
     let accepted = 0
@@ -1244,10 +1247,12 @@ class RecommendationService {
         return previous?.featureVersion === 1 && duplicateConfidence(previous, identity) >= 0.95
       }) : undefined
       const savedTrack = feature ? catalogOf(feature).playable as ScTrack | undefined : undefined
-      const historicalDuplicate: FeedCandidate | undefined = feature && savedTrack?.id && playable(savedTrack) ? {
+      const historicalDuplicate: FeedCandidate | undefined = feature && savedTrack?.id && playable(savedTrack)
+        && hasSupportedRecommendationTitle(savedTrack.title) ? {
         track: savedTrack, identity: catalogOf(feature).identity as RecordingIdentity,
         groupKey: this.group(feature.trackKey), seedTrackKey: frontier.seed.track.trackKey, cursor,
-        alternates: (catalogOf(feature).alternates as ScTrack[] | undefined)?.slice(0, 3) ?? [], addedAt: Date.now(),
+        alternates: ((catalogOf(feature).alternates as ScTrack[] | undefined) ?? [])
+          .filter(alternate => hasSupportedRecommendationTitle(alternate.title)).slice(0, 3), addedAt: Date.now(),
       } : undefined
       const duplicate = currentDuplicate ?? historicalDuplicate
       if (duplicate) {
@@ -1422,7 +1427,8 @@ class RecommendationService {
     const raw = [...(item ? [item.track, ...item.alternates] : []), ...matchingFeatures.flatMap(feature =>
       [catalogOf(feature).playable, ...((catalogOf(feature).alternates as ScTrack[] | undefined) ?? [])])]
     const ids = new Set<string>()
-    return raw.filter((track): track is ScTrack => !!track && typeof (track as ScTrack).id === 'string' && playable(track as ScTrack))
+    return raw.filter((track): track is ScTrack => !!track && typeof (track as ScTrack).id === 'string'
+      && playable(track as ScTrack) && hasSupportedRecommendationTitle((track as ScTrack).title))
       .filter(track => { if (keyOf(track) === trackKey || ids.has(track.id)) return false; ids.add(track.id); return true })
       .slice(0, 3).map(track => ({ ...this.toUnified(track, 'radio'), provenance: { ...this.toUnified(track, 'radio').provenance,
         origin: 'radio', placement: 'radio', recordingKey: group, recordingGroup: group, seedTrackKey: item?.seedTrackKey, cursor: item?.cursor ?? undefined } }))

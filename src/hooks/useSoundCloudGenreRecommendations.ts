@@ -1,15 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { libraryVersion } from '../utils/libraryVersion'
 import type { ScTrack } from '../types/models'
 import { buildTasteProfile, type TasteProfile } from '../features/recommendations/profile'
 import { rankGenreTracks } from '../features/recommendations/genre'
-import { recommendationService } from '../features/recommendations/service'
+import { recommendationLanguagePreference, recommendationService } from '../features/recommendations/service'
 
 interface FavoriteGenre {
   key: string
   label: string
 }
+
+const PAGE_SIZE = 50
+const FILL_TARGET = 24
+const PAGE_BUDGET = 6
 
 export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, fallbackCandidates: readonly ScTrack[] = []) {
   const genreKey = genre?.key ?? null
@@ -19,58 +23,135 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, f
   const [cachedTrackIds, setCachedTrackIds] = useState<ReadonlySet<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(false)
   const [retryVersion, setRetryVersion] = useState(0)
+  const providerTracksRef = useRef<ScTrack[]>([])
+  const profileRef = useRef<TasteProfile | null>(null)
+  const nextCursorRef = useRef<string | null>(null)
+  const seenCursorsRef = useRef(new Set<string>())
+  const loadedIdsRef = useRef(new Set<string>())
+  const loadingRef = useRef(false)
+  const generationRef = useRef(0)
 
-  useEffect(() => {
-    if (!genreKey || !genreLabel) {
-      setProviderTracks([])
-      setProfile(null)
-      setCachedTrackIds(new Set())
-      setLoading(false)
-      setError(null)
-      return
-    }
-
-    let cancelled = false
-    setProviderTracks([])
-    setProfile(null)
-    setCachedTrackIds(new Set())
+  const loadPages = useCallback(async (startCursor: string | null, generation: number) => {
+    if (!genreKey || !genreLabel || loadingRef.current || generation !== generationRef.current) return
+    loadingRef.current = true
     setLoading(true)
     setError(null)
 
-    void Promise.all([
-      api.scRecommendationGenreSearch(genreLabel, 40).then(result => ({ result })).catch(cause => ({ cause })),
-      api.getRecommendationContext().catch(() => null),
-    ]).then(async ([request, context]) => {
-      if (cancelled) return
-      const nextProfile = context ? buildTasteProfile(context, Date.now()) : null
-      setProfile(nextProfile)
-      if ('cause' in request) throw request.cause
-      const { result } = request
-      if (result.error) throw new Error(result.error)
-      const next = rankGenreTracks(result.tracks, genreKey, nextProfile)
-      setProviderTracks(next)
-      recommendationService.queueGenreAudioAnalysis(next)
-      if (next.length) {
-        const cached = await api.scGetCachedTrackIds(next.map((track) => track.id)).catch(() => [])
-        if (!cancelled) setCachedTrackIds(previous => previous.size === cached.length && cached.every(id => previous.has(id))
-          ? previous : new Set(cached))
+    try {
+      let cursor = startCursor
+      let firstPage = startCursor === null
+      let pages = 0
+      const initialCount = rankGenreTracks(providerTracksRef.current, genreKey, profileRef.current).length
+      const targetCount = initialCount + FILL_TARGET
+
+      while (pages < PAGE_BUDGET && (firstPage || cursor !== null)) {
+        if (generation !== generationRef.current) return
+        if (cursor && seenCursorsRef.current.has(cursor)) {
+          cursor = null
+          break
+        }
+        const requestedCursor = firstPage ? null : cursor
+        const page = await api.scRecommendationGenreSearch(genreLabel, requestedCursor, PAGE_SIZE)
+        if (generation !== generationRef.current) return
+        if (page.error) throw new Error(page.error)
+
+        // Commit each successful page before requesting its continuation. A later
+        // page failure must not discard this page or mark its data as unseen.
+        if (requestedCursor) seenCursorsRef.current.add(requestedCursor)
+        const fresh = page.tracks.filter(track => {
+          if (loadedIdsRef.current.has(track.id)) return false
+          loadedIdsRef.current.add(track.id)
+          return true
+        })
+        const accepted = rankGenreTracks(fresh, genreKey, profileRef.current)
+        const currentIds = new Set(providerTracksRef.current.map(track => track.id))
+        const appended = accepted.filter(track => !currentIds.has(track.id))
+        if (appended.length) {
+          const merged = [...providerTracksRef.current, ...appended]
+          providerTracksRef.current = merged
+          setProviderTracks(merged)
+          recommendationService.queueGenreAudioAnalysis(appended)
+          const cached = await api.scGetCachedTrackIds(appended.map(track => track.id)).catch(() => [])
+          if (generation !== generationRef.current) return
+          setCachedTrackIds(previous => {
+            const next = new Set(previous)
+            cached.forEach(id => next.add(id))
+            return next
+          })
+        }
+
+        cursor = page.nextCursor?.trim() ? page.nextCursor : null
+        if (cursor && seenCursorsRef.current.has(cursor)) cursor = null
+        nextCursorRef.current = cursor
+        setHasMore(cursor !== null)
+        firstPage = false
+        pages += 1
+
+        if (providerTracksRef.current.length >= targetCount || !cursor) break
       }
+    } catch (cause: unknown) {
+      if (generation === generationRef.current) setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (generation === generationRef.current) {
+        loadingRef.current = false
+        setLoading(false)
+      }
+    }
+  }, [genreKey, genreLabel])
+
+  useEffect(() => {
+    if (!providerTracksRef.current.length) return
+    const balanced = rankGenreTracks(providerTracksRef.current, genreKey ?? '', profile)
+    providerTracksRef.current = balanced
+    setProviderTracks(balanced)
+  }, [profile, genreKey])
+
+  useEffect(() => {
+    const generation = generationRef.current + 1
+    generationRef.current = generation
+    providerTracksRef.current = []
+    profileRef.current = null
+    nextCursorRef.current = null
+    seenCursorsRef.current.clear()
+    loadedIdsRef.current.clear()
+    loadingRef.current = false
+    setProviderTracks([])
+    setProfile(null)
+    setCachedTrackIds(new Set())
+    setHasMore(false)
+    setLoading(Boolean(genreKey && genreLabel))
+    setError(null)
+
+    if (!genreKey || !genreLabel) return
+    let cancelled = false
+
+    void api.getRecommendationContext().catch(() => null).then(context => {
+      if (cancelled || generation !== generationRef.current) return
+      const nextProfile = context ? buildTasteProfile({ ...context, languagePreference: recommendationLanguagePreference() }, Date.now()) : null
+      profileRef.current = nextProfile
+      setProfile(nextProfile)
+      return loadPages(null, generation)
     }).catch((cause: unknown) => {
-      if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
-    }).finally(() => {
-      if (!cancelled) setLoading(false)
+      if (!cancelled && generation === generationRef.current) setError(cause instanceof Error ? cause.message : String(cause))
     })
 
-    return () => { cancelled = true }
-  }, [genreKey, genreLabel, retryVersion])
+    return () => {
+      cancelled = true
+      if (generation === generationRef.current) generationRef.current += 1
+    }
+  }, [genreKey, genreLabel, retryVersion, loadPages])
 
   useEffect(() => {
     if (!genreKey) return
     let active = true
     const refreshProfile = () => {
       void api.getRecommendationContext().then(context => {
-        if (active) setProfile(buildTasteProfile(context, Date.now()))
+        if (!active) return
+        const nextProfile = buildTasteProfile({ ...context, languagePreference: recommendationLanguagePreference() }, Date.now())
+        profileRef.current = nextProfile
+        setProfile(nextProfile)
       }).catch(() => undefined)
     }
     window.addEventListener('tempo:recommendation-audio-updated', refreshProfile)
@@ -81,26 +162,37 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, f
   }, [genreKey])
 
   const tracks = useMemo(() => {
-    const relevantProviderTracks = rankGenreTracks(providerTracks, genreKey ?? '', profile)
-    return relevantProviderTracks.length > 0
-      ? relevantProviderTracks
+    return providerTracks.length > 0
+      ? providerTracks
       : rankGenreTracks(fallbackCandidates, genreKey ?? '', profile)
-  },
-  [providerTracks, fallbackCandidates, genreKey, profile])
+  }, [providerTracks, fallbackCandidates, genreKey, profile])
 
   useEffect(() => {
     if (tracks.length === 0) return
     let active = true
-    const refresh = () => {
-      void api.scGetCachedTrackIds(tracks.map(track => track.id))
-        .then(ids => { if (active) setCachedTrackIds(previous => previous.size === ids.length && ids.every(id => previous.has(id))
-          ? previous : new Set(ids)) })
-        .catch(() => undefined)
+    const refresh = async () => {
+      const ids = [...new Set(tracks.slice(-100).map(track => track.id))]
+      const cached = new Set<string>()
+      for (let start = 0; start < ids.length; start += 50) {
+        const batch = await api.scGetCachedTrackIds(ids.slice(start, start + 50)).catch(() => [])
+        batch.forEach(id => cached.add(id))
+      }
+      if (active) setCachedTrackIds(previous => {
+        const next = new Set(previous)
+        for (const id of ids) next.delete(id)
+        cached.forEach(id => next.add(id))
+        return next
+      })
     }
-    const unsubscribe = libraryVersion.subscribe(refresh)
+    const unsubscribe = libraryVersion.subscribe(() => { void refresh() })
     return () => { active = false; unsubscribe() }
   }, [tracks])
 
-  const retry = useCallback(() => setRetryVersion((version) => version + 1), [])
-  return { tracks, cachedTrackIds, loading, error, retry }
+  const loadMore = useCallback(() => {
+    const cursor = nextCursorRef.current
+    if (!cursor || !hasMore || loadingRef.current) return
+    void loadPages(cursor, generationRef.current)
+  }, [hasMore, loadPages])
+  const retry = useCallback(() => setRetryVersion(version => version + 1), [])
+  return { tracks, cachedTrackIds, loading, error, hasMore, loadMore, retry }
 }

@@ -23,6 +23,7 @@ interface NativePlayerSnapshot extends PlayerSnapshot {
   initialized: boolean
   error?: string | null
   buffering?: boolean
+  seekPending?: boolean
   trackChange?: TrackChangeEvent
 }
 
@@ -36,6 +37,7 @@ interface NativeClock {
   isPlaying: boolean
   buffering: boolean
   version: number
+  seekPending?: boolean
 }
 
 type NativeSettingsValues = {
@@ -77,6 +79,7 @@ interface PendingSeek {
   position: number
   rollbackPosition: number
   baselineVersion: number
+  baselineError: string | null
 }
 
 interface PendingReservation {
@@ -296,6 +299,7 @@ export class NativePlayerController {
       position: target,
       rollbackPosition: this.pendingSeek?.rollbackPosition ?? this.getDisplayPosition(),
       baselineVersion: this.latestVersion,
+      baselineError: this.pendingSeek?.baselineError ?? this.lastError,
     }
     this.basePosition = target
     this.baseAt = performance.now()
@@ -521,7 +525,9 @@ export class NativePlayerController {
     const effectivePosition = this.reconcilePendingSeek(
       position,
       payload.version,
-      typeof payload.error === 'string' && payload.error.trim().length > 0,
+      payload.seekPending === true || payload.preparing,
+      typeof payload.error === 'string' && payload.error.trim().length > 0 &&
+        payload.error !== this.pendingSeek?.baselineError && payload.seekPending !== true && !payload.preparing,
     )
     next.position = effectivePosition
     const transition = this.readTrackChange(payload.trackChange)
@@ -591,7 +597,7 @@ export class NativePlayerController {
     const duration = Number.isFinite(payload.duration) ? Math.max(0, payload.duration as number) : previous.duration
     const isPlaying = payload.isPlaying === true
     const buffering = payload.buffering === true
-    const effectivePosition = this.reconcilePendingSeek(position, payload.version)
+    const effectivePosition = this.reconcilePendingSeek(position, payload.version, payload.seekPending === true)
     const transportChanged = isPlaying !== previous.isPlaying || buffering !== this.buffering
     const durationChanged = duration !== previous.duration
     const positionChanged = Math.abs(position - previous.position) > 0.02
@@ -617,14 +623,14 @@ export class NativePlayerController {
     for (const listener of this.listeners) listener()
   }
 
-  private reconcilePendingSeek(position: number, version: number, failed = false): number {
+  private reconcilePendingSeek(position: number, version: number, seekPending = false, failed = false): number {
     const pending = this.pendingSeek
     if (!pending) return position
     if (failed && version > pending.baselineVersion) {
       this.pendingSeek = null
       return pending.rollbackPosition
     }
-    if (version > pending.baselineVersion && Math.abs(position - pending.position) <= 0.2) {
+    if (!seekPending && version > pending.baselineVersion && Math.abs(position - pending.position) <= 0.2) {
       this.pendingSeek = null
       return position
     }

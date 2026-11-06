@@ -48,6 +48,7 @@ struct BrowserOutput {
     handle: BrowserPlayback,
     events: Receiver<BrowserEvent>,
     position: f64,
+    pending_seek: Option<f64>,
     duration: f64,
     playing: bool,
     buffering: bool,
@@ -383,6 +384,7 @@ impl Actor {
                     handle,
                     events,
                     position: pending.position,
+                    pending_seek: (pending.position > 0.0).then_some(pending.position),
                     duration,
                     playing: false,
                     buffering: true,
@@ -449,10 +451,17 @@ impl Actor {
                         buffering,
                     } => {
                         if !browser.finished {
-                            browser.position = finite_nonnegative(position);
-                            browser.duration = duration;
+                            let position = finite_nonnegative(position);
+                            let seek_confirmed = browser
+                                .pending_seek
+                                .is_none_or(|target| (position - target).abs() <= 1.5);
+                            if seek_confirmed {
+                                browser.position = position;
+                                browser.duration = duration;
+                                browser.pending_seek = None;
+                                browser.buffering = buffering;
+                            }
                             browser.playing = playing;
-                            browser.buffering = buffering;
                             browser.has_started |= playing && !buffering;
                         }
                     }
@@ -558,6 +567,7 @@ impl Actor {
         if let Some(browser) = self.browser.as_mut() {
             browser.handle.seek(position)?;
             browser.position = position.min(browser.duration).max(0.0);
+            browser.pending_seek = Some(browser.position);
             browser.finished = false;
             browser.buffering = true;
             Ok(())
@@ -1345,6 +1355,9 @@ impl Actor {
     }
 
     fn seek(&mut self, position: f64) -> Result<(), String> {
+        // A later seek starts a fresh attempt; a previous error must not make
+        // the renderer roll back an otherwise successful asynchronous seek.
+        self.current_error = None;
         self.invalidate_continuation();
         self.sample_listening();
         self.sample_fading_listening();
@@ -2123,6 +2136,15 @@ impl Actor {
         }
     }
 
+    fn seek_pending(&self) -> bool {
+        self.pending_start.is_some()
+            || self
+                .browser
+                .as_ref()
+                .is_some_and(|browser| browser.pending_seek.is_some())
+            || self.engine.seek_pending()
+    }
+
     fn preparing(&self) -> bool {
         self.pending_start.is_some()
             || self
@@ -2168,6 +2190,9 @@ impl Actor {
             initialized: self.persisted.initialized,
         };
         let mut value = serde_json::to_value(snapshot).map_err(|error| error.to_string())?;
+        if let Some(object) = value.as_object_mut() {
+            object.insert("seekPending".into(), json!(self.seek_pending()));
+        }
         if let (Some(event), Some(object)) = (self.last_track_change.as_ref(), value.as_object_mut())
         {
             object.insert(
@@ -2231,6 +2256,7 @@ impl Actor {
             "duration": duration,
             "isPlaying": self.pending_start.as_ref().map(|pending| pending.playing).unwrap_or(self.playing_intent || self.transport_is_playing()),
             "buffering": !self.preparing() && self.transport_buffering(),
+            "seekPending": self.seek_pending(),
             "version": self.version,
         });
         let _ = self.app.emit(CLOCK_EVENT, payload);

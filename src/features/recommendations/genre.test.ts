@@ -53,6 +53,36 @@ describe('genre recommendations', () => {
     expect(rankGenreTracks([first, second], 'ambient', taste())).toEqual([first, second])
   })
 
+  it('keeps all matching tracks instead of imposing a one-page shelf cap', () => {
+    const page = Array.from({ length: 60 }, (_, index) => track(`item-${index}`, { genre: 'Ambient' }))
+    expect(rankGenreTracks(page, 'ambient', taste())).toHaveLength(60)
+  })
+
+  it('rejects titles dominated by unsupported scripts while allowing small script fragments', () => {
+    const arabic = track('arabic', { title: 'مرحبا بالعالم', genre: 'Ambient' })
+    const mixed = track('mixed', { title: 'Ambient session 東京', genre: 'Ambient' })
+    const russian = track('russian', { title: 'Вечерний ambient', genre: 'Ambient' })
+
+    expect(rankGenreTracks([arabic, mixed, russian], 'ambient', taste())).toEqual([mixed, russian])
+  })
+
+  it('balances genre results using the regular feed language weights', () => {
+    const profile = taste({ languages: { rus: 0.5, eng: 0.5 }, languageConfidence: 1, unknownShare: 0 })
+    const tracks = [
+      track('ru-1', { title: 'Первый трек', genre: 'Ambient' }),
+      track('ru-2', { title: 'Второй трек', genre: 'Ambient' }),
+      track('ru-3', { title: 'Третий трек', genre: 'Ambient' }),
+      track('ru-4', { title: 'Четвертый трек', genre: 'Ambient' }),
+      track('en-1', { title: 'First track', genre: 'Ambient', tags: ['language: english'] }),
+      track('en-2', { title: 'Second track', genre: 'Ambient', tags: ['language: english'] }),
+      track('en-3', { title: 'Third track', genre: 'Ambient', tags: ['language: english'] }),
+      track('en-4', { title: 'Fourth track', genre: 'Ambient', tags: ['language: english'] }),
+    ]
+
+    const ranked = rankGenreTracks(tracks, 'ambient', profile)
+    expect(ranked.map(item => item.id)).toEqual(['ru-1', 'en-1', 'ru-2', 'en-2', 'ru-3', 'en-3', 'ru-4', 'en-4'])
+  })
+
   it('uses cached Sonara similarity when available and keeps unmeasured tracks with fallback scoring', () => {
     const seed: RecommendationTrack = {
       trackKey: 'soundcloud:seed', source: 'soundcloud', sourceId: 'seed', dbId: null,

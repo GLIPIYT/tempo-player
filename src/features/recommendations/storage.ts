@@ -2,6 +2,7 @@ import { api } from '../../api/client'
 import type { ScTrack } from '../../types/models'
 import type { RecordingIdentity, RecommendationContext, RecommendationSeed } from './types'
 import { RECEIPT_RECENT_LIMIT, RecommendationReceipts, type ReceiptState } from './receipts'
+import { hasSupportedRecommendationTitle } from './title'
 
 export const FEED_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 export const FEED_LIMITS = { candidates: 100, published: 300, seeds: 40, cursors: 2560, seen: 5000, groups: 400, expandedSeeds: 1024, discoveryPool: 120 } as const
@@ -108,7 +109,20 @@ export function hydrateRecommendationState(context: RecommendationContext): Stor
     && (frontier.cursor === null || typeof frontier.cursor === 'string')
     && (frontier.seedId === null || /^\d+$/u.test(frontier.seedId)))) return null
   if (data.radioRecent && (!Array.isArray(data.radioRecent) || data.radioRecent.length > 9 || !data.radioRecent.every(validCandidate))) return null
-  return { ...data, expandedSeedKeys: data.expandedSeedKeys ?? [], revision: stored.revision }
+  const allowed = (item: FeedCandidate) => hasSupportedRecommendationTitle(item.track.title)
+  const sanitize = (items: FeedCandidate[] | undefined) => items?.filter(allowed).map(item => ({
+    ...item,
+    alternates: item.alternates.filter(track => hasSupportedRecommendationTitle(track.title)),
+  }))
+  return {
+    ...data,
+    candidates: sanitize(data.candidates) ?? [],
+    published: sanitize(data.published) ?? [],
+    discoveryPool: sanitize(data.discoveryPool),
+    radioRecent: sanitize(data.radioRecent),
+    expandedSeedKeys: data.expandedSeedKeys ?? [],
+    revision: stored.revision,
+  }
 }
 
 function encode(state: StoredRecommendationState): Record<string, unknown> {

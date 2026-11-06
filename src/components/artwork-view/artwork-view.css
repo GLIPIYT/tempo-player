@@ -4,27 +4,29 @@
   z-index: 200;
   display: grid;
   place-items: center;
-  animation: artwork-view-fade-in 180ms ease-out both;
 }
 
 .artwork-view__backdrop {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--bg) 45%, transparent);
-  backdrop-filter: blur(18px);
+  background: color-mix(in srgb, var(--bg) 32%, transparent);
+  backdrop-filter: blur(26px);
+  animation: artwork-view-fade-in 180ms ease-out both;
 }
 
 .artwork-view__image {
   position: relative;
-  width: min(900px, calc(100vw - 64px), calc(100vh - 96px));
+  width: min(1120px, calc(100vw - 48px), calc(100dvh - 64px));
   aspect-ratio: 1;
   filter: drop-shadow(0 18px 45px rgb(0 0 0 / 45%));
   animation: artwork-view-image-in 220ms ease-out both;
 }
 
 .artwork-view__image .cover {
+  display: block;
   width: 100% !important;
   height: 100% !important;
+  object-fit: contain;
   border-radius: var(--radius-sm);
 }
 
@@ -66,8 +68,14 @@
   to { opacity: 1; transform: scale(1); }
 }
 
+.artwork-view.is-closing .artwork-view__backdrop,
+.artwork-view.is-closing .artwork-view__close { animation: artwork-view-fade-out 140ms ease-in both; }
+.artwork-view.is-closing .artwork-view__image { animation: artwork-view-image-out 140ms ease-in both; }
+@keyframes artwork-view-fade-out { to { opacity: 0; } }
+@keyframes artwork-view-image-out { to { opacity: 0; transform: scale(.97); } }
+
 @media (prefers-reduced-motion: reduce) {
-  .artwork-view,
+  .artwork-view__backdrop,
   .artwork-view__image {
     animation: none;
   }

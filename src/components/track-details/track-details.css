@@ -6,8 +6,15 @@
   justify-content: center;
   align-items: center;
   padding: 24px;
-  background: rgba(0, 0, 0, .48);
-  backdrop-filter: blur(10px);
+  isolation: isolate;
+}
+
+.track-details-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: color-mix(in srgb, var(--bg) 30%, transparent);
+  backdrop-filter: blur(24px);
   animation: track-details-backdrop-in 180ms ease-out both;
 }
 
@@ -15,10 +22,11 @@
   color: var(--text);
 }
 .track-details--compact {
-  width: min(540px, 100%);
+  width: min(600px, 100%);
   max-height: calc(100vh - 48px);
   overflow: auto;
-  background: var(--bg-elevated);
+  background: color-mix(in srgb, var(--bg-elevated) 67%, transparent);
+  backdrop-filter: blur(20px);
   border: 1px solid var(--border);
   border-radius: 20px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, .55);
@@ -55,8 +63,10 @@
 .track-details-heading h2 { margin: 0; font-size: clamp(22px, 3vw, 30px); line-height: 1.12; font-weight: 700; overflow-wrap: anywhere; }
 .track-details-heading p { margin: 9px 0 0; color: var(--text-muted); font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
 .track-details-playback { margin-top: 30px; }
-.track-details-progress { height: 4px; overflow: hidden; border-radius: 9px; background: color-mix(in srgb, var(--text) 15%, transparent); }
-.track-details-progress span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+.track-details-playback .wave { height: 48px; }
+.track-details-playback .wave-bar { background: color-mix(in srgb, var(--text) 20%, transparent); }
+.track-details-playback .wave-accent .wave-bar { background: var(--accent); }
+.track-details-playback .wave:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .track-details-times { display: flex; justify-content: space-between; gap: 12px; margin-top: 8px; color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .track-details--compact .track-details-top { padding: 14px 16px 12px 24px; letter-spacing: 0; }
 .track-details--compact .track-details-main { align-items: stretch; gap: 22px; padding: 2px 24px 24px; }
@@ -71,8 +81,12 @@
 .track-details-expand:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 @keyframes track-details-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes track-details-in { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.track-details-layer.is-closing .track-details-backdrop { animation: track-details-out 140ms ease-in both; }
+.track-details-layer.is-closing .track-details { animation: track-details-dialog-out 140ms ease-in both; }
+@keyframes track-details-out { to { opacity: 0; } }
+@keyframes track-details-dialog-out { to { opacity: 0; transform: translateY(6px) scale(.98); } }
 @media (prefers-reduced-motion: reduce) {
-  .track-details-layer, .track-details--compact { animation: none; }
+  .track-details-backdrop, .track-details--compact { animation: none; }
 }
 @media (max-width: 560px) {
   .track-details-layer { padding: 12px; }

@@ -85,7 +85,7 @@ function CurrentPage() {
     case 'yt-collection':
       return <YtCollectionPage key={`${view.kind}:${view.id}`} kind={view.kind} id={view.id} />
     case 'track-details':
-      return <TrackDetailPage track={view.track} onBack={() => navigate(view.previous)} />
+      return <TrackDetailPage key={`${view.track.source}:${view.track.sourceId}`} track={view.track} onBack={() => navigate(view.previous)} />
   }
 }
 

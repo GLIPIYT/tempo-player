@@ -31,6 +31,7 @@ import { fmtTime } from '../../utils/format'
 import { trackToUnified } from '../../utils/unified'
 import { toast } from '../common/Toast'
 import Cover from '../common/Cover'
+import ArtistLinks from '../common/ArtistLinks'
 import { Spinner } from '../common/ScArtwork'
 import WaveProgress from '../common/WaveProgress'
 import QueuePanel from './QueuePanel'
@@ -317,7 +318,7 @@ function PlayerBarContent() {
                     {p.currentTrack.resolving ? (
                       <Spinner size={10} />
                     ) : (
-                      p.currentTrack.artists.join(', ') || t('Unknown artist')
+                      <ArtistLinks track={p.currentTrack} onNavigate={lyrics.closeLyrics} />
                     )}
                   </span>
                 )}

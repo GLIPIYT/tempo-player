@@ -525,27 +525,95 @@ fn genre_search_url(genre: &str, limit: u32, filtered: bool) -> reqwest::Url {
 
 fn cached_genre_page(data: serde_json::Value) -> Option<ScRelatedPage> {
     let page = serde_json::from_value::<ScRelatedPage>(data).ok()?;
-    (page.source == "genre" && page.error.is_none() && page.retry_at.is_none() && !page.tracks.is_empty())
+    (page.source == "genre" && page.error.is_none() && page.retry_at.is_none()
+        && (!page.tracks.is_empty() || page.next_cursor.is_some()))
         .then_some(page)
 }
 
-async fn genre_search_tracks(genre: &str, limit: u32) -> Result<Vec<ScTrack>, RecommendationFailure> {
-    let filtered_url = genre_search_url(genre, limit, true);
-    match recommendation_json(filtered_url).await {
+fn genre_recommendation_cursor(raw: &str, genre: &str) -> Result<reqwest::Url, String> {
+    if raw.len() > 2048 { return Err("Oversized SoundCloud cursor".into()); }
+    let mut url = reqwest::Url::parse(raw).map_err(|_| "Invalid SoundCloud cursor")?;
+    if url.scheme() != "https" || url.host_str() != Some("api-v2.soundcloud.com")
+        || url.port().is_some() || !url.username().is_empty() || url.password().is_some()
+        || url.fragment().is_some() || url.path() != "/search/tracks" {
+        return Err("Unexpected SoundCloud genre cursor endpoint".into());
+    }
+    let mut pairs = Vec::new();
+    let mut keys = HashSet::new();
+    let mut saw_query = false;
+    for (key, value) in url.query_pairs() {
+        if key == "client_id" { continue; }
+        if !matches!(key.as_ref(), "q" | "filter.genre_or_tag" | "access" | "limit" | "linked_partitioning" | "offset" | "cursor")
+            || !keys.insert(key.to_string()) {
+            return Err("Unexpected SoundCloud genre cursor parameter".into());
+        }
+        match key.as_ref() {
+            "q" if value.eq_ignore_ascii_case(genre) => saw_query = true,
+            "q" => return Err("SoundCloud genre cursor query changed".into()),
+            "filter.genre_or_tag" if value.eq_ignore_ascii_case(genre) => {},
+            "filter.genre_or_tag" => return Err("SoundCloud genre cursor filter changed".into()),
+            "access" if value == "playable" => {},
+            "access" => return Err("SoundCloud genre cursor access changed".into()),
+            "limit" if value.parse::<u32>().is_ok_and(|limit| (1..=50).contains(&limit)) => {},
+            "limit" => return Err("Invalid SoundCloud genre cursor limit".into()),
+            "linked_partitioning" if value == "true" => {},
+            "linked_partitioning" => return Err("Invalid SoundCloud genre cursor pagination".into()),
+            "offset" | "cursor" if !value.is_empty() && value.len() <= 1024 => {},
+            "offset" | "cursor" => return Err("Invalid SoundCloud genre cursor position".into()),
+            _ => unreachable!(),
+        }
+        pairs.push((key.into_owned(), value.into_owned()));
+    }
+    if !saw_query { return Err("SoundCloud genre cursor query is missing".into()); }
+    pairs.sort();
+    url.set_query(None);
+    url.query_pairs_mut().extend_pairs(pairs);
+    Ok(url)
+}
+
+fn genre_page_next_cursor(value: &Value, current_url: &reqwest::Url, genre: &str) -> Result<Option<String>, String> {
+    let Some(raw) = value.get("next_href").and_then(Value::as_str).filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let next = genre_recommendation_cursor(raw, genre)?;
+    let current = genre_recommendation_cursor(current_url.as_str(), genre)?;
+    if next == current { return Err("SoundCloud genre cursor loop".into()); }
+    Ok(Some(next.to_string()))
+}
+
+async fn genre_search_tracks(
+    genre: &str, cursor: Option<&str>, limit: u32,
+) -> Result<(Vec<ScTrack>, Option<String>), RecommendationFailure> {
+    let initial_filtered = genre_search_url(genre, limit, true);
+    let requested_url = cursor
+        .map(|cursor| genre_recommendation_cursor(cursor, genre).map_err(RecommendationFailure::new))
+        .transpose()?
+        .unwrap_or_else(|| initial_filtered.clone());
+    match recommendation_json(requested_url.clone()).await {
         Ok(value) => {
             let tracks: Vec<_> = tracks_from_response(&value).into_iter()
                 .filter(|track| matches_genre(track, genre)).take(limit as usize).collect();
-            if !tracks.is_empty() { return Ok(tracks); }
+            let next = genre_page_next_cursor(&value, &requested_url, genre)
+                .map_err(RecommendationFailure::new)?;
+            if !tracks.is_empty() || cursor.is_some() { return Ok((tracks, next)); }
             // Retry without the provider filter only when it yields no verified
             // matches. Exact genre/tag validation prevents broad matches leaking.
-            let fallback = recommendation_json(genre_search_url(genre, limit, false)).await?;
-            Ok(tracks_from_response(&fallback).into_iter()
-                .filter(|track| matches_genre(track, genre)).take(limit as usize).collect())
+            let fallback_url = genre_search_url(genre, limit, false);
+            let fallback = recommendation_json(fallback_url.clone()).await?;
+            let tracks = tracks_from_response(&fallback).into_iter()
+                .filter(|track| matches_genre(track, genre)).take(limit as usize).collect();
+            let next = genre_page_next_cursor(&fallback, &fallback_url, genre)
+                .map_err(RecommendationFailure::new)?;
+            Ok((tracks, next))
         }
-        Err(failure) if matches!(failure.status, Some(400 | 404)) => {
-            let fallback = recommendation_json(genre_search_url(genre, limit, false)).await?;
-            Ok(tracks_from_response(&fallback).into_iter()
-                .filter(|track| matches_genre(track, genre)).take(limit as usize).collect())
+        Err(failure) if cursor.is_none() && matches!(failure.status, Some(400 | 404)) => {
+            let fallback_url = genre_search_url(genre, limit, false);
+            let fallback = recommendation_json(fallback_url.clone()).await?;
+            let tracks = tracks_from_response(&fallback).into_iter()
+                .filter(|track| matches_genre(track, genre)).take(limit as usize).collect();
+            let next = genre_page_next_cursor(&fallback, &fallback_url, genre)
+                .map_err(RecommendationFailure::new)?;
+            Ok((tracks, next))
         }
         Err(failure) => Err(failure),
     }
@@ -711,16 +779,20 @@ pub async fn sc_recommendation_search(
 /// keeps this shelf from inheriting the main feed's seeds or candidates.
 #[tauri::command]
 pub async fn sc_recommendation_genre_search(
-    state: tauri::State<'_, crate::commands::AppState>, genre: String, limit: u32,
+    state: tauri::State<'_, crate::commands::AppState>, genre: String, cursor: Option<String>, limit: u32,
 ) -> Result<ScRelatedPage, String> {
     let genre = genre.trim();
     if genre.is_empty() || genre.len() > 96 || genre.chars().any(char::is_control) {
         return Err("Invalid SoundCloud genre".into());
     }
     let limit = limit.clamp(1, 50);
-    let cache_key = format!("sc-genre:v4:{}:{limit}", genre.to_lowercase());
+    let cache_key = format!("sc-genre:v5:{}:{limit}:{}", genre.to_lowercase(), cursor.as_deref().unwrap_or("first"));
     if let Some(cached) = crate::recommendation_store::page(&state.db, &cache_key)? {
-        if let Some(page) = cached_genre_page(cached.data) { return Ok(page); }
+        if let Some(page) = cached_genre_page(cached.data) {
+            if page.next_cursor.as_deref().is_none_or(|next| genre_recommendation_cursor(next, genre).is_ok()) {
+                return Ok(page);
+            }
+        }
     }
     let saved = state.db.get_app_setting("recommendation_provider_retry_at")?
         .and_then(|value| value.parse::<i64>().ok()).unwrap_or(0);
@@ -730,8 +802,11 @@ pub async fn sc_recommendation_genre_search(
     }
     let mut result = ScRelatedPage { tracks: Vec::new(), next_cursor: None, source: "genre".into(),
         retry_at: None, error: None, status: None, failed_endpoint: None };
-    match genre_search_tracks(genre, limit).await {
-        Ok(tracks) => result.tracks = tracks,
+    match genre_search_tracks(genre, cursor.as_deref(), limit).await {
+        Ok((tracks, next_cursor)) => {
+            result.tracks = tracks;
+            result.next_cursor = next_cursor;
+        }
         Err(failure) => {
             result.retry_at = failure.retry_at;
             result.status = failure.status;
@@ -742,7 +817,7 @@ pub async fn sc_recommendation_genre_search(
     if let Some(retry_at) = result.retry_at {
         state.db.set_app_setting("recommendation_provider_retry_at", &retry_at.to_string())?;
     }
-    if result.error.is_none() && !result.tracks.is_empty() {
+    if result.error.is_none() && (!result.tracks.is_empty() || result.next_cursor.is_some()) {
         crate::recommendation_store::save_page(&state.db, crate::recommendation_store::ProviderPage {
             key: cache_key, fetched_at: now_ms(), data: serde_json::to_value(&result).map_err(|e| e.to_string())?,
         })?;
@@ -1513,6 +1588,34 @@ mod tests {
         assert!(cached_genre_page(serde_json::to_value(&page).unwrap()).is_none());
         page.tracks.push(genre_test_track(Some("house"), &[]));
         page.error = Some("provider failed".into());
+        assert!(cached_genre_page(serde_json::to_value(&page).unwrap()).is_none());
+    }
+
+    #[test]
+    fn genre_cursor_keeps_search_endpoint_and_rejects_changed_queries() {
+        let raw = "https://api-v2.soundcloud.com/search/tracks?q=deep%20house&access=playable&limit=50&linked_partitioning=true&filter.genre_or_tag=deep%20house&offset=50&client_id=discard-me";
+        let cursor = genre_recommendation_cursor(raw, "deep house").unwrap();
+        let params: HashMap<_, _> = cursor.query_pairs().map(|(key, value)| (key.into_owned(), value.into_owned())).collect();
+        assert_eq!(cursor.path(), "/search/tracks");
+        assert_eq!(params.get("q").map(String::as_str), Some("deep house"));
+        assert_eq!(params.get("filter.genre_or_tag").map(String::as_str), Some("deep house"));
+        assert!(!params.contains_key("client_id"));
+        assert!(genre_recommendation_cursor(raw, "ambient").is_err());
+        assert!(genre_recommendation_cursor("https://example.com/search/tracks?q=deep%20house", "deep house").is_err());
+    }
+
+    #[test]
+    fn genre_pages_allow_empty_continuations_but_stop_at_cursor_loops() {
+        let mut page = ScRelatedPage { tracks: Vec::new(), next_cursor: Some(
+            "https://api-v2.soundcloud.com/search/tracks?q=house&access=playable&offset=50".into()),
+            source: "genre".into(), retry_at: None, error: None, status: None, failed_endpoint: None };
+        assert!(cached_genre_page(serde_json::to_value(&page).unwrap()).is_some());
+
+        let url = genre_search_url("house", 50, false);
+        let same = serde_json::json!({ "next_href": url.as_str() });
+        assert!(genre_page_next_cursor(&same, &url, "house").is_err());
+
+        page.next_cursor = None;
         assert!(cached_genre_page(serde_json::to_value(&page).unwrap()).is_none());
     }
 

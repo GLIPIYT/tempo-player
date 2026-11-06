@@ -1123,6 +1123,11 @@ impl PositionClock {
             + self.frames.load(Ordering::Acquire) as f64 / self.sample_rate as f64
     }
 
+    pub fn seek_pending(&self) -> bool {
+        self.seek_generation.load(Ordering::Acquire)
+            != self.handled_seek_generation.load(Ordering::Acquire)
+    }
+
     pub fn request_seek(&self, position: f64) {
         self.seek_target_bits
             .store(position.max(0.0).to_bits(), Ordering::Release);

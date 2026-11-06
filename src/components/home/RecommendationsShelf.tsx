@@ -55,13 +55,22 @@ export default function RecommendationsShelf({
   onSectionMenu,
 }: RecommendationsShelfProps) {
   const t = useT()
-  const genreRecommendations = useSoundCloudGenreRecommendations(favoriteGenre, tracks)
+  const {
+    tracks: favoriteGenreTracks,
+    cachedTrackIds: genreCachedIds,
+    loading: genreLoading,
+    error: genreError,
+    hasMore: genreHasMore,
+    loadMore: loadMoreGenre,
+    retry: retryGenre,
+  } = useSoundCloudGenreRecommendations(favoriteGenre, tracks)
   const cacheProgresses = useSyncExternalStore(subscribeCacheJobs, getTrackCacheProgresses, getTrackCacheProgresses)
-  const favoriteGenreTracks = genreRecommendations.tracks
-  const genreCachedTrackIds = new Set([...cachedTrackIds, ...genreRecommendations.cachedTrackIds])
+  const genreCachedTrackIds = new Set([...cachedTrackIds, ...genreCachedIds])
   const sectionRef = useRef<HTMLElement>(null)
   const railRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLSpanElement>(null)
+  const genreRailRef = useRef<HTMLDivElement>(null)
+  const genreEndRef = useRef<HTMLSpanElement>(null)
   const trimAnchor = useRef<{ id: string; left: number; scroll: number } | null>(null)
   const [now, setNow] = useState(Date.now)
   const coolingDown = retryAt !== null && retryAt > now
@@ -98,6 +107,17 @@ export default function RecommendationsShelf({
     observer.observe(end)
     return () => observer.disconnect()
   }, [tracks, hasMore, loading, error, coolingDown, onLoadMore])
+
+  useEffect(() => {
+    const rail = genreRailRef.current, end = genreEndRef.current
+    if (!rail || !end || !genreHasMore || genreLoading || genreError
+      || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) loadMoreGenre()
+    }, { root: rail, rootMargin: '0px 300px', threshold: 0 })
+    observer.observe(end)
+    return () => observer.disconnect()
+  }, [favoriteGenreTracks, genreHasMore, genreLoading, genreError, loadMoreGenre])
 
   useEffect(() => {
     const section = sectionRef.current, rail = railRef.current
@@ -302,26 +322,34 @@ export default function RecommendationsShelf({
                   {t('Play all')}
                 </button>
               ) : null}
-              {genreRecommendations.error ? (
-                <button type="button" className="btn btn-ghost" onClick={genreRecommendations.retry} disabled={genreRecommendations.loading}>
+              {genreError ? (
+                <button type="button" className="btn btn-ghost" onClick={retryGenre} disabled={genreLoading}>
                   <RefreshCw size={14} />
                   {t('Try again')}
                 </button>
               ) : null}
             </div>
           </div>
-          {genreRecommendations.loading && favoriteGenreTracks.length === 0 ? (
+          {genreLoading && favoriteGenreTracks.length === 0 ? (
             <div className="home-recommendation-skeletons" role="status" aria-label={t('Loading…')}>
               {Array.from({ length: 5 }, (_, index) => <span className="home-recommendation-skeleton" key={index} />)}
             </div>
           ) : favoriteGenreTracks.length > 0 ? (
-            <div className="home-track-rail home-recommendation-rail" tabIndex={0} aria-label={`${favoriteGenre.label} · ${t('Recommended for you')}`}>
+            <div className="home-track-rail home-recommendation-rail" ref={genreRailRef} tabIndex={0} aria-label={`${favoriteGenre.label} · ${t('Recommended for you')}`}>
               {renderCards(favoriteGenreTracks, (index) => onPlayFavoriteGenre(favoriteGenreTracks, index), genreCachedTrackIds)}
+              <span ref={genreEndRef} aria-hidden="true" style={{ flex: '0 0 1px', alignSelf: 'stretch' }} />
             </div>
-          ) : genreRecommendations.error ? (
-            <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}: {genreRecommendations.error}</div>
+          ) : genreError ? (
+            <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}: {genreError}</div>
           ) : (
-            <div className="home-recommendation-empty" role="status">{t('No recommendations yet')}</div>
+            <div className="home-recommendation-empty" role="status">
+              {genreLoading ? t('Loading…') : t('No recommendations yet')}
+              {genreHasMore && !genreLoading ? (
+                <button type="button" className="btn btn-ghost" onClick={loadMoreGenre}>
+                  {t('Continue with recommendations')}
+                </button>
+              ) : null}
+            </div>
           )}
         </div>
       ) : null}

@@ -1,8 +1,9 @@
 import type { ScTrack } from '../../types/models'
 import { canPlaySoundCloudTrack } from '../../soundcloud/playability'
 import { normalizeRecordingText, recordingIdentity } from './identity'
-import { candidateScore, type TasteProfile } from './profile'
+import { candidateScore, rebalanceCandidateLanguages, type TasteProfile } from './profile'
 import type { FeedCandidate } from './storage'
+import { hasSupportedRecommendationTitle } from './title'
 
 function normalizeGenreTag(value: string): string {
   const withoutPrefix = value.replace(/^\s*#+/u, '').replace(/^\s*(?:genre|tag)\s*:\s*/iu, '').replace(/^\s*#+/u, '')
@@ -32,16 +33,27 @@ export function rankGenreTracks(
   candidates: readonly ScTrack[],
   genreKey: string,
   profile: TasteProfile | null = null,
-  limit = 40,
+  limit = Number.POSITIVE_INFINITY,
 ): ScTrack[] {
   const seen = new Set<string>()
   const relevant = candidates.filter(track => {
-    if (!canPlaySoundCloudTrack(track) || !matchesFavoriteGenre(track, genreKey) || seen.has(track.id)) return false
+    if (!canPlaySoundCloudTrack(track) || !hasSupportedRecommendationTitle(track.title)
+      || !matchesFavoriteGenre(track, genreKey) || seen.has(track.id)) return false
     seen.add(track.id)
     return true
   })
-  return relevant.map((track, index) => ({ track, index, score: genreTrackScore(track, profile) }))
+  const ordered = relevant.map((track, index) => {
+    const candidate = createCandidate(track, profile)
+    return { candidate, index, score: profile ? candidateScore(candidate, profile) : 0 }
+  })
     .sort((left, right) => right.score - left.score || left.index - right.index)
-    .slice(0, Math.max(0, Math.floor(limit)))
-    .map(item => item.track)
+  const ranked = ordered.map(item => item.candidate)
+  const balanced = profile ? rebalanceCandidateLanguages(ranked, profile) : ranked
+  const end = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : balanced.length
+  return balanced.slice(0, end).map(item => item.track)
+}
+
+function createCandidate(track: ScTrack, profile: TasteProfile | null): FeedCandidate {
+  const identity = recordingIdentity(track, Object.keys(profile?.artists ?? {}))
+  return { track, identity, groupKey: identity.groupKey, seedTrackKey: '', cursor: null, alternates: [], addedAt: 0 }
 }

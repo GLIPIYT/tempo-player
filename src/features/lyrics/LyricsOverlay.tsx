@@ -8,6 +8,7 @@ import { getNativePlayerController, isNativePlayback } from '../../player/native
 import { useT } from '../../i18n'
 import { useSettings, type LyricProgressDirection } from '../../state/settings'
 import Cover from '../../components/common/Cover'
+import ArtistLinks from '../../components/common/ArtistLinks'
 import { fmtTime } from '../../utils/format'
 import { api } from '../../api/client'
 import dancingCat from '../../assets/companions/dancing-cat.gif'
@@ -1748,7 +1749,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
             ) : null}
           </div>
           <h2 className="lyr-title">{track ? <button type="button" className="lyr-title-button" onClick={onTrackDetails}>{track.title}</button> : t('Nothing playing')}</h2>
-          <p className="lyr-artists">{track ? track.artists.join(', ') || t('Unknown artist') : t('Unknown artist')}</p>
+          <p className="lyr-artists">{track ? <ArtistLinks track={track} onNavigate={onClose} /> : t('Unknown artist')}</p>
           <SideTimeline />
           <div className="lyr-controls">
             <button className="lyr-skip" onClick={p.previous} aria-label={t('Previous')}>

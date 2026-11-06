@@ -542,6 +542,13 @@ impl OutputEngine {
             .unwrap_or(0.0)
     }
 
+    /// A seek clock is provisional until the audio callback applies it.
+    pub fn seek_pending(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|track| track.clock.seek_pending())
+    }
+
     pub fn duration(&self) -> Option<f64> {
         self.active
             .as_ref()
