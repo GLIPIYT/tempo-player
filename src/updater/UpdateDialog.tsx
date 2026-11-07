@@ -15,7 +15,8 @@ import {
 } from './service'
 import { compareVersions } from './version'
 import ReleaseNotes from './ReleaseNotes'
-import { releaseType, RELEASE_TYPE_LABELS } from './releaseType'
+import { releaseType } from './releaseType'
+import ReleaseTypeBadge from './ReleaseTypeBadge'
 
 interface Props {
   releases: ReleaseInfo[]
@@ -239,7 +240,7 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
                 >
                   <span className="update-version-choice-main">
                     <strong>{item.version}</strong>
-                    {kind && <span className={`update-release-kind is-${kind}`}>{t(RELEASE_TYPE_LABELS[kind])}</span>}
+                    {kind && <ReleaseTypeBadge type={kind} />}
                     {latest ? <span className="update-version-badge is-latest">{t('Latest')}</span> : null}
                     {current ? <span className="update-version-badge">{t('Installed')}</span> : null}
                   </span>
@@ -256,7 +257,7 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
             <div className="update-head">
               <div className="update-version-heading">
                 <span className="update-version">{release.name || release.tag}</span>
-                {selectedType && <span className={`update-release-kind is-${selectedType}`}>{t(RELEASE_TYPE_LABELS[selectedType])}</span>}
+                {selectedType && <ReleaseTypeBadge type={selectedType} />}
               </div>
               {release.assetSize ? <span className="muted update-size">{formatBytes(release.assetSize)}</span> : null}
               {isInstalled ? (

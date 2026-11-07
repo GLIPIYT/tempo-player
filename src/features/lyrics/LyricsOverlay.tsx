@@ -334,7 +334,7 @@ export function SyncedView({
       const tokens = [...text.querySelectorAll<HTMLElement>('[data-lyric-token]')]
       wordsRef.current = {
         elements: tokens.filter(token => token.dataset.lyricToken === 'word'),
-        starts: wordStartsFromWidths(tokens.map(token => ({ width: token.getBoundingClientRect().width, word: token.dataset.lyricToken === 'word' }))),
+        starts: wordStartsFromWidths(tokens.map(token => ({ width: token.offsetWidth, word: token.dataset.lyricToken === 'word' }))),
         current: -2,
       }
     }

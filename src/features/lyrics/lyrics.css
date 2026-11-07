@@ -1112,10 +1112,20 @@
   -webkit-text-fill-color: currentColor;
   text-shadow: none;
 }
-.lyr-line.is-active .lyr-word { opacity: .38; }
-.lyr-line.is-active .lyr-word.is-filled { opacity: .68; }
+.lyr-word {
+  display: inline-block;
+  transform: scale(1);
+  transform-origin: center 65%;
+  transition:
+    opacity min(120ms, var(--lyr-line-duration, 120ms)) ease,
+    transform min(140ms, var(--lyr-line-duration, 140ms)) cubic-bezier(.16,.7,.3,1),
+    text-shadow min(140ms, var(--lyr-line-duration, 140ms)) ease;
+}
+.lyr-line.is-active .lyr-word { opacity: .34; }
+.lyr-line.is-active .lyr-word.is-filled { opacity: .82; }
 .lyr-line.is-active .lyr-word.is-current-word {
   opacity: 1;
+  transform: scale(1.06);
   text-shadow: 0 0 8px #ffffff50, 0 0 18px color-mix(in srgb, var(--accent) 72%, transparent);
 }
 
@@ -1197,6 +1207,7 @@
   .lyr-notes-row,
   .lyr-line,
   .lyr-line-text,
+  .lyr-word,
   .lyr-track {
     transition: none;
   }

@@ -4569,6 +4569,7 @@ html.has-bg .app-content {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
+  gap: 4px;
   padding: 2px 6px;
   border: 1px solid color-mix(in srgb, var(--release-kind-color) 60%, transparent);
   border-radius: 999px;
@@ -4587,6 +4588,29 @@ html.has-bg .app-content {
   text-shadow: 0 0 7px #ffdc8390;
   box-shadow: 0 0 10px #efc34d18;
 }
+.update-release-kind > svg { flex: none; }
+.update-release-kind-label { position: relative; }
+.update-release-kind-particles { position: absolute; inset: 0; pointer-events: none; }
+.update-release-kind-particles i {
+  position: absolute;
+  top: 45%;
+  left: 18%;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 3px #ffffff70;
+  opacity: 0;
+  animation: release-kind-spark 12s linear 2.2s infinite;
+}
+.update-release-kind-particles i:nth-child(2) { left: 60%; top: 30%; animation-delay: 6.6s; }
+.update-release-kind-particles i:nth-child(3) { left: 85%; top: 60%; animation-delay: 10.4s; }
+@keyframes release-kind-spark {
+  0% { opacity: 0; transform: translate3d(0, 0, 0) scale(.7); }
+  2% { opacity: .8; }
+  9%, 100% { opacity: 0; transform: translate3d(4px, -13px, 0) scale(.35); }
+}
+@media (prefers-reduced-motion: reduce) { .update-release-kind-particles { display: none; } }
 .update-confetti i:nth-child(3n) { border-radius: 50%; }
 .update-confetti.is-active i { animation: update-confetti-fall var(--confetti-duration) cubic-bezier(.18,.4,.5,1) var(--confetti-delay) both; }
 @keyframes update-confetti-fall {
