@@ -3,8 +3,7 @@ import { api } from '../api/client'
 import { libraryVersion } from '../utils/libraryVersion'
 import type { ScTrack } from '../types/models'
 import { buildTasteProfile, type TasteProfile } from '../features/recommendations/profile'
-import { rankGenreTracks } from '../features/recommendations/genre'
-import { refillGenreRecommendations } from '../features/recommendations/genreFeed'
+import { genreShelfTracks, refillGenreRecommendations } from '../features/recommendations/genreFeed'
 import { recommendationLanguagePreference, recommendationService } from '../features/recommendations/service'
 
 interface FavoriteGenre {
@@ -25,6 +24,7 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, f
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
+  const [loadedGenreKey, setLoadedGenreKey] = useState<string | null>(null)
   const [retryVersion, setRetryVersion] = useState(0)
   const providerTracksRef = useRef<ScTrack[]>([])
   const profileRef = useRef<TasteProfile | null>(null)
@@ -50,6 +50,7 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, f
         startCursor,
         fillTarget: FILL_TARGET,
         pageBudget: PAGE_BUDGET,
+        minimumPages: startCursor === null ? 3 : 1,
         fetchPage: (cursor) => api.scRecommendationGenreSearch(genreLabel, cursor, PAGE_SIZE),
         isCurrent: () => generation === generationRef.current,
         onAppend: async (merged, appended) => {
@@ -75,16 +76,10 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, f
       if (generation === generationRef.current) {
         loadingRef.current = false
         setLoading(false)
+        setLoadedGenreKey(genreKey)
       }
     }
   }, [genreKey, genreLabel])
-
-  useEffect(() => {
-    if (!providerTracksRef.current.length) return
-    const balanced = rankGenreTracks(providerTracksRef.current, genreKey ?? '', profile)
-    providerTracksRef.current = balanced
-    setProviderTracks(balanced)
-  }, [profile, genreKey])
 
   useEffect(() => {
     const generation = generationRef.current + 1
@@ -99,6 +94,7 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, f
     setProfile(null)
     setCachedTrackIds(new Set())
     setHasMore(false)
+    setLoadedGenreKey(null)
     setLoading(Boolean(genreKey && genreLabel))
     setError(null)
 
@@ -140,10 +136,9 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, f
   }, [genreKey])
 
   const tracks = useMemo(() => {
-    return providerTracks.length > 0
-      ? providerTracks
-      : rankGenreTracks(fallbackCandidates, genreKey ?? '', profile)
-  }, [providerTracks, fallbackCandidates, genreKey, profile])
+    if (loadedGenreKey !== genreKey) return []
+    return genreShelfTracks(providerTracks, fallbackCandidates, genreKey ?? '', profile, error)
+  }, [loadedGenreKey, providerTracks, fallbackCandidates, genreKey, profile, error])
 
   useEffect(() => {
     if (tracks.length === 0) return
@@ -172,5 +167,6 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, f
     void loadPages(cursor, generationRef.current)
   }, [hasMore, loadPages])
   const retry = useCallback(() => setRetryVersion(version => version + 1), [])
-  return { tracks, cachedTrackIds, loading, error, hasMore, loadMore, retry }
+  const waitingForFirstResult = genreKey !== null && loadedGenreKey !== genreKey
+  return { tracks, cachedTrackIds, loading: loading || waitingForFirstResult, error, hasMore, loadMore, retry }
 }

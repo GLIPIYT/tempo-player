@@ -34,6 +34,7 @@ export function rankGenreTracks(
   genreKey: string,
   profile: TasteProfile | null = null,
   limit = Number.POSITIVE_INFINITY,
+  random?: () => number,
 ): ScTrack[] {
   const seen = new Set<string>()
   const relevant = candidates.filter(track => {
@@ -47,10 +48,35 @@ export function rankGenreTracks(
     return { candidate, index, score: profile ? candidateScore(candidate, profile) : 0 }
   })
     .sort((left, right) => right.score - left.score || left.index - right.index)
+  if (random) shuffleNearScoreTies(ordered, random)
   const ranked = ordered.map(item => item.candidate)
   const balanced = profile ? rebalanceCandidateLanguages(ranked, profile) : ranked
   const end = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : balanced.length
   return balanced.slice(0, end).map(item => item.track)
+}
+
+/** Add order variety among near-equal tracks while keeping stronger matches ahead. */
+function shuffleNearScoreTies(
+  ordered: { candidate: FeedCandidate; index: number; score: number }[],
+  random: () => number,
+): void {
+  const SCORE_BAND = 0.05
+  let start = 0
+  while (start < ordered.length) {
+    const floor = ordered[start].score - SCORE_BAND
+    let end = start + 1
+    while (end < ordered.length && ordered[end].score >= floor) end += 1
+
+    for (let index = end - 1; index > start; index -= 1) {
+      const sample = random()
+      const normalized = Number.isFinite(sample) ? Math.min(0.999999999, Math.max(0, sample)) : 0
+      const swap = start + Math.floor(normalized * (index - start + 1))
+      const current = ordered[index]
+      ordered[index] = ordered[swap]
+      ordered[swap] = current
+    }
+    start = end
+  }
 }
 
 function createCandidate(track: ScTrack, profile: TasteProfile | null): FeedCandidate {

@@ -7,7 +7,6 @@ import Cover from '../components/common/Cover'
 import WaveProgress from '../components/common/WaveProgress'
 import { useT } from '../i18n'
 import { usePlayer } from '../player'
-import { playerController } from '../player/controller'
 import { useDisplayPosition } from '../player/useDisplayPosition'
 import type { UnifiedTrack } from '../types/models'
 import { fmtTime } from '../utils/format'
@@ -45,12 +44,18 @@ export default function TrackDetailPage({ track, onBack }: { track: UnifiedTrack
   const t = useT()
   const player = usePlayer()
   const displayPosition = useDisplayPosition(player)
-  const [selected, setSelected] = useState(track)
-  const [previous, setPrevious] = useState<UnifiedTrack | null>(null)
+  const [transition, setTransition] = useState<{ selected: UnifiedTrack; previous: UnifiedTrack | null }>({
+    selected: player.currentTrack ?? track, previous: null,
+  })
+  const { selected, previous } = transition
   const [artworkOpen, setArtworkOpen] = useState(false)
-  const following = useRef(trackKey(player.currentTrack) === trackKey(track))
-  const selectedRef = useRef(selected)
-  selectedRef.current = selected
+  const displayed = useRef(selected)
+  const current = player.currentTrack
+  // Synchronize before committing the render. Transitions follow the player
+  // snapshot for every navigation path, including manual skips and restoration.
+  if (current && trackKey(current) !== trackKey(selected)) {
+    setTransition({ selected: current, previous: displayed.current })
+  }
   const nextArtwork = player.queue?.[player.queueIndex + 1]?.coverPath
 
   useEffect(() => {
@@ -60,24 +65,16 @@ export default function TrackDetailPage({ track, onBack }: { track: UnifiedTrack
   }, [nextArtwork])
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const unsubscribe = playerController.subscribeTrackChange(event => {
-      if (!following.current) return
-      if (event.trackKey === trackKey(selectedRef.current)) return
-      if (event.reason !== 'natural-end') { following.current = false; return }
-      const next = playerController.getSnapshot().currentTrack
-      if (!next || trackKey(next) === trackKey(selectedRef.current)) return
-      setPrevious(selectedRef.current)
-      setSelected(next)
-      if (timer) clearTimeout(timer)
-      timer = setTimeout(() => setPrevious(null), 480)
-    })
-    return () => { unsubscribe(); if (timer) clearTimeout(timer) }
-  }, [])
+    if (!previous) return
+    const timer = setTimeout(() => {
+      setTransition(value => value.selected === selected ? { selected: value.selected, previous: null } : value)
+    }, 480)
+    return () => clearTimeout(timer)
+  }, [selected, previous])
 
-  const current = player.currentTrack
   const isCurrent = trackKey(current) === trackKey(selected)
   const details = isCurrent && current ? current : selected
+  displayed.current = details
   const duration = isCurrent && Number.isFinite(player.duration) && player.duration > 0 ? player.duration : details.durationSec
   const hasDuration = duration != null && Number.isFinite(duration) && duration > 0
   const position = isCurrent && Number.isFinite(displayPosition) ? Math.max(0, Math.min(displayPosition, duration ?? 0)) : 0

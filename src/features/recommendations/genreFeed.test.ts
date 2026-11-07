@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ScTrack } from '../../types/models'
 import type { TasteProfile } from './profile'
-import { refillGenreRecommendations } from './genreFeed'
+import { genreShelfTracks, refillGenreRecommendations } from './genreFeed'
 
 const track = (id: string, genre = 'Ambient', title = `Track ${id}`): ScTrack => ({
   id,
@@ -38,7 +38,7 @@ describe('genre recommendation refill', () => {
     const result = await refillGenreRecommendations({
       genreKey: 'ambient', profile: profile(), tracks: [],
       loadedTrackIds: new Set(), seenCursors: new Set(), startCursor: null,
-      fillTarget: 24, pageBudget: 6,
+      fillTarget: 24, pageBudget: 6, minimumPages: 3,
       fetchPage: async cursor => {
         requested.push(cursor)
         const page = pages.get(cursor)
@@ -50,7 +50,7 @@ describe('genre recommendation refill', () => {
     })
 
     expect(requested).toEqual([null, 'cursor-1', 'cursor-2'])
-    expect(appendedCounts).toEqual([1, 23])
+    expect(appendedCounts).toEqual([24])
     expect(result.tracks).toHaveLength(24)
     expect(result.tracks.map(item => item.id)).not.toContain('unsupported')
     expect(result.pages).toBe(3)
@@ -91,5 +91,64 @@ describe('genre recommendation refill', () => {
 
     expect(retry.tracks.map(item => item.id)).toEqual(['first', 'second'])
     expect(lastCursor).toBeNull()
+  })
+
+  it('fetches at least three initial pages and shuffles one combined batch without moving its later prefix', async () => {
+    const firstPage = Array.from({ length: 24 }, (_, index) => track(`first-${index}`))
+    const pages = new Map([
+      [null, { tracks: firstPage, nextCursor: 'cursor-1' }],
+      ['cursor-1', { tracks: [track('second-1'), track('second-2')], nextCursor: 'cursor-2' }],
+      ['cursor-2', { tracks: [track('third-1'), track('third-2')], nextCursor: 'cursor-3' }],
+      ['cursor-3', { tracks: [track('later-1'), track('later-2')], nextCursor: null }],
+    ])
+    const loadInitial = async (random: () => number) => {
+      const requested: (string | null)[] = []
+      const appendedCounts: number[] = []
+      const loadedTrackIds = new Set<string>()
+      const seenCursors = new Set<string>()
+      const result = await refillGenreRecommendations({
+        genreKey: 'ambient', profile: profile(), tracks: [], loadedTrackIds, seenCursors,
+        startCursor: null, fillTarget: 24, pageBudget: 6, minimumPages: 3, random,
+        fetchPage: async cursor => {
+          requested.push(cursor)
+          const page = pages.get(cursor)
+          if (!page) throw new Error(`Unexpected cursor: ${cursor}`)
+          return page
+        },
+        onAppend: (_tracks, appended) => { appendedCounts.push(appended.length) },
+      })
+      return { ...result, loadedTrackIds, seenCursors, requested, appendedCounts }
+    }
+
+    const firstRun = await loadInitial(() => 0)
+    const secondRun = await loadInitial(() => 0.999999)
+    expect(firstRun.requested).toEqual([null, 'cursor-1', 'cursor-2'])
+    expect(firstRun.pages).toBe(3)
+    expect(firstRun.tracks).toHaveLength(28)
+    expect(firstRun.appendedCounts).toEqual([28])
+    expect(firstRun.tracks.map(item => item.id)).not.toEqual([
+      ...firstPage.map(item => item.id), 'second-1', 'second-2', 'third-1', 'third-2',
+    ])
+    expect(secondRun.tracks.map(item => item.id)).not.toEqual(firstRun.tracks.map(item => item.id))
+
+    const more = await refillGenreRecommendations({
+      genreKey: 'ambient', profile: profile(), tracks: firstRun.tracks,
+      loadedTrackIds: firstRun.loadedTrackIds, seenCursors: firstRun.seenCursors,
+      startCursor: firstRun.cursor, fillTarget: 2, pageBudget: 6, minimumPages: 1, random: () => 0.999999,
+      fetchPage: async cursor => {
+        expect(cursor).toBe('cursor-3')
+        return pages.get(cursor)!
+      },
+    })
+    expect(more.tracks.slice(0, firstRun.tracks.length)).toEqual(firstRun.tracks)
+    expect(more.tracks.slice(firstRun.tracks.length).map(item => item.id)).toEqual(['later-1', 'later-2'])
+  })
+
+  it('shows main-feed matches only after the genre request fails', () => {
+    const fallback = track('fallback')
+    const provider = track('provider')
+    expect(genreShelfTracks([], [fallback], 'ambient', profile(), null)).toEqual([])
+    expect(genreShelfTracks([], [fallback], 'ambient', profile(), 'SoundCloud failed')).toEqual([fallback])
+    expect(genreShelfTracks([provider], [fallback], 'ambient', profile(), 'SoundCloud failed')).toEqual([provider])
   })
 })
