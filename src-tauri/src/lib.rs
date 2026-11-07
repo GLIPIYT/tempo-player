@@ -285,6 +285,7 @@ pub fn run() {
             commands::count_tracks_needing_loudness,
             commands::set_track_loudness,
             updater::updater_releases,
+            updater::updater_latest,
             updater::updater_download,
             updater::updater_install,
             updater::updater_discard

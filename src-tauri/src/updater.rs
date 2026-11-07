@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 const RELEASES_API: &str = "https://api.github.com/repos/GLIPIYT/tempo-player/releases";
+const LATEST_RELEASE_URL: &str = "https://github.com/GLIPIYT/tempo-player/releases/latest";
 const USER_AGENT: &str = "Tempo-desktop-updater";
 
 /// Emitted while the installer downloads: `{ version, downloaded, total }`.
@@ -41,6 +42,13 @@ pub struct ReleaseInfo {
     pub asset_name: Option<String>,
     pub asset_url: Option<String>,
     pub asset_size: Option<u64>,
+}
+
+/// The About page only needs the published version, not release notes or assets.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatestReleaseInfo {
+    pub version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +128,62 @@ pub async fn updater_releases() -> Result<Vec<ReleaseInfo>, String> {
             }
         })
         .collect())
+}
+
+/// Fetches the current stable GitHub release version for the About page.
+///
+/// GitHub redirects `/releases/latest` to its tag page. A HEAD request reads
+/// that redirect without downloading the release page, notes, or asset list.
+/// The full release list and its details remain lazy-loaded by
+/// `updater_releases` when the update menu is opened.
+#[tauri::command]
+pub async fn updater_latest() -> Result<Option<LatestReleaseInfo>, String> {
+    let response = client()?
+        .head(LATEST_RELEASE_URL)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("could not reach GitHub: {e}"))?;
+
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(format!("GitHub returned {}", response.status()));
+    }
+
+    let version = latest_release_version(response.url())
+        .ok_or_else(|| "could not read the latest release tag from GitHub".to_string())?;
+
+    Ok(Some(LatestReleaseInfo { version }))
+}
+
+fn latest_release_version(url: &reqwest::Url) -> Option<String> {
+    if url.scheme() != "https"
+        || url.host_str() != Some("github.com")
+        || url.port_or_known_default() != Some(443)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+
+    let tag = url
+        .path()
+        .strip_prefix("/GLIPIYT/tempo-player/releases/tag/")?;
+    if tag.is_empty() {
+        return None;
+    }
+
+    let version = tag.strip_prefix('v').unwrap_or(tag);
+    let parts = version.split('.').collect::<Vec<_>>();
+    if parts.len() != 3 || parts.iter().any(|part| part.parse::<u64>().is_err()) {
+        return None;
+    }
+
+    Some(version.to_string())
 }
 
 /// Downloads one installer into the temp directory and returns its path.
@@ -211,4 +275,39 @@ pub fn updater_discard(path: String) -> Result<(), String> {
         std::fs::remove_file(&installer).map_err(|e| format!("could not delete the installer: {e}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::latest_release_version;
+
+    #[test]
+    fn parses_latest_tag_redirect_without_release_details() {
+        let url =
+            reqwest::Url::parse("https://github.com/GLIPIYT/tempo-player/releases/tag/v1.3.2")
+                .expect("test URL should parse");
+
+        assert_eq!(latest_release_version(&url).as_deref(), Some("1.3.2"));
+    }
+
+    #[test]
+    fn rejects_a_url_that_is_not_a_release_tag() {
+        let url = reqwest::Url::parse("https://github.com/GLIPIYT/tempo-player/releases/latest")
+            .expect("test URL should parse");
+
+        assert_eq!(latest_release_version(&url), None);
+    }
+
+    #[test]
+    fn rejects_untrusted_hosts_queries_and_prerelease_tags() {
+        for value in [
+            "https://github.com.example/GLIPIYT/tempo-player/releases/tag/v1.3.2",
+            "https://github.com/GLIPIYT/tempo-player/releases/tag/v1.3.2?download=1",
+            "https://github.com:444/GLIPIYT/tempo-player/releases/tag/v1.3.2",
+            "https://github.com/GLIPIYT/tempo-player/releases/tag/v1.3.2-rc1",
+        ] {
+            let url = reqwest::Url::parse(value).expect("test URL should parse");
+            assert_eq!(latest_release_version(&url), None, "unexpected tag from {value}");
+        }
+    }
 }

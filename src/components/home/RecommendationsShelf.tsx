@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
 import { ChevronLeft, ChevronRight, Download, LoaderCircle, Play, RefreshCw } from 'lucide-react'
 import type { ScTrack } from '../../types/models'
 import { useT } from '../../i18n'
@@ -65,7 +65,8 @@ export default function RecommendationsShelf({
     retry: retryGenre,
   } = useSoundCloudGenreRecommendations(favoriteGenre, tracks)
   const cacheProgresses = useSyncExternalStore(subscribeCacheJobs, getTrackCacheProgresses, getTrackCacheProgresses)
-  const genreCachedTrackIds = new Set([...cachedTrackIds, ...genreCachedIds])
+  const cacheProgressByTrackId = useMemo(() => new Map(cacheProgresses.map((progress) => [progress.trackId, progress])), [cacheProgresses])
+  const genreCachedTrackIds = useMemo(() => new Set([...cachedTrackIds, ...genreCachedIds]), [cachedTrackIds, genreCachedIds])
   const sectionRef = useRef<HTMLElement>(null)
   const railRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLSpanElement>(null)
@@ -202,13 +203,13 @@ export default function RecommendationsShelf({
         })}
       >
         <span className="home-recommendation-cover">
-          <ScArtwork url={track.artworkUrl} title={track.title} />
+          <ScArtwork url={track.artworkUrl} title={track.title} resolution="card" loading="lazy" />
         </span>
         <strong title={track.title}>{track.title}</strong>
         <small title={track.artist}>{track.artist}</small>
       </button>
       {(() => {
-        const progress = cacheProgresses.find(item => item.trackId === track.id)
+        const progress = cacheProgressByTrackId.get(track.id)
         if (progress) {
           if (progress.state === 'failed') {
             return (

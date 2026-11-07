@@ -1,4 +1,13 @@
 export const ru: Record<string, string> = {
+  'Line movement': 'Движение строк',
+  'Smooth': 'Плавное',
+  'Accelerated': 'С ускорением',
+  'Text fill': 'Заполнение текста',
+  'Continuous': 'Сплошное',
+  'By word': 'По словам',
+  'Minor update': 'Небольшое обновление',
+  'Feature update': 'Обновление функций',
+  'Major update': 'Крупное обновление',
   'No saved tracks by this artist yet.': 'У этого исполнителя пока нет сохранённых треков.',
   'View artwork': 'Посмотреть обложку',
   'Track details': 'Информация о треке',

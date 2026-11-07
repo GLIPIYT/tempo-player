@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { firstAvailableArtwork } from './artworkFallback'
+import { memo, useCallback, useState } from 'react'
+import { buildArtworkSources, firstAvailableArtwork, type ArtworkResolution } from './artworkFallback'
 
 /** The spinning ring shown wherever something is still being fetched. */
 export function Spinner({ size = 12 }: { size?: number }) {
@@ -12,13 +12,7 @@ export function Spinner({ size = 12 }: { size?: number }) {
  * Remote URLs use a plain `img`; alternate URLs are tried before falling back
  * to the first letter, so one stale thumbnail does not hide the artwork.
  */
-export default function ScArtwork({
-  url,
-  fallbackUrls = [],
-  title,
-  pending = false,
-  compact = false,
-}: {
+interface ScArtworkProps {
   url: string | null
   /** Additional image URLs used when the primary image is unavailable. */
   fallbackUrls?: string[]
@@ -27,25 +21,40 @@ export default function ScArtwork({
   pending?: boolean
   /** Use SoundCloud's small thumbnail for track rows, retaining the full image as a fallback. */
   compact?: boolean
-}) {
-  const urls = [url, ...fallbackUrls].filter((source): source is string => Boolean(source))
-  const sources = Array.from(new Set(urls.flatMap((source) => {
-    // Search rows only need 32–48px; the CDN's 500px PNG can be over 15 times larger.
-    const thumbnail = /^https:\/\/[^/]+\.sndcdn\.com\//i.test(source)
-      ? source.replace(/-t500x500\.(jpg|png|webp)(?=[?#]|$)/i, '-large.$1')
-      : source
-    return compact ? [thumbnail, source] : [source, thumbnail]
-  })))
+  /** Request a resolution suited to the artwork's rendered size. */
+  resolution?: ArtworkResolution
+  /** Let offscreen artwork wait until it approaches the viewport. */
+  loading?: 'eager' | 'lazy'
+}
+
+function ScArtwork({
+  url,
+  fallbackUrls,
+  title,
+  pending = false,
+  compact = false,
+  resolution = 'full',
+  loading,
+}: ScArtworkProps) {
+  const sources = buildArtworkSources(url, fallbackUrls, compact, resolution)
   const sourcesKey = sources.join('\u0000')
   // A new candidate list must get a new loading state, even if the primary URL
   // stays the same. Resetting it in an effect can hide an already loaded image.
-  return <ArtworkImage key={sourcesKey} sources={sources} title={title} pending={pending} />
+  return <ArtworkImage key={sourcesKey} sources={sources} title={title} pending={pending} loading={loading} />
 }
 
-function ArtworkImage({ sources, title, pending }: { sources: string[]; title: string; pending: boolean }) {
+export default memo(ScArtwork)
+
+function ArtworkImage({ sources, title, pending, loading }: { sources: string[]; title: string; pending: boolean; loading?: 'eager' | 'lazy' }) {
   const [failedSources, setFailedSources] = useState<string[]>([])
   const [loadedSource, setLoadedSource] = useState<string | null>(null)
   const source = firstAvailableArtwork(sources, failedSources)
+  const attachImage = useCallback((image: HTMLImageElement | null) => {
+    if (source && image?.complete && image.naturalWidth > 0) {
+      setLoadedSource((current) => current === source ? current : source)
+    }
+  }, [source])
+
   if (!source) {
     return <span className="sc-art sc-art-fallback">{(title.trim()[0] ?? '?').toUpperCase()}</span>
   }
@@ -54,6 +63,7 @@ function ArtworkImage({ sources, title, pending }: { sources: string[]; title: s
   // for something that is not being displayed, which is a poor thing to rely
   // on for the only path that ever clears it.
   const waiting = pending || loadedSource !== source
+
   return (
     <span className="sc-art-box">
       <img
@@ -62,9 +72,9 @@ function ArtworkImage({ sources, title, pending }: { sources: string[]; title: s
         src={source}
         alt=""
         draggable={false}
-        ref={(image) => {
-          if (image?.complete && image.naturalWidth > 0) setLoadedSource(source)
-        }}
+        loading={loading}
+        decoding="async"
+        ref={attachImage}
         onLoad={() => setLoadedSource(source)}
         onError={() => setFailedSources((failed) => [...new Set([...failed, source])])}
       />

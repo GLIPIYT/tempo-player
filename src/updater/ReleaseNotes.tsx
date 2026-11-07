@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { toast } from '../components/common/Toast'
 import { useT } from '../i18n'
 import { openExternalUrl } from '../utils/externalLinks'
+import { RELEASE_TYPE_MARKER } from './releaseType'
 
 function renderInline(text: string, keyPrefix: string, t: (key: string) => string): ReactNode[] {
   const pattern = /(\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|`[^`]+`|\*[^*\n]+\*|_[^_\n]+_|\[[^\]]+\]\([^)]+\))/g
@@ -48,7 +49,7 @@ function isListStart(line: string): boolean {
 /** Renders the common release-note Markdown safely, without accepting raw HTML. */
 export default function ReleaseNotes({ markdown }: { markdown: string }) {
   const t = useT()
-  const lines = markdown.replace(/\r/g, '').split('\n')
+  const lines = markdown.replace(RELEASE_TYPE_MARKER, '').replace(/\r/g, '').split('\n')
   const blocks: ReactNode[] = []
   let index = 0
   let blockIndex = 0

@@ -21,6 +21,11 @@ export interface ReleaseInfo {
   assetSize: number | null
 }
 
+/** Minimal version information for the latest stable GitHub release. */
+export interface LatestReleaseInfo {
+  version: string
+}
+
 export interface DownloadProgress {
   version: string
   downloaded: number
@@ -35,6 +40,11 @@ const PENDING_KEY = 'tempo.pendingUpdate.v1'
 /** Every published release, newest first. */
 export function listReleases(): Promise<ReleaseInfo[]> {
   return invoke<ReleaseInfo[]>('updater_releases')
+}
+
+/** Only the latest release version, for the About page. */
+export function latestRelease(): Promise<LatestReleaseInfo | null> {
+  return invoke<LatestReleaseInfo | null>('updater_latest')
 }
 
 /** The version this build actually is, straight from the bundle. */

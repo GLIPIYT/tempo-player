@@ -4564,12 +4564,16 @@ html.has-bg .app-content {
 .update-dialog-actions .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
 .update-confetti { position: absolute; inset: 0; z-index: 8; overflow: hidden; pointer-events: none; }
 .update-confetti i { position: absolute; top: -12px; left: var(--confetti-x); width: 6px; height: 9px; border-radius: 1px; background: var(--confetti-color); opacity: 0; transform: rotate(0); }
-.update-confetti.is-active i { animation: update-confetti-fall 1.45s cubic-bezier(.12,.65,.35,1) var(--confetti-delay) both; }
+.update-release-kind { color: var(--text-muted); font-size: 10px; font-weight: 550; }
+.update-confetti i:nth-child(3n) { border-radius: 50%; }
+.update-confetti.is-active i { animation: update-confetti-fall var(--confetti-duration) cubic-bezier(.18,.4,.5,1) var(--confetti-delay) both; }
 @keyframes update-confetti-fall {
-  0% { opacity: 0; transform: translate3d(0, -5px, 0) rotate(0); }
-  12% { opacity: .95; }
-  100% { opacity: 0; transform: translate3d(24px, 360px, 0) rotate(520deg); }
+  0% { opacity: 0; transform: translate3d(0, -15px, 0) rotate(0); }
+  8% { opacity: 1; }
+  72% { opacity: 1; }
+  100% { opacity: 0; transform: translate3d(var(--confetti-drift), min(900px, 100vh), 0) rotate(var(--confetti-turn)); }
 }
+@media (prefers-reduced-motion: reduce) { .update-confetti { display: none; } }
 
 @media (max-width: 600px) {
   .update-dialog-layout {

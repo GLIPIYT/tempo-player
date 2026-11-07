@@ -48,6 +48,23 @@ export type ReleaseAvailability<T> =
   | { status: 'up-to-date'; latest: T }
   | { status: 'no-releases'; latest: null }
 
+export type LatestVersionAvailability =
+  | { status: 'update-available'; latestVersion: string }
+  | { status: 'up-to-date'; latestVersion: string }
+  | { status: 'no-releases'; latestVersion: null }
+
+/** Classifies a version-only latest-release response against the running version. */
+export function checkLatestVersionAvailability(
+  latestVersion: string | null,
+  currentVersion: string,
+): LatestVersionAvailability {
+  if (!latestVersion) return { status: 'no-releases', latestVersion: null }
+  return {
+    status: compareVersions(latestVersion, currentVersion) > 0 ? 'update-available' : 'up-to-date',
+    latestVersion,
+  }
+}
+
 /** Classifies the newest published release against the running version. */
 export function checkReleaseAvailability<T extends { version: string; assetUrl: string | null }>(
   releases: T[],

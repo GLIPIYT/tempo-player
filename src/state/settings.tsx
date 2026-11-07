@@ -7,6 +7,8 @@ export type StartupPage = 'home' | 'library' | 'albums' | 'artists' | 'playlists
 export type BrandIconStyle = 'pulse' | 'orbit'
 export type LyricProgressDirection = 'left-to-right' | 'right-to-left' | 'center-out'
 export type LyricProgressColorMode = 'theme' | 'custom'
+export type LyricMotionStyle = 'smooth' | 'accelerated'
+export type LyricTextFillMode = 'continuous' | 'words'
 
 const STARTUP_PAGES: StartupPage[] = ['home', 'library', 'albums', 'artists', 'playlists']
 
@@ -40,6 +42,8 @@ export interface AppSettings {
     alignment: 'left' | 'center' | 'right'
     textSizePx: number
     fillEnabled: boolean
+    motionStyle: LyricMotionStyle
+    textFillMode: LyricTextFillMode
     progressDirection: LyricProgressDirection
     progressColorMode: LyricProgressColorMode
     progressColor: string
@@ -145,6 +149,8 @@ export const defaultSettings: AppSettings = {
     alignment: 'left',
     textSizePx: 21,
     fillEnabled: true,
+    motionStyle: 'smooth',
+    textFillMode: 'continuous',
     progressDirection: 'left-to-right',
     progressColorMode: 'theme',
     progressColor: '#ffffff',
@@ -226,6 +232,8 @@ function normalizeLyrics(value: Partial<AppSettings['lyrics']>): AppSettings['ly
     deepAnalysisEnabled: typeof value.deepAnalysisEnabled === 'boolean' ? value.deepAnalysisEnabled : null,
     textSizePx: clampLyricNumber(value.textSizePx, 16, 40, 1, base.textSizePx),
     fillEnabled: typeof value.fillEnabled === 'boolean' ? value.fillEnabled : base.fillEnabled,
+    motionStyle: value.motionStyle === 'accelerated' ? 'accelerated' : 'smooth',
+    textFillMode: value.textFillMode === 'words' ? 'words' : 'continuous',
     progressDirection: LYRIC_PROGRESS_DIRECTIONS.includes(value.progressDirection as LyricProgressDirection)
       ? value.progressDirection as LyricProgressDirection : base.progressDirection,
     progressColorMode: LYRIC_PROGRESS_COLOR_MODES.includes(value.progressColorMode as LyricProgressColorMode)

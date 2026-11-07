@@ -7,6 +7,12 @@ const line = (timeSec: number, endTimeSec: number): LyricSegment => ({
 })
 
 describe('lyric transition motion', () => {
+  it('keeps the accelerated movement shorter, including rapid cues', () => {
+    const segments = [line(0, 3), line(3, 3.25)]
+    expect(lyricTransitionDuration(segments, 0, 0, 1, 'accelerated')).toBe(294)
+    expect(lyricTransitionDuration(segments, 1, 3, 1, 'accelerated')).toBe(105)
+    expect(lyricTransitionDuration(segments, 1, 3.24, 1, 'accelerated')).toBeGreaterThan(0)
+  })
   it('uses a smooth normal transition and shortens rapid cues without snapping', () => {
     const segments = [line(0, 3), line(3, 3.25), line(3.25, 6)]
     expect(lyricTransitionDuration(segments, 0, 0)).toBe(420)

@@ -63,10 +63,15 @@ import LyricsAnalysisCard from '../components/settings/LyricsAnalysisCard'
 import LyricsProgressColorPicker from '../components/settings/LyricsProgressColorPicker'
 import {
   appVersion,
+  latestRelease,
   listReleases,
   type ReleaseInfo,
 } from '../updater/service'
-import { checkReleaseAvailability, type ReleaseAvailability } from '../updater/version'
+import {
+  checkLatestVersionAvailability,
+  checkReleaseAvailability,
+  type ReleaseAvailability,
+} from '../updater/version'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { resolveBrandIcon } from '../theme/brandIcon'
 
@@ -787,7 +792,11 @@ function UpdateCard() {
   const mounted = useRef(false)
   const requestId = useRef(0)
   const current = useAsync(() => appVersion(), [])
+  const latest = useAsync(() => latestRelease(), [])
   const currentVersion = current.data
+  const latestAvailability = currentVersion && latest.data
+    ? checkLatestVersionAvailability(latest.data.version, currentVersion)
+    : null
 
   useEffect(() => {
     mounted.current = true
@@ -831,23 +840,24 @@ function UpdateCard() {
       <Card title={t('Updates')} desc={t('Tempo checks for new releases when it starts.')}>
         <div className="set-row">
           <span className="set-row-label">{t('Current version')}</span>
-          <span className="muted">{currentVersion ?? '…'}</span>
+          <span className="muted">{currentVersion ?? (current.loading ? '…' : '—')}</span>
         </div>
         <div className="set-row" style={{ marginTop: 6 }}>
           <span className="set-row-label">{t('Latest available')}</span>
-          <span className="muted">{checkResult ? (checkResult.latest?.version ?? '—') : '…'}</span>
+          <span className="muted">{latest.data?.version ?? (latest.loading ? '…' : '—')}</span>
         </div>
 
         {current.error ? <div className="error-line">{t('Could not check')}: {current.error}</div> : null}
+        {latest.error ? <div className="error-line">{t('Could not check')}: {latest.error}</div> : null}
         {checkError ? <div className="error-line">{t('Could not check')}: {checkError}</div> : null}
-        {checkResult?.status === 'up-to-date' ? (
+        {latestAvailability?.status === 'up-to-date' ? (
           <div className="set-note">{t('You are on the newest release.')}</div>
         ) : null}
         {checkResult?.status === 'no-releases' ? (
           <div className="set-note">{t('No installable versions.')}</div>
         ) : null}
-        {checkResult?.status === 'update-available' ? (
-          <div className="set-note">{t('Update available')} · {checkResult.latest.version}</div>
+        {latestAvailability?.status === 'update-available' ? (
+          <div className="set-note">{t('Update available')} · {latestAvailability.latestVersion}</div>
         ) : null}
         {checkResult?.status === 'installer-missing' ? (
           <div className="set-note">{t('This release has no Windows installer attached.')}</div>
@@ -2040,6 +2050,18 @@ export default function SettingsPage() {
                   display={`${settings.lyrics.textSizePx}px`}
                   onChange={textSizePx => update({ lyrics: { textSizePx } })}
                 />
+                <div className="set-row">
+                  <span className="set-row-label">{t('Line movement')}</span>
+                  <Segmented value={settings.lyrics.motionStyle}
+                    options={[{ value: 'smooth', label: t('Smooth') }, { value: 'accelerated', label: t('Accelerated') }]}
+                    onChange={motionStyle => update({ lyrics: { motionStyle } })} />
+                </div>
+                <div className="set-row">
+                  <span className="set-row-label">{t('Text fill')}</span>
+                  <Segmented value={settings.lyrics.textFillMode}
+                    options={[{ value: 'continuous', label: t('Continuous') }, { value: 'words', label: t('By word') }]}
+                    onChange={textFillMode => update({ lyrics: { textFillMode } })} />
+                </div>
                 <div className="set-row lyrics-toggle-row">
                   <span className="set-row-label">{t('Animate progress line')}</span>
                   <button className={settings.lyrics.fillEnabled ? 'switch is-on' : 'switch'} role="switch"

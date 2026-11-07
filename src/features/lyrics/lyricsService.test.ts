@@ -13,6 +13,21 @@ const pin = (text: string): LyricsOverride => ({ provider: 'manual', sourceArtis
 const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }
 
 describe('shared lyrics selection', () => {
+  it('retimes the active lyrics without clearing the screen or fetching providers again', async () => {
+    vi.mocked(api.getLyricsOverride).mockResolvedValue(pin('Same source'))
+    lyricsService.ensure(track('offset'), false)
+    await flush()
+    const active = lyricsService.getCurrent()!
+    const observed: (string | null)[] = []
+    const stop = lyricsService.subscribe(() => observed.push(lyricsService.getCurrent()?.trackId ?? null))
+    lyricsService.setActiveCandidate('offset', active.sourceResult, 40, active.sourceLyricKey, 500, active.provider)
+    stop()
+    expect(observed).toEqual(['offset'])
+    expect(lyricsService.isLoading('offset')).toBe(false)
+    expect(lyricsService.getCurrent()?.result?.kind === 'synced' && lyricsService.getCurrent()?.timing.lines[0].timeSec).toBe(1.5)
+    expect(api.getLyricsOverride).toHaveBeenCalledTimes(1)
+    expect(api.fetchOnlineLyrics).not.toHaveBeenCalled()
+  })
   beforeEach(() => { vi.resetAllMocks(); lyricsService.invalidate() })
   it.each(['Silver rivers cross the golden mountains', 'Серебряные реки пересекают золотые горы'])(
     'bounds the full %s source key while distinguishing late canonical details', text => {

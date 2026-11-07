@@ -6,6 +6,7 @@ export function lyricTransitionDuration(
   index: number,
   positionSec: number,
   playbackRate = 1,
+  style: 'smooth' | 'accelerated' = 'smooth',
 ): number {
   const segment = segments[index]
   if (!segment) return 420
@@ -19,5 +20,5 @@ export function lyricTransitionDuration(
   )
   const rate = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1
   const duration = Number.isFinite(windowSec) ? windowSec / rate * 600 : 420
-  return Math.round(Math.min(420, Math.max(70, duration)))
+  return Math.round(Math.min(420, Math.max(70, duration)) * (style === 'accelerated' ? 0.7 : 1))
 }

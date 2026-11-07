@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { checkReleaseAvailability, compareVersions, newerThan, parseVersion } from './version'
+import {
+  checkLatestVersionAvailability,
+  checkReleaseAvailability,
+  compareVersions,
+  newerThan,
+  parseVersion,
+} from './version'
 
 function release(version: string, assetUrl: string | null = `https://example.test/${version}.exe`) {
   return { version, assetUrl }
@@ -102,5 +108,25 @@ describe('checkReleaseAvailability', () => {
 
   it('distinguishes an empty release list from a current installation', () => {
     expect(checkReleaseAvailability([], '1.10.0')).toEqual({ status: 'no-releases', latest: null })
+  })
+})
+
+describe('checkLatestVersionAvailability', () => {
+  it('classifies the version-only latest response without needing release assets', () => {
+    expect(checkLatestVersionAvailability('1.10.0', '1.9.0')).toEqual({
+      status: 'update-available',
+      latestVersion: '1.10.0',
+    })
+    expect(checkLatestVersionAvailability('1.9.0', '1.10.0')).toEqual({
+      status: 'up-to-date',
+      latestVersion: '1.9.0',
+    })
+  })
+
+  it('reports an empty latest response distinctly', () => {
+    expect(checkLatestVersionAvailability(null, '1.10.0')).toEqual({
+      status: 'no-releases',
+      latestVersion: null,
+    })
   })
 })
