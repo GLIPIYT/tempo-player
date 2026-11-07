@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
-import { ChevronLeft, ChevronRight, Download, Play, RefreshCw } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, LoaderCircle, Play, RefreshCw } from 'lucide-react'
 import type { ScTrack } from '../../types/models'
 import { useT } from '../../i18n'
 import { beginTrackDrag, consumeDragClick } from '../../dnd/trackDrag'
@@ -240,7 +240,8 @@ export default function RecommendationsShelf({
               title={`${t('Caching…')}${percent === null ? '' : ` ${percent}%`}`}
               disabled
             >
-              <span>{percent === null ? '…' : `${percent}%`}</span>
+              <span className="home-cache-spinner" aria-hidden="true"><LoaderCircle size={17} strokeWidth={1.8} /></span>
+              <span className="home-cache-percent" aria-hidden="true">{percent === null ? '' : `${percent}%`}</span>
             </button>
           )
         }
