@@ -6,6 +6,6 @@ GitHub releases use a version tag, rather than arbitrary issue labels. Tempo rea
 <!-- tempo:release-type=average -->
 ```
 
-Accepted values are `minor` (small update), `average` (feature update), and `major` (major update). The marker is hidden from the changelog in Tempo. Include it in the saved notes and annotated tag body when preparing a release; use `git tag --cleanup=verbatim` to preserve Markdown and comments.
+Accepted values are `bugfix` (bug fixes only), `minor` (small update), `average` (feature update), and `major` (major update). Use `bugfix` only after reviewing the release changes and confirming that they contain no new features. A patch version does not automatically mean Bug Fix. The marker is hidden from the changelog in Tempo. Include it in the saved notes and annotated tag body when preparing a release; use `git tag --cleanup=verbatim` to preserve Markdown and comments.
 
 Without a marker, Tempo compares the release with the previous available version: major component change → major update, minor component change → feature update, patch change → small update. This fallback describes the version change; an explicit marker can classify a release differently.

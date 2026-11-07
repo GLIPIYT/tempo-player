@@ -8,6 +8,7 @@ export const ru: Record<string, string> = {
   'Minor update': 'Небольшое обновление',
   'Feature update': 'Обновление функций',
   'Major update': 'Крупное обновление',
+  'Bug Fix': 'Bug Fix',
   'No saved tracks by this artist yet.': 'У этого исполнителя пока нет сохранённых треков.',
   'View artwork': 'Посмотреть обложку',
   'Track details': 'Информация о треке',

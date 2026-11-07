@@ -9,4 +9,7 @@ it('uses explicit importance metadata and otherwise compares the previous publis
   expect(releaseType(all[3], all)).toBe('major')
   expect(releaseType(all[0], all)).toBe('major')
   expect(releaseType(release('1.1.2', '<!-- tempo:release-type=major -->'), all)).toBe('major')
+  expect(releaseType(release('1.1.2', '<!-- tempo:release-type=bugfix -->'), all)).toBe('bugfix')
+  // A patch version alone cannot establish that a release contains only bug fixes.
+  expect(releaseType(release('1.1.2', '# Fixes and a new feature'), all)).toBe('minor')
 })

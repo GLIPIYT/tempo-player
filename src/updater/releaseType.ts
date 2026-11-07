@@ -1,9 +1,9 @@
 import type { ReleaseInfo } from './service'
 import { compareVersions } from './version'
 
-export type ReleaseType = 'minor' | 'average' | 'major'
-export const RELEASE_TYPE_LABELS = { minor: 'Minor update', average: 'Feature update', major: 'Major update' } as const
-export const RELEASE_TYPE_MARKER = /<!--\s*tempo:release-type\s*=\s*(minor|average|major)\s*-->/i
+export type ReleaseType = 'bugfix' | 'minor' | 'average' | 'major'
+export const RELEASE_TYPE_LABELS = { bugfix: 'Bug Fix', minor: 'Minor update', average: 'Feature update', major: 'Major update' } as const
+export const RELEASE_TYPE_MARKER = /<!--\s*tempo:release-type\s*=\s*(bugfix|minor|average|major)\s*-->/i
 
 /** Explicit release-note metadata wins; older notes fall back to version changes. */
 export function releaseType(release: ReleaseInfo, releases: readonly ReleaseInfo[]): ReleaseType | null {

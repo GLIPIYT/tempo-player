@@ -1110,13 +1110,13 @@
 .lyr-line.is-active .lyr-line-text.is-word-fill {
   background: none;
   -webkit-text-fill-color: currentColor;
+  text-shadow: none;
 }
 .lyr-line.is-active .lyr-word { opacity: .38; }
-.lyr-line.is-active .lyr-word.is-filled { opacity: 1; }
+.lyr-line.is-active .lyr-word.is-filled { opacity: .68; }
 .lyr-line.is-active .lyr-word.is-current-word {
-  text-shadow: 0 0 16px color-mix(in srgb, var(--accent) 70%, transparent);
-  text-decoration: underline color-mix(in srgb, var(--accent) 65%, transparent);
-  text-underline-offset: .15em;
+  opacity: 1;
+  text-shadow: 0 0 8px #ffffff50, 0 0 18px color-mix(in srgb, var(--accent) 72%, transparent);
 }
 
 .lyr-underline {

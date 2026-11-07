@@ -50,7 +50,6 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
   const [progress, setProgress] = useState<{ downloaded: number; total: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const downloadedPath = useRef<string | null>(null)
-  const confettiRef = useRef<HTMLDivElement | null>(null)
   const [confettiRun, setConfettiRun] = useState(0)
   const mounted = useRef(false)
   const progressUnlisten = useRef<(() => void) | null>(null)
@@ -78,6 +77,7 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
     ?? releases.find(item => item.version === selectedVersion)
     ?? emptyRelease(selectedVersion)
   const isInstalled = installedVersion === release.version
+  const selectedType = releaseType(release, releases)
   const isCurrent = currentVersion === release.version || isInstalled
   const busy = phase === 'downloading' || phase === 'installing'
   const percent = progress && progress.total > 0
@@ -102,18 +102,6 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
     }, 30)
     return () => window.clearTimeout(timer)
   }, [installedVersion])
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const target = event.target instanceof HTMLElement ? event.target : null
-      if (event.code !== 'KeyP' || event.repeat || event.isComposing || event.ctrlKey || event.altKey || event.metaKey
-        || target?.closest('input, textarea, select, [contenteditable="true"]')) return
-      event.preventDefault()
-      setConfettiRun(run => run + 1)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
 
   useEffect(() => {
     if (!confettiRun) return
@@ -213,7 +201,7 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
   return (
     <Modal open className="update-modal" title={`${title} — ${release.version}`} onClose={dismiss} closeDisabled={busy}>
       {confettiRun > 0 ? (
-        <div key={confettiRun} className="update-confetti is-active" ref={confettiRef} aria-hidden="true">
+        <div key={confettiRun} className="update-confetti is-active" aria-hidden="true">
           {Array.from({ length: 80 }, (_, index) => (
             <i
               key={index}
@@ -239,6 +227,7 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
               const current = currentVersion === item.version || installedVersion === item.version
               const latest = latestVersion === item.version
               const unavailable = item.assetUrl === null && !current
+              const kind = releaseType(item, releases)
               return (
                 <button
                   type="button"
@@ -250,11 +239,11 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
                 >
                   <span className="update-version-choice-main">
                     <strong>{item.version}</strong>
+                    {kind && <span className={`update-release-kind is-${kind}`}>{t(RELEASE_TYPE_LABELS[kind])}</span>}
                     {latest ? <span className="update-version-badge is-latest">{t('Latest')}</span> : null}
                     {current ? <span className="update-version-badge">{t('Installed')}</span> : null}
                   </span>
                   <span className="update-version-choice-name">{item.name || item.tag}</span>
-                  {releaseType(item, releases) && <span className="update-release-kind">{t(RELEASE_TYPE_LABELS[releaseType(item, releases)!])}</span>}
                 </button>
               )
             })}
@@ -265,8 +254,10 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
         <section className="update-release-panel" aria-label={t('Release notes')}>
           <div className="update-summary">
             <div className="update-head">
-              <span className="update-version">{release.name || release.tag}</span>
-              {releaseType(release, releases) && <span className="update-release-kind">{t(RELEASE_TYPE_LABELS[releaseType(release, releases)!])}</span>}
+              <div className="update-version-heading">
+                <span className="update-version">{release.name || release.tag}</span>
+                {selectedType && <span className={`update-release-kind is-${selectedType}`}>{t(RELEASE_TYPE_LABELS[selectedType])}</span>}
+              </div>
               {release.assetSize ? <span className="muted update-size">{formatBytes(release.assetSize)}</span> : null}
               {isInstalled ? (
                 <span className="update-installed-message">
