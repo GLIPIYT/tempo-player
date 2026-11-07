@@ -57,6 +57,7 @@ pub fn run() {
                     !label.starts_with("tempo-soundcloud-playback-")
                         && !label.starts_with("sc-recording-")
                         && !label.starts_with("sc-web-fallback-")
+                        && label != "sc-session-refresh"
                 })
                 .build(),
         )
@@ -120,6 +121,7 @@ pub fn run() {
             artist_artwork::start_automatic_lookup(app.handle().clone());
             native_audio::init(app.handle()).map_err(std::io::Error::other)?;
             native_media::start(app.handle());
+            soundcloud_session::start_automatic_refresh(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
