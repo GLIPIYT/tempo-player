@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ScTrack } from '../../types/models'
 import type { RecommendationTrack } from './types'
 import type { TasteProfile } from './profile'
-import { matchesFavoriteGenre, rankGenreTracks } from './genre'
+import { genreTrackScore, matchesFavoriteGenre, rankGenreTracks } from './genre'
 
 const track = (id: string, updates: Partial<ScTrack> = {}): ScTrack => ({
   id,
@@ -81,6 +81,28 @@ describe('genre recommendations', () => {
 
     const ranked = rankGenreTracks(tracks, 'ambient', profile)
     expect(ranked.map(item => item.id)).toEqual(['ru-1', 'en-1', 'ru-2', 'en-2', 'ru-3', 'en-3', 'ru-4', 'en-4'])
+  })
+
+  it('randomizes across large score gaps before reapplying language balance', () => {
+    const profile = taste({
+      languages: { rus: 0.5, eng: 0.5 }, languageConfidence: 1, unknownShare: 0,
+      artists: { 'preferred uploader': 1 },
+    })
+    const tracks = [
+      track('ru-1', { title: 'Первый трек', genre: 'Ambient' }),
+      track('ru-2', { title: 'Второй трек', genre: 'Ambient' }),
+      track('ru-3', { title: 'Третий трек', genre: 'Ambient' }),
+      track('ru-4', { title: 'Четвертый трек', genre: 'Ambient' }),
+      track('en-1', { title: 'First track', metadataArtist: 'Preferred Uploader', genre: 'Ambient', tags: ['language: english'] }),
+      track('en-2', { title: 'Second track', genre: 'Ambient', tags: ['language: english'] }),
+      track('en-3', { title: 'Third track', genre: 'Ambient', tags: ['language: english'] }),
+      track('en-4', { title: 'Fourth track', genre: 'Ambient', tags: ['language: english'] }),
+    ]
+
+    expect(genreTrackScore(tracks[4], profile) - genreTrackScore(tracks[5], profile)).toBeGreaterThan(0.5)
+    const randomized = rankGenreTracks(tracks, 'ambient', profile, Number.POSITIVE_INFINITY, () => 0)
+
+    expect(randomized.map(item => item.id)).toEqual(['ru-1', 'en-2', 'ru-2', 'en-3', 'ru-3', 'en-4', 'ru-4', 'en-1'])
   })
 
   it('uses cached Sonara similarity when available and keeps unmeasured tracks with fallback scoring', () => {

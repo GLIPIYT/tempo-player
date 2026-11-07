@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { Check, ChevronDown, ChevronLeft, MicVocal, Music2, Pause, Pencil, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 import type { CSSProperties, TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from 'react'
@@ -39,6 +39,7 @@ import type { LyricsEditorDocument } from './editorDocument'
 import { resolveLyricProgressGeometry } from './progressGeometry'
 import { lyricsOverlayMode, manualLyricsSearchReducer, manualLyricsTrackIdentity, mergeManualLyricsCandidates } from './lyricsOverlayState'
 import { lyricsPaneWidthAtPointer, readLyricsPaneWidth, writeLyricsPaneWidth } from './lyricsPaneWidth'
+import { lyricTransitionDuration } from './lyricsMotion'
 import './lyrics.css'
 
 interface LyricsOverlayProps {
@@ -247,7 +248,7 @@ function LyricsVolumeRow() {
   )
 }
 
-function SyncedView({
+export function SyncedView({
   timing,
   lyricsRate,
   offsetMs,
@@ -274,6 +275,7 @@ function SyncedView({
   const offsetsRef = useRef<Array<{ top: number; height: number }>>([])
   const metaRef = useRef<{ stageH: number; contentH: number }>({ stageH: 0, contentH: 0 })
   const segIdxRef = useRef(-1)
+  const positionedRef = useRef(false)
   const underlineRef = useRef<HTMLSpanElement | null>(null)
   const textRef = useRef<HTMLSpanElement | null>(null)
   const pausedRef = useRef(false)
@@ -335,7 +337,7 @@ function SyncedView({
     const minTy = stage.clientHeight - metaRef.current.contentH
     const ty = clamp(baseTy + userOffsetRef.current, minTy, 0)
     const target = `translate3d(0, ${ty.toFixed(2)}px, 0)`
-    if (instant) {
+    if (instant || !positionedRef.current) {
       c.style.transition = 'none'
       c.style.transform = target
       void c.offsetHeight
@@ -343,6 +345,7 @@ function SyncedView({
     } else if (c.style.transform !== target) {
       c.style.transform = target
     }
+    positionedRef.current = true
   }, [segments])
 
   const measureAll = useCallback(
@@ -362,22 +365,19 @@ function SyncedView({
     [applyTransform, segments.length],
   )
 
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => measureAll(true))
-    return () => cancelAnimationFrame(raf)
-  }, [segments, measureAll])
-
-  useEffect(() => {
-    const raf = requestAnimationFrame(measureProgressGeometry)
-    return () => cancelAnimationFrame(raf)
-  }, [segIdx, alignment, progressClipToText, measureProgressGeometry])
+  useLayoutEffect(() => {
+    // Measure after the new active row commits. Timing refinements and rapid
+    // changes continue from the visible position instead of snapping to it.
+    measureAll(false)
+    measureProgressGeometry()
+  }, [segments, segIdx, measureAll, measureProgressGeometry])
 
   useEffect(() => {
     let raf = 0
     const onResize = () => {
       cancelAnimationFrame(raf)
       raf = requestAnimationFrame(() => {
-        measureAll(true)
+        measureAll(false)
         measureProgressGeometry()
       })
     }
@@ -385,7 +385,7 @@ function SyncedView({
     let alive = true
     document.fonts.ready.then(() => {
       if (alive) {
-        measureAll(true)
+        measureAll(false)
         measureProgressGeometry()
       }
     })
@@ -430,9 +430,11 @@ function SyncedView({
         const lyricsPosition = lyricTimeAtMediaPosition(pos, lyricsRate, offsetMs)
         const { segmentIndex: found, progress, underlineProgress } = lyricTimingAt(timing, lyricsPosition)
         if (found !== segIdxRef.current) {
+          const duration = lyricTransitionDuration(segments, found, lyricsPosition, lyricsRate * p.playbackRate)
+          stageRef.current?.style.setProperty('--lyr-scroll-duration', `${duration}ms`)
+          stageRef.current?.style.setProperty('--lyr-line-duration', `${Math.min(320, duration)}ms`)
           segIdxRef.current = found
           setSegIdx(found)
-          if (!pausedRef.current) applyTransform(false)
         }
         const seg = found >= 0 ? segments[found] : null
         const lineProgress = seg?.kind === 'line' && seg.endTimeSec > seg.timeSec
@@ -449,7 +451,7 @@ function SyncedView({
     }
     update()
     return () => cancelAnimationFrame(frame)
-  }, [timing, segments, applyTransform, segIdx, lyricsRate, offsetMs, fillEnabled])
+  }, [timing, segments, segIdx, lyricsRate, offsetMs, fillEnabled, p.playbackRate])
 
   const endPause = useCallback(() => {
     if (pauseTimerRef.current !== 0) {
