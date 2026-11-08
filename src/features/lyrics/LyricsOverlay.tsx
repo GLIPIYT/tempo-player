@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { Check, ChevronDown, ChevronLeft, MicVocal, Music2, Pause, Pencil, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, MicVocal, Pause, Pencil, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 import type { CSSProperties, TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from 'react'
 import { usePlayer } from '../../player'
 import { playerController } from '../../player/controller'
@@ -41,6 +41,7 @@ import { lyricsOverlayMode, manualLyricsSearchReducer, manualLyricsTrackIdentity
 import { lyricsPaneWidthAtPointer, readLyricsPaneWidth, writeLyricsPaneWidth } from './lyricsPaneWidth'
 import { lyricTransitionDuration } from './lyricsMotion'
 import { wordIndexAtProgress, wordStartsFromWidths } from './wordFill'
+import { SyncedRow } from './SyncedRow'
 import './lyrics.css'
 
 interface LyricsOverlayProps {
@@ -249,7 +250,7 @@ function LyricsVolumeRow() {
   )
 }
 
-export function SyncedView({
+export const SyncedView = memo(function SyncedView({
   timing,
   lyricsRate,
   offsetMs,
@@ -259,6 +260,8 @@ export function SyncedView({
   fillEnabled,
   motionStyle = 'smooth',
   textFillMode = 'continuous',
+  playbackRate,
+  onSeek,
 }: {
   timing: ResolvedLyricsTiming
   lyricsRate: number
@@ -269,17 +272,16 @@ export function SyncedView({
   fillEnabled: boolean
   motionStyle?: LyricMotionStyle
   textFillMode?: LyricTextFillMode
+  playbackRate: number
+  onSeek: (timeSec: number) => void
 }) {
-  const p = usePlayer()
   const t = useT()
-  const seek = p.seek
   const segments = timing.segments
   const stageRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const itemEls = useRef<Array<HTMLElement | null>>([])
   const wordsRef = useRef<{ elements: HTMLElement[]; starts: number[]; current: number }>({ elements: [], starts: [], current: -2 })
   const metaRef = useRef<{ stageH: number; contentH: number }>({ stageH: 0, contentH: 0 })
-  const segIdxRef = useRef(-1)
   const positionedRef = useRef(false)
   const underlineRef = useRef<HTMLSpanElement | null>(null)
   const textRef = useRef<HTMLSpanElement | null>(null)
@@ -287,8 +289,20 @@ export function SyncedView({
   const pauseTimerRef = useRef(0)
   const userOffsetRef = useRef(0)
   const touchYRef = useRef(0)
-  const [segIdx, setSegIdx] = useState(-1)
+  const [segIdx, setSegIdx] = useState(() => {
+    const position = isNativePlayback()
+      ? getNativePlayerController().getDisplayPosition()
+      : playerController.getSnapshot().position
+    return lyricTimingAt(timing, lyricTimeAtMediaPosition(position, lyricsRate, offsetMs)).segmentIndex
+  })
+  const segIdxRef = useRef(segIdx)
   const [paused, setPaused] = useState(false)
+  const registerRow = useCallback((index: number, element: HTMLElement | null) => {
+    itemEls.current[index] = element
+  }, [])
+  const setTextRef = useCallback((element: HTMLSpanElement | null) => {
+    textRef.current = element
+  }, [])
   const setUnderlineRef = useCallback((el: HTMLSpanElement | null) => {
     if (underlineRef.current === el) return
     underlineRef.current = el
@@ -298,8 +312,8 @@ export function SyncedView({
     }
   }, [])
   const seekToLyricTime = useCallback((timeSec: number) => {
-    seek(mediaPositionAtLyricTime(timeSec, lyricsRate, offsetMs))
-  }, [seek, lyricsRate, offsetMs])
+    onSeek(mediaPositionAtLyricTime(timeSec, lyricsRate, offsetMs))
+  }, [onSeek, lyricsRate, offsetMs])
 
   const measureProgressGeometry = useCallback(() => {
     const row = underlineRef.current?.parentElement
@@ -328,8 +342,7 @@ export function SyncedView({
       progressClipToText,
       progressDirection,
     )
-    path.style.left = `${geometry.leftPx}px`
-    path.style.width = `${geometry.widthPx}px`
+    // Finish all layout reads before changing the underline's styles.
     if (textFillMode === 'words') {
       const tokens = [...text.querySelectorAll<HTMLElement>('[data-lyric-token]')]
       wordsRef.current = {
@@ -338,6 +351,8 @@ export function SyncedView({
         current: -2,
       }
     }
+    path.style.left = `${geometry.leftPx}px`
+    path.style.width = `${geometry.widthPx}px`
   }, [alignment, progressClipToText, progressDirection, textFillMode])
 
   const applyTransform = useCallback((instant: boolean) => {
@@ -428,12 +443,9 @@ export function SyncedView({
   useEffect(() => {
     if (segments.length === 0) return
     let frame = 0
-    let lastPaint = -Infinity
     const native = isNativePlayback()
-    const update = (now = performance.now()) => {
+    const update = () => {
       frame = requestAnimationFrame(update)
-      if (now - lastPaint < 1000 / 60) return
-      lastPaint = now
       if (!document.hidden) {
         // Animate this small DOM surface at display cadence. Native clock
         // interpolation does not require frame-rate updates of the React tree.
@@ -443,7 +455,7 @@ export function SyncedView({
         const lyricsPosition = lyricTimeAtMediaPosition(pos, lyricsRate, offsetMs)
         const { segmentIndex: found, progress, underlineProgress } = lyricTimingAt(timing, lyricsPosition)
         if (found !== segIdxRef.current) {
-          const duration = lyricTransitionDuration(segments, found, lyricsPosition, lyricsRate * p.playbackRate, motionStyle)
+          const duration = lyricTransitionDuration(segments, found, lyricsPosition, lyricsRate * playbackRate, motionStyle)
           stageRef.current?.style.setProperty('--lyr-scroll-duration', `${duration}ms`)
           stageRef.current?.style.setProperty('--lyr-line-duration', `${Math.min(320, duration)}ms`)
           segIdxRef.current = found
@@ -474,7 +486,7 @@ export function SyncedView({
     }
     update()
     return () => cancelAnimationFrame(frame)
-  }, [timing, segments, lyricsRate, offsetMs, fillEnabled, p.playbackRate, motionStyle, textFillMode])
+  }, [timing, segments, lyricsRate, offsetMs, fillEnabled, playbackRate, motionStyle, textFillMode])
 
   const endPause = useCallback(() => {
     if (pauseTimerRef.current !== 0) {
@@ -519,82 +531,28 @@ export function SyncedView({
     applyTransform(false)
   }
 
+  const skipLabel = t('Skip instrumental')
   const itemsNode = useMemo(
-    () =>
-      segments.map((s, i) => {
-        if (s.kind === 'notes') {
-          const isActive = i === segIdx
-          return (
-            <button
-              key={`n${i}`}
-              ref={(el) => {
-                itemEls.current[i] = el
-              }}
-              className={'lyr-notes' + (s.skipPool ? ' is-skip-pool' : '') + (isActive ? ' is-active' : '')}
-              tabIndex={isActive ? 0 : -1}
-              onTransitionEnd={(event) => {
-                if (event.target === event.currentTarget && event.propertyName === 'height') measureAll(false)
-              }}
-              onClick={() => {
-                endPause()
-                seekToLyricTime(s.seekToSec)
-              }}
-              aria-label={t('Skip instrumental')}
-            >
-              <span className="lyr-notes-row" aria-hidden="true">
-                <Music2 size={17} className="lyr-note" />
-                <Music2 size={17} className="lyr-note" />
-                <Music2 size={17} className="lyr-note" />
-              </span>
-            </button>
-          )
-        }
-        const cls = 'lyr-line' + (i === segIdx ? ' is-active' : i < segIdx ? ' is-past' : '')
-        return (
-          <div
-            key={`l${i}`}
-            ref={(el) => {
-              itemEls.current[i] = el
-            }}
-            className={cls}
-            onClick={() => {
-              endPause()
-              seekToLyricTime(s.seekToSec)
-            }}
-          >
-            <span
-              className={`lyr-line-text${textFillMode === 'words' ? ' is-word-fill' : ''}`}
-              style={{ whiteSpace: 'pre-line' }}
-              onTransitionEnd={i === segIdx ? event => {
-                if (event.target === event.currentTarget && event.propertyName === 'transform') measureProgressGeometry()
-              } : undefined}
-              ref={
-                i === segIdx
-                  ? (el) => {
-                      textRef.current = el
-                    }
-                  : null
-              }
-            >
-              {textFillMode === 'words' && i === segIdx ? s.text.split(/(\s+)/u).filter(Boolean).map((token, index) => (
-                <span key={index} data-lyric-token={/\S/u.test(token) ? 'word' : 'space'} className={/\S/u.test(token) ? 'lyr-word' : undefined}>{token}</span>
-              )) : s.text}
-            </span>
-            <span
-              className="lyr-underline"
-              style={{
-                transformOrigin: progressDirection === 'center-out'
-                  ? 'center center'
-                  : progressDirection === 'right-to-left'
-                    ? 'right center'
-                    : 'left center',
-              }}
-              ref={i === segIdx ? setUnderlineRef : null}
-            />
-          </div>
-        )
-      }),
-    [segments, segIdx, seekToLyricTime, t, endPause, measureAll, measureProgressGeometry, progressDirection, setUnderlineRef, textFillMode],
+    () => segments.map((segment, index) => (
+      <SyncedRow
+        key={`${segment.kind}${index}`}
+        segment={segment}
+        index={index}
+        active={index === segIdx}
+        past={index < segIdx}
+        textFillMode={textFillMode}
+        progressDirection={progressDirection}
+        skipLabel={skipLabel}
+        registerRow={registerRow}
+        setTextRef={setTextRef}
+        setUnderlineRef={setUnderlineRef}
+        onSeek={seekToLyricTime}
+        onPauseEnd={endPause}
+        onMeasure={measureAll}
+        onMeasureProgress={measureProgressGeometry}
+      />
+    )),
+    [segments, segIdx, textFillMode, progressDirection, skipLabel, registerRow, setTextRef, setUnderlineRef, seekToLyricTime, endPause, measureAll, measureProgressGeometry],
   )
 
   return (
@@ -609,7 +567,7 @@ export function SyncedView({
       )}
     </div>
   )
-}
+})
 
 function PlainView({ text }: { text: string }) {
   return <div className="lyr-plain">{text}</div>
@@ -1879,6 +1837,8 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
                 <SyncedView
                   key={trackKey}
                   timing={activeLyrics.timing}
+                  playbackRate={playbackRate}
+                  onSeek={p.seek}
                   lyricsRate={lyricsRate}
                   offsetMs={activeLyrics.offsetMs}
                   alignment={settings.lyrics.alignment}

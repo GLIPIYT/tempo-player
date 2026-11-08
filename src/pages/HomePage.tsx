@@ -13,7 +13,7 @@ import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { useScanProgress } from '../hooks/useScanProgress'
 import { useSettings } from '../state/settings'
 import { useT } from '../i18n'
-import { usePlayer } from '../player'
+import { playerController } from '../player/controller'
 import { useNav } from '../state/nav'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { toast } from '../components/common/Toast'
@@ -61,7 +61,6 @@ const NO_TRACKS: Track[] = []
 export default function HomePage() {
   const t = useT()
   const { settings } = useSettings()
-  const player = usePlayer()
   const { navigate } = useNav()
   const foldersApi = useFolders()
   const scan = useScanProgress()
@@ -138,14 +137,14 @@ export default function HomePage() {
   const recentAdded = recent.data ?? []
 
   const playSection = (tracks: Track[], index: number) => {
-    player.playTracks(tracks.map((tr) => trackToUnified(tr)), index)
+    playerController.playTracks(tracks.map((tr) => trackToUnified(tr)), index)
   }
 
   const playRecommendations = (index: number) => {
-    player.playTracks(recommendations.tracks.map(track => recommendationService.toUnified(track)), index)
+    playerController.playTracks(recommendations.tracks.map(track => recommendationService.toUnified(track)), index)
   }
   const playFavoriteGenre = (tracks: ScTrack[], index: number) => {
-    player.playTracks(scTracksToUnified(tracks), index)
+    playerController.playTracks(scTracksToUnified(tracks), index)
   }
 
   const cacheRecommendation = (track: ScTrack) => {
@@ -212,7 +211,7 @@ export default function HomePage() {
     try {
       const tracks = (await api.getPlaylist(playlist.id)).map((row) => row.track)
       if (tracks.length === 0) return
-      player.playTracks(tracks.map(trackToUnified), 0)
+      playerController.playTracks(tracks.map(trackToUnified), 0)
       await api.recordPlaylistStart(playlist.id)
       bumpLibraryVersion()
     } catch (cause) {

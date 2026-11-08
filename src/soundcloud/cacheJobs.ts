@@ -9,6 +9,8 @@ import { getSettings } from '../state/settings'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import type { ScArtist, ScPlaylist, ScTrack, Track, UnifiedTrack } from '../types/models'
 import { getKnownSoundCloudTrack, rememberSoundCloudTrack } from './cacheMetadata'
+import { trackCacheProgressStore, type TrackCacheProgress as TrackCacheProgressData } from './trackCacheProgressStore'
+export type { TrackCacheProgress } from './trackCacheProgressStore'
 
 /**
  * Caching, as a job the UI can watch.
@@ -46,17 +48,6 @@ export interface CacheJob {
   exiting: boolean
 }
 
-export interface TrackCacheProgress {
-  trackId: string
-  downloadedBytes: number
-  totalBytes: number
-  /** Coverage fraction for browser recordings; byte fields remain downloads only. */
-  progress?: number
-  state: 'running' | 'done' | 'failed'
-  error?: string
-  exiting: boolean
-}
-
 /** Track metadata needed for a cache request; provider flags may be absent. */
 export type CacheTrackInput = Pick<ScTrack, 'id' | 'title' | 'artist' | 'durationMs'> &
   Partial<Omit<ScTrack, 'id' | 'title' | 'artist' | 'durationMs'>>
@@ -88,7 +79,7 @@ interface TrackProgressPayload {
   downloadedBytes: number
   totalBytes: number
   progress?: number
-  state: TrackCacheProgress['state']
+  state: TrackCacheProgressData['state']
   error?: string
 }
 
@@ -106,7 +97,6 @@ let initialization: Promise<void> | null = null
 let nextGeneration = 0
 const completionTimers = new Map<string, { generation: number; timer: number }>()
 const trackProgressTimers = new Map<string, number[]>()
-let trackProgresses: TrackCacheProgress[] = []
 const cacheRequests = new Map<string, CacheJobRequest>()
 const trackRequests = new Map<string, Promise<CacheRequestOutcome>>()
 const reportedTrackFailures = new Set<string>()
@@ -201,8 +191,16 @@ export function getCacheJobs(): CacheJob[] {
   return jobs
 }
 
-export function getTrackCacheProgresses(): TrackCacheProgress[] {
-  return trackProgresses
+export function getTrackCacheProgresses(): TrackCacheProgressData[] {
+  return trackCacheProgressStore.getAll()
+}
+
+export function getTrackCacheProgress(trackId: string): TrackCacheProgressData | null {
+  return trackCacheProgressStore.get(trackId)
+}
+
+export function subscribeTrackCacheProgress(trackId: string, listener: () => void): () => void {
+  return trackCacheProgressStore.subscribe(trackId, listener)
 }
 
 function clearTrackProgressTimers(trackId: string): void {
@@ -211,19 +209,17 @@ function clearTrackProgressTimers(trackId: string): void {
 }
 
 function removeTrackProgress(trackId: string): void {
-  trackProgresses = trackProgresses.filter(progress => progress.trackId !== trackId)
+  trackCacheProgressStore.remove(trackId)
   trackProgressTimers.delete(trackId)
   emit()
 }
 
 function finishTrackProgress(trackId: string): void {
-  const lingerMs = trackProgresses.find(progress => progress.trackId === trackId)?.state === 'failed'
+  const lingerMs = trackCacheProgressStore.get(trackId)?.state === 'failed'
     ? 5000
     : 620
   const lingerTimer = window.setTimeout(() => {
-    trackProgresses = trackProgresses.map(progress => progress.trackId === trackId
-      ? { ...progress, exiting: true }
-      : progress)
+    trackCacheProgressStore.update(trackId, progress => ({ ...progress, exiting: true }))
     emit()
     const removeTimer = window.setTimeout(() => removeTrackProgress(trackId), EXIT_MS)
     trackProgressTimers.set(trackId, [removeTimer])
@@ -293,10 +289,7 @@ export function initCacheJobs(): Promise<void> {
             reportTrackCacheFailure(payload)
           }
         }
-        trackProgresses = [
-          ...trackProgresses.filter(progress => progress.trackId !== payload.trackId),
-          { ...payload, exiting: false },
-        ]
+        trackCacheProgressStore.set({ ...payload, exiting: false })
         emit()
         if (payload.state !== 'running') finishTrackProgress(payload.trackId)
       }))
@@ -377,7 +370,7 @@ export function requestTrackCache(
   if (inFlight) return inFlight
 
   const activeJob = jobs.find((job) => job.id === `track:${track.id}` && job.state === 'running')
-  if (activeJob || trackProgresses.some((progress) => progress.trackId === track.id && progress.state === 'running')) {
+  if (activeJob || trackCacheProgressStore.get(track.id)?.state === 'running') {
     return Promise.resolve('started')
   }
 

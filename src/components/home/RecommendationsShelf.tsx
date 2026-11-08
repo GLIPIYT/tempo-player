@@ -1,10 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
 import { ChevronLeft, ChevronRight, Download, LoaderCircle, Play, RefreshCw } from 'lucide-react'
 import type { ScTrack } from '../../types/models'
 import { useT } from '../../i18n'
 import { beginTrackDrag, consumeDragClick } from '../../dnd/trackDrag'
 import { useSoundCloudGenreRecommendations } from '../../hooks/useSoundCloudGenreRecommendations'
-import { getTrackCacheProgresses, subscribeCacheJobs } from '../../soundcloud/cacheJobs'
+import { getTrackCacheProgress, subscribeTrackCacheProgress } from '../../soundcloud/cacheJobs'
 import ScArtwork from '../common/ScArtwork'
 
 interface RecommendationsShelfProps {
@@ -30,6 +30,69 @@ interface RecommendationsShelfProps {
   onTrimPassed: (trackKeys: string[]) => void
   onSectionMenu: (event: MouseEvent) => void
 }
+
+interface RecommendationCacheControlProps {
+  track: ScTrack
+  cached: boolean
+  onCache: (track: ScTrack) => void
+}
+
+const RecommendationCacheControl = memo(function RecommendationCacheControl({ track, cached, onCache }: RecommendationCacheControlProps) {
+  const t = useT()
+  const subscribe = useCallback((listener: () => void) => subscribeTrackCacheProgress(track.id, listener), [track.id])
+  const getSnapshot = useCallback(() => getTrackCacheProgress(track.id), [track.id])
+  const progress = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+  if (progress) {
+    if (progress.state === 'failed') {
+      return (
+        <button
+          type="button"
+          className={`home-recommendation-cache is-failed${progress.exiting ? ' is-exiting' : ''}`}
+          aria-label={`${t('Retry')}: ${track.title}`}
+          title={progress.error || t('Caching failed')}
+          onClick={() => onCache(track)}
+        >
+          <RefreshCw size={13} />
+        </button>
+      )
+    }
+    const percent = progress.state === 'done'
+      ? 100
+      : typeof progress.progress === 'number' && Number.isFinite(progress.progress)
+        ? Math.min(99, Math.max(0, Math.round(progress.progress * 100)))
+        : progress.totalBytes > 0
+          ? Math.min(99, Math.round(progress.downloadedBytes / progress.totalBytes * 100))
+          : null
+    const progressRing = percent ?? 12
+    return (
+      <button
+        type="button"
+        className={`home-recommendation-cache is-progress${percent === null ? ' is-indeterminate' : ''}${progress.exiting ? ' is-exiting' : ''}`}
+        style={{ '--cache-progress': `${progressRing}%` } as CSSProperties}
+        aria-label={`${t('Caching…')}${percent === null ? '' : ` ${percent}%`}: ${track.title}`}
+        title={`${t('Caching…')}${percent === null ? '' : ` ${percent}%`}`}
+        disabled
+      >
+        <span className="home-cache-spinner" aria-hidden="true"><LoaderCircle size={17} strokeWidth={1.8} /></span>
+        <span className="home-cache-percent" aria-hidden="true">{percent === null ? '' : `${percent}%`}</span>
+      </button>
+    )
+  }
+
+  if (!/^[1-9]\d*$/.test(track.id) || cached) return null
+  return (
+    <button
+      type="button"
+      className="home-recommendation-cache"
+      aria-label={`${t('Cache track')}: ${track.title}`}
+      title={t('Cache track')}
+      onClick={() => onCache(track)}
+    >
+      <Download size={13} />
+    </button>
+  )
+})
 
 export default function RecommendationsShelf({
   tracks,
@@ -64,17 +127,16 @@ export default function RecommendationsShelf({
     loadMore: loadMoreGenre,
     retry: retryGenre,
   } = useSoundCloudGenreRecommendations(favoriteGenre, tracks)
-  const cacheProgresses = useSyncExternalStore(subscribeCacheJobs, getTrackCacheProgresses, getTrackCacheProgresses)
-  const cacheProgressByTrackId = useMemo(() => new Map(cacheProgresses.map((progress) => [progress.trackId, progress])), [cacheProgresses])
   const genreCachedTrackIds = useMemo(() => new Set([...cachedTrackIds, ...genreCachedIds]), [cachedTrackIds, genreCachedIds])
   const sectionRef = useRef<HTMLElement>(null)
   const railRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLSpanElement>(null)
   const genreRailRef = useRef<HTMLDivElement>(null)
   const genreEndRef = useRef<HTMLSpanElement>(null)
-  const trimAnchor = useRef<{ id: string; left: number; scroll: number } | null>(null)
-  const [now, setNow] = useState(Date.now)
-  const coolingDown = retryAt !== null && retryAt > now
+  const trimAnchor = useRef<{ id: string; left: number } | null>(null)
+  const trimFrame = useRef<number | null>(null)
+  const [expiredRetryAt, setExpiredRetryAt] = useState<number | null>(() => retryAt === null || retryAt <= Date.now() ? retryAt : null)
+  const coolingDown = retryAt !== null && retryAt > Date.now() && expiredRetryAt !== retryAt
   const scroll = (direction: number) => railRef.current?.scrollBy({ left: direction * 460, behavior: 'smooth' })
 
   useEffect(() => {
@@ -94,9 +156,12 @@ export default function RecommendationsShelf({
   }, [onNearViewport])
 
   useEffect(() => {
-    if (!retryAt || retryAt <= Date.now()) return
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
+    if (!retryAt || retryAt <= Date.now()) {
+      setExpiredRetryAt(retryAt)
+      return
+    }
+    const timer = window.setTimeout(() => setExpiredRetryAt(retryAt), retryAt - Date.now())
+    return () => window.clearTimeout(timer)
   }, [retryAt])
 
   useEffect(() => {
@@ -126,11 +191,17 @@ export default function RecommendationsShelf({
     const timers = new Map<string, ReturnType<typeof setTimeout>>()
     const visible = new Set<string>()
     const recorded = new Set<string>()
+    let reportedVisible: Set<string> | null = null
     let sectionVisible = false
     const stop = (id: string) => { const timer = timers.get(id); if (timer) clearTimeout(timer); timers.delete(id) }
-    const sync = () => {
+    const sync = (force = false) => {
       const allowed = sectionVisible && document.visibilityState === 'visible'
-      onVisibleIds(allowed ? [...visible] : [])
+      const visibleIds = allowed ? [...visible] : []
+      if (force || reportedVisible === null || visibleIds.length !== reportedVisible.size
+        || visibleIds.some(id => !reportedVisible!.has(id))) {
+        reportedVisible = new Set(visibleIds)
+        onVisibleIds(visibleIds)
+      }
       for (const id of timers.keys()) if (!allowed || !visible.has(id)) stop(id)
       if (!allowed) return
       for (const id of visible) {
@@ -158,33 +229,45 @@ export default function RecommendationsShelf({
     }, { threshold: 0 })
     sectionObserver.observe(section)
     rail.querySelectorAll('[data-track-id]').forEach(card => cardsObserver.observe(card))
-    document.addEventListener('visibilitychange', sync)
-    const cacheTimer = setInterval(sync, 60_000)
+    const onVisibilityChange = () => sync(true)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    const cacheTimer = setInterval(() => sync(true), 60_000)
     return () => {
       cardsObserver.disconnect(); sectionObserver.disconnect()
-      document.removeEventListener('visibilitychange', sync)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       clearInterval(cacheTimer)
       for (const id of timers.keys()) stop(id)
       onVisibleIds([])
     }
   }, [tracks, onImpression, onVisibleIds])
 
-  const trimPassed = () => {
-    const rail = railRef.current
-    if (!rail || tracks.length < 280 || trimAnchor.current) return
-    const cards = Array.from(rail.querySelectorAll<HTMLElement>('[data-track-id]'))
-    const edge = rail.getBoundingClientRect().left
-    const passed = cards.filter(card => card.getBoundingClientRect().right <= edge)
-    const count = Math.min(20, passed.length)
-    if (!count || !cards[count]) return
-    trimAnchor.current = { id: cards[count].dataset.trackId!, left: cards[count].getBoundingClientRect().left, scroll: rail.scrollLeft }
-    onTrimPassed(tracks.slice(0, count).map(track => `soundcloud:${track.id}`))
-  }
+  const trimPassed = useCallback(() => {
+    if (trimFrame.current !== null) return
+    trimFrame.current = window.requestAnimationFrame(() => {
+      trimFrame.current = null
+      const rail = railRef.current
+      if (!rail || tracks.length < 280 || trimAnchor.current) return
+      const cards = rail.querySelectorAll<HTMLElement>('[data-track-id]')
+      const edge = rail.getBoundingClientRect().left
+      let count = 0
+      while (count < 20 && count < cards.length && cards[count].getBoundingClientRect().right <= edge) count += 1
+      if (!count || count >= cards.length) return
+      const anchor = cards[count]
+      trimAnchor.current = { id: anchor.dataset.trackId!, left: anchor.getBoundingClientRect().left }
+      onTrimPassed(tracks.slice(0, count).map(track => `soundcloud:${track.id}`))
+    })
+  }, [onTrimPassed, tracks])
+
+  useEffect(() => () => {
+    if (trimFrame.current !== null) window.cancelAnimationFrame(trimFrame.current)
+  }, [])
+
   useLayoutEffect(() => {
-    const rail = railRef.current, anchor = trimAnchor.current
+    const rail = railRef.current
+    const anchor = trimAnchor.current
     if (!rail || !anchor) return
-    const card = Array.from(rail.querySelectorAll<HTMLElement>('[data-track-id]')).find(item => item.dataset.trackId === anchor.id)
-    if (card) rail.scrollLeft += card.getBoundingClientRect().left - anchor.left
+    const card = rail.querySelector<HTMLElement>('[data-track-id]')
+    if (card?.dataset.trackId === anchor.id) rail.scrollLeft += card.getBoundingClientRect().left - anchor.left
     trimAnchor.current = null
   }, [tracks])
 
@@ -208,57 +291,7 @@ export default function RecommendationsShelf({
         <strong title={track.title}>{track.title}</strong>
         <small title={track.artist}>{track.artist}</small>
       </button>
-      {(() => {
-        const progress = cacheProgressByTrackId.get(track.id)
-        if (progress) {
-          if (progress.state === 'failed') {
-            return (
-              <button
-                type="button"
-                className={`home-recommendation-cache is-failed${progress.exiting ? ' is-exiting' : ''}`}
-                aria-label={`${t('Retry')}: ${track.title}`}
-                title={progress.error || t('Caching failed')}
-                onClick={() => onCache(track)}
-              >
-                <RefreshCw size={13} />
-              </button>
-            )
-          }
-          const percent = progress.state === 'done'
-            ? 100
-            : typeof progress.progress === 'number' && Number.isFinite(progress.progress)
-              ? Math.min(99, Math.max(0, Math.round(progress.progress * 100)))
-            : progress.totalBytes > 0
-              ? Math.min(99, Math.round(progress.downloadedBytes / progress.totalBytes * 100))
-              : null
-          const progressRing = percent ?? 12
-          return (
-            <button
-              type="button"
-              className={`home-recommendation-cache is-progress${percent === null ? ' is-indeterminate' : ''}${progress.exiting ? ' is-exiting' : ''}`}
-              style={{ '--cache-progress': `${progressRing}%` } as CSSProperties}
-              aria-label={`${t('Caching…')}${percent === null ? '' : ` ${percent}%`}: ${track.title}`}
-              title={`${t('Caching…')}${percent === null ? '' : ` ${percent}%`}`}
-              disabled
-            >
-              <span className="home-cache-spinner" aria-hidden="true"><LoaderCircle size={17} strokeWidth={1.8} /></span>
-              <span className="home-cache-percent" aria-hidden="true">{percent === null ? '' : `${percent}%`}</span>
-            </button>
-          )
-        }
-        if (!/^[1-9]\d*$/.test(track.id) || cachedIds.has(track.id)) return null
-        return (
-          <button
-            type="button"
-            className="home-recommendation-cache"
-            aria-label={`${t('Cache track')}: ${track.title}`}
-            title={t('Cache track')}
-            onClick={() => onCache(track)}
-          >
-            <Download size={13} />
-          </button>
-        )
-      })()}
+      <RecommendationCacheControl track={track} cached={cachedIds.has(track.id)} onCache={onCache} />
     </div>
   ))
 

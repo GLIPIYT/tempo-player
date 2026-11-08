@@ -1112,6 +1112,13 @@
   -webkit-text-fill-color: currentColor;
   text-shadow: none;
 }
+.lyr-line-text.is-word-fill {
+  /* Keep the same wrapping before activation and leave room for emphasis. */
+  word-spacing: .12em;
+}
+.lyr-word-space {
+  white-space: pre-wrap;
+}
 .lyr-word {
   display: inline-block;
   transform: scale(1);
@@ -1125,7 +1132,8 @@
 .lyr-line.is-active .lyr-word.is-filled { opacity: .82; }
 .lyr-line.is-active .lyr-word.is-current-word {
   opacity: 1;
-  transform: scale(1.06);
+  /* A wide word must not grow across the spaces on either side. */
+  transform: scale(1.025, 1.06);
   text-shadow: 0 0 8px #ffffff50, 0 0 18px color-mix(in srgb, var(--accent) 72%, transparent);
 }
 
