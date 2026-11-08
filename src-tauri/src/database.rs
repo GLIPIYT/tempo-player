@@ -469,6 +469,17 @@ const MIGRATION_21: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_history_played_at_id ON listening_history(played_at, id);
 "#;
 
+const MIGRATION_22: &str = r#"
+-- Vocal AED output is independent from the Whisper/lyric analysis cache.
+CREATE TABLE IF NOT EXISTS lyric_vocal_analysis (
+    fingerprint TEXT PRIMARY KEY,
+    audio_key TEXT NOT NULL,
+    analysis_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lyric_vocal_analysis_key ON lyric_vocal_analysis(audio_key);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
     MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_13,
@@ -479,6 +490,7 @@ const MIGRATIONS: &[&str] = &[
     crate::recommendation_store::PERSONALIZATION_MIGRATION,
     crate::recommendation_audio::AUDIO_MIGRATION,
     MIGRATION_21,
+    MIGRATION_22,
 ];
 
 pub struct Db {
@@ -626,6 +638,115 @@ impl Db {
             if json.len() > 2 * 1024 * 1024 { return Err("audio analysis cache exceeds its size limit".into()); }
             tx.execute("DELETE FROM lyric_audio_analysis WHERE audio_key=?1 AND fingerprint<>?2", params![identity.absolute_path, identity.fingerprint]).map_err(db_err)?;
             tx.execute("INSERT INTO lyric_audio_analysis(fingerprint,audio_key,analysis_json,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(fingerprint) DO UPDATE SET audio_key=excluded.audio_key,analysis_json=excluded.analysis_json,updated_at=excluded.updated_at", params![identity.fingerprint, identity.absolute_path, json, now()]).map_err(db_err)?;
+            tx.commit().map_err(db_err)?;
+            Ok(analysis)
+        })
+    }
+
+    pub fn lyrics_vocal_get(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<crate::vocal_analysis::VocalAnalysis>, String> {
+        self.with_conn(|conn| {
+            let json: Option<String> = conn
+                .query_row(
+                    "SELECT analysis_json FROM lyric_vocal_analysis WHERE fingerprint=?1",
+                    params![fingerprint],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(db_err)?;
+            json.map(|json| {
+                if json.len() > crate::vocal_analysis::MAX_ANALYSIS_JSON_BYTES {
+                    return Err("vocal analysis cache exceeds its size limit".into());
+                }
+                serde_json::from_str(&json)
+                    .map_err(|e| format!("invalid cached vocal analysis: {e}"))
+            })
+            .transpose()
+        })
+    }
+
+    pub fn lyrics_vocal_merge(
+        &self,
+        identity: &crate::lyric_analysis::AudioIdentity,
+        incoming: &crate::vocal_analysis::VocalAnalysis,
+    ) -> Result<crate::vocal_analysis::VocalAnalysis, String> {
+        use crate::vocal_analysis::{
+            validate_analysis, VocalAnalysis, ALGORITHM_VERSION, MAX_ANALYSIS_JSON_BYTES,
+            MODEL_REVISION,
+        };
+
+        validate_analysis(incoming, identity)?;
+        if incoming.algorithm_version != ALGORITHM_VERSION
+            || incoming.model_revision != MODEL_REVISION
+        {
+            return Err("vocal analysis version does not match the bundled model".into());
+        }
+
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction().map_err(db_err)?;
+            let json: Option<String> = tx
+                .query_row(
+                    "SELECT analysis_json FROM lyric_vocal_analysis WHERE fingerprint=?1",
+                    params![identity.fingerprint],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(db_err)?;
+            let mut analysis = match json {
+                Some(json) => {
+                    if json.len() > MAX_ANALYSIS_JSON_BYTES {
+                        return Err("vocal analysis cache exceeds its size limit".into());
+                    }
+                    let cached: VocalAnalysis = serde_json::from_str(&json)
+                        .map_err(|e| format!("invalid cached vocal analysis: {e}"))?;
+                    if cached.algorithm_version != ALGORITHM_VERSION
+                        || cached.model_revision != MODEL_REVISION
+                    {
+                        VocalAnalysis::empty(identity)
+                    } else {
+                        validate_analysis(&cached, identity)?;
+                        cached
+                    }
+                }
+                None => VocalAnalysis::empty(identity),
+            };
+
+            for chunk in &incoming.chunks {
+                if let Some(existing) = analysis.chunks.iter_mut().find(|existing| {
+                    existing.start_sec == chunk.start_sec && existing.end_sec == chunk.end_sec
+                }) {
+                    *existing = chunk.clone();
+                    continue;
+                }
+                if analysis.chunks.iter().any(|existing| {
+                    chunk.start_sec < existing.end_sec && existing.start_sec < chunk.end_sec
+                }) {
+                    return Err("vocal analysis chunks overlap".into());
+                }
+                analysis.chunks.push(chunk.clone());
+            }
+            analysis.chunks.sort_by(|a, b| {
+                a.start_sec
+                    .total_cmp(&b.start_sec)
+                    .then(a.end_sec.total_cmp(&b.end_sec))
+            });
+            validate_analysis(&analysis, identity)?;
+            let json = serde_json::to_string(&analysis).map_err(|e| e.to_string())?;
+            if json.len() > MAX_ANALYSIS_JSON_BYTES {
+                return Err("vocal analysis cache exceeds its size limit".into());
+            }
+            tx.execute(
+                "DELETE FROM lyric_vocal_analysis WHERE audio_key=?1 AND fingerprint<>?2",
+                params![identity.absolute_path, identity.fingerprint],
+            )
+            .map_err(db_err)?;
+            tx.execute(
+                "INSERT INTO lyric_vocal_analysis(fingerprint,audio_key,analysis_json,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(fingerprint) DO UPDATE SET audio_key=excluded.audio_key,analysis_json=excluded.analysis_json,updated_at=excluded.updated_at",
+                params![identity.fingerprint, identity.absolute_path, json, now()],
+            )
+            .map_err(db_err)?;
             tx.commit().map_err(db_err)?;
             Ok(analysis)
         })

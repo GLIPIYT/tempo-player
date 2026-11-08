@@ -5,6 +5,7 @@ import { createPlaybackTiming } from './playbackTiming'
 import { sha256Hex } from './sha256'
 import { lyricTimingAt, resolveLyricTiming, type LyricTimingAnalysis, type ResolvedLyricsTiming } from './timingResolver'
 import type { LyricsResult } from './types'
+import type { VocalTimingEvidence } from './analysis/vocalContract'
 
 export interface CurrentLyrics {
   trackId: string
@@ -40,10 +41,12 @@ let version = 0
 let position = 0
 let mediaDurationSec: number | null = null
 let latestAnalysis: LyricTimingAnalysis | null = null
+let latestVocal: VocalTimingEvidence | null = null
 let resolved: ResolvedLyricsTiming = { lines: [], segments: [] }
 let pass = createPlaybackTiming()
 const listeners = new Set<() => void>()
 function emit(): void { version++; listeners.forEach(listener => listener()) }
+const combinedAnalysis = (): LyricTimingAnalysis => ({ ...(latestAnalysis ?? { bpm: null, matchedEnds: [] }), vocal: latestVocal })
 function activate(trackId: string, sourceResult: LyricsResult | null, durationSec: number | null,
   sourceLyricKey: string, offsetMs: number, provider: string): void {
   loadingTrackId = ''
@@ -52,6 +55,7 @@ function activate(trackId: string, sourceResult: LyricsResult | null, durationSe
   if (current?.trackId === trackId && current.lyricKey === lyricKey && current.durationSec === durationSec) return
   generation++
   latestAnalysis = null
+  latestVocal = null
   const result: LyricsResult | null = sourceResult?.kind === 'synced'
     ? { kind: 'synced', lines: shiftLyricsLines(sourceResult.lines, offsetMs) } : sourceResult
   resolved = resolveLyricTiming(result?.kind === 'synced' ? result.lines : [], durationSec)
@@ -80,7 +84,7 @@ export const lyricsService = {
     if (requestedId !== trackId || !Number.isFinite(durationSec) || durationSec <= 0) return
     mediaDurationSec = durationSec
     if (!current || current.durationSec === durationSec) return
-    resolved = resolveLyricTiming(current.result?.kind === 'synced' ? current.result.lines : [], durationSec, latestAnalysis)
+    resolved = resolveLyricTiming(current.result?.kind === 'synced' ? current.result.lines : [], durationSec, combinedAnalysis())
     current = { ...current, durationSec, timing: pass.update(resolved, position, durationSec) }
     emit()
   },
@@ -102,7 +106,16 @@ export const lyricsService = {
     // Avoid resolving every line and notifying the whole lyric UI again.
     if (latestAnalysis === analysis) return true
     latestAnalysis = analysis
-    resolved = resolveLyricTiming(current.result?.kind === 'synced' ? current.result.lines : [], current.durationSec, analysis)
+    resolved = resolveLyricTiming(current.result?.kind === 'synced' ? current.result.lines : [], current.durationSec, combinedAnalysis())
+    current = { ...current, timing: pass.update(resolved, position, current.durationSec) }
+    emit()
+    return true
+  },
+  publishVocalAnalysis(trackId: string, lyricKey: string, expectedGeneration: number, vocal: VocalTimingEvidence | null): boolean {
+    if (!current || current.trackId !== trackId || current.lyricKey !== lyricKey || generation !== expectedGeneration) return false
+    if (latestVocal === vocal) return true
+    latestVocal = vocal
+    resolved = resolveLyricTiming(current.result?.kind === 'synced' ? current.result.lines : [], current.durationSec, combinedAnalysis())
     current = { ...current, timing: pass.update(resolved, position, current.durationSec) }
     emit()
     return true
@@ -114,7 +127,7 @@ export const lyricsService = {
     currentKey = key; requestedId = track.sourceId; current = null
     loadingTrackId = track.sourceId
     requestedTrackKey = `${track.source ?? 'local'}:${track.source === 'local' ? track.dbId ?? track.sourceId : track.sourceId}`
-    mediaDurationSec = null; latestAnalysis = null
+    mediaDurationSec = null; latestAnalysis = null; latestVocal = null
     pass = createPlaybackTiming()
     emit()
     void fetchLyrics(track, cacheOnline).then(candidate => {
@@ -132,7 +145,7 @@ export const lyricsService = {
     if (!currentKey && !current) return
     generation++; currentKey = ''; current = null; requestedId = ''; requestedTrackKey = ''
     loadingTrackId = ''
-    mediaDurationSec = null; latestAnalysis = null
+    mediaDurationSec = null; latestAnalysis = null; latestVocal = null
     emit()
   },
 }

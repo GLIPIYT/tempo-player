@@ -1,36 +1,49 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clampMiniShowMs, clampVisualizer, defaultSettings, loadSettings, resolveDeepAnalysisDefault } from './settings'
-
-const native = vi.hoisted(() => ({ invoke: vi.fn() }))
-vi.mock('@tauri-apps/api/core', () => ({ invoke: native.invoke }))
+import { clampMiniShowMs, clampVisualizer, defaultSettings, loadSettings } from './settings'
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  native.invoke.mockReset()
 })
 
-describe('persisted lyrics analysis choice', () => {
-  function loadStored(value: unknown) {
+describe('persisted lyrics analysis preferences', () => {
+  function loadLyrics(value: unknown) {
     vi.stubGlobal('localStorage', { getItem: () => JSON.stringify(value) })
-    return loadSettings().lyrics.deepAnalysisEnabled
+    return loadSettings().lyrics
   }
 
-  it('leaves legacy settings and missing storage unresolved', () => {
-    expect(loadStored({ lyrics: { cacheOnline: false } })).toBeNull()
+  it('defaults to vocal timing and keeps Whisper opt-in for new and existing settings', () => {
+    expect(defaultSettings.lyrics.vocalAnalysisEnabled).toBe(true)
+    expect(defaultSettings.lyrics.whisperWordTimingsEnabled).toBe(false)
+    expect(loadLyrics({ lyrics: { cacheOnline: false } }).vocalAnalysisEnabled).toBe(true)
+    expect(loadLyrics({ lyrics: { cacheOnline: false } }).whisperWordTimingsEnabled).toBe(false)
     vi.stubGlobal('localStorage', { getItem: () => null })
-    expect(loadSettings().lyrics.deepAnalysisEnabled).toBeNull()
+    expect(loadSettings().lyrics.vocalAnalysisEnabled).toBe(true)
+    expect(loadSettings().lyrics.whisperWordTimingsEnabled).toBe(false)
   })
 
-  it.each([true, false])('preserves an explicit saved %s', value => {
-    expect(loadStored({ lyrics: { deepAnalysisEnabled: value } })).toBe(value)
+  it.each([true, false])('preserves an explicit vocal timing preference of %s', value => {
+    expect(loadLyrics({ lyrics: { vocalAnalysisEnabled: value } }).vocalAnalysisEnabled).toBe(value)
   })
 
-  it.each([null, 'true', 'false', 0, 1, {}, []])('leaves invalid saved %j unresolved', value => {
-    expect(loadStored({ lyrics: { deepAnalysisEnabled: value } })).toBeNull()
+  it.each([true, false])('preserves an explicit Whisper preference of %s', value => {
+    expect(loadLyrics({ lyrics: { whisperWordTimingsEnabled: value } }).whisperWordTimingsEnabled).toBe(value)
   })
 
-  it('keeps initially persisted null unresolved for the pending hardware probe', () => {
-    expect(loadStored(defaultSettings)).toBeNull()
+  it.each([null, 'true', 'false', 0, 1, {}, []])('uses defaults for invalid saved preferences %j', value => {
+    const lyrics = loadLyrics({ lyrics: { vocalAnalysisEnabled: value, whisperWordTimingsEnabled: value } })
+    expect(lyrics.vocalAnalysisEnabled).toBe(true)
+    expect(lyrics.whisperWordTimingsEnabled).toBe(false)
+  })
+
+  it('ignores the legacy hardware-selected model setting without opting into Whisper', () => {
+    const lyrics = loadLyrics({ lyrics: { deepAnalysisEnabled: true } })
+    expect(lyrics.whisperWordTimingsEnabled).toBe(false)
+    expect('deepAnalysisEnabled' in lyrics).toBe(false)
+  })
+
+  it('keeps an explicit Whisper opt-out when loading a legacy enabled preference', () => {
+    expect(loadLyrics({ lyrics: { deepAnalysisEnabled: true, whisperWordTimingsEnabled: false } })
+      .whisperWordTimingsEnabled).toBe(false)
   })
 })
 
@@ -68,49 +81,6 @@ describe('persisted waveform cache preference', () => {
   it('preserves only an explicit saved opt-in', () => {
     expect(loadPlayer({ player: { cacheWaveforms: true } }).cacheWaveforms).toBe(true)
     expect(loadPlayer({ player: { cacheWaveforms: 'true' } }).cacheWaveforms).toBe(false)
-  })
-})
-
-describe('settings hardware default update', () => {
-  async function pendingDefault(recommended: boolean) {
-    vi.resetModules()
-    let finish!: (value: unknown) => void
-    const response = new Promise(resolve => { finish = resolve })
-    native.invoke.mockReturnValue(response)
-    const { initializeDeepAnalysisDefault } = await import('../features/lyrics/analysis/hardwareDefault')
-    let current = defaultSettings
-    const pending = initializeDeepAnalysisDefault(resolve => {
-      current = resolveDeepAnalysisDefault(current, resolve)
-    })
-    return {
-      get: () => current,
-      set: (choice: boolean | null) => {
-        current = { ...current, lang: 'en', lyrics: { ...current.lyrics, deepAnalysisEnabled: choice } }
-      },
-      complete: async () => {
-        finish({ installedRamBytes: 17_179_869_184, physicalCores: 6, maxDedicatedVramBytes: 2_147_483_648, recommendedEnabled: recommended })
-        await pending
-      },
-    }
-  }
-
-  it('resolves the actual settings updater after an asynchronous recommendation', async () => {
-    const state = await pendingDefault(true)
-    state.set(null)
-    await state.complete()
-    expect(state.get().lyrics.deepAnalysisEnabled).toBe(true)
-    expect(state.get().lang).toBe('en')
-    expect(defaultSettings.lyrics.deepAnalysisEnabled).toBeNull()
-  })
-
-  it.each([true, false])('preserves a manual %s through the actual updater after a late response', async manual => {
-    const state = await pendingDefault(!manual)
-    state.set(manual)
-    const selected = state.get()
-    await state.complete()
-    expect(state.get().lyrics.deepAnalysisEnabled).toBe(manual)
-    expect(state.get()).toBe(selected)
-    expect(state.get().lang).toBe('en')
   })
 })
 

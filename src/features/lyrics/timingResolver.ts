@@ -2,17 +2,20 @@ import type { LyricsLine, LyricsWord } from './types'
 import { mapLyricWordTimings, type LyricWordTiming } from './wordTiming'
 import { addEstimatedWordTimings, repeatedPhraseDurations, repeatedPhraseKey } from './wordEstimate'
 import { lyricWordTokens } from './lyricTokens'
+import type { VocalTimingEvidence } from './analysis/vocalContract'
+import { vocalPhraseEnd } from './vocalTiming'
 
 export interface LyricTimingAnalysis {
   bpm: { value: number; confidence: number } | null
   matchedEnds: readonly { lineIndex: number; endTimeSec: number; confidence: number }[]
   matchedWords?: readonly { lineIndex: number; words: readonly LyricsWord[]; confidence: number }[]
+  vocal?: VocalTimingEvidence | null
 }
 
 export interface ResolvedLyricsLine extends Omit<LyricsLine, 'endSource' | 'endTimeSec'> {
   lineIndex: number
   endTimeSec: number
-  endSource: 'manual' | 'source' | 'recognized' | 'text'
+  endSource: 'manual' | 'source' | 'recognized' | 'vocal' | 'text'
   confidence: number
   wordTimings?: readonly (LyricWordTiming | null)[]
 }
@@ -217,6 +220,8 @@ export function resolveLyricTiming(
         confidence = repeatDuration !== undefined ? .65 : calibration === null ? work.confidence : Math.min(0.7, work.confidence + 0.1)
         const gap = limit - endTimeSec
         if (Number.isFinite(limit) && (gap < 0.75 || gap < (limit - line.timeSec) * 0.2)) endTimeSec = limit
+        const vocalEnd = vocalPhraseEnd(analysis?.vocal, line.timeSec, endTimeSec, limit, sourceWordStart)
+        if (vocalEnd !== null) { endTimeSec = vocalEnd; endSource = 'vocal'; confidence = .76 }
       }
       return { ...line, lineIndex, endTimeSec, endSource, confidence }
     })
@@ -225,7 +230,7 @@ export function resolveLyricTiming(
       // Automatically inferred simultaneous phrases share a positive interval;
       // an author's explicit per-line end remains attached to its own line.
       const commonEnd = Math.max(...singing.map((line) => line.endTimeSec))
-      for (const line of singing) if (line.endSource === 'text') line.endTimeSec = Math.min(commonEnd, limit)
+      for (const line of singing) if (line.endSource === 'text' || line.endSource === 'vocal') line.endTimeSec = Math.min(commonEnd, limit)
     }
     for (const line of singing) {
       const wordLimit = Math.min(line.endTimeSec, limit)
@@ -288,7 +293,7 @@ export function resolveLyricTiming(
     }
   }
   const timing = { lines: resolved, segments }
-  addEstimatedWordTimings(timing)
+  addEstimatedWordTimings(timing, analysis?.vocal)
   return timing
 }
 

@@ -1,0 +1,9 @@
+{
+  "modelId": "FireRedVAD-AED",
+  "revision": "823c2802d870aa57f19b1fbd8214c85c72b22930c851342ef7c656f68b8e9ee2",
+  "modelFile": "aed.onnx",
+  "modelSha256": "823c2802d870aa57f19b1fbd8214c85c72b22930c851342ef7c656f68b8e9ee2",
+  "cmvnFile": "cmvn.json",
+  "cmvnSha256": "ec35a0d6f9d5b5465ae4a9248113d4bafc428138515d08bb51f2ee4502f3ad2e",
+  "algorithmVersion": "vocal-aed-v1"
+}

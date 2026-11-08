@@ -1,7 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { ActiveTheme } from '../types/theme'
 import { DEFAULT_EQUALIZER_SETTINGS, normalizeEqualizer, type EqualizerSettings } from '../audio/equalizer'
-import { initializeDeepAnalysisDefault } from '../features/lyrics/analysis/hardwareDefault'
 
 export type StartupPage = 'home' | 'library' | 'albums' | 'artists' | 'playlists'
 export type BrandIconStyle = 'pulse' | 'orbit'
@@ -37,8 +36,10 @@ export interface AppSettings {
   }
   lyrics: {
     cacheOnline: boolean
-    /** Null waits for the hardware default; only true permits deep analysis. */
-    deepAnalysisEnabled: boolean | null
+    /** Refine line timing from the audio signal without downloading a model. */
+    vocalAnalysisEnabled: boolean
+    /** Explicit opt-in to Whisper word recognition; only used in word-fill mode. */
+    whisperWordTimingsEnabled: boolean
     alignment: 'left' | 'center' | 'right'
     textSizePx: number
     fillEnabled: boolean
@@ -146,7 +147,8 @@ export const defaultSettings: AppSettings = {
   discord: { enabled: false, clientId: '1543766505295183904', lyricStitchGapSec: 2 },
   lyrics: {
     cacheOnline: true,
-    deepAnalysisEnabled: null,
+    vocalAnalysisEnabled: true,
+    whisperWordTimingsEnabled: false,
     alignment: 'left',
     textSizePx: 21,
     fillEnabled: true,
@@ -226,11 +228,18 @@ function normalizeLyricColor(value: unknown): string {
 
 function normalizeLyrics(value: Partial<AppSettings['lyrics']>): AppSettings['lyrics'] {
   const base = defaultSettings.lyrics
+  const stored = { ...value } as Partial<AppSettings['lyrics']> & { deepAnalysisEnabled?: unknown }
+  // Ignore the old hardware-selected model preference. It must never opt
+  // existing users into downloading or running Whisper.
+  delete stored.deepAnalysisEnabled
   return {
     ...base,
-    ...value,
+    ...stored,
     alignment: value.alignment === 'center' || value.alignment === 'right' ? value.alignment : 'left',
-    deepAnalysisEnabled: typeof value.deepAnalysisEnabled === 'boolean' ? value.deepAnalysisEnabled : null,
+    vocalAnalysisEnabled: typeof stored.vocalAnalysisEnabled === 'boolean'
+      ? stored.vocalAnalysisEnabled : base.vocalAnalysisEnabled,
+    whisperWordTimingsEnabled: typeof stored.whisperWordTimingsEnabled === 'boolean'
+      ? stored.whisperWordTimingsEnabled : base.whisperWordTimingsEnabled,
     textSizePx: clampLyricNumber(value.textSizePx, 16, 40, 1, base.textSizePx),
     fillEnabled: typeof value.fillEnabled === 'boolean' ? value.fillEnabled : base.fillEnabled,
     motionStyle: value.motionStyle === 'accelerated' ? 'accelerated' : 'smooth',
@@ -353,15 +362,6 @@ export function loadSettings(): AppSettings {
   }
 }
 
-export function resolveDeepAnalysisDefault(
-  current: AppSettings,
-  resolve: (choice: boolean | null) => boolean,
-): AppSettings {
-  const enabled = resolve(current.lyrics.deepAnalysisEnabled)
-  if (enabled === current.lyrics.deepAnalysisEnabled) return current
-  return { ...current, lyrics: { ...current.lyrics, deepAnalysisEnabled: enabled } }
-}
-
 interface SettingsApi {
   settings: AppSettings
   update: (patch: SettingsPatch) => void
@@ -373,15 +373,6 @@ const SettingsContext = createContext<SettingsApi | null>(null)
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(loadSettings)
   const previousPreviewSetting = useRef(settings.soundcloud.recommendationPreviewAnalysis)
-
-  useEffect(() => {
-    if (settings.lyrics.deepAnalysisEnabled !== null) return
-    let active = true
-    void initializeDeepAnalysisDefault(resolve => {
-      if (active) setSettings(current => resolveDeepAnalysisDefault(current, resolve))
-    })
-    return () => { active = false }
-  }, [settings.lyrics.deepAnalysisEnabled])
 
   useEffect(() => {
     // Kept in step with the state so the non-React readers above never see a

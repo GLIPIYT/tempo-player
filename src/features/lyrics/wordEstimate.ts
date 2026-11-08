@@ -2,6 +2,8 @@ import type { LyricsLine } from './types'
 import type { LyricTimingAnalysis, ResolvedLyricsTiming } from './timingResolver'
 import type { LyricWordTiming } from './wordTiming'
 import { lyricWordTokens } from './lyricTokens'
+import type { VocalTimingEvidence } from './analysis/vocalContract'
+import { refineEstimatedWords } from './vocalTiming'
 
 const normalize = (text: string) => text.normalize('NFKC').toLowerCase().replace(/ё/gu, 'е')
 const lexical = (text: string) => normalize(text).replace(/[^\p{L}\p{N}]/gu, '')
@@ -82,7 +84,7 @@ export function estimateLyricWords(text: string, timeSec: number, endTimeSec: nu
 }
 
 /** Run once per resolved timing revision, never from the animation frame loop. */
-export function addEstimatedWordTimings(timing: ResolvedLyricsTiming): void {
+export function addEstimatedWordTimings(timing: ResolvedLyricsTiming, vocal?: VocalTimingEvidence | null): void {
   const byIndex = new Map(timing.lines.map(line => [line.lineIndex, line]))
   const limits = new Map<number, number>()
   for (const segment of timing.segments) if (segment.kind === 'line') {
@@ -119,7 +121,7 @@ export function addEstimatedWordTimings(timing: ResolvedLyricsTiming): void {
       const cues = references.flatMap(reference => reference.cues[index] ? [reference.cues[index]!] : [])
       return cues.length ? { timeSec: line.timeSec + median(cues.map(cue => cue.timeSec)) * span,
         endTimeSec: line.timeSec + median(cues.map(cue => cue.endTimeSec)) * span, source: 'estimated' as const } : null
-    }) : estimateLyricWords(line.text, line.timeSec, end)
+    }) : refineEstimatedWords(estimateLyricWords(line.text, line.timeSec, end), vocal)
   }
   for (const segment of timing.segments) if (segment.kind === 'line') {
     segment.wordTimings = segment.lineIndices.flatMap(index => byIndex.get(index)?.wordTimings ?? [])

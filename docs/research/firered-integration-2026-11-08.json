@@ -1,0 +1,120 @@
+{
+  "date": "2026-11-08",
+  "scope": "Actual Vite module Worker / Chromium WASM numerical and runtime check; not a word-timing accuracy study or a full Tauri UI test.",
+  "runtime": {
+    "browser": "149.0.7827.55",
+    "torch": "2.9.1+cpu",
+    "wasmThreads": 1,
+    "coldInitWallMs": 953.8
+  },
+  "assets": {
+    "modelBytes": 2408216,
+    "cmvnBytes": 3098,
+    "actualModelSha256": "823c2802d870aa57f19b1fbd8214c85c72b22930c851342ef7c656f68b8e9ee2",
+    "actualCmvnSha256": "ec35a0d6f9d5b5465ae4a9248113d4bafc428138515d08bb51f2ee4502f3ad2e",
+    "ortWasmBytes": 21596019,
+    "ortMjsBytes": 44484
+  },
+  "cases": [
+    {
+      "input": {
+        "windowStartSec": 0,
+        "startSec": 0,
+        "endSec": 20,
+        "pcmStartSec": 0,
+        "pcmEndSec": 24
+      },
+      "inputShape": [
+        1,
+        2398,
+        80
+      ],
+      "outputShape": [
+        1,
+        2398,
+        3
+      ],
+      "inferenceWallMs": 280.8,
+      "workerElapsedMs": 267.8,
+      "summaryFrames": 1000,
+      "voiceByteMeanAbsError": 0.0,
+      "voiceByteMaxAbsError": 0,
+      "voiceByteExactFraction": 1.0
+    },
+    {
+      "input": {
+        "windowStartSec": 16,
+        "startSec": 20,
+        "endSec": 30,
+        "pcmStartSec": 16,
+        "pcmEndSec": 30
+      },
+      "inputShape": [
+        1,
+        1398,
+        80
+      ],
+      "outputShape": [
+        1,
+        1398,
+        3
+      ],
+      "inferenceWallMs": 154.3,
+      "workerElapsedMs": 149.7,
+      "summaryFrames": 500,
+      "voiceByteMeanAbsError": 0.0,
+      "voiceByteMaxAbsError": 0,
+      "voiceByteExactFraction": 1.0
+    }
+  ],
+  "memory": {
+    "scope": "Total Windows WorkingSet64 for Chromium headless-shell browser process and descendants; includes browser/runtime overhead, not model-only memory.",
+    "snapshots": [
+      {
+        "label": "browser idle after Vite page load",
+        "workingSetMiB": 240.57
+      },
+      {
+        "label": "after actual worker init and model load",
+        "workingSetMiB": 431.6
+      },
+      {
+        "label": "after core 0-20 inference",
+        "workingSetMiB": 400.66
+      },
+      {
+        "label": "after core 20-30 warm inference",
+        "workingSetMiB": 405
+      },
+      {
+        "label": "after worker dispose and 2 s idle (no forced GC)",
+        "workingSetMiB": 285.87
+      }
+    ]
+  },
+  "limitations": [
+    "No manually annotated word/vocal ground truth.",
+    "Process WorkingSet includes the browser and runtime; it is not the model RAM requirement.",
+    "The plain Vite page cannot mount the native Tauri TitleBar; worker requests nevertheless completed.",
+    "Two short clips were used for fbank parity; browser inference and Torch-summary parity used one 30-second clip."
+  ],
+  "productionSmoke": {
+    "productionWorker": "vocal.worker-UGDjnQsJ.js",
+    "initMs": 751.1999999992549,
+    "cases": [
+      {
+        "startSec": 0,
+        "frames": 1000,
+        "exactVoice": true,
+        "elapsedMs": 230.60000000149012
+      },
+      {
+        "startSec": 20,
+        "frames": 500,
+        "exactVoice": true,
+        "elapsedMs": 119.90000000223517
+      }
+    ],
+    "errors": []
+  }
+}

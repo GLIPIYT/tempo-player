@@ -754,6 +754,16 @@ impl AudioAnalysisStore {
         Ok(Some(issued.identity))
     }
 
+    /// Revalidates a fingerprint previously issued for a registered track.
+    /// Consumers of separate derived caches must use the same file and
+    /// registration guard as the lyric-analysis cache.
+    pub(crate) fn issued_identity(
+        &self,
+        fingerprint: &str,
+    ) -> Result<Option<AudioIdentity>, String> {
+        self.current_identity(fingerprint)
+    }
+
     pub fn get(&self, fingerprint: &str) -> Result<Option<AudioAnalysis>, String> {
         let Some(identity) = self.current_identity(fingerprint)? else {
             return Ok(None);

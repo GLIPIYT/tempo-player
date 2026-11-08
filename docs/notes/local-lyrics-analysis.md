@@ -1,10 +1,18 @@
 # Local lyric timing analysis
 
+> **Historical architecture snapshot — 1 October 2026 (`c5ae5ff`).** The implementation details and measurements below describe the Whisper-centered version at that revision. Its hardware-based automatic opt-in and Whisper-only analysis are no longer the current defaults.
+
+## Current defaults — 8 November 2026
+
+- FireRed vocal timing analysis is enabled by default and uses the model bundled with the app; it does not need a separate model download.
+- Whisper word recognition is a separate opt-in, disabled by default, and only runs in word-by-word lyric-fill mode. Enabling it there may download the Whisper model.
+- See [current word-timing behavior and limitations](../lyrics-word-timing.md).
+
 [Detailed Russian report](local-lyrics-analysis-ru.md).
 
-Tempo combines explicit lyric endpoints, text estimates, optional BPM and conservative local word matching. Manual endings take priority. A failed or ambiguous recognition result retains the text/BPM fallback; silence or an empty transcript never proves that vocals ended.
+At the historical revision, Tempo combined explicit lyric endpoints, text estimates, optional BPM and conservative local word matching. Manual endings took priority. A failed or ambiguous recognition result retained the text/BPM fallback; silence or an empty transcript never proved that vocals ended.
 
-## Runtime and storage
+## Historical Whisper runtime and storage
 
 - Model: `onnx-community/whisper-tiny_timestamped`, revision `517244293732ee2d58139af5814231b7e6830a0d`, multilingual tiny q8. Seven native files total **43,596,876 bytes**; the complete size/SHA-256 allowlist is in `src-tauri/lyric_model_manifest.json`.
 - Transformers.js `3.8.1` and ONNX Runtime Web `1.22.0-dev.20250409-89f8206ba4`. The checked local JSEP `.mjs`/`.wasm` pair totals **21,640,503 bytes**. `npm run prepare:asr` prepares the same files before dev/build. These disk sizes are not RAM limits.
@@ -49,7 +57,7 @@ Dedicated Worker `Runtime.getHeapUsage` was available in the built app. At ready
 - An in-flight actual Worker transcription was aborted and rejected. CacheStorage and IndexedDB were empty in the isolated inference profile, and observed page responses had no disk-cache flag. These observations do not prove that every internal WebView HTTP-cache entry is absent. Browser request interception alone cannot block Rust requests; no machine-wide firewall, proxy or adapter setting was changed.
 - Restart verification used the actual built app at `http://tauri.localhost`, generated `asr.worker-20HGQEvq.js` and embedded runtime with Vite stopped. The verified closed proxy remained process scoped. The first attempt deliberately refused missing model files: a fresh built origin had no persisted opt-in and its frontend disabled/removed the prepared model. After saving an enabled choice only in the isolated built profile, closing it, re-seeding and restarting, cached inference passed. A dev-origin preference must not be assumed to apply to the built origin.
 
-## Repeating the embedded-app smoke test
+## Repeating the historical embedded-app smoke test
 
 `scripts/verify-native-asr.mjs` connects to an already running, isolated **built** Tempo WebView2. It checks the embedded Worker and `/asr-runtime/` files at `http://tauri.localhost`, uses native IPC/model asset URLs, validates timed speech results and writes only aggregate evidence. It requires a separately installed Playwright module via `TEMPO_PLAYWRIGHT_MODULE` (absolute module path), or a resolvable `playwright` package. It does not install dependencies, launch/close the app or change the user's normal profile.
 
@@ -66,13 +74,13 @@ Dedicated Worker `Runtime.getHeapUsage` was available in the built app. At ready
 
 The script's raw CDP Worker heap query is optional evidence: unsupported accounting is recorded explicitly. Its totals must be reported separately from process memory, PCM estimates and model disk sizes.
 
-## Notices and automated gates
+## Historical notices and automated gates
 
 Runtime/model attribution is in `public/asr-runtime/THIRD_PARTY_NOTICES.md`, with shipped dependency license texts in `public/asr-runtime/licenses`. The model's base OpenAI card declares Apache 2.0; the selected ONNX export does not declare a separate license. Disk-size attribution does not imply a memory or accuracy guarantee. The pinned Transformers dependency also installs Node-only `sharp`; prior audit findings for that dependency are not a clean-audit claim. The shipped ASR Worker uses the browser Transformers export and does not invoke Node image processing.
 
 The final baseline-repair checks passed `npm run check` (240 tests and strict full lint), `npm run build`, `cargo test --lib` (117 passed, one pre-existing ignored network test) and warning-free `cargo check --lib`. Vite still reports its existing large-chunk advisory for ASR/hls assets. No installer compatibility or manual UI result is inferred from these commands.
 
-## Manual checks left to the user
+## Manual checks listed in the historical report
 
 - In main lyrics and overlay, check a short phrase followed by a long instrumental section, a dense six-second phrase, repeated/equal starts, explicit empty markers and the final line.
 - Add/edit a manual end and confirm it outranks inferred ends; reset it and compare fallback behavior.

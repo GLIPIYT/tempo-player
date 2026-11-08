@@ -7,6 +7,7 @@ mod discord;
 mod hardware;
 mod lyrics;
 mod lyric_analysis;
+mod vocal_analysis;
 mod lrclib_publish;
 mod metadata;
 mod models;
@@ -101,8 +102,12 @@ pub fn run() {
             });
             {
                 let state = app.state::<commands::AppState>();
-                app.manage(Arc::new(lyric_analysis::AudioAnalysisStore::new(
+                let audio_analysis = Arc::new(lyric_analysis::AudioAnalysisStore::new(
                     state.db.clone(), state.sc_cache_dir.clone(), state.yt_cache_dir.clone(),
+                ));
+                app.manage(audio_analysis.clone());
+                app.manage(Arc::new(vocal_analysis::VocalAnalysisStore::new(
+                    state.db.clone(), audio_analysis,
                 )));
                 app.manage(Arc::new(recommendation_audio::RecommendationAudioStore::new(
                     state.db.clone(), state.sc_cache_dir.clone(), state.yt_cache_dir.clone(), state.bin_dir.clone(),
@@ -150,6 +155,8 @@ pub fn run() {
             lyric_analysis::lyrics_analysis_audio_identity,
             lyric_analysis::lyrics_analysis_get,
             lyric_analysis::lyrics_analysis_merge,
+            vocal_analysis::lyrics_vocal_get,
+            vocal_analysis::lyrics_vocal_merge,
             commands::get_library_folders,
             commands::get_track_metadata_original,
             commands::get_track_metadata_editor_state,

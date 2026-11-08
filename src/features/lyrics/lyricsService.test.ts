@@ -5,6 +5,7 @@ import { lyricSliceAt, lyricSourceKey, lyricsService } from './lyricsService'
 import { lyricTimingAt } from './timingResolver'
 import { projectSourceEnds } from './analysis/matchWords'
 import type { LyricsOverride } from '../../types/models'
+import { VOCAL_ALGORITHM_VERSION, VOCAL_MODEL_REVISION, type VocalTimingEvidence } from './analysis/vocalContract'
 
 vi.mock('../../api/client', () => ({ api: { getLyricsOverride: vi.fn(), getTrackLyrics: vi.fn(), fetchOnlineLyrics: vi.fn(), setTrackLyrics: vi.fn() } }))
 const track = (id: string) => ({ sourceId: id, source: 'local' as const, title: id, artists: [], dbId: 1, durationSec: 40 })
@@ -13,6 +14,54 @@ const pin = (text: string): LyricsOverride => ({ provider: 'manual', sourceArtis
 const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }
 
 describe('shared lyrics selection', () => {
+  it('combines vocal and cached ASR results, ignores unchanged publications and rejects stale source generations', () => {
+    vi.mocked(api.getLyricsOverride).mockReturnValue(new Promise(() => {}))
+    lyricsService.ensure(track('vocal'), false); lyricsService.setPosition(0)
+    const result = { kind: 'synced' as const, lines: [
+      { timeSec: 1, text: 'Stay here' }, { timeSec: 7, text: 'Next line' },
+    ] }
+    lyricsService.setActiveCandidate('vocal', result, 20, lyricSourceKey(result, 'manual'))
+    const current = lyricsService.getCurrent()!
+    const vocal: VocalTimingEvidence = { offsetMs: 0, analysis: {
+      fingerprint: 'test', durationSec: 20, hopSec: .02, modelRevision: VOCAL_MODEL_REVISION,
+      algorithmVersion: VOCAL_ALGORITHM_VERSION, chunks: [{ startSec: 0, endSec: 20,
+        voice: Array.from({ length: 1000 }, (_, index) => index * .02 < 3 ? 240 : 10),
+        energy: Array(1000).fill(180), flux: Array(1000).fill(20) }],
+    } }
+    expect(lyricsService.publishVocalAnalysis('vocal', current.lyricKey, current.generation, vocal)).toBe(true)
+    expect(lyricsService.getCurrent()!.timing.lines[0]).toMatchObject({ endSource: 'vocal' })
+    expect(lyricsService.getCurrent()!.timing.lines[0].endTimeSec).toBeCloseTo(3, 1)
+    const analysis = { bpm: null, matchedEnds: [{ lineIndex: 1, endTimeSec: 9, confidence: .95 }] }
+    lyricsService.publishAnalysis('vocal', current.lyricKey, current.generation, analysis)
+    expect(lyricsService.getCurrent()!.timing.lines.map(line => line.endSource)).toEqual(['vocal', 'recognized'])
+    const listener = vi.fn(), stop = lyricsService.subscribe(listener)
+    for (let tick = 0; tick < 20; tick++) {
+      lyricsService.publishVocalAnalysis('vocal', current.lyricKey, current.generation, vocal)
+      lyricsService.publishAnalysis('vocal', current.lyricKey, current.generation, analysis)
+    }
+    expect(listener).not.toHaveBeenCalled(); stop()
+    lyricsService.publishVocalAnalysis('vocal', current.lyricKey, current.generation, null)
+    expect(lyricsService.getCurrent()!.timing.lines.map(line => line.endSource)).toEqual(['text', 'recognized'])
+    lyricsService.setActiveCandidate('vocal', result, 20, current.sourceLyricKey, 500)
+    expect(lyricsService.publishVocalAnalysis('vocal', current.lyricKey, current.generation, vocal)).toBe(false)
+  })
+
+  it('does not change a begun phrase when fresh vocal evidence arrives; replay adopts it', () => {
+    vi.mocked(api.getLyricsOverride).mockReturnValue(new Promise(() => {}))
+    lyricsService.ensure(track('vocal-pass'), false); lyricsService.setPosition(0)
+    const result = { kind: 'synced' as const, lines: [{ timeSec: 1, text: 'Stay here' }, { timeSec: 7, text: 'Next' }] }
+    lyricsService.setActiveCandidate('vocal-pass', result, 20, lyricSourceKey(result, 'manual'))
+    const current = lyricsService.getCurrent()!, previousEnd = current.timing.lines[0].endTimeSec
+    lyricsService.setPosition(1.5)
+    const vocal: VocalTimingEvidence = { offsetMs: 0, analysis: { fingerprint: 'test', durationSec: 20, hopSec: .02,
+      modelRevision: VOCAL_MODEL_REVISION, algorithmVersion: VOCAL_ALGORITHM_VERSION,
+      chunks: [{ startSec: 0, endSec: 20, voice: Array.from({ length: 1000 }, (_, index) => index * .02 < 3 ? 240 : 10),
+        energy: Array(1000).fill(180), flux: Array(1000).fill(20) }] } }
+    lyricsService.publishVocalAnalysis(current.trackId, current.lyricKey, current.generation, vocal)
+    expect(lyricsService.getCurrent()!.timing.lines[0].endTimeSec).toBe(previousEnd)
+    lyricsService.setPosition(0)
+    expect(lyricsService.getCurrent()!.timing.lines[0].endSource).toBe('vocal')
+  })
   it('does not resolve or notify again for an unchanged analysis payload', async () => {
     vi.mocked(api.getLyricsOverride).mockResolvedValue(pin('one two'))
     lyricsService.setPosition(0)

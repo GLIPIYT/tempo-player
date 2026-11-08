@@ -1,0 +1,11 @@
+FireRedVAD AED model asset attribution
+
+The bundled aed.onnx weights and CMVN parameters are derived from FireRedVAD.
+Copyright 2026 Xiaohongshu. Authors: Kaituo Xu, Wenpeng Li, Kai Huang, and Kun Liu.
+Maintainer: Xiaohongshu FireRedTeam.
+
+Source: https://github.com/FireRedTeam/FireRedVAD/tree/c30ec49e8cc69642b0ee65362eba11b9d11c6e54
+Upstream license: Apache-2.0 (see LICENSE).
+The ONNX file was exported from the upstream FireRedVAD AED checkpoint; it is
+not a modified upstream source file. The CMVN JSON is a machine-readable
+conversion of the upstream AED cmvn.ark statistics.
