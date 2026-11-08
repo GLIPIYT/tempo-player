@@ -1,0 +1,211 @@
+{
+  "date": "2026-11-09",
+  "codeCommit": "2d26e7a72674ea56e2838682f192d885f6fc1439",
+  "scope": "Offline experiments only; no player integration; no Russian word ground truth.",
+  "environment": {
+    "python": "3.13.3",
+    "onnxruntime": "1.24.4",
+    "requestedComputeThreads": 1,
+    "timingCaveat": "Sequential operations per process; OS and other background load not isolated. Python runtimes differ from the app WebView/WASM."
+  },
+  "englishGroundTruth": {
+    "dataset": {
+      "id": "jamendolyrics/jamendolyrics",
+      "revision": "de188c963fd4539bc769b3feb83582e5a9595e36",
+      "track": "Lower Loveday - Is It Right?",
+      "audioLicense": "CC BY-SA per dataset metadata",
+      "annotationLicense": "MIT per dataset LICENSE"
+    },
+    "fixtureSha256": "b241346ec3e2e9d0fac37e94120b999e019e26ea1185f6182d28f0d8941e34c5",
+    "durationSec": 17.925649274900003,
+    "wordCount": 24,
+    "lineWindows": "Known manual reference line endpoints supplied to every line-constrained method and both baselines",
+    "metrics": {
+      "textOnly": {
+        "words": 24,
+        "onsetMeanAbsErrorMs": 429.206,
+        "onsetMedianAbsErrorMs": 345.913,
+        "offsetMeanAbsErrorMs": 368.464,
+        "onsetsWithin100ms": 4,
+        "onsetsWithin200ms": 7,
+        "positiveSpansAndOnsetWithin200ms": 7,
+        "nonPositiveSpans": 0
+      },
+      "currentFireRed": {
+        "words": 24,
+        "onsetMeanAbsErrorMs": 405.657,
+        "onsetMedianAbsErrorMs": 302.117,
+        "offsetMeanAbsErrorMs": 344.915,
+        "onsetsWithin100ms": 6,
+        "onsetsWithin200ms": 9,
+        "positiveSpansAndOnsetWithin200ms": 9,
+        "nonPositiveSpans": 0
+      },
+      "stableTinyLineConstrained": {
+        "words": 24,
+        "onsetMeanAbsErrorMs": 155.315,
+        "onsetMedianAbsErrorMs": 115.406,
+        "offsetMeanAbsErrorMs": 228.521,
+        "onsetsWithin100ms": 9,
+        "onsetsWithin200ms": 18,
+        "positiveSpansAndOnsetWithin200ms": 18,
+        "nonPositiveSpans": 1
+      },
+      "stableTinyWhole": {
+        "words": 24,
+        "onsetMeanAbsErrorMs": 212.086,
+        "onsetMedianAbsErrorMs": 155.368,
+        "offsetMeanAbsErrorMs": 203.677,
+        "onsetsWithin100ms": 9,
+        "onsetsWithin200ms": 15,
+        "positiveSpansAndOnsetWithin200ms": 15,
+        "nonPositiveSpans": 1
+      },
+      "qwenInt4Whole": {
+        "words": 24,
+        "onsetMeanAbsErrorMs": 144.078,
+        "onsetMedianAbsErrorMs": 57.557,
+        "offsetMeanAbsErrorMs": 227.756,
+        "onsetsWithin100ms": 16,
+        "onsetsWithin200ms": 21,
+        "positiveSpansAndOnsetWithin200ms": 20,
+        "nonPositiveSpans": 2
+      },
+      "qwenInt4LineConstrained": {
+        "words": 24,
+        "onsetMeanAbsErrorMs": 134.51,
+        "onsetMedianAbsErrorMs": 65.215,
+        "offsetMeanAbsErrorMs": 208.998,
+        "onsetsWithin100ms": 18,
+        "onsetsWithin200ms": 21,
+        "positiveSpansAndOnsetWithin200ms": 20,
+        "nonPositiveSpans": 2
+      }
+    }
+  },
+  "models": {
+    "stableTiny": {
+      "name": "tiny",
+      "bytes": 75572083,
+      "sha256": "65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9",
+      "torch": "2.9.1+cpu",
+      "torchaudio": "2.9.1+cpu",
+      "stableTs": "2.19.1",
+      "openaiWhisper": "20250625",
+      "numbaThreads": 1,
+      "torchThreads": 1,
+      "torchInteropThreads": 1
+    },
+    "gigaamCtc": {
+      "repo": "istupakov/gigaam-v3-onnx",
+      "revision": "322c3b29492673eb7d0b434bfa9dfb8653e34d02",
+      "license": "MIT",
+      "file": "v3_ctc.int8.onnx",
+      "fileBytes": 224721181,
+      "sha256": "ceb61454e2e1a2dec5872cbac1de0fe0a4271d1148f6b26b5bda53ff30a12acd"
+    },
+    "qwenInt4": {
+      "repo": "jinhwan000/qwen3-aligner-0.6b-onnx",
+      "revision": "205d9c69b78e2228f8d0b8c9edce72cd1891e752",
+      "license": "Apache-2.0",
+      "filesBytes": 1086729365,
+      "checkpointType": "Third-party experimental ONNX conversion; not a canonical Torch parity check",
+      "wordTokenizerCheck": 103,
+      "wordTokenizerDifferences": 0
+    }
+  },
+  "performance": {
+    "stableEnModelLoad": {
+      "wallSeconds": 0.28414619999966817,
+      "cpuSeconds": 0.265625
+    },
+    "stableEnFirstAlignment": {
+      "wallSeconds": 3.0714188999991165,
+      "cpuSeconds": 2.890625
+    },
+    "stableEnWarmAlignment": {
+      "wallSeconds": 1.7206875999982003,
+      "cpuSeconds": 1.65625
+    },
+    "stableEnPeakWholePythonMiB": 636.60546875,
+    "stableRuPeakWholePythonMiB": 653.984375,
+    "ctcRuntime": {
+      "coldFirstFixtureWallSec": 4.738447900002939,
+      "importsWallSec": 2.580467400002817,
+      "peakWorkingSetBytes": 522809344,
+      "torchIntraOpThreads": 1,
+      "torchInterOpThreads": 1
+    },
+    "qwenLoad": {
+      "wallSec": 1.3083557000027213,
+      "cpuSec": 1.25,
+      "memory": {
+        "rssMiB": 638.05859375,
+        "peakWorkingSetMiB": 639.93359375,
+        "privateMiB": 564.59375
+      }
+    },
+    "qwenPeakWholePythonMiB": 1449.04296875
+  },
+  "russianSanity": [
+    {
+      "id": "ru-manual",
+      "words": 24,
+      "durationSec": 13.28,
+      "fixtureSha256": "cc46860294d642e3bb61821436b1c5a89691d74648579d27bc4db7005c10dd2c",
+      "stableLineSeconds": 1.6980316000008315,
+      "stableNonPositiveWords": 0,
+      "ctcSeconds": 1.0758685000000696,
+      "ctcAssignedWords": 24,
+      "ctcFrameStepSec": 0.04,
+      "ctcMeanPathLogProb": -0.12946182185855393,
+      "ctcWrongOrderMeanPathLogProb": -2.9638924593751814,
+      "qwenFullSeconds": 7.99947819999943,
+      "qwenLineSeconds": 8.589911099999881,
+      "qwenFullNonPositiveWords": 8,
+      "qwenLineNonPositiveWords": 2
+    },
+    {
+      "id": "ru-repeat",
+      "words": 22,
+      "durationSec": 13.7,
+      "fixtureSha256": "311ca2c08033ec6bba3848ed8da7e0497837931480e81d6fded1d6c564373048",
+      "stableLineSeconds": 1.713548499999888,
+      "stableNonPositiveWords": 0,
+      "ctcSeconds": 1.1270626000004995,
+      "ctcAssignedWords": 22,
+      "ctcFrameStepSec": 0.04,
+      "ctcMeanPathLogProb": -0.14124417246342333,
+      "ctcWrongOrderMeanPathLogProb": -2.4502650919510893,
+      "qwenFullSeconds": 7.769838500000333,
+      "qwenLineSeconds": 8.754308800002036,
+      "qwenFullNonPositiveWords": 16,
+      "qwenLineNonPositiveWords": 9
+    },
+    {
+      "id": "ru-dense",
+      "words": 33,
+      "durationSec": 13.19,
+      "fixtureSha256": "b3c73d4bb31bccf8679cefb0f3378b63e546a0db22fef104d60088bf8ea7bafd",
+      "stableLineSeconds": 1.7120089999989432,
+      "stableNonPositiveWords": 3,
+      "ctcSeconds": 1.078284999999596,
+      "ctcAssignedWords": 33,
+      "ctcFrameStepSec": 0.04,
+      "ctcMeanPathLogProb": -0.7991345798426527,
+      "ctcWrongOrderMeanPathLogProb": -2.1850960238595936,
+      "qwenFullSeconds": 8.669131700000435,
+      "qwenLineSeconds": 9.425434799995855,
+      "qwenFullNonPositiveWords": 11,
+      "qwenLineNonPositiveWords": 19
+    }
+  ],
+  "limitations": [
+    "English accuracy is one fragment of one song, 24 words; not a representative benchmark.",
+    "Russian fixtures have line references only; do not treat forced coverage or inter-model agreement as accuracy.",
+    "Zero-duration cues are included in raw timing metrics and must be rejected or given fallback in playback.",
+    "No vocal separation was used.",
+    "SOFA not run: no suitable verified Russian checkpoint selected.",
+    "Whisper tiny PyTorch float weights here differ in precision/runtime from Tempo existing quantized ONNX bundle."
+  ]
+}
