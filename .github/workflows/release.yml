@@ -15,16 +15,33 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
+          package-manager-cache: false
+
+      - name: Locate npm download cache
+        id: npm-cache-dir
+        shell: pwsh
+        run: '"path=$(npm config get cache)" >> $env:GITHUB_OUTPUT'
+
+      # Reuse verified npm tarballs even when only the app version in the
+      # lockfile changed. npm ci still validates the real lockfile/integrities.
+      - name: Restore npm downloads
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ steps.npm-cache-dir.outputs.path }}
+          key: npm-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-downloads-${{ runner.os }}-${{ runner.arch }}-
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: src-tauri -> target
+          shared-key: windows-msvc-deps-v1
+          # Saving under a tag cannot help a different future tag.
+          save-if: false
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --prefer-offline
 
       - name: Build and upload installer
         uses: tauri-apps/tauri-action@v0

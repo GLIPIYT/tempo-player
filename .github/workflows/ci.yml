@@ -15,16 +15,38 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
+          package-manager-cache: false
+
+      - name: Locate npm download cache
+        id: npm-cache-dir
+        shell: pwsh
+        run: '"path=$(npm config get cache)" >> $env:GITHUB_OUTPUT'
+
+      - name: Restore npm downloads
+        id: npm-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ steps.npm-cache-dir.outputs.path }}
+          key: npm-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-downloads-${{ runner.os }}-${{ runner.arch }}-
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: src-tauri -> target
+          shared-key: windows-msvc-deps-v1
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --prefer-offline
+
+      - name: Save npm downloads on main
+        if: github.ref == 'refs/heads/main' && steps.npm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ steps.npm-cache-dir.outputs.path }}
+          key: ${{ steps.npm-cache.outputs.cache-primary-key }}
 
       # cheapest signal first, so a typo does not wait on the Rust build
       - name: Typecheck frontend
@@ -52,4 +74,13 @@ jobs:
           .\actionlint.exe
 
       - name: Run Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      # Tags can read main's cache, but cannot read caches from older tags.
+      # Populate both test/debug and release dependency artifacts in this job.
+      # The first build of a new dependency/toolchain key is still cold.
+      - name: Validate release build and warm release dependencies
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # Use the same Tauri build path/features as the installer workflow.
+        # beforeBuildCommand builds frontend assets; --no-bundle skips packaging.
+        run: npm run tauri -- build --no-bundle --ci -- --locked
