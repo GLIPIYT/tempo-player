@@ -9,6 +9,7 @@ import AlbumsPage from './pages/AlbumsPage'
 import ArtistsPage from './pages/ArtistsPage'
 import PlaylistsPage from './pages/PlaylistsPage'
 import ProfilePage from './pages/ProfilePage'
+import ListeningHistoryHost from './features/listening-history/ListeningHistoryHost'
 import SettingsPage from './pages/SettingsPage'
 import SearchPage from './pages/SearchPage'
 import AlbumDetailPage from './pages/AlbumDetailPage'
@@ -261,6 +262,7 @@ function Shell() {
       <ToastHost />
       <Onboarding />
       <ContextMenuHost />
+      <ListeningHistoryHost />
     </>
   )
 }

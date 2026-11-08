@@ -337,6 +337,8 @@ export interface ListeningPeriodBucket {
   listenedSec: number
   plays: number
   completedPlays: number
+  completionPct: number
+  uniqueTracks: number
 }
 
 export interface ListeningPeriodTopTrack {
@@ -360,6 +362,7 @@ export interface ListeningPeriodStats {
   completionPct: number
   uniqueTracks: number
   buckets: ListeningPeriodBucket[]
+  topTracks: ListeningPeriodTopTrack[]
   topTrack: ListeningPeriodTopTrack | null
   topArtist: ListeningPeriodTopArtist | null
 }

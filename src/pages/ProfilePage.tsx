@@ -6,12 +6,12 @@ import { api } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { useSettings } from '../state/settings'
+import { useNav } from '../state/nav'
 import { resolveLang, useT } from '../i18n'
 import { playerController } from '../player/controller'
 import { trackToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
-import ListeningHistoryDialog from '../features/listening-history/ListeningHistoryDialog'
-import type { ListeningSelection } from '../features/listening-history/period'
+import { historyDialogState } from '../features/listening-history/dialogState'
 import './profile-page.css'
 
 function localeFor(lang: 'ru' | 'en'): string {
@@ -34,6 +34,7 @@ function hourLabel(minutes: number): string {
 }
 
 export default function ProfilePage() {
+  const { navigate } = useNav()
   const { settings, update } = useSettings()
   const t = useT()
   const version = useLibraryVersion()
@@ -43,7 +44,7 @@ export default function ProfilePage() {
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
   const [avatarBusy, setAvatarBusy] = useState(false)
-  const [historySelection, setHistorySelection] = useState<ListeningSelection | null>(null)
+  const setHistorySelection = historyDialogState.open
 
   const stats = useAsync(() => api.getAnalytics('all'), [version])
   const daily = useAsync(() => api.getDailyMinutes(range), [version, range])
@@ -317,11 +318,17 @@ export default function ProfilePage() {
           ) : (
             <div className="arow-list">
               {(stats.data?.topArtists ?? []).map((item) => (
-                <div key={item.artist.id} className="arow">
+                <button
+                  key={item.artist.id}
+                  type="button"
+                  className="arow profile-play-row"
+                  aria-label={item.artist.name}
+                  onClick={() => navigate({ name: 'artist', id: item.artist.id })}
+                >
                   <Cover path={item.artist.imagePath} label={item.artist.name} size={30} rounded />
                   <span className="arow-name">{item.artist.name}</span>
                   <span className="arow-sub">{item.playCount} {t('plays')}</span>
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -389,7 +396,6 @@ export default function ProfilePage() {
           </div>
         )}
       </section>
-      {historySelection && <ListeningHistoryDialog initialSelection={historySelection} onClose={() => setHistorySelection(null)} />}
     </div>
   )
 }

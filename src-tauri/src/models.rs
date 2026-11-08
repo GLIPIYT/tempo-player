@@ -325,6 +325,8 @@ pub struct ListeningPeriodBucket {
     pub listened_sec: f64,
     pub plays: i64,
     pub completed_plays: i64,
+    pub completion_pct: f64,
+    pub unique_tracks: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -354,6 +356,7 @@ pub struct ListeningPeriodStats {
     pub completion_pct: f64,
     pub unique_tracks: i64,
     pub buckets: Vec<ListeningPeriodBucket>,
+    pub top_tracks: Vec<ListeningPeriodTopTrack>,
     pub top_track: Option<ListeningPeriodTopTrack>,
     pub top_artist: Option<ListeningPeriodTopArtist>,
 }

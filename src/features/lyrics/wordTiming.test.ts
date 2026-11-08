@@ -69,10 +69,10 @@ describe('actual lyric word cues', () => {
   it('rejects low confidence ASR or words outside manual phrase boundaries', () => {
     const words = [{ text: 'one', timeSec: 1, endTimeSec: 2 }, { text: 'two', timeSec: 3, endTimeSec: 4 }]
     const source = [{ timeSec: 1, text: 'one two', endTimeSec: 2.5, endSource: 'manual' as const }]
-    expect(resolveLyricTiming(source, 8, { bpm: null, matchedEnds: [], matchedWords: [{ lineIndex: 0, words, confidence: 1 }] }).lines[0].wordTimings).toBeUndefined()
+    expect(resolveLyricTiming(source, 8, { bpm: null, matchedEnds: [], matchedWords: [{ lineIndex: 0, words, confidence: 1 }] }).lines[0].wordTimings?.every(cue => cue?.source === 'estimated')).toBe(true)
     expect(resolveLyricTiming([{ timeSec: 1, text: 'one two' }], 8, {
       bpm: null, matchedEnds: [], matchedWords: [{ lineIndex: 0, words, confidence: .7 }],
-    }).lines[0].wordTimings).toBeUndefined()
+    }).lines[0].wordTimings?.every(cue => cue?.source === 'estimated')).toBe(true)
   })
 
   it('does not let a cached ASR ending cut off a newly matched complete word', () => {
@@ -108,7 +108,7 @@ describe('actual lyric word cues', () => {
     const pass = createPlaybackTiming()
     pass.update(before, 2)
     const late = pass.update(analyzed, 2.1)
-    expect(late.segments.find(segment => segment.timeSec === 1)?.wordTimings).toBeUndefined()
+    expect(late.segments.find(segment => segment.timeSec === 1)?.wordTimings).toEqual(before.segments.find(segment => segment.timeSec === 1)?.wordTimings)
     expect(late.segments.find(segment => segment.timeSec === 5)?.wordTimings?.[1]?.timeSec).toBe(7)
     const replay = pass.update(analyzed, 1.1)
     expect(replay.segments.find(segment => segment.timeSec === 1)?.wordTimings?.[1]?.timeSec).toBe(2.5)

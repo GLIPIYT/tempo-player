@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -633,6 +634,27 @@ export default function Sidebar() {
   const artistRows = rowsOf('artist')
   const albumRows = rowsOf('album')
   const headerCount = interleaved ? favorites.length : playlistRows.length
+  const lastPlaylistIndex = favorites.reduce(
+    (last, entry, index) => entry.kind === 'playlist' ? index : last,
+    -1,
+  )
+  const renderNewPlaylistAction = () => (
+    <button className="fav-new" title={t('New playlist')} onClick={() => setNewOpen(true)}>
+      <Plus size={15} />
+      {!collapsed ? <span>{t('New playlist')}</span> : null}
+    </button>
+  )
+  const renderInterleavedRows = () => (
+    <>
+      {lastPlaylistIndex < 0 ? renderNewPlaylistAction() : null}
+      {flatRows.map((row, pos) => (
+        <Fragment key={`${row.entry.kind}-${row.entry.id}`}>
+          {favRow(flatRows, pos)}
+          {pos === lastPlaylistIndex ? renderNewPlaylistAction() : null}
+        </Fragment>
+      ))}
+    </>
+  )
 
   return (
     <>
@@ -676,10 +698,13 @@ export default function Sidebar() {
             {interleaved ? (
               // one continuous list: a playlist, an artist and an album can sit in any
               // order relative to each other
-              <div className="fav-list">{renderRows(flatRows)}</div>
+              <div className="fav-list">{renderInterleavedRows()}</div>
             ) : (
               <>
-                <div className="fav-list">{renderRows(playlistRows)}</div>
+                <div className="fav-list">
+                  {renderRows(playlistRows)}
+                  {renderNewPlaylistAction()}
+                </div>
                 {artistRows.length > 0 ? (
                   <>
                     {!collapsed ? (
@@ -709,10 +734,6 @@ export default function Sidebar() {
               </>
             )}
           </div>
-          <button className="fav-new" title={t('New playlist')} onClick={() => setNewOpen(true)}>
-            <Plus size={15} />
-            {!collapsed ? <span>{t('New playlist')}</span> : null}
-          </button>
         </div>
         <div className="sidebar-bottom">
           <button

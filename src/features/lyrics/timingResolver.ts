@@ -1,5 +1,6 @@
 import type { LyricsLine, LyricsWord } from './types'
 import { mapLyricWordTimings, type LyricWordTiming } from './wordTiming'
+import { addEstimatedWordTimings, repeatedPhraseDurations, repeatedPhraseKey } from './wordEstimate'
 
 export interface LyricTimingAnalysis {
   bpm: { value: number; confidence: number } | null
@@ -127,6 +128,7 @@ export function resolveLyricTiming(
   analysis?: LyricTimingAnalysis | null,
 ): ResolvedLyricsTiming {
   const duration = durationSec != null && Number.isFinite(durationSec) && durationSec > 0 ? durationSec : null
+  const phraseDurations = repeatedPhraseDurations(lines, duration, analysis)
   const wordMatches = new Map<number, NonNullable<LyricTimingAnalysis['matchedWords']>[number][]>()
   for (const match of analysis?.matchedWords ?? []) {
     if (!Number.isFinite(match.confidence) || match.confidence < CONFIDENT) continue
@@ -207,10 +209,11 @@ export function resolveLyricTiming(
           // A weak prior only: BPM does not imply a fixed syllable count per beat.
           rate *= 1 + Math.max(-0.15, Math.min(0.15, (120 - bpm.value) / 120)) * 0.1
         }
-        const estimated = Math.max(1.2, Math.min(30, work.units * rate + 0.45 + work.pause))
+        const repeatDuration = phraseDurations.get(repeatedPhraseKey(line.text) ?? '')
+        const estimated = repeatDuration ?? Math.max(1.2, Math.min(30, work.units * rate + 0.45 + work.pause))
         endTimeSec = Math.min(Math.max(line.timeSec + estimated, sourceWordStart + 0.2), limit)
         endSource = 'text'
-        confidence = calibration === null ? work.confidence : Math.min(0.7, work.confidence + 0.1)
+        confidence = repeatDuration !== undefined ? .65 : calibration === null ? work.confidence : Math.min(0.7, work.confidence + 0.1)
         const gap = limit - endTimeSec
         if (Number.isFinite(limit) && (gap < 0.75 || gap < (limit - line.timeSec) * 0.2)) endTimeSec = limit
       }
@@ -283,7 +286,9 @@ export function resolveLyricTiming(
       if (!segment.explicitPause && segment.endTimeSec - segment.timeSec <= cutoff) segment.skipPool = true
     }
   }
-  return { lines: resolved, segments }
+  const timing = { lines: resolved, segments }
+  addEstimatedWordTimings(timing)
+  return timing
 }
 
 export function lyricTimingAt(timing: ResolvedLyricsTiming, positionSec: number): LyricTimingPosition {

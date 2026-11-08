@@ -4061,6 +4061,8 @@ fn fetch_listening_period(
             listened_sec: 0.0,
             plays: 0,
             completed_plays: 0,
+            completion_pct: 0.0,
+            unique_tracks: 0,
         })
         .collect();
     let mut total_listened_sec = 0.0;
@@ -4068,6 +4070,7 @@ fn fetch_listening_period(
     let mut completed_plays = 0i64;
     let mut track_ranks = HashMap::<i64, ListeningPeriodRank>::new();
     let mut artist_ranks = HashMap::<i64, ListeningPeriodRank>::new();
+    let mut bucket_track_ids = vec![HashSet::<i64>::new(); buckets.len()];
 
     // `played_at` is the only reliable wall clock stored for a session. The
     // accumulated duration belongs to this start-time bucket; its playback
@@ -4099,6 +4102,7 @@ fn fetch_listening_period(
         let bucket = &mut buckets[bucket_index];
         bucket.plays = bucket.plays.saturating_add(1);
         add_listening_seconds(&mut bucket.listened_sec, listened_sec);
+        bucket_track_ids[bucket_index].insert(track_id);
         let track_rank = track_ranks.entry(track_id).or_default();
         track_rank.play_count = track_rank.play_count.saturating_add(1);
         add_listening_seconds(&mut track_rank.listened_sec, listened_sec);
@@ -4115,23 +4119,36 @@ fn fetch_listening_period(
     drop(rows);
     drop(stmt);
 
+    for (bucket, track_ids) in buckets.iter_mut().zip(bucket_track_ids) {
+        bucket.completion_pct = if bucket.plays == 0 {
+            0.0
+        } else {
+            bucket.completed_plays as f64 / bucket.plays as f64 * 100.0
+        };
+        bucket.unique_tracks = i64::try_from(track_ids.len()).unwrap_or(i64::MAX);
+    }
+
     let unique_tracks = i64::try_from(track_ranks.len()).unwrap_or(i64::MAX);
     let mut ranked_tracks: Vec<_> = track_ranks.into_iter().collect();
     ranked_tracks.sort_by(compare_listening_period_ranks);
-    let top_track = if let Some((track_id, rank)) = ranked_tracks.first().copied() {
+    let mut top_tracks = Vec::with_capacity(ranked_tracks.len().min(3));
+    for (track_id, rank) in ranked_tracks.into_iter().take(3) {
         let sql = format!("SELECT {} FROM {} WHERE t.id = ?1", TRACK_COLUMNS, TRACK_FROM);
-        conn.query_row(&sql, params![track_id], |row| {
-            Ok(ListeningPeriodTopTrack {
-                track: map_track_at(row, 0)?,
-                listened_sec: rank.listened_sec,
-                play_count: rank.play_count,
+        if let Some(track) = conn
+            .query_row(&sql, params![track_id], |row| {
+                Ok(ListeningPeriodTopTrack {
+                    track: map_track_at(row, 0)?,
+                    listened_sec: rank.listened_sec,
+                    play_count: rank.play_count,
+                })
             })
-        })
-        .optional()
-        .map_err(db_err)?
-    } else {
-        None
-    };
+            .optional()
+            .map_err(db_err)?
+        {
+            top_tracks.push(track);
+        }
+    }
+    let top_track = top_tracks.first().cloned();
 
     let mut ranked_artists: Vec<_> = artist_ranks.into_iter().collect();
     ranked_artists.sort_by(compare_listening_period_ranks);
@@ -4163,6 +4180,7 @@ fn fetch_listening_period(
         },
         unique_tracks,
         buckets,
+        top_tracks,
         top_track,
         top_artist,
     })
@@ -5221,12 +5239,28 @@ mod tests {
         );
         assert_eq!(stats.buckets[0].listened_sec, 30.0);
         assert_eq!(stats.buckets[0].completed_plays, 1);
+        assert!((stats.buckets[0].completion_pct - (1.0 / 3.0 * 100.0)).abs() < 1e-9);
+        assert_eq!(stats.buckets[0].unique_tracks, 2);
         assert_eq!(stats.buckets[1].listened_sec, 100.0);
+        assert_eq!(stats.buckets[1].completion_pct, 0.0);
+        assert_eq!(stats.buckets[1].unique_tracks, 2);
         assert_eq!(stats.buckets[2].listened_sec, 0.0);
         assert_eq!(stats.buckets[2].completed_plays, 1);
+        assert_eq!(stats.buckets[2].completion_pct, 50.0);
+        assert_eq!(stats.buckets[2].unique_tracks, 1);
         assert_eq!(stats.buckets[3].listened_sec, 0.0);
         assert_eq!(stats.buckets[3].completed_plays, 0);
+        assert_eq!(stats.buckets[3].completion_pct, 0.0);
+        assert_eq!(stats.buckets[3].unique_tracks, 0);
 
+        assert_eq!(stats.top_tracks.len(), 3);
+        assert_eq!(
+            stats.top_tracks.iter().map(|item| item.track.id).collect::<Vec<_>>(),
+            vec![beta, unknown, alpha]
+        );
+        assert_eq!(stats.top_tracks[0].listened_sec, 100.0);
+        assert_eq!(stats.top_tracks[1].listened_sec, 20.0);
+        assert_eq!(stats.top_tracks[2].listened_sec, 10.0);
         let top_track = stats.top_track.as_ref().unwrap();
         assert_eq!(top_track.track.id, beta);
         assert_eq!(top_track.track.title, "Beta song");
@@ -5250,6 +5284,9 @@ mod tests {
         assert_eq!(empty.unique_tracks, 0);
         assert_eq!(empty.buckets.len(), 1);
         assert_eq!(empty.buckets[0].plays, 0);
+        assert_eq!(empty.buckets[0].completion_pct, 0.0);
+        assert_eq!(empty.buckets[0].unique_tracks, 0);
+        assert!(empty.top_tracks.is_empty());
         assert!(empty.top_track.is_none());
         assert!(empty.top_artist.is_none());
 
@@ -5278,6 +5315,11 @@ mod tests {
         assert_eq!(top_track.listened_sec, 120.0);
         assert_eq!(top_track.play_count, 2);
         assert_eq!(top_track.track.id, second);
+        assert_eq!(stats.top_tracks.len(), 3);
+        assert_eq!(
+            stats.top_tracks.iter().map(|item| item.track.id).collect::<Vec<_>>(),
+            vec![second, third, first]
+        );
         let top_artist = stats.top_artist.unwrap();
         assert_eq!(top_artist.listened_sec, 120.0);
         assert_eq!(top_artist.play_count, 2);

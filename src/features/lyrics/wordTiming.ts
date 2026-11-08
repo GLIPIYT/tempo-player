@@ -3,18 +3,18 @@ import type { LyricsWord } from './types'
 export interface LyricWordTiming {
   timeSec: number
   endTimeSec: number
-  source: 'source' | 'analysis'
+  source: 'source' | 'analysis' | 'estimated'
 }
 
 const lexical = (text: string) => text.normalize('NFKC').toLowerCase().replace(/ё/gu, 'е').replace(/[^\p{L}\p{N}]/gu, '')
 
-/** One cue per rendered non-whitespace token. Null tokens retain proportional fill. */
+/** One trusted cue per rendered non-whitespace token; missing coverage is rejected. */
 export function mapLyricWordTimings(
   text: string,
   words: readonly LyricsWord[] | undefined,
   startSec: number,
   endSec: number,
-  source: LyricWordTiming['source'],
+  source: 'source' | 'analysis',
 ): (LyricWordTiming | null)[] | undefined {
   if (!words?.length || !Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) return undefined
   const tokens = text.match(/\S+/gu) ?? []

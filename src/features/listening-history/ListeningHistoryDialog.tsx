@@ -6,11 +6,12 @@ import type { ListeningPeriodStats } from '../../types/models'
 import { useAsync } from '../../hooks/useAsync'
 import { useT, resolveLang } from '../../i18n'
 import { useSettings } from '../../state/settings'
-import { playerController } from '../../player/controller'
-import { trackToUnified } from '../../utils/unified'
+import { useNav } from '../../state/nav'
 import Cover from '../../components/common/Cover'
 import { useExitTransition } from '../../components/common/useExitTransition'
 import { historyDateLabel, historyHours, hourlyLine, listeningPeriod, localDateKey, type ListeningSelection } from './period'
+import AnimatedValue from './AnimatedValue'
+import { FeaturedTracks } from './FeaturedTracks'
 import './history-dialog.css'
 
 const hour = (time: number, lang: 'ru' | 'en') => new Date(time * 1000).toLocaleTimeString(lang === 'ru' ? 'ru-RU' : 'en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
@@ -19,6 +20,7 @@ function PeriodContent({ selection, stats, lang, onDay }: {
   selection: ListeningSelection; stats: ListeningPeriodStats; lang: 'ru' | 'en'; onDay: (date: string) => void
 }) {
   const t = useT()
+  const { navigate } = useNav()
   const [hover, setHover] = useState<number | null>(null)
   const gradient = useId().replace(/:/gu, '')
   const selected = hover === null ? null : stats.buckets[hover]
@@ -26,8 +28,15 @@ function PeriodContent({ selection, stats, lang, onDay }: {
   const line = hourlyLine(stats.buckets.map(bucket => bucket.listenedSec))
   const title = historyDateLabel(selected?.from ?? stats.from, lang, selection.kind === 'month' && selected === null ? 'month' : 'day')
   const hours = `${historyHours(selected?.listenedSec ?? stats.totalListenedSec, lang)} ${lang === 'ru' ? 'ч' : 'h'}`
-  const track = stats.topTrack
+  const tracks = useMemo(() => (stats.topTracks?.length ? stats.topTracks : stats.topTrack ? [stats.topTrack] : []).slice(0, 3), [stats])
   const artist = stats.topArtist
+  const summary = selected ? { listenedSec: selected.listenedSec, plays: selected.plays,
+    completedPlays: selected.completedPlays, completionPct: selected.completionPct ?? (selected.plays ? selected.completedPlays / selected.plays * 100 : 0),
+    uniqueTracks: selected.uniqueTracks ?? 0 } : { listenedSec: stats.totalListenedSec, plays: stats.plays,
+    completedPlays: stats.completedPlays, completionPct: stats.completionPct, uniqueTracks: stats.uniqueTracks }
+  const formatHours = useMemo(() => (value: number) => historyHours(value, lang), [lang])
+  const formatNumber = useMemo(() => (value: number) => Math.round(value).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US'), [lang])
+  const formatPercent = useMemo(() => (value: number) => `${Math.round(value)}%`, [])
   return (
     <div className="history-detail-content">
       <div className="history-chart-heading" aria-live="polite">
@@ -73,26 +82,23 @@ function PeriodContent({ selection, stats, lang, onDay }: {
           </div>
         )}
       </div>
-      <p className="history-chart-note">{t('By listen start time')}</p>
+      <p className="history-chart-note">{t(selection.kind === 'month' ? 'By day' : 'By hour')}</p>
       <div className="history-summary">
-        <div><Clock3 size={16} /><strong>{historyHours(stats.totalListenedSec, lang)}</strong><span>{t('Hours')}</span></div>
-        <div><Headphones size={16} /><strong>{stats.plays.toLocaleString()}</strong><span>{t('Listens')}</span></div>
-        <div><CheckCircle2 size={16} /><strong>{stats.plays ? `${Math.round(stats.completionPct)}%` : '—'}</strong><span>{t('Completion rate')}{stats.plays > 0 ? ` · ${stats.completedPlays}/${stats.plays}` : ''}</span></div>
-        <div><Music2 size={16} /><strong>{stats.uniqueTracks}</strong><span>{t('Unique tracks')}</span></div>
+        <div><Clock3 size={16} /><strong><AnimatedValue value={summary.listenedSec} format={formatHours} /></strong><span>{t('Hours')}</span></div>
+        <div><Headphones size={16} /><strong><AnimatedValue value={summary.plays} format={formatNumber} /></strong><span>{t('Listens')}</span></div>
+        <div><CheckCircle2 size={16} /><strong><AnimatedValue value={summary.plays ? summary.completionPct : null} format={formatPercent} /></strong><span>{t('Completion rate')}{summary.plays > 0 ? ` · ${summary.completedPlays}/${summary.plays}` : ''}</span></div>
+        <div><Music2 size={16} /><strong><AnimatedValue value={summary.uniqueTracks} format={formatNumber} /></strong><span>{t('Unique tracks')}</span></div>
       </div>
       {stats.plays > 0 ? <div className="history-favorites">
         <div className="history-favorite">
           <span className="history-favorite-label">{t('Most-listened track')}</span>
-          {track ? <button type="button" className="history-featured-track" onClick={() => playerController.playTracks([trackToUnified(track.track)], 0)}>
-            <Cover path={track.track.coverPath} label={track.track.title} size={54} />
-            <span><strong>{track.track.title}</strong><small>{track.track.artistName ?? t('Unknown artist')}</small><em>{historyHours(track.listenedSec, lang)} {lang === 'ru' ? 'ч' : 'h'} · {track.playCount} {t('plays')}</em></span>
-          </button> : <span className="muted">—</span>}
+          <FeaturedTracks tracks={tracks} lang={lang} />
         </div>
         <div className="history-favorite">
           <span className="history-favorite-label">{t(selection.kind === 'month' ? 'Most-listened artist' : 'Artist of the day')}</span>
           {artist ? <div className="history-featured-track">
             <Cover path={artist.artist.imagePath} label={artist.artist.name} size={54} rounded />
-            <span><strong>{artist.artist.name}</strong><em>{historyHours(artist.listenedSec, lang)} {lang === 'ru' ? 'ч' : 'h'} · {artist.playCount} {t('plays')}</em></span>
+            <span><button type="button" className="history-artist-name" onClick={() => navigate({ name: 'artist', id: artist.artist.id })}>{artist.artist.name}</button><em>{historyHours(artist.listenedSec, lang)} {lang === 'ru' ? 'ч' : 'h'} · {artist.playCount} {t('plays')}</em></span>
           </div> : <span className="muted">{t('Unknown artist')}</span>}
         </div>
       </div> : <div className="history-empty">{t('No listening in this period')}</div>}
