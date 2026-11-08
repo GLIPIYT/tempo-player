@@ -32,6 +32,13 @@ it('retains compact instrumental rows and their active state', () => {
   const segment: LyricSegment = { ...line, kind: 'notes', text: '', skipPool: true }
   const inactive = renderToStaticMarkup(<SyncedRow {...props} segment={segment} active={false} />)
   const active = renderToStaticMarkup(<SyncedRow {...props} segment={segment} active />)
-  expect(inactive).toContain('class="lyr-notes is-skip-pool" tabindex="-1"')
-  expect(active).toContain('class="lyr-notes is-skip-pool is-active" tabindex="0"')
+  expect(inactive).toContain('class="lyr-notes is-skip-pool is-near" tabindex="-1"')
+  expect(active).toContain('class="lyr-notes is-skip-pool is-active is-near" tabindex="0"')
+})
+
+it('does not create SVG decorations for distant pause rows', () => {
+  const segment: LyricSegment = { ...line, kind: 'notes', text: '', skipPool: true }
+  const markup = renderToStaticMarkup(<SyncedRow {...props} segment={segment} active={false} near={false} />)
+  expect(markup).toContain('lyr-notes is-skip-pool')
+  expect(markup).not.toContain('<svg')
 })

@@ -1071,6 +1071,14 @@
   filter: blur(0);
 }
 
+/* Keep exact wrapping/heights for seeking, but rasterize only the viewport
+   and its overscan. Distant blurred text must not grow the moving layer. */
+.lyr-line:not(.is-near),
+.lyr-notes:not(.is-near) {
+  visibility: hidden;
+  filter: none;
+}
+
 .lyr-line.is-past {
   opacity: 0.52;
   filter: blur(0.4px);
@@ -1199,6 +1207,10 @@
 .lyr-note {
   color: color-mix(in srgb, var(--accent) 72%, var(--text));
   opacity: 0.3;
+}
+
+/* Hidden pause rows must not keep hundreds of SVG animations running. */
+.lyr-notes.is-active.is-near .lyr-note {
   animation: lyr-note-pulse 1.15s ease-in-out infinite;
 }
 
@@ -1224,7 +1236,7 @@
     transition: none;
   }
 
-  .lyr-note {
+  .lyr-notes.is-active.is-near .lyr-note {
     animation: none;
   }
 }

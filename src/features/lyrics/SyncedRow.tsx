@@ -5,13 +5,14 @@ import type { LyricProgressDirection, LyricTextFillMode } from '../../state/sett
 
 /** Keep unchanged rows out of the render work when the active cue advances. */
 export const SyncedRow = memo(function SyncedRow({
-  segment, index, active, past, textFillMode, progressDirection, skipLabel,
+  segment, index, active, past, near = true, textFillMode, progressDirection, skipLabel,
   registerRow, setTextRef, setUnderlineRef, onSeek, onPauseEnd, onMeasure, onMeasureProgress,
 }: {
   segment: LyricSegment
   index: number
   active: boolean
   past: boolean
+  near?: boolean
   textFillMode: LyricTextFillMode
   progressDirection: LyricProgressDirection
   skipLabel: string
@@ -32,7 +33,7 @@ export const SyncedRow = memo(function SyncedRow({
     return (
       <button
         ref={rowRef}
-        className={'lyr-notes' + (segment.skipPool ? ' is-skip-pool' : '') + (active ? ' is-active' : '')}
+        className={'lyr-notes' + (segment.skipPool ? ' is-skip-pool' : '') + (active ? ' is-active' : '') + (near ? ' is-near' : '')}
         tabIndex={active ? 0 : -1}
         onTransitionEnd={event => {
           if (event.target === event.currentTarget && event.propertyName === 'height') onMeasure(false)
@@ -40,16 +41,16 @@ export const SyncedRow = memo(function SyncedRow({
         onClick={onClick}
         aria-label={skipLabel}
       >
-        <span className="lyr-notes-row" aria-hidden="true">
+        {near && <span className="lyr-notes-row" aria-hidden="true">
           <Music2 size={17} className="lyr-note" />
           <Music2 size={17} className="lyr-note" />
           <Music2 size={17} className="lyr-note" />
-        </span>
+        </span>}
       </button>
     )
   }
   return (
-    <div ref={rowRef} className={'lyr-line' + (active ? ' is-active' : past ? ' is-past' : '')} onClick={onClick}>
+    <div ref={rowRef} className={'lyr-line' + (active ? ' is-active' : past ? ' is-past' : '') + (near ? ' is-near' : '')} onClick={onClick}>
       <span
         className={`lyr-line-text${textFillMode === 'words' ? ' is-word-fill' : ''}`}
         style={{ whiteSpace: 'pre-line' }}
