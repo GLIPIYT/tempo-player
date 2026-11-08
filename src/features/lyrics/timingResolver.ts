@@ -1,6 +1,7 @@
 import type { LyricsLine, LyricsWord } from './types'
 import { mapLyricWordTimings, type LyricWordTiming } from './wordTiming'
 import { addEstimatedWordTimings, repeatedPhraseDurations, repeatedPhraseKey } from './wordEstimate'
+import { lyricWordTokens } from './lyricTokens'
 
 export interface LyricTimingAnalysis {
   bpm: { value: number; confidence: number } | null
@@ -25,7 +26,7 @@ export interface LyricSegment {
   text: string
   seekToSec: number
   lineIndices: number[]
-  /** Aligned with non-whitespace tokens in text, including simultaneous lines. */
+  /** Aligned with lyricWordTokens(text), including simultaneous lines. */
   wordTimings?: readonly (LyricWordTiming | null)[]
   /** Keep author-marked blank rows at their full visual height. */
   explicitPause?: boolean
@@ -259,7 +260,7 @@ export function resolveLyricTiming(
       text: singing.map((line) => line.text).join('\n'), seekToSec: group.timeSec,
       lineIndices: singing.map((line) => line.lineIndex),
       ...(singing.some(line => line.wordTimings) ? {
-        wordTimings: singing.flatMap(line => line.wordTimings ?? (line.text.match(/\S+/gu) ?? []).map(() => null)),
+        wordTimings: singing.flatMap(line => line.wordTimings ?? lyricWordTokens(line.text).map(() => null)),
       } : {}) })
     const outroBreak = nextStart === undefined && remainingGap >= 0.75
       && (!Number.isFinite(limit) || remainingGap >= (limit - group.timeSec) * 0.2)

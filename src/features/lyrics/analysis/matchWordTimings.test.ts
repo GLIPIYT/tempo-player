@@ -24,6 +24,25 @@ it('matches a complete ordered line with case, ё and punctuation normalization'
   })
 })
 
+it('clips only a tiny early ASR onset to the authored line start', () => {
+  const line = [{ timeSec: 10, text: 'Silver rivers carry dreams' }]
+  const result = matchLyricWordTimings(line, [fragment(8, 15, words(['silver', 'rivers', 'carry', 'dreams'], 9.92))], 30)
+  expect(result[0]?.words[0].timeSec).toBe(10)
+  expect(result[0]?.words[0].endTimeSec).toBeCloseTo(10.22)
+  expect(matchLyricWordTimings(line, [fragment(8, 15, words(['silver', 'rivers', 'carry', 'dreams'], 9.7))], 30)).toEqual([])
+  const endedBeforeLine = words(['silver', 'rivers', 'carry', 'dreams'], 9.92)
+  endedBeforeLine[0].endSec = 9.99
+  expect(matchLyricWordTimings(line, [fragment(8, 15, endedBeforeLine)], 30)).toEqual([])
+})
+
+it('accepts a timestamped contraction without splitting it into fictitious words', () => {
+  const result = matchLyricWordTimings([{ timeSec: 10, text: 'Don’t leave tonight,please' }],
+    [fragment(8, 15, words(["don't", 'leave', 'tonight', 'please'], 10.1))], 30)
+  expect(result).toHaveLength(1)
+  expect(result[0].words.map(word => word.text)).toEqual(['Don’t', 'leave', 'tonight', 'please'])
+  expect(result[0].words[0].timeSec).toBeCloseTo(10.1)
+})
+
 it('rejects partial, reordered, merged, ambiguous and distant matches', () => {
   const line = [{ timeSec: 10, text: 'Silver rivers carry dreams' }]
   const incomplete = words(['silver', 'rivers', 'dreams'], 10.2)

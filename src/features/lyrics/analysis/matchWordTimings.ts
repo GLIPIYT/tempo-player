@@ -16,16 +16,17 @@ interface PreparedLine { lineIndex: number; line: LyricsLine; expected: Expected
   duplicate: boolean; supported: boolean; reliableSourceWords: boolean }
 
 const EDGE_MARGIN_SEC = 0.18
+const EARLY_START_TOLERANCE_SEC = 0.15
 const MATCH_START_AFTER_SEC = 4
 const MAX_LINE_SPAN_SEC = 10
 const DEDUPE_TOLERANCE_SEC = 0.25
 
 function normalize(text: string): string {
-  return text.toLowerCase().replaceAll('ё', 'е')
+  return text.toLowerCase().replaceAll('ё', 'е').replace(/['’]/gu, '')
 }
 
 function lyricTokens(text: string): ExpectedToken[] {
-  return [...text.matchAll(/[\p{L}\p{N}]+/gu)].map(([token]) => ({ text: token, normalized: normalize(token) }))
+  return [...text.matchAll(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu)].map(([token]) => ({ text: token, normalized: normalize(token) }))
 }
 
 export function canMatchLyricWordTimings(text: string): boolean {
@@ -96,7 +97,7 @@ function matchesInFragment(lines: readonly PreparedLine[], fragment: CompletedFr
     if (line.timeSec < 0 || line.timeSec >= durationSec || !prepared.supported) continue
     if (expected.length < 2 || expected.length > tokens.length) continue
     if (duplicate || prepared.reliableSourceWords) continue
-    const startLower = Math.max(line.timeSec,
+    const startLower = Math.max(0, line.timeSec - EARLY_START_TOLERANCE_SEC,
       previous === undefined ? 0 : (previous + line.timeSec) / 2)
     const startUpper = Math.min(line.timeSec + MATCH_START_AFTER_SEC,
       next === undefined ? durationSec : (line.timeSec + next) / 2)
@@ -116,7 +117,10 @@ function matchesInFragment(lines: readonly PreparedLine[], fragment: CompletedFr
       if (last.endSec > phraseEndUpper || first.startSec < fragment.startSec + EDGE_MARGIN_SEC
         || last.endSec > fragment.endSec - EDGE_MARGIN_SEC) continue
       const words = expected.map((token, tokenIndex) => ({ text: token.text,
-        timeSec: tokens[start + tokenIndex].word.startSec, endTimeSec: tokens[start + tokenIndex].word.endSec }))
+        timeSec: Math.max(line.timeSec, tokens[start + tokenIndex].word.startSec), endTimeSec: tokens[start + tokenIndex].word.endSec }))
+      // Tiny ASR onset jitter may precede an authored line start. Clip only this
+      // small boundary mismatch; never manufacture a positive word interval.
+      if (words.some(word => word.endTimeSec <= word.timeSec)) continue
       occurrences.push({ lineIndex, words, confidence: 1, startSec: first.startSec, endSec: last.endSec,
         edgeMarginSec: Math.min(first.startSec - fragment.startSec, fragment.endSec - last.endSec) })
     }

@@ -1,4 +1,5 @@
 import type { LyricsWord } from './types'
+import { lyricWordTokens } from './lyricTokens'
 
 export interface LyricWordTiming {
   timeSec: number
@@ -17,7 +18,7 @@ export function mapLyricWordTimings(
   source: 'source' | 'analysis',
 ): (LyricWordTiming | null)[] | undefined {
   if (!words?.length || !Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) return undefined
-  const tokens = text.match(/\S+/gu) ?? []
+  const tokens = lyricWordTokens(text)
   const normalized = tokens.map(lexical)
   const expected = normalized.join('')
   if (!expected || words.map(word => lexical(word.text)).join('') !== expected) return undefined

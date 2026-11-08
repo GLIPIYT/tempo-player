@@ -2,6 +2,7 @@ import { memo, useCallback } from 'react'
 import { Music2 } from 'lucide-react'
 import type { LyricSegment } from './timingResolver'
 import type { LyricProgressDirection, LyricTextFillMode } from '../../state/settings'
+import { lyricDisplayText, lyricDisplayTokens } from './lyricTokens'
 
 /** Keep unchanged rows out of the render work when the active cue advances. */
 export const SyncedRow = memo(function SyncedRow({
@@ -59,10 +60,10 @@ export const SyncedRow = memo(function SyncedRow({
           if (event.target === event.currentTarget && event.propertyName === 'transform') onMeasureProgress()
         } : undefined}
       >
-        {textFillMode === 'words' && active ? segment.text.split(/(\s+)/u).filter(Boolean).map((token, tokenIndex) => {
+        {textFillMode === 'words' && active ? lyricDisplayTokens(segment.text).map((token, tokenIndex) => {
           const word = /\S/u.test(token)
           return <span key={tokenIndex} data-lyric-token={word ? 'word' : 'space'} className={word ? 'lyr-word' : 'lyr-word-space'}>{token}</span>
-        }) : segment.text}
+        }) : lyricDisplayText(segment.text)}
       </span>
       <span
         className="lyr-underline"

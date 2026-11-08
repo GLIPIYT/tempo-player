@@ -10,7 +10,7 @@ import { historyHours } from './period'
 function SourceIcon({ source }: { source: SourceId }) {
   const label = source === 'soundcloud' ? 'SoundCloud' : source === 'youtube' ? 'YouTube Music' : 'Local file'
   const t = useT()
-  return <span className="history-track-source" title={t(label)}>
+  return <span className="history-track-source" data-source={source} title={t(label)}>
     {source === 'local' ? <FolderOpen size={13} role="img" aria-label={t(label)} />
       : <svg viewBox="0 0 24 24" width="13" height="13" role="img" aria-label={label} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
         {source === 'youtube' ? <><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="7" /><path d="m10 8 6 4-6 4Z" fill="currentColor" stroke="none" /></>

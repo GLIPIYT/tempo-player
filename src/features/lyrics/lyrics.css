@@ -1121,8 +1121,8 @@
   text-shadow: none;
 }
 .lyr-line-text.is-word-fill {
-  /* Keep the same wrapping before activation and leave room for emphasis. */
-  word-spacing: .12em;
+  /* Spacing is normalized in the shared display tokenizer, not amplified here. */
+  word-spacing: normal;
 }
 .lyr-word-space {
   white-space: pre-wrap;

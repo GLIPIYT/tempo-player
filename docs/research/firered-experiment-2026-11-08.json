@@ -1,0 +1,387 @@
+{
+  "local_opus_first_30s": {
+    "label": "existing_opus_fixture_first_30s",
+    "model": {
+      "source_commit": "c30ec49e8cc69642b0ee65362eba11b9d11c6e54",
+      "parameter_count": 588931,
+      "sha256_model_pth_tar": "ad08a4e05b58ca328154e158d24cff57a2fe796ceabb63bb701544c3f7d4f7ad"
+    },
+    "runtime": {
+      "python": "3.13.3",
+      "torch": "2.9.1+cpu",
+      "torch_cuda_available": false,
+      "torch_threads": 1,
+      "kaldi_native_fbank": "1.20.1",
+      "frame_shift_ms": 10,
+      "load_seconds": 0.0232,
+      "first_detect_wall_seconds": 0.1942,
+      "first_detect_cpu_seconds": 0.1719,
+      "warm_detect_wall_seconds": 0.1856,
+      "warm_detect_cpu_seconds": 0.1875,
+      "first_real_time_factor": 0.00647,
+      "warm_real_time_factor": 0.00619,
+      "repeat_probability_max_abs_error": 0.0,
+      "peak_working_set_mb": 258.49
+    },
+    "audio": {
+      "duration_seconds": 30.0,
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "frames": 480000
+    },
+    "class_stats": {
+      "speech": {
+        "max_probability": 0.5814,
+        "mean_probability": 0.0333
+      },
+      "singing": {
+        "max_probability": 0.9954,
+        "mean_probability": 0.4682
+      },
+      "music": {
+        "max_probability": 1.0,
+        "mean_probability": 0.9973
+      }
+    },
+    "result": {
+      "dur": 30.0,
+      "event2timestamps": {
+        "speech": [],
+        "singing": [
+          [
+            7.15,
+            13.28
+          ],
+          [
+            19.92,
+            30.0
+          ]
+        ],
+        "music": [
+          [
+            0.0,
+            13.26
+          ],
+          [
+            13.27,
+            30.0
+          ]
+        ]
+      },
+      "event2ratio": {
+        "speech": 0.009,
+        "singing": 0.528,
+        "music": 0.999
+      }
+    }
+  },
+  "onnx_cpu_parity": {
+    "onnx_runtime_version": "1.24.4",
+    "providers": [
+      "CPUExecutionProvider"
+    ],
+    "input_name": "feat",
+    "input_shape": [
+      "batch",
+      "time",
+      80
+    ],
+    "output_name": "probs",
+    "output_shape": [
+      "batch",
+      "time",
+      3
+    ],
+    "checks": [
+      {
+        "label": "upstream_event_22s",
+        "duration_seconds": 22.016,
+        "fbank_frames": 2200,
+        "onnx_output_shape": [
+          1,
+          2200,
+          3
+        ],
+        "max_absolute_error": 1.0132789611816406e-06,
+        "mean_absolute_error": 8.96664289484761e-08,
+        "allclose_atol_1e-5_rtol_1e-4": true
+      },
+      {
+        "label": "existing_fixture_first_30s",
+        "duration_seconds": 30.0,
+        "fbank_frames": 2998,
+        "onnx_output_shape": [
+          1,
+          2998,
+          3
+        ],
+        "max_absolute_error": 1.3113021850585938e-06,
+        "mean_absolute_error": 5.9596761303737367e-08,
+        "allclose_atol_1e-5_rtol_1e-4": true
+      }
+    ]
+  },
+  "singing_threshold_sweep": [
+    {
+      "threshold": 0.4,
+      "merge_silence_frames": 0,
+      "segments": [
+        [
+          7.14,
+          13.98
+        ],
+        [
+          19.88,
+          30.0
+        ]
+      ]
+    },
+    {
+      "threshold": 0.45,
+      "merge_silence_frames": 0,
+      "segments": [
+        [
+          7.15,
+          13.79
+        ],
+        [
+          19.91,
+          30.0
+        ]
+      ]
+    },
+    {
+      "threshold": 0.5,
+      "merge_silence_frames": 0,
+      "segments": [
+        [
+          7.15,
+          13.28
+        ],
+        [
+          19.92,
+          30.0
+        ]
+      ]
+    },
+    {
+      "threshold": 0.55,
+      "merge_silence_frames": 0,
+      "segments": [
+        [
+          7.16,
+          13.21
+        ],
+        [
+          20.0,
+          30.0
+        ]
+      ]
+    },
+    {
+      "threshold": 0.6,
+      "merge_silence_frames": 0,
+      "segments": [
+        [
+          7.17,
+          13.2
+        ],
+        [
+          20.33,
+          30.0
+        ]
+      ]
+    },
+    {
+      "threshold": 0.65,
+      "merge_silence_frames": 0,
+      "segments": [
+        [
+          7.18,
+          11.03
+        ],
+        [
+          11.16,
+          13.18
+        ],
+        [
+          20.36,
+          21.21
+        ],
+        [
+          21.47,
+          22.75
+        ],
+        [
+          23.16,
+          30.0
+        ]
+      ]
+    },
+    {
+      "threshold": 0.7,
+      "merge_silence_frames": 0,
+      "segments": [
+        [
+          7.19,
+          11.02
+        ],
+        [
+          11.26,
+          13.16
+        ],
+        [
+          20.39,
+          21.12
+        ],
+        [
+          21.59,
+          22.73
+        ],
+        [
+          23.18,
+          25.52
+        ],
+        [
+          25.61,
+          30.0
+        ]
+      ]
+    },
+    {
+      "threshold": 0.5,
+      "merge_silence_frames": 5,
+      "segments": [
+        [
+          7.15,
+          13.28
+        ],
+        [
+          19.92,
+          30.0
+        ]
+      ]
+    },
+    {
+      "threshold": 0.5,
+      "merge_silence_frames": 10,
+      "segments": [
+        [
+          7.15,
+          13.28
+        ],
+        [
+          19.92,
+          30.0
+        ]
+      ]
+    },
+    {
+      "threshold": 0.5,
+      "merge_silence_frames": 20,
+      "segments": [
+        [
+          7.15,
+          13.28
+        ],
+        [
+          19.92,
+          30.0
+        ]
+      ]
+    }
+  ],
+  "upstream_event": {
+    "label": "firered_upstream_event_22s",
+    "model": {
+      "source_commit": "c30ec49e8cc69642b0ee65362eba11b9d11c6e54",
+      "parameter_count": 588931,
+      "sha256_model_pth_tar": "ad08a4e05b58ca328154e158d24cff57a2fe796ceabb63bb701544c3f7d4f7ad"
+    },
+    "runtime": {
+      "python": "3.13.3",
+      "torch": "2.9.1+cpu",
+      "torch_cuda_available": false,
+      "torch_threads": 1,
+      "kaldi_native_fbank": "1.20.1",
+      "frame_shift_ms": 10,
+      "load_seconds": 0.0169,
+      "first_detect_wall_seconds": 0.1415,
+      "first_detect_cpu_seconds": 0.1406,
+      "warm_detect_wall_seconds": 0.1352,
+      "warm_detect_cpu_seconds": 0.1406,
+      "first_real_time_factor": 0.00643,
+      "warm_real_time_factor": 0.00614,
+      "repeat_probability_max_abs_error": 0.0,
+      "peak_working_set_mb": 250.91
+    },
+    "audio": {
+      "duration_seconds": 22.016,
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "frames": 352256
+    },
+    "class_stats": {
+      "speech": {
+        "max_probability": 0.9964,
+        "mean_probability": 0.7245
+      },
+      "singing": {
+        "max_probability": 0.9958,
+        "mean_probability": 0.8187
+      },
+      "music": {
+        "max_probability": 0.9996,
+        "mean_probability": 0.9861
+      }
+    },
+    "result": {
+      "dur": 22.016,
+      "event2timestamps": {
+        "speech": [
+          [
+            0.4,
+            3.56
+          ],
+          [
+            3.66,
+            9.08
+          ],
+          [
+            9.27,
+            9.77
+          ],
+          [
+            10.78,
+            21.76
+          ]
+        ],
+        "singing": [
+          [
+            1.79,
+            19.96
+          ],
+          [
+            19.97,
+            22.016
+          ]
+        ],
+        "music": [
+          [
+            0.09,
+            12.32
+          ],
+          [
+            12.33,
+            22.016
+          ]
+        ]
+      },
+      "event2ratio": {
+        "speech": 0.848,
+        "singing": 0.905,
+        "music": 0.991
+      }
+    }
+  }
+}

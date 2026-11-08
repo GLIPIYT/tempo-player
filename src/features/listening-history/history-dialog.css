@@ -93,6 +93,9 @@ button.history-featured-track:hover strong { color: var(--accent); }
 .history-track-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .history-track-title strong { flex: 0 1 auto; min-width: 0; }
 .history-track-source { display: inline-flex; flex: 0 0 auto; color: var(--text-muted); }
+.history-track-source[data-source="local"] { color: #fff; }
+.history-track-source[data-source="soundcloud"] { color: #ff5500; }
+.history-track-source[data-source="youtube"] { color: #ff0033; }
 .history-track-slide.is-leaving { pointer-events: none; }
 .history-track-slide.is-entering .history-track-art { animation: history-art-in 420ms ease both; }
 .history-track-slide.is-leaving .history-track-art { animation: history-art-out 420ms ease both; }

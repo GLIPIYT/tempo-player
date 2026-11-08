@@ -1,6 +1,7 @@
 import type { LyricsLine } from './types'
 import type { LyricTimingAnalysis, ResolvedLyricsTiming } from './timingResolver'
 import type { LyricWordTiming } from './wordTiming'
+import { lyricWordTokens } from './lyricTokens'
 
 const normalize = (text: string) => text.normalize('NFKC').toLowerCase().replace(/ё/gu, 'е')
 const lexical = (text: string) => normalize(text).replace(/[^\p{L}\p{N}]/gu, '')
@@ -65,7 +66,7 @@ export function repeatedPhraseDurations(lines: readonly LyricsLine[], duration: 
 }
 
 export function estimateLyricWords(text: string, timeSec: number, endTimeSec: number): (LyricWordTiming | null)[] {
-  const tokens = text.match(/\S+/gu) ?? []
+  const tokens = lyricWordTokens(text)
   if (!Number.isFinite(timeSec) || !Number.isFinite(endTimeSec) || endTimeSec <= timeSec) return tokens.map(() => null)
   let lastWord = tokens.length - 1
   while (lastWord >= 0 && !lexical(tokens[lastWord])) lastWord -= 1
@@ -92,7 +93,7 @@ export function addEstimatedWordTimings(timing: ResolvedLyricsTiming): void {
     const key = repeatedPhraseKey(line.text)
     const end = Math.min(line.endTimeSec, limits.get(line.lineIndex) ?? line.endTimeSec)
     const span = end - line.timeSec
-    const tokens = line.text.match(/\S+/gu) ?? []
+    const tokens = lyricWordTokens(line.text)
     if (!key || !line.wordTimings || span <= 0 || tokens.some((token, index) => lexical(token) && !line.wordTimings?.[index])) continue
     const values = profiles.get(key) ?? []
     values.push({ duration: span, cues: line.wordTimings.map(cue => cue ? {
@@ -106,7 +107,7 @@ export function addEstimatedWordTimings(timing: ResolvedLyricsTiming): void {
     const span = end - line.timeSec
     const key = repeatedPhraseKey(line.text)
     const references = key ? profiles.get(key)?.filter(reference => span / reference.duration >= .65 && span / reference.duration <= 1.5) : undefined
-    const tokens = line.text.match(/\S+/gu) ?? []
+    const tokens = lyricWordTokens(line.text)
     // Disagreeing renditions (spoken bridge vs sung chorus) must not impose a
     // shared pattern. Require matching token slots and similar relative onsets.
     const agrees = references?.length && references.every(reference => reference.cues.length === tokens.length)

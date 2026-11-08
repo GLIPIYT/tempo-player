@@ -14,18 +14,24 @@ const props = {
   onSeek: noop, onPauseEnd: noop, onMeasure: noop, onMeasureProgress: noop,
 }
 
-it('keeps actual separators, punctuation, repeated spaces and newlines between highlighted words', () => {
+it('normalizes repeated spaces while preserving punctuation and newlines between highlighted words', () => {
   const markup = renderToStaticMarkup(<SyncedRow {...props} segment={line} active />)
   const tokens = [...markup.matchAll(/data-lyric-token="(word|space)" class="([^"]+)">([^<]*)<\/span>/gu)]
-  expect(tokens.map(match => match[3]).join('')).toBe(line.text)
-  expect(tokens.filter(match => match[1] === 'space').map(match => match[3])).toEqual([' ', ' ', ' ', '\n', '  ', ' '])
+  expect(tokens.map(match => match[3]).join('')).toBe('На время завязал, теперь\nещё одна строка')
+  expect(tokens.filter(match => match[1] === 'space').map(match => match[3])).toEqual([' ', ' ', ' ', '\n', ' ', ' '])
   expect(tokens.filter(match => match[1] === 'space').every(match => match[2] === 'lyr-word-space')).toBe(true)
 })
 
 it('keeps inactive long lists as plain text instead of building word nodes for every row', () => {
   const markup = renderToStaticMarkup(<SyncedRow {...props} segment={line} active={false} />)
   expect(markup).not.toContain('data-lyric-token')
-  expect(markup).toContain(line.text)
+  expect(markup).toContain('На время завязал, теперь\nещё одна строка')
+})
+
+it('highlights comma-separated words independently even when the provider omitted the space', () => {
+  const markup = renderToStaticMarkup(<SyncedRow {...props} segment={{ ...line, text: 'Только не домой,только не   домой' }} active />)
+  const words = [...markup.matchAll(/data-lyric-token="word" class="lyr-word">([^<]*)<\/span>/gu)].map(match => match[1])
+  expect(words).toEqual(['Только', 'не', 'домой,', 'только', 'не', 'домой'])
 })
 
 it('retains compact instrumental rows and their active state', () => {
