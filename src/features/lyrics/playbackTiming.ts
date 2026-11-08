@@ -1,4 +1,5 @@
 import type { ResolvedLyricsTiming } from './timingResolver'
+import { clipLyricWordTimings } from './wordTiming'
 
 export function createPlaybackTiming() {
   let latest: ResolvedLyricsTiming | null = null
@@ -40,11 +41,14 @@ export function createPlaybackTiming() {
         stable = {
           segments: stable.segments.filter(segment => segment.timeSec < durationSec)
             .map(segment => ({ ...segment, endTimeSec: Math.min(segment.endTimeSec, durationSec),
+              ...(segment.wordTimings ? { wordTimings: clipLyricWordTimings(segment.wordTimings, durationSec) } : {}),
               ...(segment.displayEndTimeSec == null ? {} : {
                 displayEndTimeSec: Math.min(segment.displayEndTimeSec, durationSec),
               }) })),
           lines: stable.lines.filter(line => line.timeSec < durationSec)
-            .map(line => ({ ...line, endTimeSec: Math.min(line.endTimeSec, durationSec) })),
+            .map(line => ({ ...line, endTimeSec: Math.min(line.endTimeSec, durationSec),
+              ...(line.wordTimings ? { wordTimings: clipLyricWordTimings(line.wordTimings, durationSec) } : {}),
+            })),
         }
       }
       latest = timing

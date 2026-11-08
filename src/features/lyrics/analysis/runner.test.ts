@@ -176,6 +176,65 @@ it('persists a newly matched media endpoint as canonical source time and replays
   expect(runner.getSnapshot().analysis.matchedEnds[0]?.endTimeSec).toBe(15)
   runner.stop()
 })
+it('reopens cached fragments for canonical word matches, provider changes and current offsets', async () => {
+  const cachedWords = ['silver', 'rivers', 'carry', 'dreams'].map((text, index) => ({ text,
+    startSec: 12.2 + index * 0.5, endSec: 12.55 + index * 0.5 }))
+  const stored: AudioAnalysis = { fingerprint: 'audio', algorithmVersion: LYRIC_ANALYSIS_ALGORITHM_VERSION, modelRevision: LYRIC_MODEL_REVISION,
+    durationSec: 30, bpm: null, bpmConfidence: 0, fragments: [{ startSec: 10, endSec: 24, status: 'completed', words: cachedWords }], lyricMatches: [] }
+  const { runner, counts } = setup(stored)
+  const sourceLines = [{ timeSec: 12, text: 'Silver rivers carry dreams', endTimeSec: 16, endSource: 'manual' as const }]
+  runner.setWordTimingsEnabled(true)
+  runner.setTrack({ ...input, sourceLines, sourceLyricKey: 'provider-a', lyricKey: 'provider-a@-5', offsetMs: -5000 })
+  await vi.advanceTimersByTimeAsync(0)
+  expect(runner.getSnapshot().analysis.matchedWords?.[0]).toMatchObject({ lineIndex: 0, confidence: 1 })
+  expect(runner.getSnapshot().analysis.matchedWords?.[0].words[0].timeSec).toBeCloseTo(7.2)
+  expect(runner.getSnapshot().analysis.matchedWords?.[0].words[0].endTimeSec).toBeCloseTo(7.55)
+
+  runner.setTrack({ ...input, sourceLines, sourceLyricKey: 'provider-b', lyricKey: 'provider-b@-4', offsetMs: -4000 })
+  expect(runner.getSnapshot().analysis.matchedWords?.[0].words[0].timeSec).toBeCloseTo(8.2)
+  expect(runner.getSnapshot().analysis.matchedWords?.[0].words[0].endTimeSec).toBeCloseTo(8.55)
+  runner.setTrack({ ...input, sourceLines, sourceLyricKey: 'provider-b', lyricKey: 'provider-b@-3', offsetMs: -3000 })
+  expect(runner.getSnapshot().analysis.matchedWords?.[0].words[0].timeSec).toBeCloseTo(9.2)
+  expect(runner.getSnapshot().analysis.matchedWords?.[0].words[0].endTimeSec).toBeCloseTo(9.55)
+  const cachedAnalysis = runner.getSnapshot().analysis
+  runner.setEnabled(true); runner.setPosition(12, true)
+  expect(runner.getSnapshot().analysis).toBe(cachedAnalysis)
+  expect(counts()).toEqual({ decodes: 0, ensures: 0, disposed: 0 })
+  runner.stop()
+})
+it('does not start audio work or download the model from word mode alone', async () => {
+  const { runner, counts } = setup()
+  runner.setWordTimingsEnabled(true)
+  runner.setTrack({ ...input, sourceLines: [{ timeSec: 10, text: 'Silver rivers carry dreams', endTimeSec: 14, endSource: 'manual' }] })
+  runner.setPosition(10, true)
+  await vi.advanceTimersByTimeAsync(10000)
+  expect(counts()).toEqual({ decodes: 0, ensures: 0, disposed: 0 })
+  runner.stop()
+})
+it('keeps word-only analysis requests within the worker 12-second PCM limit', async () => {
+  const { runner, deps, writes } = setup()
+  const requests: AsrRequest[] = []
+  deps.worker = () => ({ dispose() {}, request: async request => {
+    requests.push(request)
+    return request.type === 'init' ? { type: 'ready', jobId: request.jobId }
+      : { type: 'result', jobId: request.jobId, fragmentId: request.fragmentId, elapsedMs: 1,
+        words: ['silver', 'rivers', 'carry', 'dreams'].map((text, index) => ({ text,
+          startSec: 10.2 + index * 0.5, endSec: 10.5 + index * 0.5 })) }
+  } })
+  runner.setEnabled(true); runner.setWordTimingsEnabled(true)
+  runner.setTrack({ ...input, sourceLines: [{ timeSec: 10, text: 'Silver rivers carry dreams', endTimeSec: 14, endSource: 'manual' }] })
+  runner.setPosition(10, true)
+  await vi.advanceTimersByTimeAsync(1000)
+  const request = requests.find(request => request.type === 'transcribe')
+  expect(request?.type).toBe('transcribe')
+  if (request?.type === 'transcribe') {
+    expect(request.pcm.length).toBeLessThanOrEqual(12 * 16000)
+    expect(request.pcm.length).toBeGreaterThan(11 * 16000)
+  }
+  expect(runner.getSnapshot().analysis.matchedWords?.[0].words).toHaveLength(4)
+  expect(writes.find(update => update.completedFragment)?.acceptedMatches?.ends).toEqual([])
+  runner.stop()
+})
 it('waits for a slow cache restore before position updates can start decoding', async () => {
   const { runner, deps, counts } = setup()
   deps.native.get = async () => { await new Promise(resolve => setTimeout(resolve, 1000)); return null }

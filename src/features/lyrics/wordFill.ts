@@ -1,4 +1,6 @@
-/** Word boundaries follow the measured text advance, without inventing vocal timestamps. */
+import type { LyricWordTiming } from './wordTiming'
+
+/** Fallback boundaries follow measured text advance, without inventing vocal timestamps. */
 export function wordStartsFromWidths(tokens: readonly { width: number; word: boolean }[]): number[] {
   const total = tokens.reduce((sum, token) => sum + Math.max(0, token.width), 0)
   let advance = 0
@@ -17,4 +19,19 @@ export function wordIndexAtProgress(starts: readonly number[], progress: number)
     if (starts[mid] <= progress) { found = mid; lo = mid + 1 } else hi = mid - 1
   }
   return found
+}
+
+/** 0 upcoming, 1 sung, 2 currently sung. Exact cues can leave a real silent gap. */
+export function wordFillState(
+  wordIndex: number,
+  approximateIndex: number,
+  progress: number,
+  positionSec: number,
+  timing: LyricWordTiming | null | undefined,
+): 0 | 1 | 2 {
+  if (timing) {
+    if (!Number.isFinite(positionSec) || positionSec < timing.timeSec) return 0
+    return positionSec < timing.endTimeSec ? 2 : 1
+  }
+  return wordIndex > approximateIndex ? 0 : wordIndex === approximateIndex && progress < 1 ? 2 : 1
 }

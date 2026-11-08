@@ -1,8 +1,10 @@
-import type { LyricsLine } from './types'
+import type { LyricsLine, LyricsWord } from './types'
+import { mapLyricWordTimings, type LyricWordTiming } from './wordTiming'
 
 export interface LyricTimingAnalysis {
   bpm: { value: number; confidence: number } | null
   matchedEnds: readonly { lineIndex: number; endTimeSec: number; confidence: number }[]
+  matchedWords?: readonly { lineIndex: number; words: readonly LyricsWord[]; confidence: number }[]
 }
 
 export interface ResolvedLyricsLine extends Omit<LyricsLine, 'endSource' | 'endTimeSec'> {
@@ -10,6 +12,7 @@ export interface ResolvedLyricsLine extends Omit<LyricsLine, 'endSource' | 'endT
   endTimeSec: number
   endSource: 'manual' | 'source' | 'recognized' | 'text'
   confidence: number
+  wordTimings?: readonly (LyricWordTiming | null)[]
 }
 
 export interface LyricSegment {
@@ -21,6 +24,8 @@ export interface LyricSegment {
   text: string
   seekToSec: number
   lineIndices: number[]
+  /** Aligned with non-whitespace tokens in text, including simultaneous lines. */
+  wordTimings?: readonly (LyricWordTiming | null)[]
   /** Keep author-marked blank rows at their full visual height. */
   explicitPause?: boolean
   skipPool?: boolean
@@ -122,6 +127,14 @@ export function resolveLyricTiming(
   analysis?: LyricTimingAnalysis | null,
 ): ResolvedLyricsTiming {
   const duration = durationSec != null && Number.isFinite(durationSec) && durationSec > 0 ? durationSec : null
+  const wordMatches = new Map<number, NonNullable<LyricTimingAnalysis['matchedWords']>[number][]>()
+  for (const match of analysis?.matchedWords ?? []) {
+    if (!Number.isFinite(match.confidence) || match.confidence < CONFIDENT) continue
+    const candidates = wordMatches.get(match.lineIndex) ?? []
+    candidates.push(match)
+    wordMatches.set(match.lineIndex, candidates)
+  }
+  for (const candidates of wordMatches.values()) candidates.sort((a, b) => b.confidence - a.confidence)
   const sorted = lines.map((line, lineIndex) => ({ line, lineIndex, work: phraseWork(typeof line.text === 'string' ? line.text : '') }))
     .filter(({ line }) => Number.isFinite(line.timeSec) && line.timeSec >= 0 && typeof line.text === 'string'
       && (line.text.trim().length > 0 || line.explicitPause === true)
@@ -166,9 +179,17 @@ export function resolveLyricTiming(
       }, line.timeSec) ?? line.timeSec
       const hasExplicitEnd = validEnd(line.endTimeSec, line.timeSec)
       const explicit = hasExplicitEnd ? line.endTimeSec : lastWord?.endTimeSec
-      const recognized = analysis?.matchedEnds.filter((e) => e.lineIndex === lineIndex && Number.isFinite(e.confidence)
+      const recognizedWords = wordMatches.get(lineIndex)
+        ?.find(match => mapLyricWordTimings(line.text, match.words, line.timeSec,
+          Number.isFinite(limit) ? limit : Math.max(line.timeSec + 1, ...match.words.map(word => word.endTimeSec ?? word.timeSec)), 'analysis'))
+      const recognizedEnd = analysis?.matchedEnds.filter((e) => e.lineIndex === lineIndex && Number.isFinite(e.confidence)
         && e.confidence >= CONFIDENT && validEnd(e.endTimeSec, sourceWordStart))
         .sort((a, b) => b.confidence - a.confidence)[0]
+      const recognizedWordEnd = recognizedWords?.words.at(-1)?.endTimeSec
+      // A previously cached endpoint cannot cut off a newly matched complete word.
+      const recognized = recognizedWords && validEnd(recognizedWordEnd, sourceWordStart)
+        ? { endTimeSec: Math.max(recognizedWordEnd, recognizedEnd?.endTimeSec ?? 0), confidence: recognizedWords.confidence }
+        : recognizedEnd
       if (validEnd(explicit, line.timeSec)) {
         endSource = hasExplicitEnd ? line.endSource ?? 'source' : 'source'
         endTimeSec = endSource === 'manual' ? Math.min(explicit, duration ?? Infinity) : Math.min(explicit, limit)
@@ -202,6 +223,13 @@ export function resolveLyricTiming(
       const commonEnd = Math.max(...singing.map((line) => line.endTimeSec))
       for (const line of singing) if (line.endSource === 'text') line.endTimeSec = Math.min(commonEnd, limit)
     }
+    for (const line of singing) {
+      const wordLimit = Math.min(line.endTimeSec, limit)
+      const sourceWords = mapLyricWordTimings(line.text, line.words, line.timeSec, wordLimit, 'source')
+      const recognizedWords = sourceWords ? undefined : wordMatches.get(line.lineIndex)
+        ?.map(match => mapLyricWordTimings(line.text, match.words, line.timeSec, wordLimit, 'analysis')).find(Boolean)
+      if (sourceWords || recognizedWords) line.wordTimings = sourceWords ?? recognizedWords
+    }
     resolved.push(...groupLines)
     if (singing.length === 0) {
       addSegment({ kind: 'notes', timeSec: group.timeSec, endTimeSec: limit, text: '',
@@ -226,7 +254,10 @@ export function resolveLyricTiming(
     addSegment({ kind: 'line', timeSec: group.timeSec, endTimeSec: phraseEnd,
       ...(displayEnd > phraseEnd ? { displayEndTimeSec: displayEnd } : {}),
       text: singing.map((line) => line.text).join('\n'), seekToSec: group.timeSec,
-      lineIndices: singing.map((line) => line.lineIndex) })
+      lineIndices: singing.map((line) => line.lineIndex),
+      ...(singing.some(line => line.wordTimings) ? {
+        wordTimings: singing.flatMap(line => line.wordTimings ?? (line.text.match(/\S+/gu) ?? []).map(() => null)),
+      } : {}) })
     const outroBreak = nextStart === undefined && remainingGap >= 0.75
       && (!Number.isFinite(limit) || remainingGap >= (limit - group.timeSec) * 0.2)
     if (showShortPause || pauseBeforeExplicit || longInterLineBreak || outroBreak) {

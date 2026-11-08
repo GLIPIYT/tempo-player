@@ -1,11 +1,12 @@
 import type { LyricsLine } from '../types'
-import { resolveLyricTiming, type LyricTimingAnalysis } from '../timingResolver'
+import { resolveLyricTiming, type LyricTimingAnalysis, type ResolvedLyricsLine } from '../timingResolver'
 import { analysisNativeClient, type AnalysisNativeClient, type AnalysisTrack } from './nativeClient'
 import { LYRIC_ANALYSIS_ALGORITHM_VERSION, LYRIC_MODEL_REVISION, type AudioIdentity, type AudioAnalysis, type AnalysisMerge, type MatchedSourceEnd, type CompletedFragment } from './contract'
 import { decodeForAnalysis, type AnalysisPcm } from '../../../audio/decodeForAnalysis'
 import { withAnalysisLane } from '../../../audio/analysisLane'
 import { estimateBpm } from '../../../audio/bpm'
 import { lyricLanguage, matchLyricEnds, projectSourceEnds } from './matchWords'
+import { canMatchLyricWordTimings, hasReliableSourceWordTimings, matchLyricWordTimings, projectLyricWordTimings, type MatchedLyricWords } from './matchWordTimings'
 import { createAsrWorker } from './workerClient'
 import type { AsrRequest, AsrResponse } from './workerProtocol'
 export interface AnalysisTrackInput { track: AnalysisTrack; sourceLines: readonly LyricsLine[]; durationSec: number; offsetMs: number; lyricKey: string; sourceLyricKey: string }
@@ -31,18 +32,72 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
   let identityRefreshPending = false
   let input: AnalysisTrackInput | null = null
   let identity: AudioIdentity | null = null, cache: AudioAnalysis | null = null, pcm: AnalysisPcm | null = null
+  let wordTimingsEnabled = false
+  let wordMatchMemo: { fragments: readonly CompletedFragment[]; lines: readonly LyricsLine[]; sourceLyricKey: string;
+    durationSec: number; matches: MatchedLyricWords[]; matchedWordLineIndices: Set<number>;
+    sourceWordLineIndices: Set<number> } | null = null
+  let analysisMemo: { cache: AudioAnalysis | null; lines: readonly LyricsLine[] | null; sourceLyricKey: string | null;
+    offsetMs: number; durationSec: number; wordTimingsEnabled: boolean; value: LyricTimingAnalysis } | null = null
+  let resolvedMemo: { sourceLines: readonly LyricsLine[]; offsetMs: number; durationSec: number;
+    analysis: LyricTimingAnalysis; lines: ResolvedLyricsLine[] } | null = null
   let worker: ReturnType<RunnerDependencies['worker']> | null = null
   let controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined, idleTimer: ReturnType<typeof setTimeout> | undefined
   let snapshot: AnalysisSnapshot = { lyricKey: null, phase: 'idle', analysis: { bpm: null, matchedEnds: [] }, error: null }
   const listeners = new Set<() => void>()
 
-  const sourceEnds = (): MatchedSourceEnd[] => cache?.lyricMatches.find(m => m.sourceLyricKey === input?.sourceLyricKey)?.ends ?? []
-  function publish(phase = snapshot.phase, error: string | null = null): void {
-    snapshot = { lyricKey: input?.lyricKey ?? null, phase, error, analysis: {
+  const sourceEnds = (): MatchedSourceEnd[] => cache?.lyricMatches.find(m => m.sourceLyricKey === input?.sourceLyricKey)?.ends ?? EMPTY_SOURCE_ENDS
+  function sourceWordMatches(): MatchedLyricWords[] {
+    if (!input) return []
+    const fragments = cache?.fragments ?? EMPTY_FRAGMENTS
+    if (wordMatchMemo?.fragments === fragments && wordMatchMemo.lines === input.sourceLines
+      && wordMatchMemo.sourceLyricKey === input.sourceLyricKey && wordMatchMemo.durationSec === input.durationSec) return wordMatchMemo.matches
+    const matches = matchLyricWordTimings(input.sourceLines, fragments, input.durationSec)
+    const matchedWordLineIndices = new Set(matches.map(match => match.lineIndex))
+    const ordered = input.sourceLines.map((line, lineIndex) => ({ line, lineIndex }))
+      .filter(item => Number.isFinite(item.line.timeSec)).sort((a, b) => a.line.timeSec - b.line.timeSec || a.lineIndex - b.lineIndex)
+    const nextStarts = new Map<number, number>()
+    let nextStart: number | undefined
+    for (let index = ordered.length - 1; index >= 0; index -= 1) {
+      const line = ordered[index]
+      if (nextStart !== undefined && nextStart > line.line.timeSec) nextStarts.set(line.lineIndex, nextStart)
+      if (index === 0 || ordered[index - 1].line.timeSec !== line.line.timeSec) nextStart = line.line.timeSec
+    }
+    const sourceWordLineIndices = new Set<number>()
+    input.sourceLines.forEach((line, lineIndex) => {
+      if (hasReliableSourceWordTimings(line, input!.durationSec, nextStarts.get(lineIndex))) sourceWordLineIndices.add(lineIndex)
+    })
+    wordMatchMemo = { fragments, lines: input.sourceLines, sourceLyricKey: input.sourceLyricKey,
+      durationSec: input.durationSec, matches, matchedWordLineIndices, sourceWordLineIndices }
+    return matches
+  }
+  function currentAnalysis(): LyricTimingAnalysis {
+    const lines = input?.sourceLines ?? null
+    const sourceLyricKey = input?.sourceLyricKey ?? null
+    const offsetMs = input?.offsetMs ?? 0
+    const durationSec = input?.durationSec ?? 0
+    if (analysisMemo?.cache === cache && analysisMemo.lines === lines && analysisMemo.sourceLyricKey === sourceLyricKey
+      && analysisMemo.offsetMs === offsetMs && analysisMemo.durationSec === durationSec
+      && analysisMemo.wordTimingsEnabled === wordTimingsEnabled) return analysisMemo.value
+    const value: LyricTimingAnalysis = {
       bpm: cache?.bpm != null ? { value: cache.bpm, confidence: cache.bpmConfidence } : null,
-      matchedEnds: input ? projectSourceEnds(sourceEnds(), input.offsetMs, input.durationSec) : [],
-    } }
+      matchedEnds: input ? projectSourceEnds(sourceEnds(), offsetMs, durationSec) : [],
+      ...(input && wordTimingsEnabled ? { matchedWords: projectLyricWordTimings(sourceWordMatches(), offsetMs) } : {}),
+    }
+    analysisMemo = { cache, lines, sourceLyricKey, offsetMs, durationSec, wordTimingsEnabled, value }
+    return value
+  }
+  function resolvedSourceLines(): ResolvedLyricsLine[] {
+    if (!input) return []
+    const analysis = currentAnalysis()
+    if (resolvedMemo?.sourceLines === input.sourceLines && resolvedMemo.offsetMs === input.offsetMs
+      && resolvedMemo.durationSec === input.durationSec && resolvedMemo.analysis === analysis) return resolvedMemo.lines
+    const lines = resolveLyricTiming(shiftedLines(), input.durationSec, analysis).lines
+    resolvedMemo = { sourceLines: input.sourceLines, offsetMs: input.offsetMs, durationSec: input.durationSec, analysis, lines }
+    return lines
+  }
+  function publish(phase = snapshot.phase, error: string | null = null): void {
+    snapshot = { lyricKey: input?.lyricKey ?? null, phase, error, analysis: currentAnalysis() }
     for (const listener of listeners) listener()
   }
   function release(): void { worker?.dispose(); worker = null; pcm = null; clearTimeout(idleTimer) }
@@ -73,6 +128,13 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
   function matches(fragment: CompletedFragment): MatchedSourceEnd[] {
     if (!input) return []
     return matchLyricEnds(shiftedLines(), fragment.words, input.durationSec, fragment)
+      .filter(end => {
+        const sourceLine = input!.sourceLines[end.lineIndex]
+        const explicitEnd = sourceLine?.endTimeSec ?? sourceLine?.words?.at(-1)?.endTimeSec
+        // Word-only recognition must never replace or persist an endpoint for a
+        // line whose source already provides one; the source endpoint stays exact.
+        return !(explicitEnd != null && Number.isFinite(explicitEnd) && explicitEnd > sourceLine.timeSec)
+      })
       .map(end => ({ lineIndex: end.lineIndex, sourceEndSec: end.endTimeSec - input!.offsetMs / 1000,
         matchedMediaEndSec: end.endTimeSec, offsetAtMatchMs: input!.offsetMs, confidence: end.confidence }))
   }
@@ -119,16 +181,34 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
   function nextWindow() {
     if (!input) return null
     const accepted = new Set(sourceEnds().map(end => end.lineIndex))
-    const lines = shiftedLines()
-    const resolved = resolveLyricTiming(lines, input.durationSec, snapshot.analysis).lines
-    const candidates = resolved.flatMap(line => {
+    const matchedWords = wordTimingsEnabled ? (sourceWordMatches(), wordMatchMemo?.matchedWordLineIndices ?? EMPTY_LINE_INDICES) : EMPTY_LINE_INDICES
+    const sourceWordLineIndices = wordTimingsEnabled ? wordMatchMemo?.sourceWordLineIndices ?? EMPTY_LINE_INDICES : EMPTY_LINE_INDICES
+    const candidates = resolvedSourceLines().flatMap(line => {
       const language = lyricLanguage(line.text)
-      if (!language || accepted.has(line.lineIndex) || line.endSource === 'manual' || line.endSource === 'source') return []
+      if (!language) return []
+      const sourceLine = input!.sourceLines[line.lineIndex]
+      const needsEnd = !accepted.has(line.lineIndex) && line.endSource !== 'manual' && line.endSource !== 'source'
+      const needsWords = wordTimingsEnabled && canMatchLyricWordTimings(line.text) && !matchedWords.has(line.lineIndex)
+        && !sourceWordLineIndices.has(line.lineIndex)
+      if (!needsEnd && !needsWords) return []
       const startSec = Math.max(0, Math.floor((line.endTimeSec - 6) * 50) / 50)
       const endSec = Math.min(input!.durationSec, Math.ceil((line.endTimeSec + 1) * 50) / 50)
-      if (endSec <= startSec || (cache?.fragments ?? []).some(fragment => fragment.startSec <= startSec && fragment.endSec >= endSec)) return []
       const priority = position >= line.timeSec && position <= line.endTimeSec ? 0 : Math.abs(line.timeSec - position) + 1
-      return [{ startSec, endSec, language, priority }]
+      const result: { startSec: number; endSec: number; language: 'en' | 'ru'; priority: number }[] = []
+      if (needsEnd && endSec > startSec && !(cache?.fragments ?? []).some(fragment => fragment.startSec <= startSec && fragment.endSec >= endSec)) {
+        result.push({ startSec, endSec, language, priority })
+      }
+      if (needsWords) {
+        // Word matching is against canonical source time. Leave room for a full
+        // line plus context so a line is never pieced together from fragments.
+        const wordStartSec = Math.max(0, Math.floor((sourceLine.timeSec - 1.5) * 50) / 50)
+        const wordEndSec = Math.min(input!.durationSec, Math.ceil((sourceLine.timeSec + 10.25) * 50) / 50)
+        if (wordEndSec > wordStartSec && !(cache?.fragments ?? []).some(fragment => fragment.startSec <= wordStartSec && fragment.endSec >= wordEndSec)) {
+          result.push({ startSec: wordStartSec, endSec: wordEndSec, language,
+            priority: Math.abs(sourceLine.timeSec - position) + 1 })
+        }
+      }
+      return result
     })
     return candidates.sort((a, b) => a.priority - b.priority)[0] ?? null
   }
@@ -205,6 +285,12 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
         else schedule()
       }
     },
+    setWordTimingsEnabled(value: boolean): void {
+      if (wordTimingsEnabled === value) return
+      wordTimingsEnabled = value
+      publish()
+      schedule()
+    },
     setTrack(value: AnalysisTrackInput | null): void {
       const sameTrack = input && value && input.track.dbId === value.track.dbId && input.track.source === value.track.source && input.track.sourceId === value.track.sourceId
       if (sameTrack) {
@@ -231,9 +317,13 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
     },
     getSnapshot: (): AnalysisSnapshot => snapshot,
     subscribe(listener: () => void): () => void { listeners.add(listener); return () => listeners.delete(listener) },
-    stop(): void { enabled = false; cancel(); input = null; identity = null; cache = null; publish('idle') },
+    stop(): void { enabled = false; wordTimingsEnabled = false; cancel(); input = null; identity = null; cache = null; wordMatchMemo = null; publish('idle') },
   }
 }
+
+const EMPTY_FRAGMENTS: readonly CompletedFragment[] = []
+const EMPTY_LINE_INDICES = new Set<number>()
+const EMPTY_SOURCE_ENDS: MatchedSourceEnd[] = []
 
 /** Constructing the singleton does no native calls, decoding, downloads or Worker allocation. */
 export const lyricsAnalysisRunner = createLyricsAnalysisRunner()

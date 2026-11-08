@@ -3,7 +3,7 @@ import { api } from '../../api/client'
 import { lyricsService, lyricSliceAt, lyricSourceKey } from '../../features/lyrics/lyricsService'
 import { createLyricsAnalysisRunner } from '../../features/lyrics/analysis/runner'
 import { LYRIC_ANALYSIS_ALGORITHM_VERSION, LYRIC_MODEL_REVISION, type AudioAnalysis } from '../../features/lyrics/analysis/contract'
-import { connectLyricsAnalysis, needsLyricsAnalysis } from './lyricsAnalysisConnection'
+import { connectLyricsAnalysis, needsLyricsAnalysis, needsLyricsWordTimings } from './lyricsAnalysisConnection'
 import type { UnifiedTrack } from '../../types/models'
 
 vi.mock('../../api/client', () => ({ api: { getLyricsOverride: vi.fn(), getTrackLyrics: vi.fn(), fetchOnlineLyrics: vi.fn() } }))
@@ -57,5 +57,37 @@ describe('main playback connection without an overlay', () => {
     expect(needsLyricsAnalysis([{ text: '', timeSec: 0 }, { text: 'one', timeSec: 1, endTimeSec: 3, endSource: 'manual' },
       { text: 'two', timeSec: 4, words: [{ text: 'two', timeSec: 4, endTimeSec: 5 }] }])).toBe(false)
     expect(needsLyricsAnalysis([{ text: 'one', timeSec: 1, endTimeSec: 3 }, { text: 'two', timeSec: 4 }])).toBe(true)
+  })
+  it('gates word timing work on explicit opt-in even when manual line ends are already present', async () => {
+    const wordResult = { kind: 'synced' as const, lines: [{ timeSec: 1, text: 'Silver rivers carry dreams', endTimeSec: 5, endSource: 'manual' as const }] }
+    const sourceKey = lyricSourceKey(wordResult, 'manual')
+    expect(needsLyricsAnalysis(wordResult.lines)).toBe(false)
+    expect(needsLyricsWordTimings(wordResult.lines)).toBe(true)
+    expect(needsLyricsWordTimings([{ ...wordResult.lines[0], words: [
+      { text: 'Silver', timeSec: 1, endTimeSec: 1.4 }, { text: 'rivers', timeSec: 1.5, endTimeSec: 2 },
+      { text: 'carry', timeSec: 2.2, endTimeSec: 2.6 }, { text: 'dreams', timeSec: 3, endTimeSec: 4 },
+    ] }])).toBe(false)
+    expect(needsLyricsWordTimings([{ timeSec: 1, text: 'Extraordinary', endTimeSec: 5, endSource: 'manual' }])).toBe(false)
+
+    const runner = createLyricsAnalysisRunner({
+      now: () => Date.now(), wasmBaseUrl: () => 'http://localhost/asr-runtime/',
+      native: { identity: async () => null, get: async () => null, merge: async () => cache,
+        ensureModel: async () => { throw Error('unexpected model') }, assetUrl: value => value },
+      decode: async () => null, worker: () => { throw Error('unexpected worker') },
+    })
+    let wordMode = false
+    const scheduling: boolean[] = []
+    const disconnect = connectLyricsAnalysis({ player: { getSnapshot: () => ({ currentTrack: track, position: 0, isPlaying: false,
+      playbackRate: 1, duration: 40, preparing: false }), subscribe: () => () => {} }, runner, lyrics: lyricsService,
+      lifecycle: { setSchedulingAllowed(value) { scheduling.push(value) } }, cacheOnline: () => false,
+      wordTimingsEnabled: () => wordMode })
+    try {
+      lyricsService.setActiveCandidate('1', wordResult, 40, sourceKey)
+      expect(scheduling.at(-1)).toBe(false)
+      wordMode = true; disconnect.update()
+      expect(scheduling.at(-1)).toBe(true)
+      wordMode = false; disconnect.update()
+      expect(scheduling.at(-1)).toBe(false)
+    } finally { disconnect() }
   })
 })

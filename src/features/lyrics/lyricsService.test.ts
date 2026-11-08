@@ -13,6 +13,27 @@ const pin = (text: string): LyricsOverride => ({ provider: 'manual', sourceArtis
 const flush = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }
 
 describe('shared lyrics selection', () => {
+  it('does not resolve or notify again for an unchanged analysis payload', async () => {
+    vi.mocked(api.getLyricsOverride).mockResolvedValue(pin('one two'))
+    lyricsService.setPosition(0)
+    lyricsService.ensure(track('word-clock'), false)
+    await flush()
+    const current = lyricsService.getCurrent()!
+    const listener = vi.fn()
+    const stop = lyricsService.subscribe(listener)
+    const analysis = { bpm: null, matchedEnds: [], matchedWords: [{ lineIndex: 0, confidence: 1, words: [
+      { text: 'one', timeSec: 1.2, endTimeSec: 1.8 }, { text: 'two', timeSec: 2.1, endTimeSec: 2.5 },
+    ] }] }
+    expect(lyricsService.publishAnalysis(current.trackId, current.lyricKey, current.generation, analysis)).toBe(true)
+    const timing = lyricsService.getCurrent()!.timing
+    expect(timing.segments.find(segment => segment.kind === 'line')?.wordTimings?.[1]?.timeSec).toBe(2.1)
+    for (let tick = 0; tick < 50; tick += 1) {
+      expect(lyricsService.publishAnalysis(current.trackId, current.lyricKey, current.generation, analysis)).toBe(true)
+    }
+    stop()
+    expect(lyricsService.getCurrent()!.timing).toBe(timing)
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
   it('retimes the active lyrics without clearing the screen or fetching providers again', async () => {
     vi.mocked(api.getLyricsOverride).mockResolvedValue(pin('Same source'))
     lyricsService.ensure(track('offset'), false)

@@ -6,7 +6,8 @@ import { lyricAnchorIndex, lyricTimingAt, type ResolvedLyricsTiming } from './ti
 import { lyricTimeAtMediaPosition, mediaPositionAtLyricTime } from './lyricsRate'
 import { resolveLyricProgressGeometry } from './progressGeometry'
 import { lyricTransitionDuration } from './lyricsMotion'
-import { wordIndexAtProgress, wordStartsFromWidths } from './wordFill'
+import { wordFillState, wordIndexAtProgress, wordStartsFromWidths } from './wordFill'
+import type { LyricWordTiming } from './wordTiming'
 import { SyncedRow } from './SyncedRow'
 import { lyricPaintRange } from './paintRange'
 
@@ -46,7 +47,10 @@ export const SyncedView = memo(function SyncedView({
   const stageRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const itemEls = useRef<Array<HTMLElement | null>>([])
-  const wordsRef = useRef<{ elements: HTMLElement[]; starts: number[]; current: number }>({ elements: [], starts: [], current: -2 })
+  const wordsRef = useRef<{
+    elements: HTMLElement[]; starts: number[]; states: number[]
+    timings: readonly (LyricWordTiming | null)[] | undefined; segmentIndex: number
+  }>({ elements: [], starts: [], states: [], timings: undefined, segmentIndex: -1 })
   const positionedRef = useRef(false)
   const previousTyRef = useRef(0)
   const collapsingNotesRef = useRef(new Set<number>())
@@ -114,12 +118,14 @@ export const SyncedView = memo(function SyncedView({
       wordsRef.current = {
         elements: tokens.filter(token => token.dataset.lyricToken === 'word'),
         starts: wordStartsFromWidths(tokens.map(token => ({ width: token.offsetWidth, word: token.dataset.lyricToken === 'word' }))),
-        current: -2,
+        states: [],
+        timings: segments[segIdxRef.current]?.wordTimings,
+        segmentIndex: segIdxRef.current,
       }
     }
     path.style.left = `${geometry.leftPx}px`
     path.style.width = `${geometry.widthPx}px`
-  }, [alignment, progressClipToText, progressDirection, textFillMode])
+  }, [alignment, progressClipToText, progressDirection, textFillMode, segments])
 
   const applyTransform = useCallback((instant: boolean) => {
     const c = containerRef.current
@@ -272,12 +278,13 @@ export const SyncedView = memo(function SyncedView({
         if (textFillMode === 'words') {
           const words = wordsRef.current
           const index = seg?.kind === 'line' ? wordIndexAtProgress(words.starts, lineProgress) : -1
-          const stateIndex = lineProgress >= 1 ? words.elements.length : index
-          if (stateIndex !== words.current) {
-            words.current = stateIndex
+          if (words.segmentIndex === found) {
             words.elements.forEach((element, word) => {
-              element.classList.toggle('is-filled', word <= index)
-              element.classList.toggle('is-current-word', word === index && lineProgress < 1)
+              const state = wordFillState(word, index, lineProgress, lyricsPosition, words.timings?.[word])
+              if (words.states[word] === state) return
+              words.states[word] = state
+              element.classList.toggle('is-filled', state > 0)
+              element.classList.toggle('is-current-word', state === 2)
             })
           }
         } else textRef.current?.style.setProperty('--lyr-fill', `${lineProgress * 100}%`)

@@ -98,6 +98,9 @@ export const lyricsService = {
   },
   publishAnalysis(trackId: string, lyricKey: string, expectedGeneration: number, analysis: LyricTimingAnalysis): boolean {
     if (!current || current.trackId !== trackId || current.lyricKey !== lyricKey || generation !== expectedGeneration) return false
+    // Runner phase/clock updates do not change the immutable timing payload.
+    // Avoid resolving every line and notifying the whole lyric UI again.
+    if (latestAnalysis === analysis) return true
     latestAnalysis = analysis
     resolved = resolveLyricTiming(current.result?.kind === 'synced' ? current.result.lines : [], current.durationSec, analysis)
     current = { ...current, timing: pass.update(resolved, position, current.durationSec) }
