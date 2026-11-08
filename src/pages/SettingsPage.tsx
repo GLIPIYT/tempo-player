@@ -230,6 +230,7 @@ function CommitSlider(props: {
   step: number
   value: number
   format: (v: number) => string
+  ariaFormat?: (v: number) => string
   onCommit: (v: number) => void
   disabled?: boolean
 }) {
@@ -302,6 +303,7 @@ function CommitSlider(props: {
           step={props.step}
           value={shown}
           disabled={props.disabled}
+          aria-valuetext={props.ariaFormat?.(shown) ?? props.format(shown)}
           onChange={onChange}
           onKeyDown={onKeyDown}
           onBlur={commit}
@@ -597,7 +599,7 @@ function StorageCard() {
   const limitMb = scInfo.data ? Math.round(scInfo.data.limitBytes / 1048576) : 0
 
   const formatLimit = (v: number): string => {
-    if (v <= 0) return t('Unlimited')
+    if (v <= 0) return '∞'
     if (v >= 1024) {
       const gb = v / 1024
       return `${Number.isInteger(gb) ? gb : gb.toFixed(1)} GB`
@@ -737,6 +739,7 @@ function StorageCard() {
           step={256}
           value={limitMb}
           format={formatLimit}
+          ariaFormat={(v) => (v <= 0 ? t('Unlimited') : formatLimit(v))}
           onCommit={(v) => void applyLimit(v)}
         />
         <div className="set-note">
@@ -1988,6 +1991,19 @@ export default function SettingsPage() {
                     aria-label={t('Waveform progress bar')}
                     onClick={() => update({ player: { waveform: !settings.player.waveform } })}
                   />
+                </div>
+                <div className="set-row" style={{ marginTop: 6 }}>
+                  <span className="set-row-label">{t('Cache waveform data')}</span>
+                  <button
+                    className={settings.player.cacheWaveforms ? 'switch is-on' : 'switch'}
+                    role="switch"
+                    aria-checked={settings.player.cacheWaveforms}
+                    aria-label={t('Cache waveform data')}
+                    onClick={() => update({ player: { cacheWaveforms: !settings.player.cacheWaveforms } })}
+                  />
+                </div>
+                <div className="set-note">
+                  {t('Saves SoundCloud waveform data on this device for up to 12 hours, including after app restarts.')}
                 </div>
                 <div className="set-row" style={{ marginTop: 6 }}>
                   <span className="set-row-label">{t('Player bar layout')}</span>

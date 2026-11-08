@@ -16,6 +16,7 @@ interface WaveProgressProps {
   seed: string
   soundCloudTrackId: string | null
   waveformEnabled: boolean
+  cacheWaveforms?: boolean
   disabled?: boolean
   onSeek: (sec: number) => void
 }
@@ -28,6 +29,7 @@ export default function WaveProgress({
   seed,
   soundCloudTrackId,
   waveformEnabled,
+  cacheWaveforms = false,
   disabled = false,
   onSeek,
 }: WaveProgressProps) {
@@ -38,16 +40,25 @@ export default function WaveProgress({
   const [scrubbing, setScrubbing] = useState(false)
   const [previewFrac, setPreviewFrac] = useState(0)
   const [barCount, setBarCount] = useState(0)
-  const [loadedWaveform, setLoadedWaveform] = useState<{ trackId: string; samples: number[] } | null>(null)
+  const [loadedWaveform, setLoadedWaveform] = useState<{
+    trackId: string
+    samples: number[]
+    persisted: boolean
+  } | null>(null)
 
   useEffect(() => {
     if (!waveformEnabled || !soundCloudTrackId || loadedWaveform?.trackId === soundCloudTrackId) return
 
     let active = true
+    const memoryKey = `${soundCloudTrackId}:memory`
+    const diskKey = `${soundCloudTrackId}:disk`
+    // If caching is switched off while a disk-enabled request is already in
+    // flight, observe that request instead of issuing a second one.
+    const requestKey = cacheWaveforms || waveformRequestsRef.current.has(diskKey) ? diskKey : memoryKey
     const request = cachedWaveformRequest(
       waveformRequestsRef.current,
-      soundCloudTrackId,
-      () => api.scWaveform(soundCloudTrackId),
+      requestKey,
+      () => api.scWaveform(soundCloudTrackId, requestKey === diskKey),
     )
     while (waveformRequestsRef.current.size > WAVEFORM_REQUEST_CACHE_SIZE) {
       const oldest = waveformRequestsRef.current.keys().next().value
@@ -55,13 +66,45 @@ export default function WaveProgress({
       waveformRequestsRef.current.delete(oldest)
     }
     request.then(samples => {
-      if (active && Array.isArray(samples)) setLoadedWaveform({ trackId: soundCloudTrackId, samples })
+      if (active && Array.isArray(samples)) {
+        setLoadedWaveform({ trackId: soundCloudTrackId, samples, persisted: requestKey === diskKey })
+      }
     }).catch(() => {
       // SoundCloud may hide waveforms or be offline. The stable fallback below
       // keeps seeking available without surfacing a player error.
     })
     return () => { active = false }
-  }, [waveformEnabled, soundCloudTrackId, loadedWaveform?.trackId])
+  }, [waveformEnabled, cacheWaveforms, soundCloudTrackId, loadedWaveform?.trackId])
+
+  useEffect(() => {
+    if (
+      !waveformEnabled || !cacheWaveforms || !soundCloudTrackId ||
+      loadedWaveform?.trackId !== soundCloudTrackId || loadedWaveform.persisted
+    ) return
+
+    let active = true
+    const diskKey = `${soundCloudTrackId}:disk`
+    const request = cachedWaveformRequest(
+      waveformRequestsRef.current,
+      diskKey,
+      () => api.scWaveform(soundCloudTrackId, true),
+    )
+    while (waveformRequestsRef.current.size > WAVEFORM_REQUEST_CACHE_SIZE) {
+      const oldest = waveformRequestsRef.current.keys().next().value
+      if (oldest === undefined) break
+      waveformRequestsRef.current.delete(oldest)
+    }
+    request.then(samples => {
+      if (active && Array.isArray(samples)) {
+        setLoadedWaveform(current => current?.trackId === soundCloudTrackId
+          ? { trackId: soundCloudTrackId, samples, persisted: true }
+          : current)
+      }
+    }).catch(() => {
+      // The already-loaded peaks remain usable even if disk persistence fails.
+    })
+    return () => { active = false }
+  }, [waveformEnabled, cacheWaveforms, soundCloudTrackId, loadedWaveform?.trackId, loadedWaveform?.persisted])
 
   // Use the rendered width so detail keeps growing with wide windows and UI
   // zoom. The helper factors zoom out only for its fit check against the row's

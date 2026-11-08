@@ -1,0 +1,19 @@
+.profile-page-remaster .profile-play-row {
+  box-sizing: border-box;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile-page-remaster .profile-recent .profile-play-row {
+  width: 100%;
+}
+
+.profile-page-remaster .profile-play-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

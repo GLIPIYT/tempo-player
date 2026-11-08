@@ -12,6 +12,7 @@ mod metadata;
 mod models;
 mod scanner;
 mod soundcloud;
+mod waveform_cache;
 mod soundcloud_web;
 mod soundcloud_session;
 mod soundcloud_capture_policy;
@@ -196,6 +197,7 @@ pub fn run() {
             commands::get_track_lyrics,
             commands::get_analytics,
             commands::get_history,
+            commands::get_listening_period,
             commands::clear_history,
             commands::get_covers_cache_info,
             commands::clear_covers_cache,

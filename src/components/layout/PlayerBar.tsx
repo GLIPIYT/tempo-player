@@ -400,6 +400,7 @@ function PlayerBarContent() {
               seed={p.currentTrack?.sourceId ?? 'none'}
               soundCloudTrackId={p.currentTrack?.source === 'soundcloud' ? p.currentTrack.sourceId : null}
               waveformEnabled={settings.player.waveform}
+              cacheWaveforms={settings.player.cacheWaveforms}
               position={livePos}
               duration={maxDur}
               onSeek={p.seek}

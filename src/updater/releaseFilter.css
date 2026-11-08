@@ -1,0 +1,50 @@
+.update-version-filter {
+  position: relative;
+  flex: none;
+  margin: 0 7px 5px;
+  color: var(--text-muted);
+}
+.update-version-filter > svg {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.update-version-filter select {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 28px 0 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.update-version-filter select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.update-version-filter select:disabled { opacity: .5; cursor: default; }
+.update-version-empty button {
+  display: block;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.update-version-empty button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.update-release-empty { padding: 12px; font-size: 12px; }
+@media (max-width: 600px) {
+  .update-version-empty { flex: 1 0 auto; }
+}
+@media (max-width: 600px) {
+  .update-modal .update-dialog-layout { grid-template-rows: minmax(170px, .65fr) minmax(100px, 1fr) auto; }
+  .update-modal .update-version-choice { flex-basis: 160px; }
+}

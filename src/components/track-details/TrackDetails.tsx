@@ -2,6 +2,7 @@ import { useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowUpRight, X } from 'lucide-react'
 import { useT } from '../../i18n'
+import { useSettings } from '../../state/settings'
 import type { UnifiedTrack } from '../../types/models'
 import { fmtTime } from '../../utils/format'
 import Cover from '../common/Cover'
@@ -22,6 +23,7 @@ export interface TrackDetailsProps {
 
 export default function TrackDetails({ track, position, duration, onClose, onOpenFull, onSeek, onArtistNavigate }: TrackDetailsProps) {
   const t = useT()
+  const { settings } = useSettings()
   const titleId = useId()
   const closeRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLElement>(null)
@@ -75,7 +77,8 @@ export default function TrackDetails({ track, position, duration, onClose, onOpe
             <div className="track-details-playback" aria-label={`${t('Position')}: ${fmtTime(safePosition)}; ${t('Duration')}: ${fmtTime(knownDuration)}`}>
               <WaveProgress key={`${track.source}:${track.sourceId}`} seed={track.sourceId}
                 soundCloudTrackId={track.source === 'soundcloud' ? track.sourceId : null}
-                waveformEnabled position={safePosition ?? 0} duration={knownDuration ?? 0} onSeek={onSeek} />
+                waveformEnabled cacheWaveforms={settings.player.cacheWaveforms}
+                position={safePosition ?? 0} duration={knownDuration ?? 0} onSeek={onSeek} />
               <div className="track-details-times" aria-hidden="true"><span>{fmtTime(safePosition)}</span><span>{fmtTime(knownDuration)}</span></div>
             </div>
           </div>

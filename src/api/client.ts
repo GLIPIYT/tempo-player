@@ -18,6 +18,7 @@ import type {
   HistoryEntry,
   LibraryFolder,
   LrclibPublishRequest,
+  ListeningPeriodStats,
   LyricsOverride,
   OnlineLyricsCandidateData,
   Playlist,
@@ -275,6 +276,8 @@ export const api = {
   clearCoversCache: () => invoke<void>('clear_covers_cache'),
   getHistory: (limit: number, offset: number) =>
     invoke<HistoryEntry[]>('get_history', { limit, offset }),
+  getListeningPeriod: (boundaries: number[]) =>
+    invoke<ListeningPeriodStats>('get_listening_period', { boundaries }),
 
   setTaskbarProgress: (position: number, duration: number, playing: boolean) =>
     invoke<void>('set_taskbar_progress', { position, duration, playing }),
@@ -300,8 +303,9 @@ export const api = {
   scSearchTracks: (query: string, limit: number, offset: number) =>
     invoke<ScTrack[]>('sc_search_tracks', { query, limit, offset }),
 
-  /** Loads bounded public waveform peaks for one SoundCloud track. */
-  scWaveform: (trackId: string) => invoke<number[]>('sc_waveform', { trackId }),
+  /** Loads public waveform peaks, optionally persisting them across app restarts. */
+  scWaveform: (trackId: string, cacheDisk = false) =>
+    invoke<number[]>('sc_waveform', { trackId, cacheDisk }),
 
   scSessionStatus: () => invoke<SoundCloudSessionStatus>('sc_session_status'),
   scSessionLogin: () => invoke<void>('sc_session_login'),

@@ -17,7 +17,8 @@ pub struct KnownYtTrack {
 
 use crate::models::{
     Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, FavoriteOrderEntry, FileStamp,
-    HiddenTrack, HistoryEntryDto, LibraryElementKind, LibraryFolder, LyricsEditedVersion,
+    HiddenTrack, HistoryEntryDto, LibraryElementKind, LibraryFolder, ListeningPeriodBucket,
+    ListeningPeriodStats, ListeningPeriodTopArtist, ListeningPeriodTopTrack, LyricsEditedVersion,
     LyricsEditorDocument, LyricsOverride,
     OriginalPictureSnapshot, OriginalTrackMetadataSnapshot, Playlist, PlaylistPlayStat,
     PlaylistTrack, SearchResults, StatsSummary, TopArtistItem, TopTrackItem, Track, TrackInput,
@@ -98,6 +99,11 @@ const TRACK_EXACT_TARGET: usize = 25;
 const CATALOG_EXACT_TARGET: usize = 15;
 const TRACK_CANDIDATE_LIMIT: i64 = 20000;
 const SEARCH_MIN_COVERAGE: f64 = 0.5;
+const LISTENING_PERIOD_MAX_BUCKETS: usize = 32;
+const LISTENING_PERIOD_MAX_SPAN_SECS: i64 = 32 * 24 * 60 * 60;
+// Unix seconds from 1970 through the first second of year 10000. This allows
+// ordinary historical/future calendar ranges while rejecting malformed input.
+const LISTENING_PERIOD_MAX_TIMESTAMP: i64 = 253_402_300_800;
 
 const ALBUM_COLUMNS: &str =
     "al.id, al.title, al.artist_id, ar.name, al.year, al.cover_path, \
@@ -459,6 +465,10 @@ CREATE TABLE IF NOT EXISTS artist_artwork_lookup (
 CREATE INDEX IF NOT EXISTS idx_artist_artwork_retry ON artist_artwork_lookup(next_attempt_at);
 "#;
 
+const MIGRATION_21: &str = r#"
+CREATE INDEX IF NOT EXISTS idx_history_played_at_id ON listening_history(played_at, id);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
     MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_13,
@@ -468,6 +478,7 @@ const MIGRATIONS: &[&str] = &[
     crate::recommendation_store::IDENTITY_MIGRATION,
     crate::recommendation_store::PERSONALIZATION_MIGRATION,
     crate::recommendation_audio::AUDIO_MIGRATION,
+    MIGRATION_21,
 ];
 
 pub struct Db {
@@ -3183,6 +3194,14 @@ impl Db {
         })
     }
 
+    pub fn get_listening_period(
+        &self,
+        boundaries: &[i64],
+    ) -> Result<ListeningPeriodStats, String> {
+        validate_listening_period_boundaries(boundaries)?;
+        self.with_conn(|conn| fetch_listening_period(conn, boundaries))
+    }
+
     pub fn clear_history(&self) -> Result<u32, String> {
         self.with_conn(|conn| {
             let tx = conn.unchecked_transaction().map_err(db_err)?;
@@ -3983,6 +4002,172 @@ fn fetch_top_artists(
     Ok(items)
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct ListeningPeriodRank {
+    listened_sec: f64,
+    play_count: i64,
+}
+
+fn validate_listening_period_boundaries(boundaries: &[i64]) -> Result<(), String> {
+    if !(2..=LISTENING_PERIOD_MAX_BUCKETS + 1).contains(&boundaries.len()) {
+        return Err("listening period requires between 2 and 33 boundaries".to_string());
+    }
+    if boundaries
+        .iter()
+        .any(|edge| !(0..=LISTENING_PERIOD_MAX_TIMESTAMP).contains(edge))
+    {
+        return Err("listening period boundary is outside the supported timestamp range".to_string());
+    }
+    if boundaries.windows(2).any(|window| window[0] >= window[1]) {
+        return Err("listening period boundaries must be strictly increasing".to_string());
+    }
+    let span = boundaries[boundaries.len() - 1] - boundaries[0];
+    if span > LISTENING_PERIOD_MAX_SPAN_SECS {
+        return Err("listening period cannot span more than 32 days".to_string());
+    }
+    Ok(())
+}
+
+fn add_listening_seconds(total: &mut f64, value: f64) {
+    if !value.is_finite() || value < 0.0 {
+        return;
+    }
+    *total = if *total > f64::MAX - value {
+        f64::MAX
+    } else {
+        *total + value
+    };
+}
+
+fn compare_listening_period_ranks(
+    a: &(i64, ListeningPeriodRank),
+    b: &(i64, ListeningPeriodRank),
+) -> std::cmp::Ordering {
+    b.1.listened_sec
+        .total_cmp(&a.1.listened_sec)
+        .then_with(|| b.1.play_count.cmp(&a.1.play_count))
+        .then_with(|| a.0.cmp(&b.0))
+}
+
+fn fetch_listening_period(
+    conn: &Connection,
+    boundaries: &[i64],
+) -> Result<ListeningPeriodStats, String> {
+    let mut buckets: Vec<ListeningPeriodBucket> = boundaries
+        .windows(2)
+        .map(|window| ListeningPeriodBucket {
+            from: window[0],
+            to: window[1],
+            listened_sec: 0.0,
+            plays: 0,
+            completed_plays: 0,
+        })
+        .collect();
+    let mut total_listened_sec = 0.0;
+    let mut plays = 0i64;
+    let mut completed_plays = 0i64;
+    let mut track_ranks = HashMap::<i64, ListeningPeriodRank>::new();
+    let mut artist_ranks = HashMap::<i64, ListeningPeriodRank>::new();
+
+    // `played_at` is the only reliable wall clock stored for a session. The
+    // accumulated duration belongs to this start-time bucket; its playback
+    // span cannot be reconstructed from the history table.
+    let mut stmt = conn
+        .prepare(
+            "SELECT h.track_id, h.played_at, h.listened_sec, h.completed, ar.id \
+             FROM listening_history h \
+             JOIN tracks t ON t.id = h.track_id \
+             LEFT JOIN artists ar ON ar.id = t.artist_id \
+             WHERE h.played_at >= ?1 AND h.played_at < ?2 \
+             ORDER BY h.played_at ASC, h.id ASC",
+        )
+        .map_err(db_err)?;
+    let mut rows = stmt.query(params![boundaries[0], boundaries[boundaries.len() - 1]])
+        .map_err(db_err)?;
+    while let Some(row) = rows.next().map_err(db_err)? {
+        let track_id = row.get::<_, i64>(0).map_err(db_err)?;
+        let played_at = row.get::<_, i64>(1).map_err(db_err)?;
+        let listened_sec = row.get::<_, Option<f64>>(2).map_err(db_err)?
+            .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+            .unwrap_or(0.0);
+        let completed = row.get::<_, bool>(3).map_err(db_err)?;
+        let artist_id = row.get::<_, Option<i64>>(4).map_err(db_err)?;
+        let bucket_index = boundaries.partition_point(|edge| *edge <= played_at) - 1;
+
+        plays = plays.saturating_add(1);
+        add_listening_seconds(&mut total_listened_sec, listened_sec);
+        let bucket = &mut buckets[bucket_index];
+        bucket.plays = bucket.plays.saturating_add(1);
+        add_listening_seconds(&mut bucket.listened_sec, listened_sec);
+        let track_rank = track_ranks.entry(track_id).or_default();
+        track_rank.play_count = track_rank.play_count.saturating_add(1);
+        add_listening_seconds(&mut track_rank.listened_sec, listened_sec);
+        if completed {
+            completed_plays = completed_plays.saturating_add(1);
+            bucket.completed_plays = bucket.completed_plays.saturating_add(1);
+        }
+        if let Some(artist_id) = artist_id {
+            let artist_rank = artist_ranks.entry(artist_id).or_default();
+            artist_rank.play_count = artist_rank.play_count.saturating_add(1);
+            add_listening_seconds(&mut artist_rank.listened_sec, listened_sec);
+        }
+    }
+    drop(rows);
+    drop(stmt);
+
+    let unique_tracks = i64::try_from(track_ranks.len()).unwrap_or(i64::MAX);
+    let mut ranked_tracks: Vec<_> = track_ranks.into_iter().collect();
+    ranked_tracks.sort_by(compare_listening_period_ranks);
+    let top_track = if let Some((track_id, rank)) = ranked_tracks.first().copied() {
+        let sql = format!("SELECT {} FROM {} WHERE t.id = ?1", TRACK_COLUMNS, TRACK_FROM);
+        conn.query_row(&sql, params![track_id], |row| {
+            Ok(ListeningPeriodTopTrack {
+                track: map_track_at(row, 0)?,
+                listened_sec: rank.listened_sec,
+                play_count: rank.play_count,
+            })
+        })
+        .optional()
+        .map_err(db_err)?
+    } else {
+        None
+    };
+
+    let mut ranked_artists: Vec<_> = artist_ranks.into_iter().collect();
+    ranked_artists.sort_by(compare_listening_period_ranks);
+    let top_artist = if let Some((artist_id, rank)) = ranked_artists.first().copied() {
+        let sql = format!("SELECT {} FROM artists ar WHERE ar.id = ?1", ARTIST_COLUMNS);
+        conn.query_row(&sql, params![artist_id], |row| {
+            Ok(ListeningPeriodTopArtist {
+                artist: map_artist(row)?,
+                listened_sec: rank.listened_sec,
+                play_count: rank.play_count,
+            })
+        })
+        .optional()
+        .map_err(db_err)?
+    } else {
+        None
+    };
+
+    Ok(ListeningPeriodStats {
+        from: boundaries[0],
+        to: boundaries[boundaries.len() - 1],
+        total_listened_sec,
+        plays,
+        completed_plays,
+        completion_pct: if plays == 0 {
+            0.0
+        } else {
+            completed_plays as f64 / plays as f64 * 100.0
+        },
+        unique_tracks,
+        buckets,
+        top_track,
+        top_artist,
+    })
+}
+
 fn fetch_history_entries(
     conn: &Connection,
     where_clause: &str,
@@ -4457,6 +4642,26 @@ mod tests {
             gain_db: None,
             peak_db: None,
         }
+    }
+
+    #[test]
+    fn listening_period_boundary_validation_is_bounded_and_strict() {
+        assert!(validate_listening_period_boundaries(&[]).is_err());
+        assert!(validate_listening_period_boundaries(&[10]).is_err());
+        assert!(validate_listening_period_boundaries(&[10, 10]).is_err());
+        assert!(validate_listening_period_boundaries(&[11, 10]).is_err());
+        assert!(validate_listening_period_boundaries(&[-1, 1]).is_err());
+        assert!(validate_listening_period_boundaries(&[0, LISTENING_PERIOD_MAX_TIMESTAMP + 1]).is_err());
+        assert!(validate_listening_period_boundaries(&[0, LISTENING_PERIOD_MAX_SPAN_SECS + 1]).is_err());
+
+        let max_buckets: Vec<i64> = (0..=LISTENING_PERIOD_MAX_BUCKETS as i64).collect();
+        assert!(validate_listening_period_boundaries(&max_buckets).is_ok());
+        let too_many_boundaries: Vec<i64> = (0..=LISTENING_PERIOD_MAX_BUCKETS as i64 + 1).collect();
+        assert!(validate_listening_period_boundaries(&too_many_boundaries).is_err());
+
+        // Local-calendar days may be 23 or 25 hours across daylight-saving changes.
+        assert!(validate_listening_period_boundaries(&[1_000_000, 1_000_000 + 23 * 3600]).is_ok());
+        assert!(validate_listening_period_boundaries(&[1_000_000, 1_000_000 + 25 * 3600]).is_ok());
     }
 
     #[test]
@@ -4935,6 +5140,24 @@ mod tests {
         .unwrap()
     }
 
+    fn insert_period_history(
+        db: &Db,
+        track_id: i64,
+        played_at: i64,
+        listened_sec: Option<f64>,
+        completed: bool,
+    ) {
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO listening_history(track_id, played_at, listened_sec, completed, skipped) \
+                 VALUES(?1, ?2, ?3, ?4, 0)",
+                params![track_id, played_at, listened_sec, completed],
+            )
+            .map_err(db_err)
+        })
+        .unwrap();
+    }
+
     fn insert_old_history(db: &Db, track_id: i64, played_at: i64, listened_sec: f64) {
         db.with_conn(|c| {
             c.execute(
@@ -4945,6 +5168,123 @@ mod tests {
             .map_err(db_err)
         })
         .unwrap();
+    }
+
+    #[test]
+    fn listening_period_aggregates_interleaved_sessions_by_start_time() {
+        let (db, dir) = test_db("listening_period");
+        let alpha_path = fixture_file(&dir, "alpha.mp3");
+        let unknown_path = fixture_file(&dir, "unknown.mp3");
+        let beta_path = fixture_file(&dir, "beta.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let alpha = seed_track(&db, folder.id, &alpha_path, "Alpha song", "Alpha", None, 180.0);
+        let beta = seed_track(&db, folder.id, &beta_path, "Beta song", "Beta", None, 180.0);
+        let unknown_input = track_input(&unknown_path, folder.id, "Unknown song", None, None);
+        db.upsert_scanned_tracks(&[unknown_input], &[]).unwrap();
+        let unknown = db.find_track_id_by_path(&unknown_path).unwrap().unwrap();
+        let beta_artist_id: i64 = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT artist_id FROM tracks WHERE id = ?1",
+                    params![beta],
+                    |row| row.get(0),
+                )
+                .map_err(db_err)
+            })
+            .unwrap();
+        db.set_artist_image(beta_artist_id, Some("avatars/beta.jpg"))
+            .unwrap();
+
+        // Sessions are interleaved across tracks and land exactly on both
+        // included starts and internal bucket edges. A session at `to` belongs
+        // to the next period. Nonfinite and negative durations add no seconds.
+        insert_period_history(&db, alpha, 100, Some(8.0), true);
+        insert_period_history(&db, unknown, 101, Some(20.0), false);
+        insert_period_history(&db, alpha, 199, Some(2.0), false);
+        insert_period_history(&db, beta, 200, Some(100.0), false);
+        insert_period_history(&db, alpha, 299, Some(f64::INFINITY), false);
+        insert_period_history(&db, beta, 300, Some(-3.0), false);
+        insert_period_history(&db, beta, 399, Some(f64::NAN), true);
+        insert_period_history(&db, alpha, 500, Some(999.0), true);
+
+        let stats = db.get_listening_period(&[100, 200, 300, 400, 500]).unwrap();
+        assert_eq!((stats.from, stats.to), (100, 500));
+        assert_eq!(stats.plays, 7);
+        assert_eq!(stats.completed_plays, 2);
+        assert!((stats.completion_pct - (2.0 / 7.0 * 100.0)).abs() < 1e-9);
+        assert_eq!(stats.unique_tracks, 3);
+        assert_eq!(stats.total_listened_sec, 130.0);
+        assert_eq!(stats.buckets.len(), 4);
+        assert_eq!(
+            stats.buckets.iter().map(|bucket| bucket.plays).collect::<Vec<_>>(),
+            vec![3, 2, 2, 0]
+        );
+        assert_eq!(stats.buckets[0].listened_sec, 30.0);
+        assert_eq!(stats.buckets[0].completed_plays, 1);
+        assert_eq!(stats.buckets[1].listened_sec, 100.0);
+        assert_eq!(stats.buckets[2].listened_sec, 0.0);
+        assert_eq!(stats.buckets[2].completed_plays, 1);
+        assert_eq!(stats.buckets[3].listened_sec, 0.0);
+        assert_eq!(stats.buckets[3].completed_plays, 0);
+
+        let top_track = stats.top_track.as_ref().unwrap();
+        assert_eq!(top_track.track.id, beta);
+        assert_eq!(top_track.track.title, "Beta song");
+        assert_eq!(top_track.track.artist_name.as_deref(), Some("Beta"));
+        assert_eq!(top_track.listened_sec, 100.0);
+        assert_eq!(top_track.play_count, 3);
+        let top_artist = stats.top_artist.as_ref().unwrap();
+        assert_eq!(top_artist.artist.name, "Beta");
+        assert_eq!(top_artist.artist.image_path.as_deref(), Some("avatars/beta.jpg"));
+        assert_eq!(top_artist.listened_sec, 100.0);
+        assert_eq!(top_artist.play_count, 3);
+
+        // The upper edge was excluded above and is the included lower edge here.
+        let next_period = db.get_listening_period(&[500, 600]).unwrap();
+        assert_eq!(next_period.plays, 1);
+        assert_eq!(next_period.total_listened_sec, 999.0);
+        let empty = db.get_listening_period(&[501, 600]).unwrap();
+        assert_eq!(empty.plays, 0);
+        assert_eq!(empty.completed_plays, 0);
+        assert_eq!(empty.completion_pct, 0.0);
+        assert_eq!(empty.unique_tracks, 0);
+        assert_eq!(empty.buckets.len(), 1);
+        assert_eq!(empty.buckets[0].plays, 0);
+        assert!(empty.top_track.is_none());
+        assert!(empty.top_artist.is_none());
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn listening_period_rank_ties_use_play_count_then_entity_id() {
+        let (db, dir) = test_db("listening_period_ties");
+        let first_path = fixture_file(&dir, "first.mp3");
+        let second_path = fixture_file(&dir, "second.mp3");
+        let third_path = fixture_file(&dir, "third.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let first = seed_track(&db, folder.id, &first_path, "First", "First artist", None, 180.0);
+        let second = seed_track(&db, folder.id, &second_path, "Second", "Second artist", None, 180.0);
+        let third = seed_track(&db, folder.id, &third_path, "Third", "Third artist", None, 180.0);
+        insert_period_history(&db, first, 1_000, Some(120.0), false);
+        insert_period_history(&db, second, 1_100, Some(60.0), false);
+        insert_period_history(&db, third, 1_200, Some(60.0), false);
+        insert_period_history(&db, second, 1_300, Some(60.0), false);
+        insert_period_history(&db, third, 1_400, Some(60.0), false);
+
+        let stats = db.get_listening_period(&[1_000, 2_000]).unwrap();
+        let top_track = stats.top_track.unwrap();
+        assert_eq!(top_track.listened_sec, 120.0);
+        assert_eq!(top_track.play_count, 2);
+        assert_eq!(top_track.track.id, second);
+        let top_artist = stats.top_artist.unwrap();
+        assert_eq!(top_artist.listened_sec, 120.0);
+        assert_eq!(top_artist.play_count, 2);
+        assert_eq!(top_artist.artist.name, "Second artist");
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

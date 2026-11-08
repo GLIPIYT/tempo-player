@@ -8,6 +8,7 @@ import WaveProgress from '../components/common/WaveProgress'
 import { useT } from '../i18n'
 import { usePlayer } from '../player'
 import { useDisplayPosition } from '../player/useDisplayPosition'
+import { useSettings } from '../state/settings'
 import type { UnifiedTrack } from '../types/models'
 import { fmtTime } from '../utils/format'
 import './track-detail-page.css'
@@ -43,6 +44,7 @@ function TrackFacts({ track, duration, exiting = false }: { track: UnifiedTrack;
 export default function TrackDetailPage({ track, onBack }: { track: UnifiedTrack; onBack: () => void }) {
   const t = useT()
   const player = usePlayer()
+  const { settings } = useSettings()
   const displayPosition = useDisplayPosition(player)
   const [transition, setTransition] = useState<{ selected: UnifiedTrack; previous: UnifiedTrack | null }>({
     selected: player.currentTrack ?? track, previous: null,
@@ -103,7 +105,8 @@ export default function TrackDetailPage({ track, onBack }: { track: UnifiedTrack
         </header>
         <section className="track-page-waveform" aria-label={t('Position')}>
           <WaveProgress key={trackKey(details)} seed={details.sourceId} soundCloudTrackId={details.source === 'soundcloud' ? details.sourceId : null}
-            waveformEnabled position={position} duration={hasDuration ? duration : 0} disabled={!isCurrent || !hasDuration} onSeek={player.seek} />
+            waveformEnabled cacheWaveforms={settings.player.cacheWaveforms} position={position}
+            duration={hasDuration ? duration : 0} disabled={!isCurrent || !hasDuration} onSeek={player.seek} />
           <div className="track-page-times" aria-hidden="true"><span>{fmtTime(position)}</span><span>{fmtTime(duration)}</span></div>
         </section>
         <div className="track-page-facts-wrap">

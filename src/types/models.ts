@@ -331,6 +331,39 @@ export interface HistoryEntry {
   track: Track
 }
 
+export interface ListeningPeriodBucket {
+  from: number
+  to: number
+  listenedSec: number
+  plays: number
+  completedPlays: number
+}
+
+export interface ListeningPeriodTopTrack {
+  track: Track
+  listenedSec: number
+  playCount: number
+}
+
+export interface ListeningPeriodTopArtist {
+  artist: Artist
+  listenedSec: number
+  playCount: number
+}
+
+export interface ListeningPeriodStats {
+  from: number
+  to: number
+  totalListenedSec: number
+  plays: number
+  completedPlays: number
+  completionPct: number
+  uniqueTracks: number
+  buckets: ListeningPeriodBucket[]
+  topTrack: ListeningPeriodTopTrack | null
+  topArtist: ListeningPeriodTopArtist | null
+}
+
 export interface StatsSummary {
   totalMinutes: number
   plays: number

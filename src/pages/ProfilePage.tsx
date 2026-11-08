@@ -7,7 +7,12 @@ import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { useSettings } from '../state/settings'
 import { resolveLang, useT } from '../i18n'
+import { playerController } from '../player/controller'
+import { trackToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
+import ListeningHistoryDialog from '../features/listening-history/ListeningHistoryDialog'
+import type { ListeningSelection } from '../features/listening-history/period'
+import './profile-page.css'
 
 function localeFor(lang: 'ru' | 'en'): string {
   return lang === 'ru' ? 'ru-RU' : 'en-US'
@@ -38,6 +43,7 @@ export default function ProfilePage() {
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
   const [avatarBusy, setAvatarBusy] = useState(false)
+  const [historySelection, setHistorySelection] = useState<ListeningSelection | null>(null)
 
   const stats = useAsync(() => api.getAnalytics('all'), [version])
   const daily = useAsync(() => api.getDailyMinutes(range), [version, range])
@@ -46,6 +52,18 @@ export default function ProfilePage() {
   const nickname = settings.profile.nickname
   const summary = stats.data?.summary
   const totalHours = summary ? Math.round((summary.totalMinutes / 60) * 10) / 10 : 0
+
+  const playTopTrackAt = (index: number) => {
+    const items = stats.data?.topTracks ?? []
+    if (index < 0 || index >= items.length) return
+    playerController.playTracks(items.map((item) => trackToUnified(item.track)), index)
+  }
+
+  const playRecentAt = (index: number) => {
+    const entries = recent.data ?? []
+    if (index < 0 || index >= entries.length) return
+    playerController.playTracks(entries.map((entry) => trackToUnified(entry.track)), index)
+  }
 
   const activityDays = useMemo(() => {
     const map = new Map((daily.data ?? []).map((d) => [d.date, d.minutes]))
@@ -236,9 +254,12 @@ export default function ProfilePage() {
         {activityView === 'graph' ? (
           <div className={range === 365 ? 'chart is-year' : 'chart'} aria-label={t('Listening activity')}>
             {chart.map((d) => (
-              <div
+              <button
+                type="button"
                 key={d.date}
                 className="chart-bar-wrap"
+                onClick={() => setHistorySelection({ kind: range === 365 ? 'month' : 'day', date: d.date })}
+                aria-label={`${t(range === 365 ? 'Show month details' : 'Show day details')}: ${d.label}`}
                 title={`${range === 365 ? d.label : dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
               >
                 <div
@@ -246,7 +267,7 @@ export default function ProfilePage() {
                   style={{ height: `${Math.max(3, (d.minutes / chartMax) * 100)}%` }}
                 />
                 <span className="chart-day">{d.label}</span>
-              </div>
+              </button>
             ))}
           </div>
         ) : (
@@ -261,7 +282,9 @@ export default function ProfilePage() {
                     if (d === null) return <span key={`empty-${index}`} className="activity-cell is-empty" role="presentation" />
                     const level = d.minutes === 0 ? 0 : Math.max(1, Math.ceil((d.minutes / chartMax) * 4))
                     return (
-                      <span
+                      <button
+                        type="button"
+                        onClick={() => setHistorySelection({ kind: 'day', date: d.date })}
                         key={d.date}
                         className="activity-cell"
                         data-level={Math.min(4, level)}
@@ -295,7 +318,7 @@ export default function ProfilePage() {
             <div className="arow-list">
               {(stats.data?.topArtists ?? []).map((item) => (
                 <div key={item.artist.id} className="arow">
-                  <Cover path={null} label={item.artist.name} size={30} rounded />
+                  <Cover path={item.artist.imagePath} label={item.artist.name} size={30} rounded />
                   <span className="arow-name">{item.artist.name}</span>
                   <span className="arow-sub">{item.playCount} {t('plays')}</span>
                 </div>
@@ -311,12 +334,18 @@ export default function ProfilePage() {
             <div className="muted">{t('Nothing here yet')}</div>
           ) : (
             <div className="arow-list">
-              {(stats.data?.topTracks ?? []).map((item) => (
-                <div key={item.track.id} className="arow">
+              {(stats.data?.topTracks ?? []).map((item, index) => (
+                <button
+                  key={item.track.id}
+                  type="button"
+                  className="arow profile-play-row"
+                  aria-label={`${t('Play')}: ${item.track.title} — ${item.track.artistName ?? t('Unknown artist')}`}
+                  onClick={() => playTopTrackAt(index)}
+                >
                   <Cover path={item.track.coverPath} label={item.track.title} size={30} />
                   <span className="arow-name">{item.track.title}</span>
                   <span className="arow-sub">{item.playCount} {t('plays')}</span>
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -331,8 +360,14 @@ export default function ProfilePage() {
           <div className="muted">{t('Nothing here yet')}</div>
         ) : (
           <div className="tl">
-            {(recent.data ?? []).map((entry) => (
-              <div key={entry.id} className="tl-row">
+            {(recent.data ?? []).map((entry, index) => (
+              <button
+                key={entry.id}
+                type="button"
+                className="tl-row profile-play-row"
+                aria-label={`${t('Play')}: ${entry.track.title} — ${entry.track.artistName ?? t('Unknown artist')}`}
+                onClick={() => playRecentAt(index)}
+              >
                 <div className="tl-main">
                   <Cover path={entry.track.coverPath} label={entry.track.title} size={30} />
                   <div className="tl-meta">
@@ -349,11 +384,12 @@ export default function ProfilePage() {
                     minute: '2-digit',
                   })}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         )}
       </section>
+      {historySelection && <ListeningHistoryDialog initialSelection={historySelection} onClose={() => setHistorySelection(null)} />}
     </div>
   )
 }

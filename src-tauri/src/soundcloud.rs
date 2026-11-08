@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -1458,16 +1459,35 @@ async fn resolve_waveform(track_id: &str) -> Result<Vec<f32>, String> {
 }
 
 /// Loads the public SoundCloud waveform only when the player asks for it.
-/// The response is bounded and cached so track changes do not repeat requests.
-pub async fn get_waveform(track_id: &str) -> Result<Vec<f32>, String> {
+/// The response is bounded and cached in memory; opt-in disk caching survives restarts.
+pub async fn get_waveform(
+    track_id: &str,
+    cache_disk: bool,
+    cache_dir: Option<&Path>,
+) -> Result<Vec<f32>, String> {
     if track_id.is_empty() || track_id.len() > 32 || !track_id.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err("invalid SoundCloud track ID".into());
     }
-    {
+    let memory_hit = {
         let mut cache = waveform_cache().lock().await;
         cache.retain(|_, (_, at)| at.elapsed() < WAVEFORM_TTL);
-        if let Some((samples, _)) = cache.get(track_id) {
-            return Ok(samples.clone());
+        cache.get(track_id).map(|(samples, _)| samples.clone())
+    };
+    if let Some(samples) = memory_hit {
+        if cache_disk {
+            if let Some(cache_dir) = cache_dir {
+                crate::waveform_cache::store(cache_dir, track_id, &samples).await;
+            }
+        }
+        return Ok(samples);
+    }
+
+    if cache_disk {
+        if let Some(cache_dir) = cache_dir {
+            if let Some(samples) = crate::waveform_cache::load(cache_dir, track_id).await {
+                remember_waveform(track_id, &samples).await;
+                return Ok(samples);
+            }
         }
     }
 
@@ -1475,22 +1495,39 @@ pub async fn get_waveform(track_id: &str) -> Result<Vec<f32>, String> {
         .acquire()
         .await
         .map_err(|_| "SoundCloud waveform request gate closed".to_string())?;
-    {
+    let memory_hit_after_slot = {
         let cache = waveform_cache().lock().await;
-        if let Some((samples, _)) = cache.get(track_id) {
-            return Ok(samples.clone());
+        cache.get(track_id).map(|(samples, _)| samples.clone())
+    };
+    if let Some(samples) = memory_hit_after_slot {
+        if cache_disk {
+            if let Some(cache_dir) = cache_dir {
+                crate::waveform_cache::store(cache_dir, track_id, &samples).await;
+            }
         }
+        return Ok(samples);
     }
 
     let samples = resolve_waveform(track_id).await?;
+
+    // Fetch success must not depend on the optional on-disk cache being writable.
+    if cache_disk {
+        if let Some(cache_dir) = cache_dir {
+            crate::waveform_cache::store(cache_dir, track_id, &samples).await;
+        }
+    }
+    remember_waveform(track_id, &samples).await;
+    Ok(samples)
+}
+
+async fn remember_waveform(track_id: &str, samples: &[f32]) {
     let mut cache = waveform_cache().lock().await;
     if cache.len() >= WAVEFORM_CACHE_MAX {
         if let Some(oldest) = cache.iter().min_by_key(|(_, (_, at))| *at).map(|(id, _)| id.clone()) {
             cache.remove(&oldest);
         }
     }
-    cache.insert(track_id.to_string(), (samples.clone(), Instant::now()));
-    Ok(samples)
+    cache.insert(track_id.to_string(), (samples.to_vec(), Instant::now()));
 }
 
 fn queryencode(s: &str) -> String {

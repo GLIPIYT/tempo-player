@@ -319,6 +319,47 @@ pub struct HistoryEntryDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ListeningPeriodBucket {
+    pub from: i64,
+    pub to: i64,
+    pub listened_sec: f64,
+    pub plays: i64,
+    pub completed_plays: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListeningPeriodTopTrack {
+    pub track: Track,
+    pub listened_sec: f64,
+    pub play_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListeningPeriodTopArtist {
+    pub artist: Artist,
+    pub listened_sec: f64,
+    pub play_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListeningPeriodStats {
+    pub from: i64,
+    pub to: i64,
+    pub total_listened_sec: f64,
+    pub plays: i64,
+    pub completed_plays: i64,
+    pub completion_pct: f64,
+    pub unique_tracks: i64,
+    pub buckets: Vec<ListeningPeriodBucket>,
+    pub top_track: Option<ListeningPeriodTopTrack>,
+    pub top_artist: Option<ListeningPeriodTopArtist>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StatsSummary {
     pub total_minutes: f64,
     pub plays: i64,

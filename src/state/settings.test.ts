@@ -54,6 +54,23 @@ describe('player companion setting', () => {
   })
 })
 
+describe('persisted waveform cache preference', () => {
+  function loadPlayer(value: unknown) {
+    vi.stubGlobal('localStorage', { getItem: () => JSON.stringify(value) })
+    return loadSettings().player
+  }
+
+  it('keeps the disk cache opt-in for new and legacy settings', () => {
+    expect(defaultSettings.player.cacheWaveforms).toBe(false)
+    expect(loadPlayer({ player: { waveform: true } }).cacheWaveforms).toBe(false)
+  })
+
+  it('preserves only an explicit saved opt-in', () => {
+    expect(loadPlayer({ player: { cacheWaveforms: true } }).cacheWaveforms).toBe(true)
+    expect(loadPlayer({ player: { cacheWaveforms: 'true' } }).cacheWaveforms).toBe(false)
+  })
+})
+
 describe('settings hardware default update', () => {
   async function pendingDefault(recommended: boolean) {
     vi.resetModules()

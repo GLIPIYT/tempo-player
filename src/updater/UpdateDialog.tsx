@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { Download, PackageCheck } from 'lucide-react'
+import { Download, Filter, PackageCheck } from 'lucide-react'
 import Modal from '../components/common/Modal'
 import { toast } from '../components/common/Toast'
 import { useT } from '../i18n'
@@ -15,7 +15,9 @@ import {
 } from './service'
 import { compareVersions } from './version'
 import ReleaseNotes from './ReleaseNotes'
-import { releaseType } from './releaseType'
+import { releaseType, RELEASE_TYPE_LABELS, type ReleaseType } from './releaseType'
+import { filterReleasesByType, type ReleaseTypeFilter } from './releaseFilter'
+import './releaseFilter.css'
 import ReleaseTypeBadge from './ReleaseTypeBadge'
 
 interface Props {
@@ -47,6 +49,7 @@ function emptyRelease(version: string): ReleaseInfo {
 export default function UpdateDialog({ releases, initialVersion, currentVersion, installedVersion, onDismiss }: Props) {
   const t = useT()
   const [selectedVersion, setSelectedVersion] = useState(initialVersion)
+  const [typeFilter, setTypeFilter] = useState<ReleaseTypeFilter>('all')
   const [phase, setPhase] = useState<Phase>('offer')
   const [progress, setProgress] = useState<{ downloaded: number; total: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -74,6 +77,8 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
     }
   }
   versionChoices.sort((a, b) => compareVersions(b.version, a.version))
+  const filteredChoices = filterReleasesByType(versionChoices, releases, typeFilter)
+  const hasVisibleSelection = filteredChoices.some(item => item.version === selectedVersion)
   const release = versionChoices.find(item => item.version === selectedVersion)
     ?? releases.find(item => item.version === selectedVersion)
     ?? emptyRelease(selectedVersion)
@@ -138,6 +143,15 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
     setSelectedVersion(version)
   }
 
+  const changeFilter = (filter: ReleaseTypeFilter) => {
+    if (busy) return
+    const nextChoices = filterReleasesByType(versionChoices, releases, filter)
+    if (nextChoices.length && !nextChoices.some(item => item.version === selectedVersion)) {
+      selectVersion((nextChoices.find(item => item.assetUrl || installedVersions.includes(item.version)) ?? nextChoices[0]).version)
+    }
+    setTypeFilter(filter)
+  }
+
   const begin = async () => {
     if (operationRunning.current || busy || !release.assetUrl) return
     operationRunning.current = true
@@ -197,10 +211,10 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
     onDismiss()
   }
 
-  const title = isInstalled ? t('Update installed') : t('Updates')
+  const title = hasVisibleSelection && isInstalled ? t('Update installed') : t('Updates')
 
   return (
-    <Modal open className="update-modal" title={`${title} — ${release.version}`} onClose={dismiss} closeDisabled={busy}>
+    <Modal open className="update-modal" title={hasVisibleSelection ? `${title} — ${release.version}` : title} onClose={dismiss} closeDisabled={busy}>
       {confettiRun > 0 ? (
         <div key={confettiRun} className="update-confetti is-active" aria-hidden="true">
           {Array.from({ length: 80 }, (_, index) => (
@@ -222,8 +236,17 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
       <div className="update-dialog-layout">
         <aside className="update-version-picker" aria-label={t('Available versions')}>
           <div className="update-version-picker-heading">{t('Available versions')}</div>
+          <div className="update-version-filter">
+            <Filter size={14} aria-hidden="true" />
+            <select aria-label={t('Filter release type')} value={typeFilter} disabled={busy} onChange={event => changeFilter(event.target.value as ReleaseTypeFilter)}>
+              <option value="all">{t('No filter')}</option>
+              {(Object.keys(RELEASE_TYPE_LABELS) as ReleaseType[]).map(type => (
+                <option key={type} value={type}>{t(RELEASE_TYPE_LABELS[type])}</option>
+              ))}
+            </select>
+          </div>
           <div className="update-version-picker-list">
-            {versionChoices.map(item => {
+            {filteredChoices.map(item => {
               const selected = item.version === release.version
               const current = currentVersion === item.version || installedVersion === item.version
               const latest = latestVersion === item.version
@@ -248,11 +271,16 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
                 </button>
               )
             })}
-            {versionChoices.length === 0 ? <div className="muted update-version-empty">{t('No installable versions.')}</div> : null}
+            {filteredChoices.length === 0 ? (
+              <div className="muted update-version-empty">
+                {typeFilter === 'all' ? t('No installable versions.') : t('No versions match this filter.')}
+                {typeFilter !== 'all' && <button type="button" onClick={() => changeFilter('all')}>{t('Clear filter')}</button>}
+              </div>
+            ) : null}
           </div>
         </aside>
 
-        <section className="update-release-panel" aria-label={t('Release notes')}>
+        {hasVisibleSelection ? <section className="update-release-panel" aria-label={t('Release notes')}>
           <div className="update-summary">
             <div className="update-head">
               <div className="update-version-heading">
@@ -298,11 +326,11 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
               <div className="muted settings-line">{t('No release notes.')}</div>
             )}
           </section>
-        </section>
+        </section> : <div className="muted update-release-empty" /> }
 
         {!busy ? (
           <div className="modal-actions update-dialog-actions">
-            {isCurrent || !release.assetUrl ? (
+            {!hasVisibleSelection || isCurrent || !release.assetUrl ? (
               <button className="btn btn-primary" onClick={dismiss}>{t('Close')}</button>
             ) : (
               <>

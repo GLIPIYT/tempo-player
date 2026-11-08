@@ -12,8 +12,9 @@ use crate::database::{Db, MetadataDbUpdate};
 use crate::metadata::{self, ArtworkChange, EditableMetadata, StagedTagWrite};
 use crate::models::{
     Album, AlbumDetail, AnalyticsData, Artist, ArtistDetail, CoversCacheInfo, FavoriteOrderEntry,
-    HiddenTrack, HistoryEntryDto, LibraryFolder, LoudnessJob, LyricsEditorDocument, LyricsOverride, Playlist,
-    LibraryElementKind, PlaylistTrack, ScanPhase, ScanProgress, ScanSummary, SearchResults, Track,
+    HiddenTrack, HistoryEntryDto, LibraryFolder, ListeningPeriodStats, LoudnessJob,
+    LyricsEditorDocument, LyricsOverride, Playlist, LibraryElementKind, PlaylistTrack, ScanPhase,
+    ScanProgress, ScanSummary, SearchResults, Track,
     TrackArtworkEdit, TrackMetadataEditRequest, TrackMetadataEditorState, TrackMetadataOriginal,
 };
 use crate::scanner;
@@ -1265,6 +1266,17 @@ pub fn get_history(state: State<'_, AppState>, limit: i64, offset: i64) -> Resul
 }
 
 #[tauri::command]
+pub async fn get_listening_period(
+    state: State<'_, AppState>,
+    boundaries: Vec<i64>,
+) -> Result<ListeningPeriodStats, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.get_listening_period(&boundaries))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub fn clear_history(state: State<'_, AppState>) -> Result<u32, String> {
     state.db.clear_history()
 }
@@ -1409,8 +1421,13 @@ pub async fn sc_stream_url(track_id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn sc_waveform(track_id: String) -> Result<Vec<f32>, String> {
-    crate::soundcloud::get_waveform(&track_id).await
+pub async fn sc_waveform(
+    app: AppHandle,
+    track_id: String,
+    cache_disk: bool,
+) -> Result<Vec<f32>, String> {
+    let cache_dir = if cache_disk { app.path().app_cache_dir().ok() } else { None };
+    crate::soundcloud::get_waveform(&track_id, cache_disk, cache_dir.as_deref()).await
 }
 
 #[tauri::command]

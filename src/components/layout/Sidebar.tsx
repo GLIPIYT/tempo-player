@@ -669,44 +669,46 @@ export default function Sidebar() {
               <span className="fav-count">{headerCount}</span>
             </div>
           ) : null}
-          {!collapsed && headerCount === 0 ? (
-            <div className="fav-empty">{t('Pin playlists to see them here')}</div>
-          ) : null}
-          {interleaved ? (
-            // one continuous list: a playlist, an artist and an album can sit in any
-            // order relative to each other
-            <div className="fav-list">{renderRows(flatRows)}</div>
-          ) : (
-            <>
-              <div className="fav-list">{renderRows(playlistRows)}</div>
-              {artistRows.length > 0 ? (
-                <>
-                  {!collapsed ? (
-                    <div className="fav-head" style={{ marginTop: 10 }}>
-                      <span>{t('Favorite artists')}</span>
-                      <span className="fav-count">{artistRows.length}</span>
+          <div className="sidebar-favs-list">
+            {!collapsed && headerCount === 0 ? (
+              <div className="fav-empty">{t('Pin playlists to see them here')}</div>
+            ) : null}
+            {interleaved ? (
+              // one continuous list: a playlist, an artist and an album can sit in any
+              // order relative to each other
+              <div className="fav-list">{renderRows(flatRows)}</div>
+            ) : (
+              <>
+                <div className="fav-list">{renderRows(playlistRows)}</div>
+                {artistRows.length > 0 ? (
+                  <>
+                    {!collapsed ? (
+                      <div className="fav-head" style={{ marginTop: 10 }}>
+                        <span>{t('Favorite artists')}</span>
+                        <span className="fav-count">{artistRows.length}</span>
+                      </div>
+                    ) : null}
+                    <div className="fav-list" style={{ marginTop: 2 }}>
+                      {renderRows(artistRows)}
                     </div>
-                  ) : null}
-                  <div className="fav-list" style={{ marginTop: 2 }}>
-                    {renderRows(artistRows)}
-                  </div>
-                </>
-              ) : null}
-              {albumRows.length > 0 ? (
-                <>
-                  {!collapsed ? (
-                    <div className="fav-head" style={{ marginTop: 10 }}>
-                      <span>{t('Favorite albums')}</span>
-                      <span className="fav-count">{albumRows.length}</span>
+                  </>
+                ) : null}
+                {albumRows.length > 0 ? (
+                  <>
+                    {!collapsed ? (
+                      <div className="fav-head" style={{ marginTop: 10 }}>
+                        <span>{t('Favorite albums')}</span>
+                        <span className="fav-count">{albumRows.length}</span>
+                      </div>
+                    ) : null}
+                    <div className="fav-list" style={{ marginTop: 2 }}>
+                      {renderRows(albumRows)}
                     </div>
-                  ) : null}
-                  <div className="fav-list" style={{ marginTop: 2 }}>
-                    {renderRows(albumRows)}
-                  </div>
-                </>
-              ) : null}
-            </>
-          )}
+                  </>
+                ) : null}
+              </>
+            )}
+          </div>
           <button className="fav-new" title={t('New playlist')} onClick={() => setNewOpen(true)}>
             <Plus size={15} />
             {!collapsed ? <span>{t('New playlist')}</span> : null}

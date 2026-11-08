@@ -64,6 +64,7 @@ export interface AppSettings {
   }
   player: {
     waveform: boolean
+    cacheWaveforms: boolean
     companionEnabled: boolean
     /**
      * Player bar layout. `classic` is the original: progress fills its column
@@ -160,7 +161,7 @@ export const defaultSettings: AppSettings = {
   },
   font: { family: null, importedPath: null, sizePx: 13, uiScalePct: 100 },
   background: { path: null, dimPct: 45, blurPx: 0 },
-  player: { waveform: false, companionEnabled: false, barStyle: 'classic' },
+  player: { waveform: false, cacheWaveforms: false, companionEnabled: false, barStyle: 'classic' },
   sidebar: { grouped: true },
   // off by default: an always-on-top window appearing unprompted after an
   // update is worse than a feature nobody notices
@@ -323,6 +324,7 @@ export function loadSettings(): AppSettings {
       player: {
         ...defaultSettings.player,
         ...parsed.player,
+        cacheWaveforms: parsed.player?.cacheWaveforms === true,
         companionEnabled: parsed.player?.companionEnabled === true,
       },
       sidebar: { ...defaultSettings.sidebar, ...parsed.sidebar },
