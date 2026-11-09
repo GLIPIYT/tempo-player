@@ -407,6 +407,7 @@ html.theme-gradient .home-mix-art::after {
 .home-mix-picker-heading span { color: var(--text-muted); font-size: 10px; }
 
 .home-mix-picker-rail {
+  position: relative;
   display: flex;
   flex: 1;
   gap: 14px;
@@ -423,6 +424,7 @@ html.theme-gradient .home-mix-art::after {
 .home-mix-picker-rail.is-short .home-mix-choice { flex-basis: 190px; }
 
 .home-mix-choice {
+  position: relative;
   display: flex;
   flex: 0 0 172px;
   flex-direction: column;
@@ -436,6 +438,38 @@ html.theme-gradient .home-mix-art::after {
   background: var(--surface);
   overflow: hidden;
   text-align: left;
+}
+.home-mix-choice[data-mix-key] {
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.home-mix-choice[data-mix-key] img { -webkit-user-drag: none; }
+.home-mix-picker-rail.is-reordering .home-mix-choice[data-mix-key] {
+  transition: transform .2s cubic-bezier(.2,.8,.2,1);
+  will-change: transform;
+}
+.home-mix-picker-rail.is-reordering .home-mix-choice.is-dragging {
+  z-index: 2;
+  cursor: grabbing;
+  transition: none;
+  border-color: var(--accent);
+  box-shadow: 0 5px 16px #0005;
+}
+.home-mix-drop-slot {
+  position: absolute;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1px dashed color-mix(in srgb, var(--accent) 65%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  opacity: 0;
+  transition: left .2s cubic-bezier(.2,.8,.2,1), opacity .12s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-mix-picker-rail.is-reordering .home-mix-choice[data-mix-key],
+  .home-mix-drop-slot { transition: none; }
 }
 .home-mix-choice-art {
   display: flex;

@@ -173,6 +173,17 @@
 .mix-rule-description-count.is-warning {
   color: #ff6f83;
 }
+.mix-rule-section + .mix-rule-section {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid #ffffff10;
+}
+.mix-rule-section-title {
+  margin: 0 0 20px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
 .mix-rule-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -182,7 +193,7 @@
   min-width: 0;
   align-self: start;
 }
-.mix-rule-field h3 {
+.mix-rule-field h4 {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -190,7 +201,7 @@
   font-weight: 600;
   margin: 0 0 13px;
 }
-.mix-rule-field h3 > svg {
+.mix-rule-field h4 > svg {
   opacity: 0.56;
   flex: none;
 }

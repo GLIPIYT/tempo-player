@@ -11,6 +11,7 @@ export interface HourMix {
   tracks: Track[]
   rule?: CustomMixRule
   warnings?: string[]
+  generatedAt?: number
 }
 
 export interface SmartMixTitles {

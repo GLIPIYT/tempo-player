@@ -59,6 +59,7 @@ export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
           description: rule.description,
           tracks: result.tracks,
           warnings: result.warnings,
+          generatedAt: result.generatedAt,
           rule,
         })
       } finally {

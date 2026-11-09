@@ -577,10 +577,10 @@ export default function CustomMixEditor({
     wide = false,
   ) => (
     <section className={`mix-rule-field${wide ? ' is-wide' : ''}`}>
-      <h3>
+      <h4>
         {icon}
         {t(label)}
-      </h3>
+      </h4>
       {control}
     </section>
   )
@@ -728,228 +728,241 @@ export default function CustomMixEditor({
               />
             </div>
           </div>
-          <div className="mix-rule-grid">
-            {field(
-              'Track count',
-              <ListMusic size={15} />,
-              <SingleRange
-                label={t('Track count')}
-                value={rule.trackCount ?? 24}
-                min={1}
-                max={50}
-                step={1}
-                onChange={(trackCount) => change({ trackCount })}
-                format={(value) => String(value)}
-              />,
-            )}
-            {field(
-              'Rebuild interval',
-              <TimerReset size={15} />,
-              <SingleRange
-                label={t('Rebuild interval')}
-                value={rule.refreshIntervalMinutes ?? 0}
-                min={0}
-                max={1440}
-                step={10}
-                onChange={(refreshIntervalMinutes) =>
-                  change({ refreshIntervalMinutes })
-                }
-                format={(value) =>
-                  value === 0
-                    ? t('Every time opened')
-                    : `${Math.floor(value / 60) ? `${Math.floor(value / 60)} ${t('hours short')}` : ''}${value >= 60 && value % 60 ? ' ' : ''}${value % 60 ? `${value % 60} ${t('minutes short')}` : ''}`
-                }
-              />,
-            )}
-            {field(
-              'Artists',
-              <Users size={15} />,
-              <>
+          <section className="mix-rule-section" aria-labelledby={`${fieldId}-main`}>
+            <h3 className="mix-rule-section-title" id={`${fieldId}-main`}>{t('Main functions')}</h3>
+            <div className="mix-rule-grid">
+              {field(
+                'Track count',
+                <ListMusic size={15} />,
+                <SingleRange
+                  label={t('Track count')}
+                  value={rule.trackCount ?? 24}
+                  min={1}
+                  max={50}
+                  step={1}
+                  onChange={(trackCount) => change({ trackCount })}
+                  format={(value) => String(value)}
+                />,
+              )}
+              {field(
+                'Rebuild interval',
+                <TimerReset size={15} />,
+                <SingleRange
+                  label={t('Rebuild interval')}
+                  value={rule.refreshIntervalMinutes ?? 0}
+                  min={0}
+                  max={1440}
+                  step={10}
+                  onChange={(refreshIntervalMinutes) =>
+                    change({ refreshIntervalMinutes })
+                  }
+                  format={(value) =>
+                    value === 0
+                      ? t('Every time opened')
+                      : `${Math.floor(value / 60) ? `${Math.floor(value / 60)} ${t('hours short')}` : ''}${value >= 60 && value % 60 ? ' ' : ''}${value % 60 ? `${value % 60} ${t('minutes short')}` : ''}`
+                  }
+                />,
+              )}
+              {field(
+                'Genres',
+                <Music2 size={15} />,
                 <MultiSelect
-                  label={t('Artists')}
-                  options={artists.map((a) => ({
-                    id: String(a.id),
-                    name: a.name,
-                    avatar: a.imagePath,
-                    artist: true,
-                  }))}
-                  values={rule.artistIds.map(String)}
-                  onChange={(ids) => change({ artistIds: ids.map(Number) })}
+                  label={t('Genres')}
+                  options={genreOptions}
+                  values={rule.genres}
+                  onChange={(genres) => change({ genres })}
                   mode={
                     <Mode
-                      value={rule.artistMode}
-                      onChange={(artistMode) => change({ artistMode })}
+                      value={rule.genreMode}
+                      onChange={(genreMode) => change({ genreMode })}
                     />
                   }
-                />
-                {artistError ? (
-                  <small className="error-line">
-                    {t('Could not load artists')}
-                  </small>
-                ) : null}
-              </>,
-            )}
-            {field(
-              'Listening time',
-              <Clock3 size={15} />,
-              <Range
-                label={t('Listening time')}
-                value={rule.timeWindow}
-                max={1440}
-                step={30}
-                format={time}
-                disabled={rule.specials.includes('currentHour')}
-                onChange={(timeWindow) => change({ timeWindow })}
-              />,
-            )}
-            {field(
-              'Average completion',
-              <History size={15} />,
-              <Range
-                label={t('Average completion')}
-                value={rule.completionPercent}
-                onChange={(completionPercent) => change({ completionPercent })}
-              />,
-            )}
-            {field(
-              'Genres',
-              <Music2 size={15} />,
-              <MultiSelect
-                label={t('Genres')}
-                options={genreOptions}
-                values={rule.genres}
-                onChange={(genres) => change({ genres })}
-                mode={
-                  <Mode
-                    value={rule.genreMode}
-                    onChange={(genreMode) => change({ genreMode })}
+                />,
+              )}
+              {field(
+                'Share of selected genres',
+                <Music2 size={15} />,
+                <Range
+                  label={t('Share of selected genres')}
+                  value={rule.genrePercent}
+                  disabled={!rule.genres.length || rule.genreMode === 'deny'}
+                  onChange={(genrePercent) => change({ genrePercent })}
+                />,
+              )}
+            </div>
+          </section>
+          <section className="mix-rule-section" aria-labelledby={`${fieldId}-content`}>
+            <h3 className="mix-rule-section-title" id={`${fieldId}-content`}>{t('Content filters')}</h3>
+            <div className="mix-rule-grid">
+              {field(
+                'Artists',
+                <Users size={15} />,
+                <>
+                  <MultiSelect
+                    label={t('Artists')}
+                    options={artists.map((a) => ({
+                      id: String(a.id),
+                      name: a.name,
+                      avatar: a.imagePath,
+                      artist: true,
+                    }))}
+                    values={rule.artistIds.map(String)}
+                    onChange={(ids) => change({ artistIds: ids.map(Number) })}
+                    mode={
+                      <Mode
+                        value={rule.artistMode}
+                        onChange={(artistMode) => change({ artistMode })}
+                      />
+                    }
                   />
-                }
-              />,
-            )}
-            {field(
-              'Share of selected genres',
-              <Music2 size={15} />,
-              <Range
-                label={t('Share of selected genres')}
-                value={rule.genrePercent}
-                disabled={!rule.genres.length || rule.genreMode === 'deny'}
-                onChange={(genrePercent) => change({ genrePercent })}
-              />,
-            )}
-            {field(
-              'Track sources',
-              <Folder size={15} />,
-              <MultiSelect
-                label={t('Track sources')}
-                options={[
-                  {
-                    id: 'local',
-                    name: t('Local files'),
-                    icon: <Folder size={15} color="white" />,
-                  },
-                  {
-                    id: 'soundcloud',
-                    name: 'SoundCloud',
-                    icon: (
-                      <BrandIcon
-                        mark="soundcloud"
-                        size={17}
-                        style={{ fill: '#ff5500' }}
-                      />
-                    ),
-                  },
-                  {
-                    id: 'youtube',
-                    name: 'YouTube Music',
-                    icon: (
-                      <BrandIcon
-                        mark="youtubemusic"
-                        size={17}
-                        style={{ fill: '#ff0033' }}
-                      />
-                    ),
-                  },
-                ]}
-                values={rule.sources}
-                onChange={(sources) =>
-                  change({ sources: sources as CustomMixRule['sources'] })
-                }
-              />,
-            )}
-            {field(
-              'Special rules',
-              <Sparkles size={15} />,
-              <MultiSelect
-                label={t('Special rules')}
-                options={[
-                  {
-                    id: 'currentHour',
-                    name: t('For this hour'),
-                    icon: <Clock3 size={14} />,
-                  },
-                  {
-                    id: 'onlineGenre',
-                    name: t('SoundCloud genre discovery'),
-                    icon: (
-                      <BrandIcon
-                        mark="soundcloud"
-                        size={16}
-                        style={{ fill: '#ff5500' }}
-                      />
-                    ),
-                  },
-                  {
-                    id: 'forgotten',
-                    name: t('Forgotten tracks'),
-                    icon: <History size={14} />,
-                  },
-                  {
-                    id: 'onRepeat',
-                    name: t('On repeat'),
-                    icon: <History size={14} />,
-                  },
-                  {
-                    id: 'newToYou',
-                    name: t('New to you'),
-                    icon: <Sparkles size={14} />,
-                  },
-                  {
-                    id: 'noSkips',
-                    name: t('No skips'),
-                    icon: <Check size={14} />,
-                  },
-                ]}
-                values={rule.specials}
-                onChange={(specials) =>
-                  change({ specials: specials as CustomMixRule['specials'] })
-                }
-              />,
-            )}
-            {field(
-              'Share of forgotten tracks',
-              <History size={15} />,
-              <Range
-                label={t('Share of forgotten tracks')}
-                value={rule.forgottenPercent}
-                disabled={!rule.specials.includes('forgotten')}
-                onChange={(forgottenPercent) => change({ forgottenPercent })}
-              />,
-            )}
-            {field(
-              'Days since last play',
-              <History size={15} />,
-              <Range
-                label={t('Days since last play')}
-                value={rule.forgottenDays}
-                min={1}
-                max={365}
-                format={(n) => String(n)}
-                disabled={!rule.specials.includes('forgotten')}
-                onChange={(forgottenDays) => change({ forgottenDays })}
-              />,
-            )}
-          </div>
+                  {artistError ? (
+                    <small className="error-line">
+                      {t('Could not load artists')}
+                    </small>
+                  ) : null}
+                </>,
+              )}
+              {field(
+                'Track sources',
+                <Folder size={15} />,
+                <MultiSelect
+                  label={t('Track sources')}
+                  options={[
+                    {
+                      id: 'local',
+                      name: t('Local files'),
+                      icon: <Folder size={15} color="white" />,
+                    },
+                    {
+                      id: 'soundcloud',
+                      name: 'SoundCloud',
+                      icon: (
+                        <BrandIcon
+                          mark="soundcloud"
+                          size={17}
+                          style={{ fill: '#ff5500' }}
+                        />
+                      ),
+                    },
+                    {
+                      id: 'youtube',
+                      name: 'YouTube Music',
+                      icon: (
+                        <BrandIcon
+                          mark="youtubemusic"
+                          size={17}
+                          style={{ fill: '#ff0033' }}
+                        />
+                      ),
+                    },
+                  ]}
+                  values={rule.sources}
+                  onChange={(sources) =>
+                    change({ sources: sources as CustomMixRule['sources'] })
+                  }
+                />,
+              )}
+              {field(
+                'Listening time',
+                <Clock3 size={15} />,
+                <Range
+                  label={t('Listening time')}
+                  value={rule.timeWindow}
+                  max={1440}
+                  step={30}
+                  format={time}
+                  disabled={rule.specials.includes('currentHour')}
+                  onChange={(timeWindow) => change({ timeWindow })}
+                />,
+              )}
+              {field(
+                'Average completion',
+                <History size={15} />,
+                <Range
+                  label={t('Average completion')}
+                  value={rule.completionPercent}
+                  onChange={(completionPercent) => change({ completionPercent })}
+                />,
+              )}
+            </div>
+          </section>
+          <section className="mix-rule-section" aria-labelledby={`${fieldId}-extra`}>
+            <h3 className="mix-rule-section-title" id={`${fieldId}-extra`}>{t('Additional functions')}</h3>
+            <div className="mix-rule-grid">
+              {field(
+                'Special rules',
+                <Sparkles size={15} />,
+                <MultiSelect
+                  label={t('Special rules')}
+                  options={[
+                    {
+                      id: 'currentHour',
+                      name: t('For this hour'),
+                      icon: <Clock3 size={14} />,
+                    },
+                    {
+                      id: 'onlineGenre',
+                      name: t('SoundCloud genre discovery'),
+                      icon: (
+                        <BrandIcon
+                          mark="soundcloud"
+                          size={16}
+                          style={{ fill: '#ff5500' }}
+                        />
+                      ),
+                    },
+                    {
+                      id: 'forgotten',
+                      name: t('Forgotten tracks'),
+                      icon: <History size={14} />,
+                    },
+                    {
+                      id: 'onRepeat',
+                      name: t('On repeat'),
+                      icon: <History size={14} />,
+                    },
+                    {
+                      id: 'newToYou',
+                      name: t('New to you'),
+                      icon: <Sparkles size={14} />,
+                    },
+                    {
+                      id: 'noSkips',
+                      name: t('No skips'),
+                      icon: <Check size={14} />,
+                    },
+                  ]}
+                  values={rule.specials}
+                  onChange={(specials) =>
+                    change({ specials: specials as CustomMixRule['specials'] })
+                  }
+                />,
+              )}
+              {field(
+                'Share of forgotten tracks',
+                <History size={15} />,
+                <Range
+                  label={t('Share of forgotten tracks')}
+                  value={rule.forgottenPercent}
+                  disabled={!rule.specials.includes('forgotten')}
+                  onChange={(forgottenPercent) => change({ forgottenPercent })}
+                />,
+              )}
+              {field(
+                'Days since last play',
+                <History size={15} />,
+                <Range
+                  label={t('Days since last play')}
+                  value={rule.forgottenDays}
+                  min={1}
+                  max={365}
+                  format={(n) => String(n)}
+                  disabled={!rule.specials.includes('forgotten')}
+                  onChange={(forgottenDays) => change({ forgottenDays })}
+                />,
+              )}
+            </div>
+          </section>
         </div>
         <footer>
           {onDelete ? (

@@ -38,7 +38,7 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scheduleTimerRef = useRef<() => void>(() => undefined)
 
-  const makeMix = useCallback((rule: CustomMixRule, tracks: HourMix['tracks'], warnings: string[]): HourMix => ({
+  const makeMix = useCallback((rule: CustomMixRule, tracks: HourMix['tracks'], warnings: string[], generatedAt: number): HourMix => ({
     key: `custom:${rule.id}`,
     kind: 'custom',
     title: rule.name,
@@ -46,6 +46,7 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
     tracks,
     rule,
     warnings,
+    generatedAt,
   }), [])
 
   const generateMix = useCallback(async (
@@ -63,7 +64,7 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
       return customMixService.generate(rule, pool, { reason })
     })
     if (!result || !isCurrent()) return null
-    const mix = makeMix(rule, result.tracks, result.warnings)
+    const mix = makeMix(rule, result.tracks, result.warnings, result.generatedAt)
     if (rule.id != null) generatedAtRef.current.set(rule.id, result.generatedAt)
     setMixes((current) => {
       if (!isCurrent()) return current

@@ -59,7 +59,7 @@ export default function LyricsProcessingPanel({
               ? t('Analysis queued')
               : vocalState.phase === 'complete'
                 ? t('Track analyzed')
-                : t('Ready for analysis')
+                : t('Ready')
   const progress =
     modelState.totalBytes > 0
       ? Math.min(
@@ -79,14 +79,11 @@ export default function LyricsProcessingPanel({
         : wordEnabled && wordMode
           ? t('Preparing model download')
           : t('Not downloaded')
-  const wordNote =
-    wordEnabled && !wordMode
-      ? t('Only used in word-by-word mode')
-      : wordReady
-        ? t('Model is stored on this computer.')
-        : t(
-            'The model downloads when this option is enabled in word-by-word mode.',
-          )
+  const wordNote = wordReady
+    ? t('Model is available on this computer.')
+    : t(
+        'The model downloads when this option is enabled in word-by-word mode.',
+      )
   const size = (bytes: number) => (bytes / 1048576).toFixed(1)
   return (
     <section
@@ -145,7 +142,7 @@ export default function LyricsProcessingPanel({
               <strong>{vocalLabel}</strong>
             </div>
             <p className="processing-state-note">
-              {t('The vocal model is included with Tempo.')}
+              {t('Model is available on this computer.')}
             </p>
             {vocalError && vocalState.error ? (
               <details className="processing-error">

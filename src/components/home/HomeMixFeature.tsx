@@ -6,6 +6,7 @@ import { formatCount } from '../../i18n/count'
 import { useSettings } from '../../state/settings'
 import type { HourMix } from '../../utils/hourMixes'
 import Cover from '../common/Cover'
+import { useMixReorder } from './useMixReorder'
 
 interface HomeMixFeatureProps {
   mixes: HourMix[]
@@ -14,6 +15,7 @@ interface HomeMixFeatureProps {
   onMixMenu: (event: MouseEvent, mix: HourMix) => void
   onSectionMenu: (event: MouseEvent) => void
   onCreateRule: () => void
+  onReorder: (keys: string[]) => void
 }
 
 function mixCover(mix: HourMix): string | null {
@@ -27,6 +29,7 @@ export default function HomeMixFeature({
   onMixMenu,
   onSectionMenu,
   onCreateRule,
+  onReorder,
 }: HomeMixFeatureProps) {
   const t = useT()
   const { settings } = useSettings()
@@ -42,6 +45,7 @@ export default function HomeMixFeature({
   const [visible, setVisible] = useState(!document.hidden)
   const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const [manualUntil, setManualUntil] = useState(0)
+  const reorder = useMixReorder(mixes.map(mix => mix.key), onReorder, reducedMotion)
 
   const activeIndex = Math.max(0, mixes.findIndex((mix) => mix.key === selectedKey))
   const activeMix = mixes[activeIndex]
@@ -169,17 +173,25 @@ export default function HomeMixFeature({
         })}
         <div className="home-mix-picker" id="home-mix-picker" aria-hidden={!pickerOpen}>
             <div className="home-mix-picker-heading"><strong>{t('All mixes')}</strong><span>{t('Choose a mix')}</span></div>
-            <div className={`home-mix-picker-rail${mixes.length < 4 ? ' is-short' : ''}`}>
+            <div ref={reorder.railRef} {...reorder.railHandlers} className={`home-mix-picker-rail${mixes.length < 4 ? ' is-short' : ''}${reorder.draggingKey ? ' is-reordering' : ''}`}>
+              <span ref={reorder.slotRef} className="home-mix-drop-slot" aria-hidden="true" />
               {mixes.map((mix, index) => (
                 <button
                   key={mix.key}
                   ref={index === 0 ? firstChoiceRef : undefined}
                   type="button"
-                  className="home-mix-choice"
+                  className={`home-mix-choice${reorder.draggingKey === mix.key ? ' is-dragging' : ''}`}
+                  data-mix-key={mix.key}
+                  title={t('Drag to reorder. Alt + arrow keys also move the mix.')}
+                  onPointerDown={event => reorder.onPointerDown(event, mix.key)}
+                  onDragStart={event => event.preventDefault()}
                   tabIndex={pickerOpen ? 0 : -1}
                   aria-current={index === activeIndex ? 'true' : undefined}
                   onClick={() => chooseMix(index)}
-                  onContextMenu={(event) => onMixMenu(event, mix)}
+                  onContextMenu={(event) => {
+                    if (reorder.draggingKey) { event.preventDefault(); event.stopPropagation(); return }
+                    onMixMenu(event, mix)
+                  }}
                 >
                   <span className="home-mix-choice-art"><Cover path={mixCover(mix)} label={mix.title} size={146} /></span>
                   <span className="home-mix-choice-copy">
