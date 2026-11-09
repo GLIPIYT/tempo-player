@@ -1,9 +1,9 @@
 import type { HourMix } from '../../utils/hourMixes'
-import { createCustomMixRule } from './types'
+import { createCustomMixRule, normalizeCustomMixRule } from './types'
 
 /** Copy editable criteria, never freeze the current track IDs into a rule. */
 export function presetFromMix(mix: HourMix) {
-  if (mix.rule) return structuredClone(mix.rule)
+  if (mix.rule) return normalizeCustomMixRule(structuredClone(mix.rule))
   const rule = createCustomMixRule(mix.title)
   if (mix.kind === 'hour') rule.specials = ['currentHour']
   if (mix.kind === 'artist')

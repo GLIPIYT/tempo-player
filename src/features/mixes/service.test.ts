@@ -4,6 +4,7 @@ import type { TasteProfile } from '../recommendations/profile'
 import { createCustomMixRule, type CustomMixCandidate } from './types'
 
 const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
   api: {
     getRecommendationContext: vi.fn(),
     scRecommendationGenreSearch: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   buildTasteProfile: vi.fn(),
 }))
 
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('../../api/client', () => ({ api: mocks.api }))
 vi.mock('../recommendations/profile', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../recommendations/profile')>()
@@ -21,7 +23,8 @@ vi.mock('../recommendations/profile', async (importOriginal) => {
 })
 vi.mock('../recommendations/service', () => ({ recommendationLanguagePreference: () => null }))
 
-import { augmentOnlineGenreCandidates } from './service'
+import { augmentOnlineGenreCandidates, generateCustomMixSelection } from './service'
+import { customMixRuleFingerprint } from './snapshot'
 
 function localCandidate(
   id: number,
@@ -82,6 +85,20 @@ describe('augmentOnlineGenreCandidates', () => {
     expect(mocks.api.scRecommendationGenreSearch).not.toHaveBeenCalled()
   })
 
+  it('uses the configured 50-track target when checking whether online genre capacity is needed', async () => {
+    const rule = onlineRule()
+    rule.trackCount = 50
+    rule.genrePercent = [50, 100]
+    const candidates = Array.from({ length: 24 }, (_, index) => localCandidate(
+      index + 1, 'Ambient', { artistName: index === 0 ? 'Preferred Artist' : null },
+      index === 0 ? { liked: true } : {},
+    ))
+
+    await augmentOnlineGenreCandidates(rule, candidates)
+
+    expect(mocks.api.scRecommendationGenreSearch).toHaveBeenCalledWith('Ambient', null, 50)
+  })
+
   it('skips online search when completion or clock rules require local history', async () => {
     const rule = onlineRule()
     rule.completionPercent = [70, 100]
@@ -113,7 +130,7 @@ describe('augmentOnlineGenreCandidates', () => {
     const result = await augmentOnlineGenreCandidates(onlineRule(), candidates)
 
     expect(mocks.api.scRecommendationGenreSearch).toHaveBeenCalledOnce()
-    expect(mocks.api.scRecommendationGenreSearch).toHaveBeenCalledWith('Ambient', null, 40)
+    expect(mocks.api.scRecommendationGenreSearch).toHaveBeenCalledWith('Ambient', null, 50)
     expect(mocks.api.scSearchArtists).toHaveBeenCalledWith('Preferred Artist', 3, 0)
     expect(result.candidates).toHaveLength(1)
     expect(result.candidates[0].track.externalId).toBe('preferred')
@@ -161,5 +178,60 @@ describe('augmentOnlineGenreCandidates', () => {
     expect(mocks.api.scRecommendationGenreSearch).toHaveBeenCalledOnce()
     expect(result.candidates).toEqual([])
     expect(result.warnings).toContain('No online tracks matched your artist or sound similarity history; the local mix is unchanged.')
+  })
+})
+
+describe('generateCustomMixSelection', () => {
+  beforeEach(() => {
+    mocks.invoke.mockReset()
+  })
+
+  it('reuses interval-zero snapshots during background work and regenerates them on open', async () => {
+    const rule = createCustomMixRule('Every open')
+    rule.id = 7
+    const oldTrack = localCandidate(99, 'Old')
+    let stored = {
+      ruleFingerprint: customMixRuleFingerprint(rule), generatedAt: 1_000,
+      tracks: [oldTrack.track], warnings: [],
+    }
+    mocks.invoke.mockImplementation(async (command: string, args: { snapshot?: typeof stored }) => {
+      if (command === 'get_custom_mix_snapshot') return stored
+      if (command === 'save_custom_mix_snapshot') { stored = args.snapshot!; return undefined }
+      throw new Error(`Unexpected command ${command}`)
+    })
+    const library = [localCandidate(1, 'Ambient'), localCandidate(2, 'Rock')]
+
+    const scheduled = await generateCustomMixSelection(rule, library, { reason: 'scheduled', now: 1_001 })
+    expect(scheduled).toMatchObject({ tracks: [oldTrack.track], generatedAt: 1_000, fromCache: true })
+    expect(mocks.invoke).toHaveBeenCalledTimes(1)
+
+    const opened = await generateCustomMixSelection(rule, library, { reason: 'open', now: 2_000 })
+    expect(opened).toMatchObject({ generatedAt: 2_000, fromCache: false })
+    expect(opened.tracks).toHaveLength(2)
+    expect(stored.generatedAt).toBe(2_000)
+  })
+
+  it('keeps a nonempty snapshot when a forced refresh has no eligible tracks', async () => {
+    const rule = createCustomMixRule('Keep last selection')
+    rule.id = 8
+    rule.artistIds = [123]
+    const oldTrack = localCandidate(99, 'Ambient')
+    const stored = {
+      ruleFingerprint: customMixRuleFingerprint(rule), generatedAt: 1_000,
+      tracks: [oldTrack.track], warnings: [],
+    }
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'get_custom_mix_snapshot') return stored
+      if (command === 'save_custom_mix_snapshot') return undefined
+      throw new Error(`Unexpected command ${command}`)
+    })
+
+    const refreshed = await generateCustomMixSelection(rule, [localCandidate(1, 'Rock')], {
+      reason: 'refresh', now: 2_000,
+    })
+
+    expect(refreshed).toMatchObject({ tracks: [oldTrack.track], generatedAt: 1_000, fromCache: true })
+    expect(refreshed.warnings).toContain('The mix could not be refreshed; its previous selection is still available.')
+    expect(mocks.invoke).toHaveBeenCalledTimes(1)
   })
 })

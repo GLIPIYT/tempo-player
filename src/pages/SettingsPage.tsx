@@ -1611,6 +1611,7 @@ export default function SettingsPage() {
                 <div className="set-note">{t('Closing the window keeps playback running in the tray.')}</div>
               </Card>
               <LoudnessCard />
+              <LyricsAnalysisCard />
               {hasUsableSoundCloudSession ? (
                 <Card title={t('SoundCloud capture')}>
                   {captureSettings ? (
@@ -2139,7 +2140,6 @@ export default function SettingsPage() {
                     onClick={() => update({ lyrics: { progressClipToText: !settings.lyrics.progressClipToText } })} />
                 </div>
               </Card>
-              <LyricsAnalysisCard />
 
               <Card title={t('Visualizer')}>
                 <Segmented<VisualizerStyle>

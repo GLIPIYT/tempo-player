@@ -31,6 +31,29 @@ describe('generateCustomMix', () => {
     expect(first.warnings).toEqual([])
   })
 
+  it('defaults to 24 tracks and supports the full 50-track cap', () => {
+    const rule = baseRule()
+    const tracks = Array.from({ length: 60 }, (_, index) => candidate(index + 1))
+
+    expect(generateCustomMix(rule, tracks).tracks).toHaveLength(24)
+    const max = generateCustomMix(rule, tracks, { limit: 60, seed: 1 })
+    expect(max.requestedCount).toBe(50)
+    expect(max.tracks).toHaveLength(50)
+  })
+
+  it('validates description length, count bounds, and ten-minute refresh steps', () => {
+    const rule = baseRule()
+    rule.description = 'x'.repeat(151)
+    rule.trackCount = 51
+    rule.refreshIntervalMinutes = 15
+
+    expect(generateCustomMix(rule, []).warnings).toEqual([
+      'Description must be 150 characters or fewer.',
+      'Track count must be an integer from 1 to 50.',
+      'Refresh interval must use 10-minute steps from 0 to 1440.',
+    ])
+  })
+
   it('selects the genre and forgotten quotas jointly', () => {
     const now = new Date(2026, 0, 1, 12).getTime() / 1000
     const rule = baseRule()

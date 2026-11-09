@@ -5,8 +5,8 @@ import type {
   CustomMixRule,
 } from './types'
 
-const DEFAULT_LIMIT = 40
-const MAX_LIMIT = 40
+const DEFAULT_LIMIT = 24
+const MAX_LIMIT = 50
 const FULL_PERCENT_RANGE: readonly [number, number] = [0, 100]
 const FULL_DAY_RANGE: readonly [number, number] = [0, 1440]
 const DAY_SECONDS = 86_400
@@ -14,6 +14,14 @@ const DAY_SECONDS = 86_400
 export function validateCustomMixRule(rule: CustomMixRule): string[] {
   const errors: string[] = []
   if (!rule.name.trim()) errors.push('Give this mix a name.')
+  if (rule.description.length > 150) errors.push('Description must be 150 characters or fewer.')
+  if (!Number.isInteger(rule.trackCount) || rule.trackCount < 1 || rule.trackCount > 50) {
+    errors.push('Track count must be an integer from 1 to 50.')
+  }
+  if (!Number.isInteger(rule.refreshIntervalMinutes) || rule.refreshIntervalMinutes < 0
+    || rule.refreshIntervalMinutes > 1440 || rule.refreshIntervalMinutes % 10 !== 0) {
+    errors.push('Refresh interval must use 10-minute steps from 0 to 1440.')
+  }
   if (!isRange(rule.timeWindow, 0, 1440, true) || rule.timeWindow[0] > rule.timeWindow[1]) {
     errors.push('Choose a valid listening-time range.')
   } else if (rule.timeWindow.some((minute) => minute !== 1440 && minute % 30 !== 0)) {

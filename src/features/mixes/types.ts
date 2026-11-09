@@ -11,6 +11,9 @@ export type ForgottenDaysRange = [number, number]
 export interface CustomMixRule {
   id: number | null
   name: string
+  description: string
+  trackCount: number
+  refreshIntervalMinutes: number
   artistMode: MixArtistMode
   artistIds: number[]
   timeWindow: MinuteRange
@@ -41,7 +44,7 @@ export interface CustomMixGenerationOptions {
   now?: Date | number
   /** Supplying a seed makes the selection repeatable. Omitted seeds are fresh per generation. */
   seed?: number | string
-  /** Output count, capped at 40. Defaults to 40. */
+  /** Output count, capped at 50. Defaults to 24. */
   limit?: number
 }
 
@@ -52,7 +55,28 @@ export interface CustomMixGenerationResult {
   actualCount: number
 }
 
+export interface CustomMixSnapshot {
+  ruleFingerprint: string
+  /** Unix seconds. */
+  generatedAt: number
+  tracks: Track[]
+  warnings: string[]
+}
+
+export type CustomMixGenerationReason = 'open' | 'refresh' | 'scheduled'
+
+export interface CustomMixGeneratedSelection {
+  tracks: Track[]
+  warnings: string[]
+  /** Unix seconds. */
+  generatedAt: number
+  fromCache: boolean
+}
+
 export const DEFAULT_CUSTOM_MIX_RULE: Omit<CustomMixRule, 'id' | 'name'> = {
+  description: '',
+  trackCount: 24,
+  refreshIntervalMinutes: 0,
   artistMode: 'allow',
   artistIds: [],
   timeWindow: [0, 1440],
@@ -77,5 +101,30 @@ export function createCustomMixRule(name = ''): CustomMixRule {
     forgottenDays: [...DEFAULT_CUSTOM_MIX_RULE.forgottenDays],
     artistIds: [...DEFAULT_CUSTOM_MIX_RULE.artistIds],
     genres: [...DEFAULT_CUSTOM_MIX_RULE.genres],
+  }
+}
+
+/** Apply defaults introduced after the first saved custom mix rules existed. */
+export function normalizeCustomMixRule(rule: CustomMixRule): CustomMixRule {
+  const trackCount = Number.isFinite(rule.trackCount)
+    ? rule.trackCount
+    : DEFAULT_CUSTOM_MIX_RULE.trackCount
+  const refreshIntervalMinutes = Number.isFinite(rule.refreshIntervalMinutes)
+    ? rule.refreshIntervalMinutes
+    : DEFAULT_CUSTOM_MIX_RULE.refreshIntervalMinutes
+  return {
+    ...rule,
+    description: typeof rule.description === 'string' ? rule.description : '',
+    trackCount,
+    refreshIntervalMinutes,
+    artistIds: [...rule.artistIds],
+    timeWindow: [...rule.timeWindow],
+    completionPercent: [...rule.completionPercent],
+    genres: [...rule.genres],
+    genrePercent: [...rule.genrePercent],
+    sources: [...rule.sources],
+    specials: [...rule.specials],
+    forgottenPercent: [...rule.forgottenPercent],
+    forgottenDays: [...rule.forgottenDays],
   }
 }

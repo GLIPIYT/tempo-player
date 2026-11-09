@@ -138,7 +138,7 @@ export default function HomeMixFeature({
                   {mix.kind === 'custom' ? t('Custom mix') : mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}
                 </span>
                 <h2>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</h2>
-                {mix.description ? <p>{t(mix.description)}</p> : null}
+                {mix.description ? <p>{mix.kind === 'custom' ? mix.description : t(mix.description)}</p> : null}
                 <div className="home-mix-actions">
                   <button type="button" className="home-mix-play" disabled={!mix.tracks.length} tabIndex={current && !pickerOpen ? 0 : -1} onClick={() => onPlay(mix.tracks, 0)}>
                     <Play size={15} fill="currentColor" />
@@ -185,14 +185,14 @@ export default function HomeMixFeature({
                   <span className="home-mix-choice-copy">
                     <small>{mix.kind === 'custom' ? t('Custom mix') : mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}</small>
                     <strong>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</strong>
-                    <span className="home-mix-choice-description">{t(mix.description)}</span>
+                    <span className="home-mix-choice-description">{mix.kind === 'custom' ? mix.description : t(mix.description)}</span>
                     <span className="home-mix-choice-meta">{formatCount(mix.tracks.length, 'track', t, lang)}</span>
                   </span>
                 </button>
               ))}
               <button type="button" className="home-mix-choice home-mix-create" tabIndex={pickerOpen ? 0 : -1} onClick={onCreateRule}>
                 <span className="home-mix-choice-art"><Plus size={42} strokeWidth={1.2} /></span>
-                <span className="home-mix-choice-copy"><strong>{t('Your rule')}</strong></span>
+                <span className="home-mix-choice-copy"><strong>{t('Your rule')}</strong><span className="home-mix-choice-description">{t('Create your own personal mix')}</span></span>
               </button>
             </div>
         </div>

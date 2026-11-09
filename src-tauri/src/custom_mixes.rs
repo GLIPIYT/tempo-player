@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::database::Db;
@@ -41,6 +41,8 @@ fn default_genre_percent() -> [u8; 2] { [0, 100] }
 fn default_sources() -> Vec<MixSource> { vec![MixSource::Local, MixSource::Soundcloud, MixSource::Youtube] }
 fn default_forgotten_percent() -> [u8; 2] { [0, 100] }
 fn default_forgotten_days() -> [u16; 2] { [1, 365] }
+fn default_track_count() -> u8 { 24 }
+fn default_refresh_interval_minutes() -> u16 { 0 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -48,6 +50,12 @@ pub struct CustomMixRule {
     #[serde(default)]
     pub id: Option<i64>,
     pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_track_count")]
+    pub track_count: u8,
+    #[serde(default = "default_refresh_interval_minutes")]
+    pub refresh_interval_minutes: u16,
     #[serde(default = "default_artist_mode")]
     pub artist_mode: MixMode,
     #[serde(default)]
@@ -76,6 +84,15 @@ impl CustomMixRule {
     pub fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {
             return Err("mix name must not be empty".to_string());
+        }
+        if self.description.encode_utf16().count() > 150 {
+            return Err("description must contain at most 150 characters".to_string());
+        }
+        if !(1..=50).contains(&self.track_count) {
+            return Err("trackCount must be between 1 and 50".to_string());
+        }
+        if self.refresh_interval_minutes > 1440 || self.refresh_interval_minutes % 10 != 0 {
+            return Err("refreshIntervalMinutes must use 10-minute steps from 0 to 1440".to_string());
         }
         if self.artist_ids.iter().any(|id| *id <= 0) {
             return Err("artist IDs must be positive".to_string());
@@ -107,6 +124,16 @@ impl CustomMixRule {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CustomMixSnapshot {
+    pub rule_fingerprint: String,
+    /// Unix seconds.
+    pub generated_at: i64,
+    pub tracks: Vec<Track>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CustomMixCandidate {
     pub track: Track,
     pub average_completion_percent: Option<f64>,
@@ -131,6 +158,11 @@ CREATE TABLE IF NOT EXISTS custom_mix_rules (
     updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_custom_mix_rules_updated ON custom_mix_rules(updated_at DESC, id DESC);
+CREATE TABLE IF NOT EXISTS custom_mix_snapshots (
+    rule_id INTEGER PRIMARY KEY,
+    snapshot_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 "#;
 
 /// Separate idempotent initialization avoids changing the shared migration history.
@@ -189,6 +221,8 @@ impl Db {
                 tx.execute("UPDATE custom_mix_rules SET rule_json = ?1 WHERE id = ?2", params![json, rule.id])
                     .map_err(db_error)?;
             }
+            tx.execute("DELETE FROM custom_mix_snapshots WHERE rule_id = ?1", params![rule.id])
+                .map_err(db_error)?;
             tx.commit().map_err(db_error)?;
             Ok(rule)
         })
@@ -200,8 +234,68 @@ impl Db {
         }
         self.with_conn(|conn| {
             conn.execute_batch(CUSTOM_MIX_SCHEMA).map_err(db_error)?;
-            conn.execute("DELETE FROM custom_mix_rules WHERE id = ?1", params![rule_id])
-                .map_err(db_error)?;
+            let tx = conn.unchecked_transaction().map_err(db_error)?;
+            tx.execute("DELETE FROM custom_mix_snapshots WHERE rule_id = ?1", params![rule_id]).map_err(db_error)?;
+            tx.execute("DELETE FROM custom_mix_rules WHERE id = ?1", params![rule_id]).map_err(db_error)?;
+            tx.commit().map_err(db_error)?;
+            Ok(())
+        })
+    }
+
+    pub fn get_custom_mix_snapshot(&self, rule_id: i64) -> Result<Option<CustomMixSnapshot>, String> {
+        if rule_id <= 0 { return Err("mix ID must be positive".into()); }
+        self.with_conn(|conn| {
+            conn.execute_batch(CUSTOM_MIX_SCHEMA).map_err(db_error)?;
+            let json = conn.query_row(
+                "SELECT snapshot_json FROM custom_mix_snapshots WHERE rule_id = ?1",
+                params![rule_id],
+                |row| row.get::<_, String>(0),
+            ).optional().map_err(db_error)?;
+            json.map(|json| serde_json::from_str(&json)
+                .map_err(|error| format!("invalid custom mix snapshot for rule {rule_id}: {error}")))
+                .transpose()
+        })
+    }
+
+    pub fn save_custom_mix_snapshot(&self, rule_id: i64, snapshot: CustomMixSnapshot) -> Result<(), String> {
+        if rule_id <= 0 { return Err("mix ID must be positive".into()); }
+        if snapshot.rule_fingerprint.is_empty() || snapshot.rule_fingerprint.len() > 16 * 1024 {
+            return Err("invalid custom mix snapshot fingerprint".into());
+        }
+        if snapshot.tracks.is_empty() || snapshot.tracks.len() > 50 {
+            return Err("custom mix snapshots must contain between 1 and 50 tracks".into());
+        }
+        if snapshot.warnings.len() > 100 {
+            return Err("custom mix snapshot has too many warnings".into());
+        }
+        let json = serde_json::to_string(&snapshot).map_err(|error| error.to_string())?;
+        if json.len() > 2 * 1024 * 1024 {
+            return Err("custom mix snapshot exceeds its size limit".into());
+        }
+        self.with_conn(|conn| {
+            conn.execute_batch(CUSTOM_MIX_SCHEMA).map_err(db_error)?;
+            let tx = conn.unchecked_transaction().map_err(db_error)?;
+            let rule_json = tx.query_row(
+                "SELECT rule_json FROM custom_mix_rules WHERE id = ?1",
+                params![rule_id],
+                |row| row.get::<_, String>(0),
+            ).optional().map_err(db_error)?
+                .ok_or_else(|| format!("custom mix {rule_id} was not found"))?;
+            let saved_rule: CustomMixRule = serde_json::from_str(&rule_json)
+                .map_err(|error| format!("invalid saved custom mix rule {rule_id}: {error}"))?;
+            let mut current_rule = serde_json::to_value(saved_rule).map_err(|error| error.to_string())?;
+            if let Some(object) = current_rule.as_object_mut() { let _ = object.remove("id"); }
+            let fingerprint: serde_json::Value = serde_json::from_str(&snapshot.rule_fingerprint)
+                .map_err(|error| format!("invalid custom mix snapshot fingerprint: {error}"))?;
+            if current_rule != fingerprint {
+                return Err(format!("custom mix {rule_id} changed before this selection could be saved"));
+            }
+            tx.execute(
+                "INSERT INTO custom_mix_snapshots(rule_id, snapshot_json, updated_at) VALUES(?1, ?2, ?3) \
+                 ON CONFLICT(rule_id) DO UPDATE SET snapshot_json = excluded.snapshot_json, updated_at = excluded.updated_at",
+                params![rule_id, json, unix_now()],
+            ).map_err(db_error)?;
+            tx.commit().map_err(db_error)?;
             Ok(())
         })
     }
@@ -303,6 +397,9 @@ mod tests {
         CustomMixRule {
             id: None,
             name: name.to_string(),
+            description: String::new(),
+            track_count: 24,
+            refresh_interval_minutes: 0,
             artist_mode: MixMode::Allow,
             artist_ids: Vec::new(),
             time_window: [0, 1440],
@@ -332,6 +429,7 @@ mod tests {
 
         db.delete_custom_mix_rule(updated.id.unwrap()).unwrap();
         assert!(db.list_custom_mix_rules().unwrap().is_empty());
+        assert!(db.get_custom_mix_snapshot(updated.id.unwrap()).unwrap().is_none());
         drop(db);
         let _ = std::fs::remove_file(&path);
         let mut wal = PathBuf::from(&path);
@@ -340,5 +438,100 @@ mod tests {
         let mut shm = PathBuf::from(&path);
         shm.set_extension("sqlite-shm");
         let _ = std::fs::remove_file(shm);
+    }
+
+    #[test]
+    fn legacy_custom_mix_rules_use_new_field_defaults() {
+        let legacy: CustomMixRule = serde_json::from_str(r#"{"name":"Legacy"}"#).unwrap();
+        assert_eq!(legacy.description, "");
+        assert_eq!(legacy.track_count, 24);
+        assert_eq!(legacy.refresh_interval_minutes, 0);
+    }
+
+    #[test]
+    fn custom_mix_rule_validation_enforces_description_count_and_cadence() {
+        let mut value = rule("Valid");
+        value.description = "x".repeat(151);
+        assert!(value.validate().unwrap_err().contains("description"));
+        value.description.clear();
+        value.track_count = 51;
+        assert!(value.validate().unwrap_err().contains("trackCount"));
+        value.track_count = 24;
+        value.refresh_interval_minutes = 15;
+        assert!(value.validate().unwrap_err().contains("refreshIntervalMinutes"));
+        value.refresh_interval_minutes = 1440;
+        value.track_count = 50;
+        assert!(value.validate().is_ok());
+    }
+
+    #[test]
+    fn generated_custom_mix_snapshot_round_trips_and_rule_edits_clear_it() {
+        let path = test_db_path();
+        let db = Db::open_at(&path).unwrap();
+        init_schema(&db).unwrap();
+        let mut saved = db.save_custom_mix_rule(rule("Saved selection")).unwrap();
+        let rule_id = saved.id.unwrap();
+        let snapshot = CustomMixSnapshot {
+            rule_fingerprint: fingerprint(&saved),
+            generated_at: 1_800_000_000,
+            tracks: vec![Track {
+                id: -42,
+                path: "soundcloud://42".to_string(),
+                title: "Provider result".to_string(),
+                artist_id: None,
+                artist_name: Some("Artist".to_string()),
+                album_id: None,
+                album_title: None,
+                track_number: None,
+                disc_number: None,
+                duration_sec: Some(180.0),
+                year: None,
+                genre: Some("Ambient".to_string()),
+                cover_path: None,
+                file_size: 0,
+                modified_at: 0,
+                added_at: 1_800_000_000,
+                source: "soundcloud".to_string(),
+                external_id: Some("42".to_string()),
+                last_played_at: None,
+                play_count: 0,
+                skip_count: 0,
+                gain_db: None,
+                peak_db: None,
+            }],
+            warnings: vec!["A sample warning".to_string()],
+        };
+        db.save_custom_mix_snapshot(rule_id, snapshot.clone()).unwrap();
+        let loaded = db.get_custom_mix_snapshot(rule_id).unwrap().unwrap();
+        assert_eq!(loaded.rule_fingerprint, snapshot.rule_fingerprint);
+        assert_eq!(loaded.generated_at, snapshot.generated_at);
+        assert_eq!(loaded.tracks[0].id, -42);
+        assert_eq!(loaded.tracks[0].external_id.as_deref(), Some("42"));
+        assert_eq!(loaded.warnings, snapshot.warnings);
+
+        saved.description = "Changed criteria".to_string();
+        let updated = db.save_custom_mix_rule(saved).unwrap();
+        assert!(db.get_custom_mix_snapshot(rule_id).unwrap().is_none());
+        assert!(db.save_custom_mix_snapshot(rule_id, snapshot.clone()).unwrap_err().contains("changed"));
+
+        let mut refreshed = snapshot;
+        refreshed.rule_fingerprint = fingerprint(&updated);
+        db.save_custom_mix_snapshot(rule_id, refreshed).unwrap();
+        assert!(db.get_custom_mix_snapshot(rule_id).unwrap().is_some());
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+        let mut wal = PathBuf::from(&path);
+        wal.set_extension("sqlite-wal");
+        let _ = std::fs::remove_file(wal);
+        let mut shm = PathBuf::from(&path);
+        shm.set_extension("sqlite-shm");
+        let _ = std::fs::remove_file(shm);
+    }
+
+    fn fingerprint(rule: &CustomMixRule) -> String {
+        let mut value = serde_json::to_value(rule).unwrap();
+        let _ = value.as_object_mut().unwrap().remove("id");
+        serde_json::to_string(&value).unwrap()
     }
 }

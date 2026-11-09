@@ -1,0 +1,195 @@
+.processing-card {
+  container-type: inline-size;
+}
+.processing-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+}
+.processing-title > svg {
+  color: var(--text-muted);
+}
+.processing-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  margin: 16px 0 22px;
+  color: #f2c67c;
+  background: #e3a8460b;
+  border: 1px solid #e3a84635;
+  border-radius: 10px;
+}
+.processing-warning > svg {
+  flex: none;
+  margin-top: 1px;
+}
+.processing-warning p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.65;
+}
+.processing-features {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+.processing-feature {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.processing-feature + .processing-feature {
+  border-left: 1px solid var(--border);
+  padding-left: 22px;
+}
+.processing-feature-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+}
+.processing-feature-heading > svg {
+  color: var(--text-muted);
+  flex: none;
+}
+.processing-feature-heading > h4 {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+.processing-feature-heading > .switch {
+  flex: none;
+}
+.processing-description {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.65;
+  margin: 10px 0 16px;
+}
+.processing-state {
+  margin-top: auto;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 15%, var(--border));
+  background: color-mix(in srgb, var(--bg-elevated) 65%, transparent);
+  min-width: 0;
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+}
+.processing-state-label {
+  display: block;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.processing-state-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.processing-state-main > svg {
+  flex: none;
+}
+.processing-state-main > strong {
+  font-weight: 600;
+}
+.processing-state.is-ready .processing-state-main > svg {
+  color: #78cbb2;
+}
+.processing-state.is-working .processing-state-main > svg {
+  color: var(--accent);
+}
+.processing-state.is-error {
+  border-color: #e693613d;
+}
+.processing-state.is-error .processing-state-main > svg {
+  color: #f0b086;
+}
+.processing-state.is-idle .processing-state-main > svg {
+  color: var(--text-muted);
+}
+.processing-state-note {
+  margin: 7px 0 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.processing-percent {
+  margin-left: auto;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.processing-progress {
+  height: 3px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+  margin-top: 12px;
+}
+.processing-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+.processing-bytes {
+  font-variant-numeric: tabular-nums;
+}
+.processing-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #ffffff05;
+  color: var(--text);
+  font-size: 10px;
+  cursor: pointer;
+}
+.processing-retry:hover {
+  background: #ffffff0c;
+}
+.processing-error {
+  margin-top: 9px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.processing-error > summary {
+  cursor: pointer;
+}
+.processing-error > p {
+  overflow-wrap: anywhere;
+  max-height: 90px;
+  overflow: auto;
+  line-height: 1.5;
+}
+@container (max-width:590px) {
+  .processing-features {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .processing-feature + .processing-feature {
+    padding: 20px 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .processing-card * {
+    transition: none !important;
+  }
+  .processing-state .spin {
+    animation: none;
+  }
+}

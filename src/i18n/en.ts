@@ -1,4 +1,6 @@
 export const en: Record<string, string> = {
+  'hours short': 'h',
+  'minutes short': 'min',
   'Beta tester': 'Beta tester',
   'Enter fullscreen': 'Enter fullscreen',
   'Exit fullscreen': 'Exit fullscreen',

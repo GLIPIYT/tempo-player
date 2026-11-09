@@ -145,6 +145,8 @@ pub fn run() {
             commands::save_custom_mix_rule,
             commands::delete_custom_mix_rule,
             commands::get_custom_mix_candidates,
+            commands::get_custom_mix_snapshot,
+            commands::save_custom_mix_snapshot,
             commands::resolve_library_audio_path,
             native_audio::native_audio_command,
             native_audio::native_audio_snapshot,

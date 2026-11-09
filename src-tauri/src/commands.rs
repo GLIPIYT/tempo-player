@@ -64,6 +64,18 @@ pub async fn get_custom_mix_candidates(state: State<'_, AppState>) -> Result<Vec
     tauri::async_runtime::spawn_blocking(move || db.get_custom_mix_candidates()).await.map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+pub async fn get_custom_mix_snapshot(state: State<'_, AppState>, rule_id: i64) -> Result<Option<crate::custom_mixes::CustomMixSnapshot>, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.get_custom_mix_snapshot(rule_id)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn save_custom_mix_snapshot(state: State<'_, AppState>, rule_id: i64, snapshot: crate::custom_mixes::CustomMixSnapshot) -> Result<(), String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.save_custom_mix_snapshot(rule_id, snapshot)).await.map_err(|e| e.to_string())?
+}
+
 fn sc_cache_options(state: &AppState, configured: Option<String>) -> crate::soundcloud_store::CacheOptions {
     let ytdlp_path = configured.unwrap_or_else(|| {
         state.db.get_app_setting(crate::native_audio::models::NATIVE_STATE_SETTING)

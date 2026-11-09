@@ -8,14 +8,21 @@ import { recommendationLanguagePreference } from '../recommendations/service'
 import { normalizeRecordingText } from '../recommendations/identity'
 import { matchesFavoriteGenre, rankGenreTracks } from '../recommendations/genre'
 import { generateCustomMix } from './rules'
-import type { CustomMixCandidate, CustomMixRule } from './types'
+import type {
+  CustomMixCandidate,
+  CustomMixGeneratedSelection,
+  CustomMixGenerationReason,
+  CustomMixRule,
+  CustomMixSnapshot,
+} from './types'
+import { normalizeCustomMixRule } from './types'
+import { customMixRuleFingerprint, shouldRegenerateCustomMixSnapshot } from './snapshot'
 
-const PAGE_SIZE = 40
+const PAGE_SIZE = 50
 const MAX_GENRE_SEARCHES = 8
 const MAX_ARTIST_SEEDS = 2
 const MAX_TRACK_SEEDS = 2
 const PERSONAL_ACOUSTIC_AFFINITY_MIN = 0.3
-const MIX_TARGET = 24
 
 export interface OnlineGenreAugmentationOptions {
   maxGenres?: number
@@ -27,11 +34,21 @@ export interface OnlineGenreAugmentation {
   warnings: string[]
 }
 
-export const listCustomMixRules = (): Promise<CustomMixRule[]> =>
-  invoke<CustomMixRule[]>('list_custom_mix_rules')
+export interface GenerateCustomMixSelectionOptions {
+  reason: CustomMixGenerationReason
+  /** Useful for a forced user refresh; `reason: 'refresh'` is always forced. */
+  force?: boolean
+  /** Unix seconds, injectable for deterministic tests. */
+  now?: number
+}
 
-export const saveCustomMixRule = (rule: CustomMixRule): Promise<CustomMixRule> =>
-  invoke<CustomMixRule>('save_custom_mix_rule', { rule })
+const pendingGenerations = new Map<string, Promise<CustomMixGeneratedSelection>>()
+
+export const listCustomMixRules = (): Promise<CustomMixRule[]> =>
+  invoke<CustomMixRule[]>('list_custom_mix_rules').then((rules) => rules.map(normalizeCustomMixRule))
+
+export const saveCustomMixRule = async (rule: CustomMixRule): Promise<CustomMixRule> =>
+  normalizeCustomMixRule(await invoke<CustomMixRule>('save_custom_mix_rule', { rule: normalizeCustomMixRule(rule) }))
 
 export const deleteCustomMixRule = (ruleId: number): Promise<void> =>
   invoke<void>('delete_custom_mix_rule', { ruleId })
@@ -39,11 +56,98 @@ export const deleteCustomMixRule = (ruleId: number): Promise<void> =>
 export const getCustomMixCandidates = (): Promise<CustomMixCandidate[]> =>
   invoke<CustomMixCandidate[]>('get_custom_mix_candidates')
 
+export const getCustomMixSnapshot = (ruleId: number): Promise<CustomMixSnapshot | null> =>
+  invoke<CustomMixSnapshot | null>('get_custom_mix_snapshot', { ruleId })
+
+export const saveCustomMixSnapshot = (ruleId: number, snapshot: CustomMixSnapshot): Promise<void> =>
+  invoke<void>('save_custom_mix_snapshot', { ruleId, snapshot })
+
+async function generateCustomMixSelectionNow(
+  rawRule: CustomMixRule,
+  libraryCandidates: readonly CustomMixCandidate[],
+  options: GenerateCustomMixSelectionOptions,
+): Promise<CustomMixGeneratedSelection> {
+  const rule = normalizeCustomMixRule(rawRule)
+  const now = Math.floor(options.now ?? Date.now() / 1000)
+  let saved: CustomMixSnapshot | null = null
+  if (rule.id != null) {
+    try {
+      saved = await getCustomMixSnapshot(rule.id)
+    } catch {
+      // A snapshot-store error must not prevent a fresh in-memory mix.
+    }
+  }
+  if (saved && !options.force && !shouldRegenerateCustomMixSnapshot(rule, saved, options.reason, now)) {
+    return { tracks: saved.tracks, warnings: saved.warnings, generatedAt: saved.generatedAt, fromCache: true }
+  }
+
+  let online: OnlineGenreAugmentation = { candidates: [], warnings: [] }
+  if (rule.specials.includes('onlineGenre')) {
+    online = await augmentOnlineGenreCandidates(rule, libraryCandidates)
+  }
+  const generated = generateCustomMix(rule, [...libraryCandidates, ...online.candidates], {
+    limit: rule.trackCount,
+    now,
+  })
+  const warnings = [...new Set([...generated.warnings, ...online.warnings])]
+  const result: CustomMixGeneratedSelection = {
+    tracks: generated.tracks,
+    warnings,
+    generatedAt: now,
+    fromCache: false,
+  }
+
+  // Empty provider failures must never replace a previously useful snapshot.
+  if (generated.tracks.length > 0 && rule.id != null) {
+    const next: CustomMixSnapshot = {
+      ruleFingerprint: customMixRuleFingerprint(rule),
+      generatedAt: now,
+      tracks: generated.tracks,
+      warnings,
+    }
+    try {
+      await saveCustomMixSnapshot(rule.id, next)
+    } catch {
+      result.warnings = [...result.warnings, 'This selection could not be saved for the next time you open it.']
+    }
+  } else if (generated.tracks.length === 0 && saved?.tracks.length
+    && saved.ruleFingerprint === customMixRuleFingerprint(rule)) {
+    return {
+      tracks: saved.tracks,
+      warnings: [...new Set([...saved.warnings, ...warnings, 'The mix could not be refreshed; its previous selection is still available.'])],
+      generatedAt: saved.generatedAt,
+      fromCache: true,
+    }
+  }
+  return result
+}
+
+export function generateCustomMixSelection(
+  rule: CustomMixRule,
+  candidates: readonly CustomMixCandidate[],
+  options: GenerateCustomMixSelectionOptions,
+): Promise<CustomMixGeneratedSelection> {
+  const force = options.force || options.reason === 'refresh'
+  if (force) return generateCustomMixSelectionNow(rule, candidates, options)
+  const key = `${rule.id ?? 'new'}:${customMixRuleFingerprint(rule)}:${options.reason}`
+  const pending = pendingGenerations.get(key)
+  if (pending) return pending
+  const request = generateCustomMixSelectionNow(rule, candidates, options)
+  pendingGenerations.set(key, request)
+  void request.finally(() => {
+    if (pendingGenerations.get(key) === request) pendingGenerations.delete(key)
+  }).catch(() => undefined)
+  return request
+}
+
 export const customMixService = {
   list: listCustomMixRules,
   save: saveCustomMixRule,
   delete: deleteCustomMixRule,
   getCandidates: getCustomMixCandidates,
+  getSnapshot: getCustomMixSnapshot,
+  saveSnapshot: saveCustomMixSnapshot,
+  generate: generateCustomMixSelection,
   augmentOnlineGenre: augmentOnlineGenreCandidates,
 }
 
@@ -173,10 +277,10 @@ function hasLocalGenreQuotaShortage(
 ): boolean {
   const [minimum] = rule.genrePercent
   if (minimum <= 0 || (rule.genrePercent[0] === 0 && rule.genrePercent[1] === 100)) return false
-  const local = generateCustomMix(rule, candidates, { limit: MIX_TARGET, seed: 'online-genre-capacity' })
+  const local = generateCustomMix(rule, candidates, { limit: rule.trackCount, seed: 'online-genre-capacity' })
   const genres = new Set(rule.genres.map(normalizeName))
   const genreCount = local.tracks.filter((track) => normalizeGenre(track.genre).some((genre) => genres.has(genre))).length
-  return genreCount < Math.ceil(MIX_TARGET * minimum / 100)
+  return genreCount < Math.ceil(rule.trackCount * minimum / 100)
 }
 
 function hasTasteEvidence(profile: TasteProfile | null): boolean {
