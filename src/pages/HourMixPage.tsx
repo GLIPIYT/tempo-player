@@ -1,8 +1,10 @@
+import { useFormatCount } from '../i18n/count'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { save } from '@tauri-apps/plugin-dialog'
-import { FileDown, Play, Pencil, RefreshCw } from 'lucide-react'
+import { Clock3, FileDown, ListMusic, Play, Pencil, RefreshCw, Shuffle } from 'lucide-react'
 import { api } from '../api/client'
-import Cover from '../components/common/Cover'
+import { CollectionTrackHeading } from '../components/common/CollectionCatalog'
+import CollectionArtwork from '../components/common/CollectionArtwork'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import TrackList from '../components/common/TrackList'
 import { toast } from '../components/common/Toast'
@@ -24,8 +26,10 @@ import { mixMessage } from '../features/mixes/messages'
 
 export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
   const t = useT()
+  const count = useFormatCount()
   const player = usePlayer()
   const { navigate } = useNav()
+  const [query, setQuery] = useState('')
   const [exportBusy, setExportBusy] = useState(false)
   const [editing, setEditing] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -46,10 +50,8 @@ export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
       generationActive.current = true
       setGenerating(true)
       try {
-        const library = await customMixService.getCandidates()
-        const result = await customMixService.generate(rule, library, {
-          reason,
-        })
+        const cached = reason === 'open' ? await customMixService.getReusableSnapshot(rule) : null
+        const result = cached ?? await customMixService.generate(rule, await customMixService.getCandidates(), { reason })
         if (token !== request.current) return
         generatedAt.current = result.generatedAt
         setResolvedMix({
@@ -74,6 +76,7 @@ export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
   )
   useEffect(() => {
     generatedAt.current = null
+    setQuery('')
     const rule = inputMix.current.rule
     if (rule)
       void generate(rule, 'open').catch((error) =>
@@ -81,6 +84,7 @@ export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
       )
     return invalidateGeneration
   }, [initialMix.key, generate, invalidateGeneration])
+  const shownTracks = mix.tracks.filter(track => `${track.title} ${track.artistName ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
   const refreshMinutes = mix.rule?.refreshIntervalMinutes ?? 0
   useEffect(() => {
     if (refreshMinutes <= 0) return
@@ -173,31 +177,14 @@ export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
       ) : null}
       <EditorialDetailLayout
         className="local-playlist-page hour-mix-page"
+        variant="panorama"
+        artworkPath={mix.tracks.find(track => track.coverPath)?.coverPath}
+        artworkLabel={mix.title}
+        artworkPreview={<CollectionArtwork paths={mix.tracks.map(track => track.coverPath)} label={mix.title} eager />}
+        kindIcon={mix.kind === 'hour' ? <Clock3 size={13} /> : <ListMusic size={13} />}
         onBack={() => navigate({ name: 'home' })}
         backLabel={t('Home')}
-        art={
-          mix.tracks.length > 1 ? (
-            <div
-              className="playlist-cover-mosaic"
-              aria-label={t('Playlist cover')}
-            >
-              {mix.tracks.slice(0, 4).map((track) => (
-                <Cover
-                  key={track.id}
-                  path={track.coverPath}
-                  label={track.title}
-                  size={112}
-                />
-              ))}
-            </div>
-          ) : (
-            <Cover
-              path={mix.tracks[0]?.coverPath ?? null}
-              label={mix.title}
-              size={232}
-            />
-          )
-        }
+        art={<CollectionArtwork paths={mix.tracks.map(track => track.coverPath)} label={mix.title} eager />}
         kind={t(
           mix.kind === 'custom'
             ? 'Custom mix'
@@ -213,8 +200,7 @@ export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
         }
         meta={
           <span>
-            {mix.tracks.length}{' '}
-            {t(mix.tracks.length === 1 ? 'track' : 'tracks')}
+            {count(mix.tracks.length, 'track')}
             {mix.kind !== 'custom' ? ` · ${t('From your library')}` : ''}
           </span>
         }
@@ -228,14 +214,16 @@ export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
               <Play size={14} fill="currentColor" />
               {t('Play mix')}
             </button>
+            <button type="button" className={`collection-icon-action${player.shuffle ? ' is-active' : ''}`} disabled={!mix.tracks.length} title={t('Shuffle')} aria-label={t('Shuffle')} onClick={() => { if (!player.shuffle) player.toggleShuffle(); player.playTracks(tracksToUnified(mix.tracks), 0) }}><Shuffle size={19} /></button>
             {mix.rule ? (
               <>
-                <button className="btn" onClick={() => setEditing(true)}>
+                <button className="collection-icon-action" title={t('Edit rule')} aria-label={t('Edit rule')} onClick={() => setEditing(true)}>
                   <Pencil size={14} />
-                  {t('Edit rule')}
                 </button>
                 <button
-                  className="btn"
+                  className="collection-icon-action"
+                  aria-label={t('Refresh')}
+                  title={t('Refresh')}
                   disabled={generating}
                   onClick={() =>
                     void regenerate(mix.rule!).catch((e) =>
@@ -247,18 +235,17 @@ export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
                     size={14}
                     className={generating ? 'spin' : undefined}
                   />
-                  {t('Refresh')}
                 </button>
               </>
             ) : null}
             <button
-              className="btn"
+              className="collection-icon-action"
+              aria-label={t('Export playlist (m3u8)')}
               disabled={exportBusy}
               title={t('Export playlist (m3u8)')}
               onClick={() => void exportMix()}
             >
               <FileDown size={14} />
-              m3u8
             </button>
           </>
         }
@@ -273,7 +260,8 @@ export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
             {t('No tracks match this rule. Try widening the filters.')}
           </p>
         ) : null}
-        <TrackList tracks={mix.tracks} showHeader />
+        <CollectionTrackHeading count={shownTracks.length} query={query} onQuery={setQuery} />
+        {mix.tracks.length > 0 && !shownTracks.length ? <p className="muted">{t('No tracks found')}</p> : <TrackList showSource tracks={shownTracks} showHeader />}
       </EditorialDetailLayout>
     </>
   )

@@ -1,5 +1,5 @@
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { ListMusic, Play, Plus, Search, Star, StarOff, Trash2, Upload } from 'lucide-react'
+import { Clock3, Ellipsis, ListMusic, Play, Plus, Search, Star, StarOff, Trash2, Upload } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
@@ -14,7 +14,8 @@ import { usePlayer } from '../player'
 import { trackToUnified } from '../utils/unified'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
-import Cover from '../components/common/Cover'
+import CollectionArtwork from '../components/common/CollectionArtwork'
+import { CollectionCatalogHeading, CollectionCatalogToolbar } from '../components/common/CollectionCatalog'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
 import { toast } from '../components/common/Toast'
@@ -35,10 +36,11 @@ export default function PlaylistsPage() {
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [query, setQuery] = useState('')
-  const [sort, setSort] = useState<PlaylistSort>('name')
+  const [sort, setSort] = useState<PlaylistSort>('updated')
+  const [favoritesOnly, setFavoritesOnly] = useState(false)
   const search = query.trim().toLocaleLowerCase()
   const visiblePlaylists = (data ?? [])
-    .filter((playlist) => playlistDisplayName(playlist, playlist.name, t).toLocaleLowerCase().includes(search))
+    .filter((playlist) => (!favoritesOnly || playlist.pinned) && playlistDisplayName(playlist, playlist.name, t).toLocaleLowerCase().includes(search))
     .sort((a, b) => {
       if (sort === 'updated') return b.updatedAt - a.updatedAt || a.id - b.id
       if (sort === 'tracks') return (b.trackCount ?? 0) - (a.trackCount ?? 0) || a.name.localeCompare(b.name)
@@ -70,7 +72,7 @@ export default function PlaylistsPage() {
   }
 
   const playlistMenu = (
-    event: ReactMouseEvent<HTMLDivElement>,
+    event: ReactMouseEvent,
     playlist: Playlist,
     displayName: string,
   ) => {
@@ -142,29 +144,18 @@ export default function PlaylistsPage() {
   }
 
   return (
-    <div className="page playlist-list-page">
-      <div className="page-head collection-library-heading">
-        <div>
-          <h1 className="page-title">{t('Playlists')}</h1>
-          <div className="page-sub">{data ? formatCount(data.length, 'playlist', t, lang) : t('Loading…')}</div>
-        </div>
-        <div className="page-actions">
-          <button className="btn btn-primary" onClick={() => { setName(''); setCreating(true) }}><Plus size={15} />{t('New playlist')}</button>
-          <button className="btn" onClick={() => void importM3u8()} title={t('Import playlist (m3u8)')}><Upload size={15} />{t('Import')}</button>
-        </div>
-      </div>
-
-      <div className="collection-library-toolbar">
-        <label className="collection-library-search">
-          <Search size={15} />
-          <input type="search" value={query} aria-label={t('Search playlists')} placeholder={t('Search playlists')} onChange={(event) => setQuery(event.target.value)} />
-        </label>
-        <select className="select" value={sort} aria-label={t('Sort by')} onChange={(event) => setSort(event.target.value as PlaylistSort)}>
+    <div className="page playlist-list-page collection-catalog collection-playlists-air">
+      <CollectionCatalogHeading title={t('Playlists')} count={data?.length} actions={<>
+        <button className="btn btn-primary" onClick={() => { setName(''); setCreating(true) }}><Plus size={15} />{t('New playlist')}</button>
+        <button className="collection-icon-action" onClick={() => void importM3u8()} title={t('Import playlist (m3u8)')} aria-label={t('Import playlist (m3u8)')}><Upload size={18} /></button>
+      </>} />
+      <CollectionCatalogToolbar query={query} onQuery={setQuery} placeholder={t('Search playlists')} favoritesOnly={favoritesOnly} onFavoritesOnly={setFavoritesOnly} allLabel={t('All playlists')}>
+        <select value={sort} aria-label={t('Sort by')} onChange={event => setSort(event.target.value as PlaylistSort)}>
           <option value="name">{t('Sort by title')}</option>
           <option value="updated">{t('Recently updated')}</option>
           <option value="tracks">{t('Most tracks')}</option>
         </select>
-      </div>
+      </CollectionCatalogToolbar>
 
       {error ? <div className="error-line">{error}</div> : null}
       {loading && data === null ? (
@@ -178,28 +169,26 @@ export default function PlaylistsPage() {
       ) : visiblePlaylists.length === 0 ? (
         <EmptyState icon={<Search size={30} />} title={t('No playlists match')} hint={t('Try another search.')} />
       ) : (
-        <>
-          <div className="playlist-list-header" aria-hidden="true"><span>{t('Playlist')}</span><span></span><span>{t('Tracks')}</span><span></span></div>
-          <div className="playlist-list-rows">
-            {visiblePlaylists.map((playlist) => {
-              const displayName = playlistDisplayName(playlist, playlist.name, t)
-              const covers = previews.data?.[playlist.id] ?? (playlist.coverPath ? [playlist.coverPath] : [])
-              return (
-                <div key={playlist.id} className="playlist-list-row" onContextMenu={(event) => playlistMenu(event, playlist, displayName)}>
-                  <button type="button" className="playlist-list-open" onClick={() => navigate({ name: 'playlist', id: playlist.id })} title={displayName}>
-                    <span className="playlist-list-cover"><CacheBadge kind="playlist" scId={null} localId={playlist.id}>
-                      {playlist.coverPath ? <Cover path={playlist.coverPath} label={displayName} size={56} /> : <span className="playlist-list-fallback"><ListMusic size={24} /></span>}
-                    </CacheBadge></span>
-                    <span className="playlist-list-title"><strong>{displayName}</strong>{playlist.pinned ? <small><Star size={12} fill="currentColor" /> {t('Pinned')}</small> : null}</span>
-                  </button>
-                  <div className="playlist-list-covers" aria-hidden="true">{covers.map((path) => <Cover key={path} path={path} label={displayName} size={30} />)}</div>
-                  <span className="playlist-list-count">{formatCount(playlist.trackCount ?? 0, 'track', t, lang)}</span>
-                  <button type="button" className="playlist-list-play" disabled={(playlist.trackCount ?? 0) === 0} aria-label={`${t('Play all')}: ${displayName}`} onClick={() => void playPlaylist(playlist)}><Play size={16} fill="currentColor" /></button>
-                </div>
-              )
-            })}
-          </div>
-        </>
+        <div className="collection-playlist-grid">
+          {visiblePlaylists.map(playlist => {
+            const displayName = playlistDisplayName(playlist, playlist.name, t)
+            const paths = playlist.coverPath ? [playlist.coverPath] : previews.data?.[playlist.id] ?? []
+            const updated = new Date(playlist.updatedAt * 1000).toLocaleDateString(lang, { day: 'numeric', month: 'short' })
+            return <article key={playlist.id} className="collection-playlist-card" onContextMenu={event => playlistMenu(event, playlist, displayName)}>
+              <button type="button" className="collection-playlist-open" title={displayName} onClick={() => navigate({ name: 'playlist', id: playlist.id })}>
+                <span className="collection-playlist-art"><CacheBadge kind="playlist" scId={null} localId={playlist.id}><CollectionArtwork paths={paths} label={displayName} likes={playlist.isLikes} /></CacheBadge><span className="collection-art-count"><ListMusic size={12} />{formatCount(playlist.trackCount ?? 0, 'track', t, lang)}</span></span>
+                <strong>{displayName}</strong>
+                <span className="collection-playlist-meta"><span>{formatCount(playlist.trackCount ?? 0, 'track', t, lang)}</span><span title={t('Recently updated')}><Clock3 size={10} />{updated}</span></span>
+              </button>
+              <div className="collection-playlist-card-actions">
+                <button type="button" className={`collection-icon-action${playlist.pinned ? ' is-active' : ''}`} aria-label={`${playlist.pinned ? t('Remove from favorites') : t('Add to favorites')}: ${displayName}`} aria-pressed={playlist.pinned ?? false} onClick={() => { void api.setPlaylistPinned(playlist.id, !playlist.pinned).then(bumpLibraryVersion).catch(cause => toast.show(String(cause), 'error')) }}><Star size={15} fill={playlist.pinned ? 'currentColor' : 'none'} /></button>
+                <button type="button" className="collection-icon-action" aria-label={`${t('More')}: ${displayName}`} onClick={event => playlistMenu(event, playlist, displayName)}><Ellipsis size={18} /></button>
+              </div>
+              <button type="button" className="collection-card-play" disabled={(playlist.trackCount ?? 0) === 0} aria-label={`${t('Play all')}: ${displayName}`} onClick={() => void playPlaylist(playlist)}><Play size={17} fill="currentColor" /></button>
+            </article>
+          })}
+          <button type="button" className="collection-create-card" onClick={() => { setName(''); setCreating(true) }}><span><Plus size={29} /></span><strong>{t('New playlist')}</strong></button>
+        </div>
       )}
 
       <Modal open={creating} title={t('New playlist')} onClose={() => setCreating(false)}>

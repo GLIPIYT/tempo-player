@@ -7,6 +7,7 @@ import { fmtTime } from '../../utils/format'
 import { trackToUnified } from '../../utils/unified'
 import { beginTrackDrag } from '../../dnd/trackDrag'
 import Cover from './Cover'
+import TrackSourceIcon from './TrackSourceIcon'
 import TrackMenu from './TrackMenu'
 import type { TrackMenuHandle } from './TrackMenu'
 
@@ -16,9 +17,10 @@ interface TrackListProps {
   showIndex?: boolean
   showHeader?: boolean
   onPlayAt?: (index: number) => void
+  showSource?: boolean
 }
 
-export default function TrackList({ tracks, showAlbum = true, showIndex = true, showHeader = false, onPlayAt }: TrackListProps) {
+export default function TrackList({ tracks, showAlbum = true, showIndex = true, showHeader = false, onPlayAt, showSource = false }: TrackListProps) {
   const t = useT()
   const player = usePlayer()
   // one handle per rendered row, so right-clicking a row opens that row's menu
@@ -96,7 +98,7 @@ export default function TrackList({ tracks, showAlbum = true, showIndex = true, 
               <Cover path={t.coverPath} label={t.title} size={30} />
               <div className="tl-meta">
                 <span className="tl-title">{t.title}</span>
-                <span className="tl-artist">{t.artistName ?? unknownArtist}</span>
+                <span className="tl-artist"><span className="tl-artist-name">{t.artistName ?? unknownArtist}</span>{showSource && <TrackSourceIcon source={t.source} />}</span>
               </div>
             </div>
             {showAlbum ? <div className="tl-album">{t.albumTitle ?? '—'}</div> : null}

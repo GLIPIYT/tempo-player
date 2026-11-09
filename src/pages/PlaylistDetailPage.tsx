@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useFormatCount } from '../i18n/count'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { save } from '@tauri-apps/plugin-dialog'
-import { Check, Download, FileDown, ListMusic, Pencil, Play, Star, StarOff, Trash2, X } from 'lucide-react'
+import { Check, Download, Ellipsis, FileDown, Folder, ListMusic, Pencil, Play, Shuffle, Star, Trash2, X } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { useT } from '../i18n'
 import { api } from '../api/client'
@@ -13,10 +14,14 @@ import { fmtTime } from '../utils/format'
 import { trackToUnified } from '../utils/unified'
 import { playlistDisplayName } from '../utils/playlists'
 import Cover from '../components/common/Cover'
+import { CollectionTrackHeading } from '../components/common/CollectionCatalog'
+import CollectionArtwork from '../components/common/CollectionArtwork'
+import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import CacheBadge from '../soundcloud/CacheBadge'
 import { toast } from '../components/common/Toast'
 import EmptyState from '../components/common/EmptyState'
+import TrackSourceIcon from '../components/common/TrackSourceIcon'
 import TrackMenu, { type TrackMenuHandle } from '../components/common/TrackMenu'
 import { beginTrackDrag } from '../dnd/trackDrag'
 
@@ -27,10 +32,13 @@ function errText(e: unknown): string {
 export default function PlaylistDetailPage({ playlistId }: { playlistId: number }) {
   const { navigate } = useNav()
   const t = useT()
+  const count = useFormatCount()
   const player = usePlayer()
   const version = useLibraryVersion()
   const detail = useAsync(() => api.getPlaylist(playlistId), [playlistId, version])
   const lists = useAsync(() => api.listPlaylists(), [version])
+  const [query, setQuery] = useState('')
+  useEffect(() => setQuery(''), [playlistId])
   const [renaming, setRenaming] = useState(false)
   const [name, setName] = useState('')
   const [savedRename, setSavedRename] = useState<{ playlistId: number; name: string } | null>(null)
@@ -98,6 +106,8 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const baseItems = detail.data ?? []
   const items = orderOverride ?? baseItems
   const tracks: Track[] = items.map((p) => p.track)
+  const search = query.trim().toLocaleLowerCase()
+  const shownItems = items.filter(item => `${item.track.title} ${item.track.artistName ?? ''}`.toLocaleLowerCase().includes(search))
   const playlist = (lists.data ?? []).find((pl) => pl.id === playlistId)
 
   const reloadAll = () => {
@@ -216,33 +226,33 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
     setRenaming(false)
   }
 
+  const artworkPaths = playlist?.coverPath ? [playlist.coverPath] : tracks.map(track => track.coverPath)
+  const artwork = <CollectionArtwork paths={artworkPaths} label={displayName} likes={isLikes} eager />
+  const playAll = (shuffle = false) => {
+    if (!tracks.length) return
+    if (shuffle && !player.shuffle) player.toggleShuffle()
+    player.playTracks(tracks.map(trackToUnified), 0)
+    void api.recordPlaylistStart(playlistId).then(bumpLibraryVersion).catch(cause => toast.show(String(cause), 'error'))
+  }
+  const collectionMenu = (event: MouseEvent) => {
+    const items: ContextMenuItem[] = []
+    if (!isLikes) items.push({ id: 'rename', label: t('Rename'), icon: <Pencil size={14} />, disabled: busy, onSelect: beginRename })
+    items.push({ id: 'export', label: t('Export playlist (m3u8)'), icon: <FileDown size={14} />, disabled: exportBusy || !tracks.length, onSelect: () => void exportM3u8() })
+    if (isLikes) items.push({ id: 'cache', label: t('Download to cache'), icon: <Download size={14} />, disabled: downloadBusy || !tracks.some(track => track.source === 'soundcloud'), onSelect: () => void downloadToCache() })
+    else items.push({ id: 'delete', label: t('Delete'), icon: <Trash2 size={14} />, danger: true, disabled: busy, onSelect: () => void destroy() })
+    openContextMenu({ x: event.clientX, y: event.clientY, title: displayName, items })
+  }
   return (
     <EditorialDetailLayout
       className="local-playlist-page"
+      variant="panorama"
+      artworkPath={artworkPaths.find(Boolean)}
+      artworkLabel={displayName}
+      artworkPreview={artwork}
+      kindIcon={<ListMusic size={13} />}
       onBack={() => navigate({ name: 'playlists' })}
       backLabel={t('Playlists')}
-      art={
-        <CacheBadge kind="playlist" scId={null} localId={playlistId}>
-          {items.length > 1 ? (
-            <div className="playlist-cover-mosaic" aria-label={t('Playlist cover')}>
-              {items.slice(0, 4).map((item) => (
-                <Cover
-                  key={`${item.track.id}-${item.position}`}
-                  path={item.track.coverPath}
-                  label={item.track.title}
-                  size={112}
-                />
-              ))}
-            </div>
-          ) : playlist?.coverPath ? (
-            <Cover path={playlist.coverPath} label={displayName} size={232} />
-          ) : (
-            <span className="detail-side-fallback">
-              <ListMusic size={34} />
-            </span>
-          )}
-        </CacheBadge>
-      }
+      art={<CacheBadge kind="playlist" scId={null} localId={playlistId}>{artwork}</CacheBadge>}
       kind={t('Playlist')}
       title={playlist && !isLikes ? (
         renaming ? (
@@ -277,80 +287,29 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
       ) : displayName}
       meta={
         <span>
-          {items.length === 1 ? `${items.length} ${t('track')}` : `${items.length} ${t('tracks')}`}
+          {count(items.length, 'track')} · {fmtTime(tracks.reduce((sum, track) => sum + (track.durationSec ?? 0), 0))}
         </span>
       }
-      actions={
-        <>
-          {tracks.length > 0 ? (
-            <button
-              className="btn btn-primary"
-              onClick={() => {
-                player.playTracks(tracks.map((t) => trackToUnified(t)), 0)
-                void api.recordPlaylistStart(playlistId).then(() => bumpLibraryVersion()).catch((cause: unknown) => toast.show(String(cause), 'error'))
-              }}
-            >
-              {t('Play all')}
-            </button>
-          ) : null}
-          {playlist ? (
-            <>
-              <button
-                className="btn"
-                title={playlist.pinned ? t('Remove from favorites') : t('Add to favorites')}
-                onClick={() => void togglePin()}
-              >
-                {playlist.pinned ? <StarOff size={14} /> : <Star size={14} />}
-                {playlist.pinned ? t('Remove from favorites') : t('Add to favorites')}
-              </button>
-              <button
-                className="btn"
-                onClick={beginRename}
-              >
-                <Pencil size={14} />
-                {t('Rename')}
-              </button>
-              <button
-                className="btn"
-                disabled={exportBusy || items.length === 0}
-                title={t('Export playlist (m3u8)')}
-                onClick={() => void exportM3u8()}
-              >
-                <FileDown size={14} />
-                m3u8
-              </button>
-              {isLikes ? (
-                <button
-                  className="btn"
-                  disabled={downloadBusy || !items.some((it) => it.track.source === 'soundcloud')}
-                  title={t('Download to cache')}
-                  onClick={() => void downloadToCache()}
-                >
-                  <Download size={14} />
-                  {t('Download to cache')}
-                </button>
-              ) : null}
-              {isLikes ? null : (
-                <button className="btn btn-danger" disabled={busy} onClick={() => void destroy()}>
-                  <Trash2 size={14} />
-                  {t('Delete')}
-                </button>
-              )}
-            </>
-          ) : null}
-        </>
-      }
+      actions={<>
+        {tracks.length > 0 && <button className="btn btn-primary" onClick={() => playAll()}><Play size={15} fill="currentColor" />{t('Play all')}</button>}
+        {playlist && <>
+          <button type="button" className={`collection-icon-action${playlist.pinned ? ' is-active' : ''}`} title={playlist.pinned ? t('Remove from favorites') : t('Add to favorites')} aria-label={playlist.pinned ? t('Remove from favorites') : t('Add to favorites')} aria-pressed={playlist.pinned ?? false} onClick={() => void togglePin()}><Star size={21} fill={playlist.pinned ? 'currentColor' : 'none'} /></button>
+          <button type="button" className={`collection-icon-action${player.shuffle ? ' is-active' : ''}`} title={t('Shuffle')} aria-label={t('Shuffle')} disabled={!tracks.length} onClick={() => playAll(true)}><Shuffle size={19} /></button>
+          <button type="button" className="collection-icon-action" aria-label={t('More')} title={t('More')} onClick={collectionMenu}><Ellipsis size={22} /></button>
+        </>}
+      </>}
     >
 
       {playlistError ? <div className="error-line">{playlistError}</div> : null}
 
+      <CollectionTrackHeading count={shownItems.length} query={query} onQuery={setQuery} />
       {items.length === 0 ? (
         <EmptyState
           icon={<ListMusic size={34} />}
           title={t('This playlist is empty')}
           hint={t('Add tracks from your library to fill it.')}
         />
-      ) : (
+      ) : !shownItems.length ? <EmptyState title={t('No tracks found')} hint={t('Try another search.')} /> : (
         <div className="tl tl-withactions tl-has-header">
           <div className="tl-head playlist-track-head" aria-hidden="true">
             <span className="tl-head-index">#</span>
@@ -360,9 +319,10 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
             <span className="tl-head-remove" />
             <span className="tl-head-menu" />
           </div>
-          {items.map((p, i) => {
+          {shownItems.map((p) => {
+            const i = items.indexOf(p)
             const t = p.track
-            const playing = player.currentTrack?.sourceId === String(t.id)
+            const playing = player.currentTrack?.source === t.source && player.currentTrack.sourceId === (t.source === 'local' ? String(t.id) : t.externalId)
             const dragging = dragFromPos === p.position
             const before = dropEdge !== null && dropEdge.pos === p.position && !dropEdge.after && !dragging
             const after = dropEdge !== null && dropEdge.pos === p.position && dropEdge.after && !dragging
@@ -376,7 +336,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                   (before ? ' drop-before' : '') +
                   (after ? ' drop-after' : '')
                 }
-                data-dnd-sort-group={`playlist-${playlistId}`}
+                data-dnd-sort-group={search ? undefined : `playlist-${playlistId}`}
                 data-dnd-sort-position={p.position}
                 onPointerDown={(e) => {
                   if (e.button !== 0) return
@@ -386,7 +346,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                     coverPath: t.coverPath,
                     trackId: t.id,
                     sourceTrack: t,
-                    sort: {
+                    sort: search ? undefined : {
                       group: `playlist-${playlistId}`,
                       position: p.position,
                       onDrop: (fromPosition, insertionIndex) => dropAtInsertion(fromPosition, insertionIndex),
@@ -425,7 +385,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                   <Cover path={t.coverPath} label={t.title} size={30} />
                   <div className="tl-meta">
                     <span className="tl-title">{t.title}</span>
-                    <span className="tl-artist">{t.artistName ?? unknownArtist}</span>
+                    <span className="tl-artist"><span className="tl-artist-name">{t.artistName ?? unknownArtist}</span><TrackSourceIcon source={t.source} /></span>
                   </div>
                 </div>
                 <div className="tl-album">{t.albumTitle ?? '—'}</div>
@@ -461,6 +421,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
         </div>
       )}
 
+      <footer className="collection-detail-footnote"><Folder size={13} />{t('In library')}</footer>
     </EditorialDetailLayout>
   )
 }

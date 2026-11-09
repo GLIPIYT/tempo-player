@@ -1,4 +1,5 @@
-import type { Lang } from './index'
+import { resolveLang, useT, type Lang } from './index'
+import { useSettings } from '../state/settings'
 
 type Unit = 'artist' | 'album' | 'playlist' | 'track'
 
@@ -13,4 +14,11 @@ export function formatCount(count: number, unit: Unit, t: (key: string) => strin
   const category = new Intl.PluralRules(lang).select(count)
   const [one, few, other] = forms[unit]
   return `${count} ${t(category === 'one' ? one : category === 'few' ? few : other)}`
+}
+
+export function useFormatCount(): (count: number, unit: Unit) => string {
+  const t = useT()
+  const { settings } = useSettings()
+  const lang = resolveLang(settings.lang)
+  return (count, unit) => formatCount(count, unit, t, lang)
 }

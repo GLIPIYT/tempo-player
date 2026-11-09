@@ -1,18 +1,17 @@
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { Disc3, Play, Search, Star, StarOff } from 'lucide-react'
+import { Play, Search, Star, StarOff } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
 import type { Album } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
-import { resolveLang, useT } from '../i18n'
-import { formatCount } from '../i18n/count'
-import { useSettings } from '../state/settings'
+import { useT } from '../i18n'
 import { usePlayer } from '../player'
 import { tracksToUnified } from '../utils/unified'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
-import Cover from '../components/common/Cover'
+import CollectionAlbumGrid from '../components/common/CollectionAlbumGrid'
+import { CollectionCatalogHeading, CollectionCatalogToolbar } from '../components/common/CollectionCatalog'
 import EmptyState from '../components/common/EmptyState'
 
 type AlbumSort = 'title' | 'artist' | 'year'
@@ -20,16 +19,17 @@ type AlbumSort = 'title' | 'artist' | 'year'
 export default function AlbumsPage() {
   const { navigate } = useNav()
   const t = useT()
-  const { settings } = useSettings()
-  const lang = resolveLang(settings.lang)
   const player = usePlayer()
   const version = useLibraryVersion()
   const { data, loading, error } = useAsync(() => api.listAlbums(''), [version])
+  const favorites = useAsync(() => api.listFavoriteAlbums(), [version])
+  const favoriteIds = new Set((favorites.data ?? []).map(album => album.id))
+  const [favoritesOnly, setFavoritesOnly] = useState(false)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<AlbumSort>('title')
   const search = query.trim().toLocaleLowerCase()
   const visibleAlbums = (data ?? [])
-    .filter((album) => `${album.title} ${album.artistName ?? ''}`.toLocaleLowerCase().includes(search))
+    .filter((album) => (!favoritesOnly || favoriteIds.has(album.id)) && `${album.title} ${album.artistName ?? ''}`.toLocaleLowerCase().includes(search))
     .sort((a, b) => {
       if (sort === 'year') return (b.year ?? -1) - (a.year ?? -1) || a.title.localeCompare(b.title)
       if (sort === 'artist') return (a.artistName ?? '').localeCompare(b.artistName ?? '') || a.title.localeCompare(b.title)
@@ -76,25 +76,15 @@ export default function AlbumsPage() {
   }
 
   return (
-    <div className="page album-wall-page">
-      <div className="page-head collection-library-heading">
-        <div>
-          <h1 className="page-title">{t('Albums')}</h1>
-          <div className="page-sub album-catalog-count">{data ? formatCount(data.length, 'album', t, lang) : t('Loading…')}</div>
-        </div>
-      </div>
-
-      <div className="collection-library-toolbar">
-        <label className="collection-library-search">
-          <Search size={15} />
-          <input type="search" value={query} aria-label={t('Search albums')} placeholder={t('Search albums')} onChange={(event) => setQuery(event.target.value)} />
-        </label>
-        <select className="select" value={sort} aria-label={t('Sort by')} onChange={(event) => setSort(event.target.value as AlbumSort)}>
+    <div className="page album-wall-page collection-catalog collection-albums-panorama">
+      <CollectionCatalogHeading title={t('Albums')} count={data?.length} />
+      <CollectionCatalogToolbar query={query} onQuery={setQuery} placeholder={t('Search albums')} favoritesOnly={favoritesOnly} onFavoritesOnly={setFavoritesOnly} allLabel={t('All albums')}>
+        <select value={sort} aria-label={t('Sort by')} onChange={event => setSort(event.target.value as AlbumSort)}>
           <option value="title">{t('Sort by title')}</option>
           <option value="artist">{t('Sort by artist')}</option>
           <option value="year">{t('Sort by year')}</option>
         </select>
-      </div>
+      </CollectionCatalogToolbar>
 
       {error ? <div className="error-line">{error}</div> : null}
       {loading && data === null ? (
@@ -104,21 +94,7 @@ export default function AlbumsPage() {
       ) : visibleAlbums.length === 0 ? (
         <EmptyState icon={<Search size={30} />} title={t('No albums match')} hint={t('Try another search.')} />
       ) : (
-        <div className="album-wall-grid album-wall-grid-remaster">
-          {visibleAlbums.map((album) => (
-            <div key={album.id} className="album-wall-item">
-              <button type="button" className="album-wall-open" onClick={() => navigate({ name: 'album', id: album.id })} onContextMenu={(event) => albumMenu(event, album)} title={album.title}>
-                <span className="album-wall-cover">
-                  <Cover path={album.coverPath} label={album.title} size={170} />
-                  {album.trackCount != null ? <span className="album-wall-track-count"><Disc3 size={12} />{album.trackCount}</span> : null}
-                </span>
-                <strong>{album.title}</strong>
-                <small>{album.artistName ?? t('Unknown artist')}{album.year != null ? ` · ${album.year}` : ''}</small>
-              </button>
-              <button type="button" className="album-wall-play" aria-label={`${t('Play all')}: ${album.title}`} onClick={() => void playAlbum(album.id)}><Play size={15} fill="currentColor" /></button>
-            </div>
-          ))}
-        </div>
+        <CollectionAlbumGrid albums={visibleAlbums} panorama favoriteIds={favoriteIds} onOpen={album => navigate({ name: 'album', id: album.id })} onPlay={album => void playAlbum(album.id)} onMenu={albumMenu} onFavorite={album => { void api.toggleFavoriteAlbum(album.id).then(bumpLibraryVersion).catch(() => undefined) }} />
       )}
     </div>
   )

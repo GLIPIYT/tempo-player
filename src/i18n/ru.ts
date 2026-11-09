@@ -1,4 +1,10 @@
 export const ru: Record<string, string> = {
+  'Search tracks': 'Найти песню',
+  'In library': 'В медиатеке',
+  'All playlists': 'Все плейлисты',
+  'All albums': 'Все альбомы',
+  'Popular': 'Популярное',
+  'Popular tracks': 'Популярные песни',
   'Main functions': 'Основные функции',
   'Content filters': 'Фильтры по содержанию',
   'Additional functions': 'Дополнительные функции',

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { useT } from '../../i18n'
@@ -8,11 +8,12 @@ import { useExitTransition } from '../common/useExitTransition'
 import './artwork-view.css'
 
 interface ArtworkViewProps {
-  track: UnifiedTrack
+  track: Pick<UnifiedTrack, 'title' | 'coverPath'>
+  artwork?: ReactNode
   onClose: () => void
 }
 
-export default function ArtworkView({ track, onClose }: ArtworkViewProps) {
+export default function ArtworkView({ track, onClose, artwork }: ArtworkViewProps) {
   const t = useT()
   const closeRef = useRef<HTMLButtonElement>(null)
   const { closing, close } = useExitTransition(onClose)
@@ -45,7 +46,7 @@ export default function ArtworkView({ track, onClose }: ArtworkViewProps) {
     <div className={`artwork-view${closing ? ' is-closing' : ''}`} role="dialog" aria-modal="true" aria-label={`${t('Artwork')}: ${track.title}`}>
       <div className="artwork-view__backdrop" aria-hidden="true" onClick={() => close()} />
       <div className="artwork-view__image" role="img" aria-label={`${t('Artwork')}: ${track.title}`}>
-        <Cover path={track.coverPath} label={track.title} size={640} loading="eager" />
+        {artwork ?? <Cover path={track.coverPath} label={track.title} size={640} loading="eager" />}
       </div>
       <button ref={closeRef} type="button" className="artwork-view__close" onClick={() => close()} aria-label={t('Close')} title={t('Close')}>
         <X size={20} aria-hidden="true" />
