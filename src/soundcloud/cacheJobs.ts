@@ -8,6 +8,7 @@ import { resolveLang } from '../i18n'
 import { getSettings } from '../state/settings'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import type { ScArtist, ScPlaylist, ScTrack, Track, UnifiedTrack } from '../types/models'
+import { ensureLibraryTrackId } from '../utils/transientTracks'
 import { getKnownSoundCloudTrack, rememberSoundCloudTrack } from './cacheMetadata'
 import { trackCacheProgressStore, type TrackCacheProgress as TrackCacheProgressData } from './trackCacheProgressStore'
 export type { TrackCacheProgress } from './trackCacheProgressStore'
@@ -328,10 +329,11 @@ export function retryCacheJob(id: string): void {
 
 /** Adds a library track and schedules its SoundCloud cache through the shared job path. */
 export async function addTrackToPlaylistAndCache(playlistId: number, track: Track): Promise<void> {
-  await api.playlistAddTrack(playlistId, track.id)
+  const id = await ensureLibraryTrackId(track)
+  await api.playlistAddTrack(playlistId, id)
   bumpLibraryVersion()
   if (track.source !== 'soundcloud') return
-  scheduleTrackCacheForSource(track)
+  scheduleTrackCacheForSource({ ...track, id })
 }
 
 /**

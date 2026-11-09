@@ -2,6 +2,7 @@ import { api } from '../api/client'
 import { scheduleTrackCacheForSource } from '../soundcloud/cacheJobs'
 import type { Track, UnifiedTrack } from '../types/models'
 import { bumpLibraryVersion } from './libraryVersion'
+import { ensureLibraryTrackId, savedTrackId } from './transientTracks'
 
 type Listener = () => void
 
@@ -38,7 +39,7 @@ export const likesStore = {
       listeners.delete(l)
     }
   },
-  isLiked: (trackId: number): boolean => ids.has(trackId),
+  isLiked: (trackId: number): boolean => ids.has(savedTrackId(trackId)),
   /** Ensures the liked ids are fetched once per session. */
   ensureLoaded: (): void => {
     if (loaded || loading !== null) return
@@ -53,6 +54,10 @@ export const likesStore = {
     emit()
   },
   toggle: (trackId: number, sourceTrack?: Track | UnifiedTrack): void => {
+    if (trackId <= 0 && sourceTrack && 'id' in sourceTrack) {
+      void ensureLibraryTrackId(sourceTrack).then(id => likesStore.toggle(id, { ...sourceTrack, id })).catch(() => {})
+      return
+    }
     const liked = ids.has(trackId)
     if (liked) ids.delete(trackId)
     else ids.add(trackId)

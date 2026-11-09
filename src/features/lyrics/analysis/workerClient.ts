@@ -16,18 +16,23 @@ export class AsrWorkerClient {
       const cleanup = (): void => { signal.removeEventListener('abort', cancel); clearTimeout(timeout); this.rejectPending = null; this.port.onmessage = null; this.port.onerror = null }
       const fail = (reason: unknown): void => { cleanup(); reject(reason) }
       const cancel = (): void => this.dispose(signal.reason)
-      const timeout = setTimeout(() => this.dispose(new Error('Local recognition timed out')), 120000)
+      const timeout = setTimeout(() => this.dispose(new Error('Local lyric analysis timed out')), 120000)
       this.rejectPending = fail
       signal.addEventListener('abort', cancel, { once: true })
       this.port.onerror = (event) => this.dispose(new Error(event.message || 'Local recognition worker failed'))
       this.port.onmessage = ({ data }) => {
         if (data.jobId !== message.jobId) return
-        if (message.type === 'transcribe' && (data.type === 'ready' || data.fragmentId !== message.fragmentId)) return
-        if (message.type === 'init' && data.type === 'result') return
+        if (message.type === 'transcribe' && (data.type === 'ready' || (data.type === 'result' && data.fragmentId !== message.fragmentId))) return
+        if (message.type === 'align-known-text' && (data.type === 'ready' || (data.type === 'alignment' && data.alignmentId !== message.alignmentId))) return
+        if (message.type === 'init' && (data.type === 'result' || data.type === 'alignment')) return
+        if (data.type === 'error') {
+          if (message.type === 'transcribe' && data.fragmentId && data.fragmentId !== message.fragmentId) return
+          if (message.type === 'align-known-text' && data.alignmentId && data.alignmentId !== message.alignmentId) return
+        }
         if (data.type === 'error') { this.dispose(new Error(data.error)); return }
         cleanup(); resolve(data)
       }
-      try { this.port.postMessage(message, message.type === 'transcribe' ? [message.pcm.buffer as ArrayBuffer] : []) }
+      try { this.port.postMessage(message, message.type === 'init' ? [] : [message.pcm.buffer as ArrayBuffer]) }
       catch (error) { this.dispose(error) }
     })
   }

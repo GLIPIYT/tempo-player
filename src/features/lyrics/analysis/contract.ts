@@ -60,6 +60,17 @@ export interface CachedLyricMatches {
   ends: MatchedSourceEnd[]
 }
 
+/** Forced word timings for one source lyric line, separate from free-ASR fragments. */
+export interface CachedAlignedSourceLine {
+  sourceLyricKey: string
+  lineIndex: number
+  sourceText: string
+  sourceStartSec: number
+  sourceEndSec: number
+  confidence: number
+  words: AnalysisWord[]
+}
+
 export interface BpmEstimate {
   bpm: number
   confidence: number
@@ -74,6 +85,7 @@ export interface AudioAnalysis {
   bpmConfidence: number
   fragments: CompletedFragment[]
   lyricMatches: CachedLyricMatches[]
+  alignedSources?: CachedAlignedSourceLine[]
 }
 
 export interface AnalysisMerge {
@@ -83,4 +95,5 @@ export interface AnalysisMerge {
   bpm?: BpmEstimate
   completedFragment?: CompletedFragment
   acceptedMatches?: CachedLyricMatches
+  alignedSource?: CachedAlignedSourceLine
 }

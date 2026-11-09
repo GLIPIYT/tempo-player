@@ -10,10 +10,12 @@ import type {
   ScPlaylist,
   ScTrack,
   SearchResults,
+  Track,
   YtEnrichment,
   YtSearchHit,
 } from '../types/models'
 import { useSearchQuery } from '../hooks/useSearchQuery'
+import { useSettings } from '../state/settings'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import TrackList from '../components/common/TrackList'
 import Cover from '../components/common/Cover'
@@ -343,6 +345,8 @@ function ScRowMenu({ track }: { track: ScTrack }) {
 
 export default function SearchPage() {
   const t = useT()
+  const { settings } = useSettings()
+  const [lyricMatches, setLyricMatches] = useState<{ query: string; tracks: Track[] }>({ query: '', tracks: [] })
   const query = useSearchQuery()
   const { navigate } = useNav()
   const version = useLibraryVersion()
@@ -375,6 +379,18 @@ export default function SearchPage() {
     tab === 'albums' ? 'albums' : tab === 'artists' ? 'artists' : tab === 'playlists' ? 'playlists' : null
   const [source, setSource] = useState<SearchSource>('all')
   const trimmed = query.trim()
+  const lyricsSearchEnabled = settings.lyrics.cacheOnline && settings.lyrics.searchCached
+    && source === 'all' && (tab === 'all' || tab === 'tracks')
+  useEffect(() => {
+    if (!lyricsSearchEnabled || !trimmed) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void api.searchCachedLyrics(trimmed).then(tracks => {
+        if (!cancelled) setLyricMatches({ query: trimmed, tracks })
+      }).catch(() => { if (!cancelled) setLyricMatches({ query: trimmed, tracks: [] }) })
+    }, 250)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [lyricsSearchEnabled, trimmed, version])
   const ytTrackRequested = source !== 'soundcloud' && (tab === 'all' || tab === 'tracks')
   const ytCollectionSections = useMemo<YtCollectionSection[]>(
     () =>
@@ -772,12 +788,14 @@ export default function SearchPage() {
   const ytProviderPending =
     (ytTrackMode && (ytStatus === 'idle' || ytStatus === 'loading')) ||
     ytCollectionSections.some((section) => ytCollStatus[section] === 'idle' || ytCollStatus[section] === 'loading')
-  const searchPending = localPending || scPending || ytProviderPending
+  const lyricCount = lyricsSearchEnabled && lyricMatches.query === trimmed ? lyricMatches.tracks.length : 0
+  const lyricPending = lyricsSearchEnabled && trimmed.length > 0 && lyricMatches.query !== trimmed
+  const searchPending = localPending || scPending || ytProviderPending || lyricPending
   const searchError =
     (localRelevant && error !== null) ||
     (scRelevant && activeScStatuses.some((status) => status === 'error')) ||
     (ytRelevant && ((ytTrackMode && ytStatus === 'error') || ytCollectionSections.some((section) => ytCollStatus[section] === 'error')))
-  const showNoResults = trimmed.length > 0 && !searchPending && currentCount === 0 && !searchError
+  const showNoResults = trimmed.length > 0 && !searchPending && currentCount === 0 && lyricCount === 0 && !searchError
 
   const providerHeading = (name: string, count: number, mark: BrandMark | null) => (
     <header className="search-provider-head">
@@ -912,6 +930,12 @@ export default function SearchPage() {
                 </section>
               ) : null}
 
+              {lyricsSearchEnabled && lyricMatches.query === trimmed && lyricMatches.tracks.length > 0 ? (
+                <section className="search-provider-group">
+                  {providerHeading(t('Cached lyrics'), lyricMatches.tracks.length, null)}
+                  <TrackList tracks={lyricMatches.tracks} showAlbum showIndex />
+                </section>
+              ) : null}
               {scRelevant && (scPending || activeScErrors.length > 0 || scCount > 0) ? (
                 <section className="search-provider-group">
                   {providerHeading(t('SoundCloud'), scCount, 'soundcloud')}

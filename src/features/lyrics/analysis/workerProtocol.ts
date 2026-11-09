@@ -2,10 +2,13 @@ import { LYRIC_MODEL_ID, LYRIC_MODEL_REVISION, type AnalysisWord, type ModelBund
 export type AsrRequest =
   | { type: 'init'; jobId: number; bundle: ModelBundle; artifactUrls: Record<string, string>; wasmBaseUrl: string }
   | { type: 'transcribe'; jobId: number; fragmentId: string; trackStartSec: number; sampleRate: 16000; pcm: Float32Array; language: 'en' | 'ru' }
+  | { type: 'align-known-text'; jobId: number; alignmentId: string; trackStartSec: number; sourceEndSec: number;
+      sampleRate: 16000; pcm: Float32Array; language: 'en' | 'ru'; text: string }
 export type AsrResponse =
   | { type: 'ready'; jobId: number }
   | { type: 'result'; jobId: number; fragmentId: string; words: AnalysisWord[]; elapsedMs: number }
-  | { type: 'error'; jobId: number; fragmentId?: string; error: string }
+  | { type: 'alignment'; jobId: number; alignmentId: string; words: AnalysisWord[]; confidence: number; elapsedMs: number }
+  | { type: 'error'; jobId: number; fragmentId?: string; alignmentId?: string; error: string }
 export const MODEL_ARTIFACTS = ['config.json', 'generation_config.json', 'preprocessor_config.json', 'tokenizer.json',
   'tokenizer_config.json', 'onnx/encoder_model_quantized.onnx', 'onnx/decoder_model_merged_quantized.onnx'] as const
 export function artifactMap(bundle: ModelBundle, urls: Record<string, string>): Map<string, string> {

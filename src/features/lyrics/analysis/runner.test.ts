@@ -20,6 +20,8 @@ function setup(saved?: AudioAnalysis) {
         stored ??= { fingerprint: 'audio', algorithmVersion: LYRIC_ANALYSIS_ALGORITHM_VERSION, modelRevision: LYRIC_MODEL_REVISION, durationSec: 30, bpm: null, bpmConfidence: 0, fragments: [], lyricMatches: [] }
         if (update.completedFragment) stored.fragments.push(update.completedFragment)
         if (update.acceptedMatches) stored.lyricMatches = [update.acceptedMatches]
+        if (update.alignedSource) stored.alignedSources = [...(stored.alignedSources ?? []).filter(source =>
+          source.sourceLyricKey !== update.alignedSource!.sourceLyricKey || source.lineIndex !== update.alignedSource!.lineIndex), update.alignedSource]
         return structuredClone(stored)
       },
       ensureModel: async () => { ensures++; return { modelId: LYRIC_MODEL_ID, revision: LYRIC_MODEL_REVISION, files: [] } }, assetUrl: path => path,
@@ -30,8 +32,9 @@ function setup(saved?: AudioAnalysis) {
         calls.push({ time: Date.now(), request })
         return new Promise<AsrResponse>((resolve, reject) => {
           signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
-          setTimeout(() => resolve(request.type === 'init' ? { type: 'ready', jobId: request.jobId } :
-            { type: 'result', jobId: request.jobId, fragmentId: request.fragmentId, words: [], elapsedMs: 100 }), request.type === 'init' ? 20 : 100)
+          setTimeout(() => resolve(request.type === 'init' ? { type: 'ready', jobId: request.jobId } : request.type === 'transcribe'
+            ? { type: 'result', jobId: request.jobId, fragmentId: request.fragmentId, words: [], elapsedMs: 100 }
+            : { type: 'alignment', jobId: request.jobId, alignmentId: request.alignmentId, words: [], confidence: 0, elapsedMs: 100 }), request.type === 'init' ? 20 : 100)
         })
       }, dispose: () => { disposed++ },
     }),
@@ -163,8 +166,9 @@ it('persists a newly matched media endpoint as canonical source time and replays
   const { runner, deps, writes } = setup()
   deps.worker = () => ({ dispose() {}, request: async (request) => request.type === 'init'
     ? { type: 'ready', jobId: request.jobId }
-    : { type: 'result', jobId: request.jobId, fragmentId: request.fragmentId, elapsedMs: 1,
-      words: [{ text: 'silver', startSec: 12.2, endSec: 12.7 }, { text: 'rivers', startSec: 13, endSec: 14 }] } })
+    : request.type === 'transcribe' ? { type: 'result', jobId: request.jobId, fragmentId: request.fragmentId, elapsedMs: 1,
+      words: [{ text: 'silver', startSec: 12.2, endSec: 12.7 }, { text: 'rivers', startSec: 13, endSec: 14 }] }
+      : { type: 'alignment', jobId: request.jobId, alignmentId: request.alignmentId, words: [], confidence: 0, elapsedMs: 1 } })
   const song = { ...input, sourceLines: [{ timeSec: 17, text: 'Silver rivers' }], offsetMs: -5000 }
   runner.setEnabled(true); runner.setTrack(song); runner.setPosition(12, true)
   await vi.advanceTimersByTimeAsync(1000)
@@ -217,22 +221,27 @@ it('keeps word-only analysis requests within the worker 12-second PCM limit', as
   deps.worker = () => ({ dispose() {}, request: async request => {
     requests.push(request)
     return request.type === 'init' ? { type: 'ready', jobId: request.jobId }
-      : { type: 'result', jobId: request.jobId, fragmentId: request.fragmentId, elapsedMs: 1,
-        words: ['silver', 'rivers', 'carry', 'dreams'].map((text, index) => ({ text,
+      : request.type === 'align-known-text' ? { type: 'alignment', jobId: request.jobId, alignmentId: request.alignmentId,
+        confidence: 0.9, elapsedMs: 1, words: ['Silver', 'rivers', 'carry', 'dreams'].map((text, index) => ({ text,
           startSec: 10.2 + index * 0.5, endSec: 10.5 + index * 0.5 })) }
+        : { type: 'result', jobId: request.jobId, fragmentId: request.fragmentId, elapsedMs: 1,
+          words: ['silver', 'rivers', 'carry', 'dreams'].map((text, index) => ({ text,
+            startSec: 10.2 + index * 0.5, endSec: 10.5 + index * 0.5 })) }
   } })
   runner.setEnabled(true); runner.setWordTimingsEnabled(true)
   runner.setTrack({ ...input, sourceLines: [{ timeSec: 10, text: 'Silver rivers carry dreams', endTimeSec: 14, endSource: 'manual' }] })
   runner.setPosition(10, true)
   await vi.advanceTimersByTimeAsync(1000)
-  const request = requests.find(request => request.type === 'transcribe')
-  expect(request?.type).toBe('transcribe')
-  if (request?.type === 'transcribe') {
+  const request = requests.find(request => request.type === 'align-known-text')
+  expect(request?.type).toBe('align-known-text')
+  if (request?.type === 'align-known-text') {
     expect(request.pcm.length).toBeLessThanOrEqual(12 * 16000)
-    expect(request.pcm.length).toBeGreaterThan(11 * 16000)
+    expect(request.pcm.length).toBe(4 * 16000)
   }
   expect(runner.getSnapshot().analysis.matchedWords?.[0].words).toHaveLength(4)
-  expect(writes.find(update => update.completedFragment)?.acceptedMatches?.ends).toEqual([])
+  expect(writes.find(update => update.alignedSource)?.completedFragment).toBeUndefined()
+  expect(writes.find(update => update.alignedSource)?.acceptedMatches).toBeUndefined()
+  expect(writes.find(update => update.alignedSource)?.alignedSource?.sourceText).toBe('Silver rivers carry dreams')
   runner.stop()
 })
 it('waits for a slow cache restore before position updates can start decoding', async () => {

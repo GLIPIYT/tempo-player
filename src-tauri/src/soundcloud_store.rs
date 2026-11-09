@@ -111,11 +111,11 @@ pub fn enforce_cache_limit(db: &Db, dir: &Path, limit: i64) {
         if info.total_bytes <= limit {
             break;
         }
-        let Ok(Some(external_id)) = db.oldest_cached_sc_track() else {
-            break;
-        };
-        let file = find_cached_file(dir, &external_id)
-            .unwrap_or_else(|| cache_lock_path(dir, &external_id));
+        let Ok(candidates) = db.cached_sc_tracks_oldest_first() else { break };
+        let next = candidates
+            .into_iter()
+            .find_map(|external_id| find_cached_file(dir, &external_id).map(|file| (external_id, file)));
+        let Some((external_id, file)) = next else { break };
         if std::fs::remove_file(&file).is_ok() || !file.exists() {
             let _ = db.mark_sc_uncached(&external_id);
         } else {
@@ -152,6 +152,8 @@ fn finalize_cached_file(
         return Err("SoundCloud cache has no library row to mark complete".into());
     }
     db.mark_sc_cached(sc_id, metadata.len() as i64)?;
+    let _ = db.mark_cached_audio_path("soundcloud", sc_id, &file)?;
+    crate::library_identity::request_background_refresh();
     // Matroska audio streams do not reliably expose SoundCloud title/artist/artwork
     // tags. A false result means the cache remains valid and the API metadata row
     // stays authoritative; actual database failures are still surfaced.
@@ -226,6 +228,16 @@ pub async fn get_playback(
         || !track_id.bytes().all(|byte| byte.is_ascii_digit())
     {
         return Err("invalid SoundCloud track ID".to_string());
+    }
+    if let Some(path) = db.resolve_registered_audio_path(None, Some("soundcloud"), Some(track_id))? {
+        let cached = PathBuf::from(path);
+        if is_within_directory(&cached, &dir) && has_library_row(&db, track_id)? {
+            finalize_cached_file(&db, &dir, &covers_dir, track_id)?;
+        }
+        return Ok(local_playback(&cached));
+    }
+    if db.has_cached_audio_identity("soundcloud", track_id)? {
+        crate::library_identity::request_background_refresh();
     }
     if let Some(cached) = find_cached_file(&dir, track_id) {
         // Older cache files can outlive their catalog rows. Playback remains
@@ -952,6 +964,22 @@ pub async fn run_cache_job(
 
 pub fn clear_cache(db: &Db, default_root: &Path) -> Result<(u32, u32), String> {
     let dir = cache_dir(db, default_root);
+    let retained_ids: HashSet<i64> = db.with_conn(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, path FROM tracks WHERE source = 'soundcloud'",
+        ).map_err(|error| error.to_string())?;
+        let rows = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|error| error.to_string())?;
+        let mut retained = HashSet::new();
+        for row in rows {
+            let (id, path) = row.map_err(|error| error.to_string())?;
+            let path = PathBuf::from(path);
+            if path.is_file() && !is_within_directory(&path, &dir) {
+                retained.insert(id);
+            }
+        }
+        Ok(retained)
+    })?;
     let mut files_deleted = 0u32;
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -963,19 +991,41 @@ pub fn clear_cache(db: &Db, default_root: &Path) -> Result<(u32, u32), String> {
     }
     let playlist_rows_deleted = db.with_conn(|conn| {
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-        let deleted = tx
-            .execute(
-                "DELETE FROM playlist_tracks WHERE track_id IN \
-                 (SELECT id FROM tracks WHERE source = 'soundcloud')",
-                [],
+        let (playlist_sql, tracks_sql) = if retained_ids.is_empty() {
+            (
+                "DELETE FROM playlist_tracks WHERE track_id IN (SELECT id FROM tracks WHERE source = 'soundcloud')".to_string(),
+                "DELETE FROM tracks WHERE source = 'soundcloud'".to_string(),
             )
-            .map_err(|e| e.to_string())? as u32;
-        tx.execute("DELETE FROM tracks WHERE source = 'soundcloud'", [])
-            .map_err(|e| e.to_string())?;
+        } else {
+            let placeholders = (1..=retained_ids.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(", ");
+            (
+                format!("DELETE FROM playlist_tracks WHERE track_id IN (SELECT id FROM tracks WHERE source = 'soundcloud' AND id NOT IN ({placeholders}))"),
+                format!("DELETE FROM tracks WHERE source = 'soundcloud' AND id NOT IN ({placeholders})"),
+            )
+        };
+        let keep: Vec<i64> = retained_ids.iter().copied().collect();
+        let deleted = if retained_ids.is_empty() {
+            tx.execute(&playlist_sql, []).map_err(|e| e.to_string())? as u32
+        } else {
+            tx.execute(&playlist_sql, rusqlite::params_from_iter(keep.iter())).map_err(|e| e.to_string())? as u32
+        };
+        if retained_ids.is_empty() {
+            tx.execute(&tracks_sql, []).map_err(|e| e.to_string())?;
+        } else {
+            tx.execute(&tracks_sql, rusqlite::params_from_iter(keep.iter())).map_err(|e| e.to_string())?;
+        }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(deleted)
     })?;
     Ok((files_deleted, playlist_rows_deleted))
+}
+
+fn is_within_directory(path: &Path, directory: &Path) -> bool {
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let directory = std::fs::canonicalize(directory).unwrap_or_else(|_| directory.to_path_buf());
+    let path = path.to_string_lossy().replace('/', "\\").to_lowercase();
+    let directory = directory.to_string_lossy().replace('/', "\\").to_lowercase();
+    path == directory || path.starts_with(&format!("{}\\", directory.trim_end_matches('\\')))
 }
 
 fn cache_lock_path(dir: &Path, track_id: &str) -> PathBuf {
@@ -1151,6 +1201,51 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn moved_soundcloud_audio_survives_reconcile_and_cache_clear() {
+        use rusqlite::params;
+
+        let (db, root) = test_env("moved-cache");
+        let cache = root.join("cache");
+        let moved = root.join("library").join("moved.flac");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        std::fs::write(cache.join("leftover.tmp"), b"cache artifact").unwrap();
+        std::fs::write(&moved, b"same audio bytes").unwrap();
+        set_cache_dir(&db, cache.to_str().unwrap()).unwrap();
+
+        let track_id = db.upsert_sc_track("301", "Moved track", "Artist", 120_000, None).unwrap();
+        db.mark_sc_cached("301", 16).unwrap();
+        assert!(db.mark_cached_audio_path("soundcloud", "301", &moved).unwrap());
+        let playlist = db.create_playlist("Preserve moved track").unwrap();
+        db.playlist_add_track(playlist.id, track_id).unwrap();
+        db.like_track(track_id).unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO listening_history(track_id, played_at, listened_sec, completed, skipped) VALUES(?1, 1, 16.0, 1, 0)",
+                params![track_id],
+            ).map_err(|error| error.to_string())?;
+            Ok(())
+        }).unwrap();
+
+        db.reconcile_sc_cache(&cache, &root.join("covers")).unwrap();
+        let (files_deleted, playlist_rows_deleted) = clear_cache(&db, &root.join("unused")).unwrap();
+        assert_eq!(files_deleted, 1);
+        assert_eq!(playlist_rows_deleted, 0);
+        assert!(moved.is_file());
+        assert!(!cache.join("leftover.tmp").exists());
+        assert_eq!(db.find_track_id_by_path(moved.to_str().unwrap()).unwrap(), Some(track_id));
+        assert_eq!(db.get_playlist_tracks(playlist.id).unwrap()[0].track.id, track_id);
+        assert_eq!(db.list_liked_track_ids().unwrap(), vec![track_id]);
+        let history_count: i64 = db.with_conn(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM listening_history WHERE track_id = ?1", params![track_id], |row| row.get(0))
+                .map_err(|error| error.to_string())
+        }).unwrap();
+        assert_eq!(history_count, 1);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[tokio::test]
     async fn get_playback_returns_cached_file_without_network() {
         let (db, root) = test_env("playback");
@@ -1222,7 +1317,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(uncached, 1);
-        assert_eq!(size, 0);
+        assert_eq!(size, 100);
         drop(db);
         let _ = std::fs::remove_dir_all(&root);
     }

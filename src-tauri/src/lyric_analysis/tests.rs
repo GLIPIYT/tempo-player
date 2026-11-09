@@ -489,6 +489,20 @@ fn wav(path: &Path, duration: u32) {
     file.write_all(&byte_count.to_le_bytes()).unwrap();
     file.write_all(&vec![0u8; byte_count as usize]).unwrap();
 }
+fn test_file_stamp(path: &Path) -> (i64, i64) {
+    let metadata = std::fs::metadata(path).unwrap();
+    let size = i64::try_from(metadata.len()).unwrap();
+    let modified_ns = i64::try_from(
+        metadata
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+    )
+    .unwrap();
+    (size, modified_ns)
+}
 fn track(db: &Db, path: &Path, source: &str, source_id: Option<&str>) -> i64 {
     db.with_conn(|conn| {
         conn.execute("INSERT INTO tracks(path,title,duration_sec,added_at,source,external_id) VALUES(?1,'fixture',9999,0,?2,?3)", rusqlite::params![path.to_string_lossy(), source, source_id]).map_err(|e| e.to_string())?;
@@ -523,6 +537,84 @@ fn accepted(key: &str, source_end: f64, media_end: f64, offset: f64) -> CachedLy
         }],
     }
 }
+fn aligned_source(key: &str, text: &str, start: f64, end: f64) -> CachedAlignedSourceLine {
+    CachedAlignedSourceLine {
+        source_lyric_key: key.into(),
+        line_index: 0,
+        source_text: text.into(),
+        source_start_sec: start,
+        source_end_sec: end,
+        confidence: 0.8,
+        words: vec![
+            AnalysisWord { text: "Hello".into(), start_sec: start + 0.2, end_sec: start + 0.7 },
+            AnalysisWord { text: "world".into(), start_sec: start + 1.0, end_sec: start + 1.6 },
+        ],
+    }
+}
+
+#[test]
+fn old_analysis_json_defaults_aligned_sources_and_rejects_invalid_forced_word_spans() {
+    let old_json = format!(
+        r#"{{"fingerprint":"{}","algorithmVersion":"{}","modelRevision":"{}","durationSec":20.0,"bpm":null,"bpmConfidence":0.0,"fragments":[],"lyricMatches":[]}}"#,
+        "old-fingerprint", ALGORITHM_VERSION, MODEL_REVISION
+    );
+    let old: AudioAnalysis = serde_json::from_str(&old_json).unwrap();
+    assert!(old.aligned_sources.is_empty());
+    assert!(validate_aligned_source(&aligned_source("provider", "Hello world", 2.0, 4.0), 20.0).is_ok());
+
+    let mut invalid = aligned_source("provider", "Hello world", 2.0, 4.0);
+    invalid.words[0].end_sec = invalid.words[0].start_sec;
+    assert!(validate_aligned_source(&invalid, 20.0).is_err());
+    let mut invalid = aligned_source("provider", "Hello world", 2.0, 4.0);
+    invalid.words[1].start_sec = 3.0;
+    invalid.words[1].end_sec = 4.1;
+    assert!(validate_aligned_source(&invalid, 20.0).is_err());
+    let mut invalid = aligned_source("provider", "Hello world", 2.0, 4.0);
+    invalid.confidence = 0.0009;
+    assert!(validate_aligned_source(&invalid, 20.0).is_err());
+}
+
+#[test]
+fn known_text_alignments_persist_separately_and_are_invalidated_with_model_versions() {
+    let root = Temp::new();
+    let (db, store, id) = audio_env(&root.0);
+    let identity = store.audio_identity(Some(id), "local", None).unwrap().unwrap();
+    let first = store.merge_with_alignment(
+        &identity.fingerprint, ALGORITHM_VERSION, MODEL_REVISION, None, None, None,
+        Some(aligned_source("provider-a", "Hello world", 2.0, 4.0)),
+    ).unwrap();
+    assert!(first.fragments.is_empty(), "forced words must never become free-ASR fragments");
+    assert!(first.lyric_matches.is_empty());
+    assert_eq!(first.aligned_sources.len(), 1);
+
+    let mut edited = aligned_source("provider-a", "Hello there", 2.0, 4.0);
+    edited.words[1].text = "there".into();
+    let second = store.merge_with_alignment(
+        &identity.fingerprint, ALGORITHM_VERSION, MODEL_REVISION, None, None, None,
+        Some(edited),
+    ).unwrap();
+    assert_eq!(second.aligned_sources.len(), 1, "edited source lines replace their old alignment");
+    assert_eq!(second.aligned_sources[0].source_text, "Hello there");
+    assert_eq!(second.aligned_sources[0].words[1].text, "there");
+
+    drop(store);
+    drop(db);
+    let db = Arc::new(Db::open_at(&root.0.join("tempo.db")).unwrap());
+    let store = AudioAnalysisStore::new(db, root.0.join("sc"), root.0.join("yt"));
+    let reopened_identity = store.audio_identity(Some(id), "local", None).unwrap().unwrap();
+    assert_eq!(reopened_identity.fingerprint, identity.fingerprint);
+    let replay = store.get(&identity.fingerprint).unwrap().unwrap();
+    assert_eq!(replay.aligned_sources[0].source_lyric_key, "provider-a");
+    assert_eq!(replay.aligned_sources[0].source_text, "Hello there");
+    assert!(replay.fragments.is_empty());
+
+    let changed_model = store.merge(
+        &identity.fingerprint, ALGORITHM_VERSION, "future-model", None, None, None,
+    ).unwrap();
+    assert!(changed_model.aligned_sources.is_empty());
+    assert!(changed_model.fragments.is_empty());
+}
+
 #[test]
 fn identity_uses_actual_audio_properties_and_rejects_unregistered_or_missing_files() {
     let root = Temp::new();
@@ -820,7 +912,7 @@ fn malformed_nonfinite_and_out_of_range_words_are_rejected_without_overwriting_c
 }
 
 #[test]
-fn uncached_streams_return_none_and_cached_stream_lookup_is_exact_and_path_scoped() {
+fn uncached_and_unconfirmed_youtube_streams_return_none_and_cached_lookup_is_exact() {
     let root = Temp::new();
     let (db, store, _id) = audio_env(&root.0);
     let sc = track(
@@ -841,6 +933,13 @@ fn uncached_streams_return_none_and_cached_stream_lookup_is_exact_and_path_scope
         .is_none());
     assert!(store
         .audio_identity(None, "youtube", Some("abcdefghijk"))
+        .unwrap()
+        .is_none());
+    let unconfirmed_path = root.0.join("unconfirmed-youtube.wav");
+    wav(&unconfirmed_path, 20);
+    let unconfirmed_yt = track(&db, &unconfirmed_path, "youtube", Some("lmnopqrstuv"));
+    assert!(store
+        .audio_identity(Some(unconfirmed_yt), "youtube", Some("lmnopqrstuv"))
         .unwrap()
         .is_none());
     assert!(!root.0.join("sc").exists());
@@ -865,6 +964,109 @@ fn uncached_streams_return_none_and_cached_stream_lookup_is_exact_and_path_scope
     assert!(
         crate::soundcloud_store::existing_cached_file(&db, &root.0.join("sc"), "../123").is_err()
     );
+}
+
+#[test]
+fn moved_youtube_cache_reissues_identity_and_rechecks_analysis_at_new_path() {
+    let root = Temp::new();
+    let db = Arc::new(Db::open_at(&root.0.join("tempo.db")).unwrap());
+    let cache_root = root.0.join("yt-cache");
+    std::fs::create_dir_all(&cache_root).unwrap();
+    let original_path = cache_root.join("abcdefghijk.wav");
+    wav(&original_path, 20);
+    let original_size = std::fs::metadata(&original_path).unwrap().len() as i64;
+    let track_id = db
+        .upsert_yt_track(
+            "abcdefghijk",
+            "fixture",
+            "",
+            "",
+            20_000,
+            None,
+            Some(original_size),
+        )
+        .unwrap();
+    assert!(db
+        .mark_cached_audio_path("youtube", "abcdefghijk", &original_path)
+        .unwrap());
+    let (original_size, original_mtime_ns) = test_file_stamp(&original_path);
+    let original_bytes = std::fs::read(&original_path).unwrap();
+    let sha256 = format!("{:x}", Sha256::digest(&original_bytes));
+    assert!(db
+        .remember_registered_audio_hash(
+            track_id,
+            original_path.to_str().unwrap(),
+            original_size,
+            original_mtime_ns,
+            &sha256,
+        )
+        .unwrap());
+
+    let store = AudioAnalysisStore::new(db.clone(), root.0.join("sc-cache"), cache_root);
+    let original_identity = store
+        .audio_identity(Some(track_id), "youtube", Some("abcdefghijk"))
+        .unwrap()
+        .unwrap();
+    store
+        .merge_with_alignment(
+            &original_identity.fingerprint,
+            ALGORITHM_VERSION,
+            MODEL_REVISION,
+            None,
+            None,
+            None,
+            Some(aligned_source("provider-youtube", "Hello world", 2.0, 4.0)),
+        )
+        .unwrap();
+
+    std::fs::remove_file(&original_path).unwrap();
+    let moved_path = root.0.join("Music").join("renamed.wav");
+    std::fs::create_dir_all(moved_path.parent().unwrap()).unwrap();
+    std::fs::write(&moved_path, original_bytes).unwrap();
+    let (moved_size, moved_mtime_ns) = test_file_stamp(&moved_path);
+    db.index_audio_file(&crate::database::IndexedAudioFile {
+        path: moved_path.to_string_lossy().into_owned(),
+        file_name: "renamed.wav".into(),
+        file_size: moved_size,
+        file_mtime_ns: moved_mtime_ns,
+        sha256,
+    })
+    .unwrap();
+
+    let moved_identity = store
+        .audio_identity(Some(track_id), "youtube", Some("abcdefghijk"))
+        .unwrap()
+        .unwrap();
+    assert_ne!(moved_identity.fingerprint, original_identity.fingerprint);
+    assert_eq!(
+        moved_identity.absolute_path,
+        std::fs::canonicalize(&moved_path)
+            .unwrap()
+            .to_string_lossy()
+    );
+    let registered = db
+        .lyrics_analysis_track(Some(track_id), "youtube", Some("abcdefghijk"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(registered.path, moved_path.to_string_lossy());
+    assert!(store.get(&original_identity.fingerprint).unwrap().is_none(),
+        "moving the registered file changes its path-bound fingerprint and invalidates the old derived cache");
+    assert!(store.get(&moved_identity.fingerprint).unwrap().is_none());
+
+    store
+        .merge_with_alignment(
+            &moved_identity.fingerprint,
+            ALGORITHM_VERSION,
+            MODEL_REVISION,
+            None,
+            None,
+            None,
+            Some(aligned_source("provider-youtube", "Hello world", 2.0, 4.0)),
+        )
+        .unwrap();
+    let replay = store.get(&moved_identity.fingerprint).unwrap().unwrap();
+    assert_eq!(replay.aligned_sources.len(), 1);
+    assert_eq!(replay.aligned_sources[0].source_text, "Hello world");
 }
 
 #[test]

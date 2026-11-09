@@ -1,12 +1,14 @@
 import type { LyricsLine } from '../types'
 import { resolveLyricTiming, type LyricTimingAnalysis, type ResolvedLyricsLine } from '../timingResolver'
 import { analysisNativeClient, type AnalysisNativeClient, type AnalysisTrack } from './nativeClient'
-import { LYRIC_ANALYSIS_ALGORITHM_VERSION, LYRIC_MODEL_REVISION, type AudioIdentity, type AudioAnalysis, type AnalysisMerge, type MatchedSourceEnd, type CompletedFragment } from './contract'
+import { LYRIC_ANALYSIS_ALGORITHM_VERSION, LYRIC_MODEL_REVISION, type AudioIdentity, type AudioAnalysis, type AnalysisMerge,
+  type MatchedSourceEnd, type CompletedFragment, type CachedAlignedSourceLine } from './contract'
 import { decodeForAnalysis, type AnalysisPcm } from '../../../audio/decodeForAnalysis'
 import { withAnalysisLane } from '../../../audio/analysisLane'
 import { estimateBpm } from '../../../audio/bpm'
 import { lyricLanguage, matchLyricEnds, projectSourceEnds } from './matchWords'
 import { canMatchLyricWordTimings, hasReliableSourceWordTimings, matchLyricWordTimings, projectLyricWordTimings, type MatchedLyricWords } from './matchWordTimings'
+import { knownTextAlignmentKey, knownTextLineWindow, knownTextWords, matchCachedKnownText } from './knownTextAlignment'
 import { createAsrWorker } from './workerClient'
 import type { AsrRequest, AsrResponse } from './workerProtocol'
 export interface AnalysisTrackInput { track: AnalysisTrack; sourceLines: readonly LyricsLine[]; durationSec: number; offsetMs: number; lyricKey: string; sourceLyricKey: string }
@@ -33,7 +35,9 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
   let input: AnalysisTrackInput | null = null
   let identity: AudioIdentity | null = null, cache: AudioAnalysis | null = null, pcm: AnalysisPcm | null = null
   let wordTimingsEnabled = false
-  let wordMatchMemo: { fragments: readonly CompletedFragment[]; lines: readonly LyricsLine[]; sourceLyricKey: string;
+  const attemptedAlignments = new Set<string>()
+  let wordMatchMemo: { fragments: readonly CompletedFragment[]; alignedSources: readonly CachedAlignedSourceLine[];
+    lines: readonly LyricsLine[]; sourceLyricKey: string;
     durationSec: number; matches: MatchedLyricWords[]; matchedWordLineIndices: Set<number>;
     sourceWordLineIndices: Set<number> } | null = null
   let analysisMemo: { cache: AudioAnalysis | null; lines: readonly LyricsLine[] | null; sourceLyricKey: string | null;
@@ -50,9 +54,12 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
   function sourceWordMatches(): MatchedLyricWords[] {
     if (!input) return []
     const fragments = cache?.fragments ?? EMPTY_FRAGMENTS
-    if (wordMatchMemo?.fragments === fragments && wordMatchMemo.lines === input.sourceLines
+    const alignedSources = cache?.alignedSources ?? EMPTY_ALIGNED_SOURCES
+    if (wordMatchMemo?.fragments === fragments && wordMatchMemo.alignedSources === alignedSources && wordMatchMemo.lines === input.sourceLines
       && wordMatchMemo.sourceLyricKey === input.sourceLyricKey && wordMatchMemo.durationSec === input.durationSec) return wordMatchMemo.matches
-    const matches = matchLyricWordTimings(input.sourceLines, fragments, input.durationSec)
+    const byLine = new Map(matchLyricWordTimings(input.sourceLines, fragments, input.durationSec).map(match => [match.lineIndex, match]))
+    for (const match of matchCachedKnownText(input.sourceLines, alignedSources, input.sourceLyricKey, input.durationSec)) byLine.set(match.lineIndex, match)
+    const matches = [...byLine.values()].sort((left, right) => left.lineIndex - right.lineIndex)
     const matchedWordLineIndices = new Set(matches.map(match => match.lineIndex))
     const ordered = input.sourceLines.map((line, lineIndex) => ({ line, lineIndex }))
       .filter(item => Number.isFinite(item.line.timeSec)).sort((a, b) => a.line.timeSec - b.line.timeSec || a.lineIndex - b.lineIndex)
@@ -67,7 +74,7 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
     input.sourceLines.forEach((line, lineIndex) => {
       if (hasReliableSourceWordTimings(line, input!.durationSec, nextStarts.get(lineIndex))) sourceWordLineIndices.add(lineIndex)
     })
-    wordMatchMemo = { fragments, lines: input.sourceLines, sourceLyricKey: input.sourceLyricKey,
+    wordMatchMemo = { fragments, alignedSources, lines: input.sourceLines, sourceLyricKey: input.sourceLyricKey,
       durationSec: input.durationSec, matches, matchedWordLineIndices, sourceWordLineIndices }
     return matches
   }
@@ -178,34 +185,42 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
       }
     }
   }
-  function nextWindow() {
+  type AnalysisWindow =
+    | { kind: 'transcribe'; startSec: number; endSec: number; language: 'en' | 'ru'; priority: number }
+    | { kind: 'align'; alignmentId: string; cacheKey: string; lineIndex: number; text: string;
+        sourceLyricKey: string; startSec: number; endSec: number; language: 'en' | 'ru'; priority: number }
+  function nextWindow(): AnalysisWindow | null {
     if (!input) return null
     const accepted = new Set(sourceEnds().map(end => end.lineIndex))
-    const matchedWords = wordTimingsEnabled ? (sourceWordMatches(), wordMatchMemo?.matchedWordLineIndices ?? EMPTY_LINE_INDICES) : EMPTY_LINE_INDICES
     const sourceWordLineIndices = wordTimingsEnabled ? wordMatchMemo?.sourceWordLineIndices ?? EMPTY_LINE_INDICES : EMPTY_LINE_INDICES
     const candidates = resolvedSourceLines().flatMap(line => {
       const language = lyricLanguage(line.text)
       if (!language) return []
       const sourceLine = input!.sourceLines[line.lineIndex]
       const needsEnd = !accepted.has(line.lineIndex) && line.endSource !== 'manual' && line.endSource !== 'source'
-      const needsWords = wordTimingsEnabled && canMatchLyricWordTimings(line.text) && !matchedWords.has(line.lineIndex)
-        && !sourceWordLineIndices.has(line.lineIndex)
+      const needsWords = wordTimingsEnabled && canMatchLyricWordTimings(line.text) && !sourceWordLineIndices.has(line.lineIndex)
+        && !sourceLine.words?.length
       if (!needsEnd && !needsWords) return []
       const startSec = Math.max(0, Math.floor((line.endTimeSec - 6) * 50) / 50)
       const endSec = Math.min(input!.durationSec, Math.ceil((line.endTimeSec + 1) * 50) / 50)
       const priority = position >= line.timeSec && position <= line.endTimeSec ? 0 : Math.abs(line.timeSec - position) + 1
-      const result: { startSec: number; endSec: number; language: 'en' | 'ru'; priority: number }[] = []
+      const result: AnalysisWindow[] = []
       if (needsEnd && endSec > startSec && !(cache?.fragments ?? []).some(fragment => fragment.startSec <= startSec && fragment.endSec >= endSec)) {
-        result.push({ startSec, endSec, language, priority })
+        result.push({ kind: 'transcribe', startSec, endSec, language, priority })
       }
       if (needsWords) {
-        // Word matching is against canonical source time. Leave room for a full
-        // line plus context so a line is never pieced together from fragments.
-        const wordStartSec = Math.max(0, Math.floor((sourceLine.timeSec - 1.5) * 50) / 50)
-        const wordEndSec = Math.min(input!.durationSec, Math.ceil((sourceLine.timeSec + 10.25) * 50) / 50)
-        if (wordEndSec > wordStartSec && !(cache?.fragments ?? []).some(fragment => fragment.startSec <= wordStartSec && fragment.endSec >= wordEndSec)) {
-          result.push({ startSec: wordStartSec, endSec: wordEndSec, language,
-            priority: Math.abs(sourceLine.timeSec - position) + 1 })
+        const window = knownTextLineWindow(input!.sourceLines, line.lineIndex, input!.durationSec)
+        if (window) {
+          const cacheKey = knownTextAlignmentKey(input!.sourceLyricKey, line.lineIndex, sourceLine.text, window.startSec, window.endSec)
+          const exists = (cache?.alignedSources ?? EMPTY_ALIGNED_SOURCES).some(source => source.sourceLyricKey === input!.sourceLyricKey
+            && source.lineIndex === line.lineIndex && source.sourceText === sourceLine.text
+            && source.sourceStartSec === window.startSec && source.sourceEndSec === window.endSec)
+          if (!exists && !attemptedAlignments.has(cacheKey)) {
+            const alignmentId = `${generation}:${line.lineIndex}:${window.startSec}:${window.endSec}`
+            result.push({ kind: 'align', alignmentId, cacheKey, lineIndex: line.lineIndex, text: sourceLine.text,
+              sourceLyricKey: input!.sourceLyricKey, startSec: window.startSec, endSec: window.endSec, language,
+              priority: Math.abs(sourceLine.timeSec - position) + 0.5 })
+          }
         }
       }
       return result
@@ -252,15 +267,37 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
         }
         signal.throwIfAborted()
         publish('analyzing')
-        const fragmentId = `${window.startSec}:${window.endSec}`
         const fragmentPcm = audio.pcm.slice(Math.floor(window.startSec * 16000), Math.floor(window.endSec * 16000))
-        const response = await worker.request({ type: 'transcribe', jobId: job, fragmentId,
-          trackStartSec: window.startSec, sampleRate: 16000, pcm: fragmentPcm, language: window.language }, signal)
-        signal.throwIfAborted()
-        if (response.type !== 'result') throw new Error('Unexpected recognition response')
-        const fragment: CompletedFragment = { startSec: window.startSec, endSec: window.endSec, status: 'completed', words: response.words }
-        await checkpoint({ completedFragment: fragment,
-          acceptedMatches: { sourceLyricKey: input!.sourceLyricKey, ends: combineEnds(matches(fragment)) } }, job)
+        if (window.kind === 'align') {
+          const response = await worker.request({ type: 'align-known-text', jobId: job, alignmentId: window.alignmentId,
+            trackStartSec: window.startSec, sourceEndSec: window.endSec, sampleRate: 16000,
+            pcm: fragmentPcm, language: window.language, text: window.text }, signal)
+          signal.throwIfAborted()
+          if (response.type !== 'alignment') throw new Error('Unexpected known-text alignment response')
+          if (job !== generation || input?.sourceLyricKey !== window.sourceLyricKey) return
+          const currentLine = input.sourceLines[window.lineIndex]
+          const currentWindow = knownTextLineWindow(input.sourceLines, window.lineIndex, input.durationSec)
+          if (!currentLine || currentLine.text !== window.text || currentWindow?.startSec !== window.startSec
+            || currentWindow.endSec !== window.endSec) return
+          attemptedAlignments.add(window.cacheKey)
+          if (response.words.length && Number.isFinite(response.confidence) && response.confidence >= 0.001) {
+            const expectedWords = knownTextWords(window.text)
+            if (response.words.length !== expectedWords.length || response.words.some((word, index) => word.text !== expectedWords[index].text)) return
+            const alignedSource: CachedAlignedSourceLine = { sourceLyricKey: window.sourceLyricKey,
+              lineIndex: window.lineIndex, sourceText: window.text, sourceStartSec: window.startSec,
+              sourceEndSec: window.endSec, confidence: response.confidence, words: response.words }
+            await checkpoint({ alignedSource }, job)
+          }
+        } else {
+          const fragmentId = `${window.startSec}:${window.endSec}`
+          const response = await worker.request({ type: 'transcribe', jobId: job, fragmentId,
+            trackStartSec: window.startSec, sampleRate: 16000, pcm: fragmentPcm, language: window.language }, signal)
+          signal.throwIfAborted()
+          if (response.type !== 'result') throw new Error('Unexpected recognition response')
+          const fragment: CompletedFragment = { startSec: window.startSec, endSec: window.endSec, status: 'completed', words: response.words }
+          await checkpoint({ completedFragment: fragment,
+            acceptedMatches: { sourceLyricKey: input!.sourceLyricKey, ends: combineEnds(matches(fragment)) } }, job)
+        }
       }))
       touchIdle()
     } catch (error) {
@@ -295,6 +332,7 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
       const sameTrack = input && value && input.track.dbId === value.track.dbId && input.track.source === value.track.source && input.track.sourceId === value.track.sourceId
       if (sameTrack) {
         const changedSource = input!.sourceLyricKey !== value!.sourceLyricKey
+        if (changedSource) attemptedAlignments.clear()
         input = value; publish()
         if (changedSource) {
           const ends = combineEnds((cache?.fragments ?? []).flatMap(matches))
@@ -302,7 +340,7 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
         }
         schedule(); return
       }
-      cancel(); input = value; identity = null; cache = null
+      cancel(); attemptedAlignments.clear(); input = value; identity = null; cache = null
       publish(value ? 'loading' : 'idle')
       if (value) void restore(generation, value.track)
     },
@@ -317,11 +355,12 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
     },
     getSnapshot: (): AnalysisSnapshot => snapshot,
     subscribe(listener: () => void): () => void { listeners.add(listener); return () => listeners.delete(listener) },
-    stop(): void { enabled = false; wordTimingsEnabled = false; cancel(); input = null; identity = null; cache = null; wordMatchMemo = null; publish('idle') },
+    stop(): void { enabled = false; wordTimingsEnabled = false; cancel(); attemptedAlignments.clear(); input = null; identity = null; cache = null; wordMatchMemo = null; publish('idle') },
   }
 }
 
 const EMPTY_FRAGMENTS: readonly CompletedFragment[] = []
+const EMPTY_ALIGNED_SOURCES: readonly CachedAlignedSourceLine[] = []
 const EMPTY_LINE_INDICES = new Set<number>()
 const EMPTY_SOURCE_ENDS: MatchedSourceEnd[] = []
 

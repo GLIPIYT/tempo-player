@@ -28,6 +28,8 @@ pub struct ScanOutcome {
 
 pub fn collect_audio_files(root: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = WalkDir::new(root)
+        .follow_links(false)
+        .sort_by_file_name()
         .into_iter()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())

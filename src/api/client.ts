@@ -77,6 +77,8 @@ function periodSinceSecs(period: AnalyticsPeriod): number | null {
 }
 
 export const api = {
+  resolveLibraryAudioPath: (trackId: number) => invoke<string | null>('resolve_library_audio_path', { trackId }),
+  searchCachedLyrics: (query: string) => invoke<Track[]>('search_cached_lyrics', { query }),
   listLibraryFolders: () => invoke<LibraryFolder[]>('get_library_folders'),
   addLibraryFolder: (path: string) => invoke<LibraryFolder>('add_library_folder', { path }),
   removeLibraryFolder: (folderId: number) =>

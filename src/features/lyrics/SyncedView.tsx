@@ -25,6 +25,7 @@ export const SyncedView = memo(function SyncedView({
   fillEnabled,
   motionStyle = 'smooth',
   textFillMode = 'continuous',
+  capitalizeLines = true,
   playbackRate,
   onSeek,
   getPosition,
@@ -38,6 +39,7 @@ export const SyncedView = memo(function SyncedView({
   fillEnabled: boolean
   motionStyle?: LyricMotionStyle
   textFillMode?: LyricTextFillMode
+  capitalizeLines?: boolean
   playbackRate: number
   onSeek: (timeSec: number) => void
   getPosition: () => number
@@ -353,6 +355,7 @@ export const SyncedView = memo(function SyncedView({
         past={index < segIdx}
         near={index >= paintRange.start && index < paintRange.end}
         textFillMode={textFillMode}
+        capitalizeLines={capitalizeLines}
         progressDirection={progressDirection}
         skipLabel={skipLabel}
         registerRow={registerRow}
@@ -364,7 +367,7 @@ export const SyncedView = memo(function SyncedView({
         onMeasureProgress={measureProgressGeometry}
       />
     )),
-    [segments, segIdx, paintRange, textFillMode, progressDirection, skipLabel, registerRow, setTextRef, setUnderlineRef, seekToLyricTime, endPause, measureAll, measureProgressGeometry],
+    [segments, segIdx, paintRange, textFillMode, capitalizeLines, progressDirection, skipLabel, registerRow, setTextRef, setUnderlineRef, seekToLyricTime, endPause, measureAll, measureProgressGeometry],
   )
 
   return (

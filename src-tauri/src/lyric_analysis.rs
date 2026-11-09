@@ -5,8 +5,9 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
@@ -21,6 +22,8 @@ pub const MAX_AUDIO_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_AUDIO_DURATION_SEC: f64 = 600.0;
 pub const MAX_DECODED_AUDIO_BYTES: u64 = 256 * 1024 * 1024;
 pub const MODEL_STATE_EVENT: &str = "lyrics-analysis://model-state";
+const MAX_KNOWN_TEXT_WINDOW_SEC: f64 = 12.0;
+const MAX_KNOWN_TEXT_WORDS: usize = 48;
 
 const MODEL_PATHS: &[&str] = &[
     "config.json",
@@ -579,6 +582,17 @@ pub struct CachedLyricMatches {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CachedAlignedSourceLine {
+    pub source_lyric_key: String,
+    pub line_index: u32,
+    pub source_text: String,
+    pub source_start_sec: f64,
+    pub source_end_sec: f64,
+    pub confidence: f64,
+    pub words: Vec<AnalysisWord>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BpmEstimate {
     pub bpm: f64,
     pub confidence: f64,
@@ -594,6 +608,8 @@ pub struct AudioAnalysis {
     pub bpm_confidence: f64,
     pub fragments: Vec<CompletedFragment>,
     pub lyric_matches: Vec<CachedLyricMatches>,
+    #[serde(default)]
+    pub aligned_sources: Vec<CachedAlignedSourceLine>,
 }
 #[derive(Clone, Debug)]
 pub struct AnalysisTrack {
@@ -646,13 +662,25 @@ impl AudioAnalysisStore {
                     .as_deref()
                     .ok_or("missing SoundCloud track ID")?,
             ),
-            "youtube" => existing_youtube_file(
-                &self.yt_root,
-                track
+            "youtube" => {
+                let source_id = track
                     .source_id
                     .as_deref()
-                    .ok_or("missing YouTube track ID")?,
-            ),
+                    .ok_or("missing YouTube track ID")?;
+                let registered = if self.db.has_cached_audio_identity("youtube", source_id)? {
+                    self.db
+                        .resolve_registered_audio_path(
+                            Some(track.id),
+                            Some("youtube"),
+                            Some(source_id),
+                        )?
+                        .map(PathBuf::from)
+                        .filter(|path| path.is_file())
+                } else {
+                    None
+                };
+                Ok(registered.or(existing_youtube_file(&self.yt_root, source_id)?))
+            }
             _ => Err("unsupported audio source".into()),
         }
     }
@@ -682,9 +710,24 @@ impl AudioAnalysisStore {
         {
             return Err("registered track source does not match".into());
         }
+        let track_id = track.id;
         let Some(path) = self.resolve(&track)? else {
             return Ok(None);
         };
+        // Resolving a moved provider cache can relink the registered DB row.
+        // Keep the issued identity tied to the post-relink path, or the next
+        // get/merge guard will reject this same file as a stale track.
+        let Some(track) = self
+            .db
+            .lyrics_analysis_track(Some(track_id), source, source_id)?
+        else {
+            return Ok(None);
+        };
+        if track.source != source
+            || (source_id.is_some() && track.source_id.as_deref() != source_id)
+        {
+            return Err("registered track source changed while resolving audio".into());
+        }
         let Some((identity, stamp)) = read_audio_identity(&path)? else {
             return Ok(None);
         };
@@ -776,6 +819,7 @@ impl AudioAnalysisStore {
         Ok(Some(analysis))
     }
 
+    #[cfg(test)]
     pub fn merge(
         &self,
         fingerprint: &str,
@@ -784,6 +828,19 @@ impl AudioAnalysisStore {
         bpm: Option<BpmEstimate>,
         fragment: Option<CompletedFragment>,
         matches: Option<CachedLyricMatches>,
+    ) -> Result<AudioAnalysis, String> {
+        self.merge_with_alignment(fingerprint, algorithm, model, bpm, fragment, matches, None)
+    }
+
+    pub fn merge_with_alignment(
+        &self,
+        fingerprint: &str,
+        algorithm: &str,
+        model: &str,
+        bpm: Option<BpmEstimate>,
+        fragment: Option<CompletedFragment>,
+        matches: Option<CachedLyricMatches>,
+        aligned_source: Option<CachedAlignedSourceLine>,
     ) -> Result<AudioAnalysis, String> {
         validate_version(algorithm)?;
         validate_version(model)?;
@@ -799,16 +856,73 @@ impl AudioAnalysisStore {
         if let Some(matches) = &matches {
             validate_matches(matches, identity.duration_sec)?;
         }
+        if let Some(aligned_source) = &aligned_source {
+            validate_aligned_source(aligned_source, identity.duration_sec)?;
+        }
+        if aligned_source.is_none() {
+            // Keep the existing shorter transaction for the unchanged ASR path.
+            return self.db.lyrics_analysis_merge(
+                &identity,
+                algorithm,
+                model,
+                bpm.as_ref(),
+                fragment.as_ref(),
+                matches.as_ref(),
+            );
+        }
         // Header/filesystem work and revalidation finish before entering the
-        // short SQLite transaction. No database lock spans IO or HTTP awaits.
-        self.db.lyrics_analysis_merge(
-            &identity,
-            algorithm,
-            model,
-            bpm.as_ref(),
-            fragment.as_ref(),
-            matches.as_ref(),
-        )
+        // short SQLite transaction. Alignment remains separate from free-ASR fragments.
+        self.db.with_conn(|conn| {
+            let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+            let json: Option<String> = tx.query_row(
+                "SELECT analysis_json FROM lyric_audio_analysis WHERE fingerprint=?1",
+                params![identity.fingerprint],
+                |row| row.get(0),
+            ).optional().map_err(|e| e.to_string())?;
+            let mut analysis = match json {
+                Some(json) => serde_json::from_str::<AudioAnalysis>(&json).map_err(|e| e.to_string())?,
+                None => AudioAnalysis::empty(&identity, algorithm, model),
+            };
+            validate_analysis(&analysis, &identity)?;
+            analysis.reset_versions(algorithm, model);
+            if let Some(bpm) = &bpm {
+                analysis.bpm = Some(bpm.bpm);
+                analysis.bpm_confidence = bpm.confidence;
+            }
+            if let Some(fragment) = &fragment {
+                analysis.fragments.retain(|old| old.start_sec != fragment.start_sec || old.end_sec != fragment.end_sec);
+                analysis.fragments.push(fragment.clone());
+                analysis.fragments.sort_by(|a, b| a.start_sec.total_cmp(&b.start_sec).then(a.end_sec.total_cmp(&b.end_sec)));
+            }
+            if let Some(matches) = &matches {
+                if let Some(old) = analysis.lyric_matches.iter_mut().find(|old| old.source_lyric_key == matches.source_lyric_key) {
+                    for end in &matches.ends {
+                        old.ends.retain(|old| old.line_index != end.line_index);
+                        old.ends.push(end.clone());
+                    }
+                    old.ends.sort_by_key(|end| end.line_index);
+                } else {
+                    analysis.lyric_matches.push(matches.clone());
+                }
+            }
+            let aligned_source = aligned_source.as_ref().expect("alignment branch is checked above");
+            analysis.aligned_sources.retain(|old| old.source_lyric_key != aligned_source.source_lyric_key
+                || old.line_index != aligned_source.line_index);
+            analysis.aligned_sources.push(aligned_source.clone());
+            analysis.aligned_sources.sort_by(|a, b| a.source_lyric_key.cmp(&b.source_lyric_key).then(a.line_index.cmp(&b.line_index)));
+            validate_analysis(&analysis, &identity)?;
+
+            let json = serde_json::to_string(&analysis).map_err(|e| e.to_string())?;
+            if json.len() > 2 * 1024 * 1024 { return Err("audio analysis cache exceeds its size limit".into()); }
+            let updated_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+            tx.execute("DELETE FROM lyric_audio_analysis WHERE audio_key=?1 AND fingerprint<>?2",
+                params![identity.absolute_path, identity.fingerprint]).map_err(|e| e.to_string())?;
+            tx.execute("INSERT INTO lyric_audio_analysis(fingerprint,audio_key,analysis_json,updated_at) VALUES(?1,?2,?3,?4) \
+                ON CONFLICT(fingerprint) DO UPDATE SET audio_key=excluded.audio_key,analysis_json=excluded.analysis_json,updated_at=excluded.updated_at",
+                params![identity.fingerprint, identity.absolute_path, json, updated_at]).map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
+            Ok(analysis)
+        })
     }
 }
 
@@ -1095,6 +1209,43 @@ fn validate_matches(matches: &CachedLyricMatches, duration: f64) -> Result<(), S
     }
     Ok(())
 }
+fn validate_aligned_source(source: &CachedAlignedSourceLine, duration: f64) -> Result<(), String> {
+    if source.source_lyric_key.is_empty()
+        || source.source_lyric_key.len() > 512
+        || source.source_text.trim().is_empty()
+        || source.source_text.len() > 4096
+        || source.source_text.contains('\n')
+        || source.source_text.contains('\r')
+        || source.words.len() < 2
+        || source.words.len() > MAX_KNOWN_TEXT_WORDS
+        || !source.confidence.is_finite()
+        || !(0.001..=1.0).contains(&source.confidence)
+        || !source.source_start_sec.is_finite()
+        || !source.source_end_sec.is_finite()
+        || source.source_start_sec < 0.0
+        || source.source_end_sec <= source.source_start_sec
+        || source.source_end_sec > duration
+        || source.source_end_sec - source.source_start_sec > MAX_KNOWN_TEXT_WINDOW_SEC
+    {
+        return Err("invalid known-text alignment identity or window".into());
+    }
+    let mut previous_end = source.source_start_sec;
+    for word in &source.words {
+        if word.text.trim().is_empty()
+            || word.text.len() > 256
+            || !word.start_sec.is_finite()
+            || !word.end_sec.is_finite()
+            || word.start_sec < previous_end
+            || word.start_sec < source.source_start_sec
+            || word.end_sec <= word.start_sec
+            || word.end_sec > source.source_end_sec
+        {
+            return Err("invalid aligned source word".into());
+        }
+        previous_end = word.end_sec;
+    }
+    Ok(())
+}
 pub fn validate_analysis(analysis: &AudioAnalysis, identity: &AudioIdentity) -> Result<(), String> {
     if analysis.fingerprint != identity.fingerprint
         || !analysis.duration_sec.is_finite()
@@ -1102,6 +1253,7 @@ pub fn validate_analysis(analysis: &AudioAnalysis, identity: &AudioIdentity) -> 
         || !confidence(analysis.bpm_confidence)
         || analysis.fragments.len() > 2048
         || analysis.lyric_matches.len() > 64
+        || analysis.aligned_sources.len() > 2048
     {
         return Err("invalid stored audio analysis".into());
     }
@@ -1119,6 +1271,13 @@ pub fn validate_analysis(analysis: &AudioAnalysis, identity: &AudioIdentity) -> 
     for matches in &analysis.lyric_matches {
         validate_matches(matches, identity.duration_sec)?;
     }
+    let mut aligned_source_lines = HashSet::new();
+    for source in &analysis.aligned_sources {
+        validate_aligned_source(source, identity.duration_sec)?;
+        if !aligned_source_lines.insert((source.source_lyric_key.as_str(), source.line_index)) {
+            return Err("duplicate aligned source line".into());
+        }
+    }
     Ok(())
 }
 impl AudioAnalysis {
@@ -1132,6 +1291,7 @@ impl AudioAnalysis {
             bpm_confidence: 0.0,
             fragments: Vec::new(),
             lyric_matches: Vec::new(),
+            aligned_sources: Vec::new(),
         }
     }
     pub fn reset_versions(&mut self, algorithm: &str, model: &str) {
@@ -1142,6 +1302,7 @@ impl AudioAnalysis {
         if self.algorithm_version != algorithm || self.model_revision != model {
             self.fragments.clear();
             self.lyric_matches.clear();
+            self.aligned_sources.clear();
         }
         self.algorithm_version = algorithm.into();
         self.model_revision = model.into();
@@ -1203,16 +1364,18 @@ pub async fn lyrics_analysis_merge(
     bpm: Option<BpmEstimate>,
     completed_fragment: Option<CompletedFragment>,
     accepted_matches: Option<CachedLyricMatches>,
+    aligned_source: Option<CachedAlignedSourceLine>,
 ) -> Result<AudioAnalysis, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        store.merge(
+        store.merge_with_alignment(
             &fingerprint,
             &algorithm_version,
             &model_revision,
             bpm,
             completed_fragment,
             accepted_matches,
+            aligned_source,
         )
     })
     .await

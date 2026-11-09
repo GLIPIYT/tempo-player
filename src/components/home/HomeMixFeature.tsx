@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FocusEvent, type MouseEvent } from 'react'
-import { ChevronDown, ChevronLeft, ChevronRight, Clock3, ListMusic, Play } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, Clock3, ListMusic, Play, Plus } from 'lucide-react'
 import type { Track } from '../../types/models'
 import { resolveLang, useT } from '../../i18n'
 import { formatCount } from '../../i18n/count'
@@ -13,6 +13,7 @@ interface HomeMixFeatureProps {
   onOpen: (mix: HourMix) => void
   onMixMenu: (event: MouseEvent, mix: HourMix) => void
   onSectionMenu: (event: MouseEvent) => void
+  onCreateRule: () => void
 }
 
 function mixCover(mix: HourMix): string | null {
@@ -25,6 +26,7 @@ export default function HomeMixFeature({
   onOpen,
   onMixMenu,
   onSectionMenu,
+  onCreateRule,
 }: HomeMixFeatureProps) {
   const t = useT()
   const { settings } = useSettings()
@@ -87,7 +89,7 @@ export default function HomeMixFeature({
     return () => document.removeEventListener('pointerdown', onOutsidePointer)
   }, [pickerOpen])
 
-  if (!activeMix) return null
+  if (!activeMix) return <section className="home-mix-feature"><button className="btn" onClick={onCreateRule}><Plus size={16} />{t('Your rule')}</button></section>
 
   const chooseMix = (index: number) => {
     if (pickerOpen) pickerButtonRef.current?.focus()
@@ -133,12 +135,12 @@ export default function HomeMixFeature({
               <div className="home-mix-copy">
                 <span className="home-mix-kicker">
                   <Clock3 size={14} />
-                  {mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}
+                  {mix.kind === 'custom' ? t('Custom mix') : mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}
                 </span>
                 <h2>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</h2>
-                <p>{t(mix.description)}</p>
+                {mix.description ? <p>{t(mix.description)}</p> : null}
                 <div className="home-mix-actions">
-                  <button type="button" className="home-mix-play" tabIndex={current && !pickerOpen ? 0 : -1} onClick={() => onPlay(mix.tracks, 0)}>
+                  <button type="button" className="home-mix-play" disabled={!mix.tracks.length} tabIndex={current && !pickerOpen ? 0 : -1} onClick={() => onPlay(mix.tracks, 0)}>
                     <Play size={15} fill="currentColor" />
                     {t('Play mix')}
                   </button>
@@ -152,7 +154,7 @@ export default function HomeMixFeature({
                     {t('View tracks')}
                   </button>
                 </div>
-                <span className="home-mix-meta">{formatCount(mix.tracks.length, 'track', t, lang)} · {t('From your library')}</span>
+                <span className="home-mix-meta">{formatCount(mix.tracks.length, 'track', t, lang)}{mix.kind !== 'custom' ? ` · ${t('From your library')}` : ''}</span>
               </div>
               <div className="home-mix-art" aria-hidden="true">
                 <div className="home-mix-art-back"><Cover path={art} label={mix.title} size={360} loading="eager" /></div>
@@ -181,13 +183,17 @@ export default function HomeMixFeature({
                 >
                   <span className="home-mix-choice-art"><Cover path={mixCover(mix)} label={mix.title} size={146} /></span>
                   <span className="home-mix-choice-copy">
-                    <small>{mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}</small>
+                    <small>{mix.kind === 'custom' ? t('Custom mix') : mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}</small>
                     <strong>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</strong>
                     <span className="home-mix-choice-description">{t(mix.description)}</span>
                     <span className="home-mix-choice-meta">{formatCount(mix.tracks.length, 'track', t, lang)}</span>
                   </span>
                 </button>
               ))}
+              <button type="button" className="home-mix-choice home-mix-create" tabIndex={pickerOpen ? 0 : -1} onClick={onCreateRule}>
+                <span className="home-mix-choice-art"><Plus size={42} strokeWidth={1.2} /></span>
+                <span className="home-mix-choice-copy"><strong>{t('Your rule')}</strong></span>
+              </button>
             </div>
         </div>
         <div className="home-mix-controls">

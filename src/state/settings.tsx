@@ -36,9 +36,11 @@ export interface AppSettings {
   }
   lyrics: {
     cacheOnline: boolean
+    searchCached: boolean
+    capitalizeLines: boolean
     /** Refine line timing from the audio signal without downloading a model. */
     vocalAnalysisEnabled: boolean
-    /** Explicit opt-in to Whisper word recognition; only used in word-fill mode. */
+    /** Explicit opt-in to known-text word alignment; only used in word-fill mode. */
     whisperWordTimingsEnabled: boolean
     alignment: 'left' | 'center' | 'right'
     textSizePx: number
@@ -147,6 +149,8 @@ export const defaultSettings: AppSettings = {
   discord: { enabled: false, clientId: '1543766505295183904', lyricStitchGapSec: 2 },
   lyrics: {
     cacheOnline: true,
+    searchCached: false,
+    capitalizeLines: true,
     vocalAnalysisEnabled: true,
     whisperWordTimingsEnabled: false,
     alignment: 'left',
@@ -235,6 +239,8 @@ function normalizeLyrics(value: Partial<AppSettings['lyrics']>): AppSettings['ly
   return {
     ...base,
     ...stored,
+    searchCached: stored.searchCached === true,
+    capitalizeLines: stored.capitalizeLines !== false,
     alignment: value.alignment === 'center' || value.alignment === 'right' ? value.alignment : 'left',
     vocalAnalysisEnabled: typeof stored.vocalAnalysisEnabled === 'boolean'
       ? stored.vocalAnalysisEnabled : base.vocalAnalysisEnabled,

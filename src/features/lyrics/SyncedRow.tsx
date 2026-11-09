@@ -3,10 +3,11 @@ import { Music2 } from 'lucide-react'
 import type { LyricSegment } from './timingResolver'
 import type { LyricProgressDirection, LyricTextFillMode } from '../../state/settings'
 import { lyricDisplayText, lyricDisplayTokens } from './lyricTokens'
+import { capitalizeLyricLines } from './displayCase'
 
 /** Keep unchanged rows out of the render work when the active cue advances. */
 export const SyncedRow = memo(function SyncedRow({
-  segment, index, active, past, near = true, textFillMode, progressDirection, skipLabel,
+  segment, index, active, past, near = true, textFillMode, progressDirection, skipLabel, capitalizeLines = true,
   registerRow, setTextRef, setUnderlineRef, onSeek, onPauseEnd, onMeasure, onMeasureProgress,
 }: {
   segment: LyricSegment
@@ -17,6 +18,7 @@ export const SyncedRow = memo(function SyncedRow({
   textFillMode: LyricTextFillMode
   progressDirection: LyricProgressDirection
   skipLabel: string
+  capitalizeLines?: boolean
   registerRow: (index: number, element: HTMLElement | null) => void
   setTextRef: (element: HTMLSpanElement | null) => void
   setUnderlineRef: (element: HTMLSpanElement | null) => void
@@ -26,6 +28,7 @@ export const SyncedRow = memo(function SyncedRow({
   onMeasureProgress: () => void
 }) {
   const rowRef = useCallback((element: HTMLElement | null) => registerRow(index, element), [index, registerRow])
+  const displayText = capitalizeLines ? capitalizeLyricLines(segment.text) : segment.text
   const onClick = () => {
     onPauseEnd()
     onSeek(segment.seekToSec)
@@ -60,10 +63,10 @@ export const SyncedRow = memo(function SyncedRow({
           if (event.target === event.currentTarget && event.propertyName === 'transform') onMeasureProgress()
         } : undefined}
       >
-        {textFillMode === 'words' && active ? lyricDisplayTokens(segment.text).map((token, tokenIndex) => {
+        {textFillMode === 'words' && active ? lyricDisplayTokens(displayText).map((token, tokenIndex) => {
           const word = /\S/u.test(token)
           return <span key={tokenIndex} data-lyric-token={word ? 'word' : 'space'} className={word ? 'lyr-word' : 'lyr-word-space'}>{token}</span>
-        }) : lyricDisplayText(segment.text)}
+        }) : lyricDisplayText(displayText)}
       </span>
       <span
         className="lyr-underline"

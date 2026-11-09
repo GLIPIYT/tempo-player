@@ -32,6 +32,11 @@ function row(patch: Partial<Track>): Track {
 }
 
 describe('localTrackToUnified', () => {
+  it('plays temporary online mix candidates by provider ID without treating their temporary ID as a database row', () => {
+    const track = localTrackToUnified(row({ id: -42, source: 'soundcloud', externalId: '123' }))
+    expect(track.sourceId).toBe('123')
+    expect(track.dbId).toBeNull()
+  })
   it('keeps a local track pointing at its file', () => {
     const track = localTrackToUnified(row({ source: 'local', path: 'C:/music/a.mp3' }))
     expect(track.source).toBe('local')

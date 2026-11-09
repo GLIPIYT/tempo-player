@@ -36,6 +36,7 @@ import type { LyricsEditorDocument } from './editorDocument'
 import { lyricsOverlayMode, manualLyricsSearchReducer, manualLyricsTrackIdentity, mergeManualLyricsCandidates } from './lyricsOverlayState'
 import { lyricsPaneWidthAtPointer, readLyricsPaneWidth, writeLyricsPaneWidth } from './lyricsPaneWidth'
 import { SyncedView } from './SyncedView'
+import { capitalizeLyricLines } from './displayCase'
 import './lyrics.css'
 
 interface LyricsOverlayProps {
@@ -246,8 +247,8 @@ function LyricsVolumeRow() {
 }
 
 
-function PlainView({ text }: { text: string }) {
-  return <div className="lyr-plain">{text}</div>
+function PlainView({ text, capitalize }: { text: string; capitalize: boolean }) {
+  return <div className="lyr-plain">{capitalize ? capitalizeLyricLines(text) : text}</div>
 }
 
 function LoadingMark() {
@@ -1525,9 +1526,10 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
                   fillEnabled={settings.lyrics.fillEnabled}
                   motionStyle={settings.lyrics.motionStyle}
                   textFillMode={settings.lyrics.textFillMode}
+                  capitalizeLines={settings.lyrics.capitalizeLines}
                 />
               )}
-              {activeLyrics?.result?.kind === 'plain' && <PlainView text={activeLyrics.result.text} />}
+              {activeLyrics?.result?.kind === 'plain' && <PlainView text={activeLyrics.result.text} capitalize={settings.lyrics.capitalizeLines} />}
               {mode === 'loading' && !searching && <LoadingMark />}
             </>
           )}

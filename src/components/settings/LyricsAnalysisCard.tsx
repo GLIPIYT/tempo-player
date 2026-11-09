@@ -13,7 +13,7 @@ export default function LyricsAnalysisCard() {
   const whisperEnabled = settings.lyrics.whisperWordTimingsEnabled
   const wordMode = settings.lyrics.textFillMode === 'words'
   const modelRequested = whisperEnabled && wordMode
-  const title = t('Use speech recognition for word timing')
+  const title = t('Refine word timing')
   const progress = state.totalBytes > 0 ? Math.min(100, Math.max(0, state.loadedBytes / state.totalBytes * 100)) : 0
   const status = state.phase === 'downloading'
     ? `${t('Downloading model')} · ${Math.floor(progress)}%`

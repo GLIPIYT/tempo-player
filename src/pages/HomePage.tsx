@@ -3,7 +3,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { Eye, EyeOff, FolderPlus, Play, RefreshCw, UserRound } from 'lucide-react'
+import { Eye, EyeOff, FolderPlus, Play, RefreshCw, UserRound, Pencil } from 'lucide-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '../api/client'
 import type { Playlist, PlaylistPlayStat, ScTrack, TopTrackItem, Track } from '../types/models'
@@ -19,6 +19,10 @@ import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { toast } from '../components/common/Toast'
 import { scTracksToUnified, trackToUnified } from '../utils/unified'
 import HomeMixFeature from '../components/home/HomeMixFeature'
+import CustomMixEditor from '../components/home/CustomMixEditor'
+import { useCustomMixes } from '../features/mixes/useCustomMixes'
+import { presetFromMix } from '../features/mixes/presets'
+import type { CustomMixRule } from '../features/mixes/types'
 import HomeShelves from '../components/home/HomeShelves'
 import RecommendationsShelf from '../components/home/RecommendationsShelf'
 import EmptyState from '../components/common/EmptyState'
@@ -65,6 +69,8 @@ export default function HomePage() {
   const foldersApi = useFolders()
   const scan = useScanProgress()
   const version = useLibraryVersion()
+  const [editingRule, setEditingRule] = useState<CustomMixRule | 'new' | null>(null)
+  const custom = useCustomMixes(version, editingRule !== null)
   const total = useAsync(() => api.countTracks(), [version])
   const recent = useAsync(() => api.listTracks('', 10, 0), [version])
   const mixLibrary = useAsync(() => api.listTracks('', 300, 0, 'added'), [version])
@@ -195,7 +201,8 @@ export default function HomePage() {
   }
 
   const hidden = (id: string) => isSectionHidden(id)
-  const visibleMixes = hourMixes.filter((mix) => !hidden(`home.mix:${mix.key}`))
+  const allMixes = [...hourMixes, ...custom.mixes]
+  const visibleMixes = allMixes.filter((mix) => !hidden(`home.mix:${mix.key}`))
   const playlistStats = new Map((playlistData.data?.stats ?? []).map((stat: PlaylistPlayStat) => [stat.playlistId, stat]))
   const candidatePlaylists = (playlistData.data?.playlists ?? []).filter((playlist) => !playlist.isLikes && (playlist.trackCount ?? 0) > 0)
   const hasPlaylistHistory = candidatePlaylists.some((playlist) => playlistStats.has(playlist.id))
@@ -231,7 +238,12 @@ export default function HomePage() {
 
   return (
     <div className="page tempo-home">
+      {editingRule ? <CustomMixEditor initial={editingRule === 'new' ? undefined : editingRule}
+        genres={[...new Set(custom.candidates.flatMap(c => c.track.genre?.split(/[;,|]/u).map(g => g.trim()).filter(Boolean) ?? []))]}
+        presets={allMixes.map(mix => ({ name: mix.title, rule: presetFromMix(mix), cover: mix.tracks.find(tr => tr.coverPath)?.coverPath }))}
+        onSave={custom.save} onDelete={editingRule !== 'new' && editingRule.id != null ? () => custom.remove(editingRule.id!) : undefined} onClose={() => setEditingRule(null)} /> : null}
       {error ? <div className="error-line">{error}</div> : null}
+      {custom.error ? <div className="error-line">{custom.error}</div> : null}
       <div className="hero">
         <div className="hero-main">
           <div className="home-greeting">
@@ -287,14 +299,17 @@ export default function HomePage() {
         />
       ) : (
         <>
-          {visibleMixes.length > 0 && !hidden('home.hour') ? (
+          {!hidden('home.hour') ? (
             <HomeMixFeature
               mixes={visibleMixes}
+              onCreateRule={() => setEditingRule('new')}
               onPlay={playSection}
               onOpen={(mix) => navigate({ name: 'hour-mix', mix })}
-              onMixMenu={(event, mix) =>
-                sectionMenu(event, { title: mix.title, id: 'home.mix:' + mix.key, tracks: mix.tracks })
-              }
+              onMixMenu={(event, mix) => {
+                if (!mix.rule) return sectionMenu(event, { title: mix.title, id: 'home.mix:' + mix.key, tracks: mix.tracks })
+                event.preventDefault(); event.stopPropagation()
+                openContextMenu({ x: event.clientX, y: event.clientY, title: mix.title, items: [{ id: 'edit', label: t('Edit rule'), icon: <Pencil size={13} />, onSelect: () => setEditingRule(mix.rule!) }] })
+              }}
               onSectionMenu={(event) =>
                 sectionMenu(event, { title: t('For this hour'), id: 'home.hour', tracks: hourPicksList })
               }

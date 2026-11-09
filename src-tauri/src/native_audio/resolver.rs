@@ -105,27 +105,33 @@ pub fn prepare_track(
     } else {
         match source.as_str() {
             "local" => {
-                let mut path = track
-                    .get("localPath")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.is_empty())
-                    .map(PathBuf::from);
-                if path.is_none() {
-                    if let Some(id) = track
-                        .get("dbId")
-                        .and_then(Value::as_i64)
-                        .filter(|id| *id > 0)
-                    {
-                        path = db
-                            .get_tracks_by_ids(&[id])?
-                            .first()
-                            .map(|row| PathBuf::from(&row.path));
-                    }
-                }
-                let path =
-                    path.ok_or_else(|| format!("local audio path is unavailable for {title}"))?;
+                let db_id = track
+                    .get("dbId")
+                    .and_then(Value::as_i64)
+                    .filter(|id| *id > 0);
+                let recovered = match db_id {
+                    Some(id) => db.resolve_registered_audio_path(Some(id), None, None)?,
+                    None => None,
+                };
+                let path = recovered
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        track.get("localPath")
+                            .and_then(Value::as_str)
+                            .filter(|value| !value.is_empty())
+                            .map(PathBuf::from)
+                            .filter(|path| path.is_file())
+                    });
+                let Some(path) = path else {
+                    crate::library_identity::request_background_refresh();
+                    return Err(format!("local audio path is unavailable for {title}"));
+                };
                 if !path.is_file() {
+                    crate::library_identity::request_background_refresh();
                     return Err(format!("audio file no longer exists: {}", path.display()));
+                }
+                if let Some(object) = track.as_object_mut() {
+                    object.insert("localPath".into(), json!(path.to_string_lossy()));
                 }
                 SourceSpec {
                     location: path.to_string_lossy().into_owned(),
@@ -258,7 +264,14 @@ pub fn prepare_track(
                 std::fs::create_dir_all(&yt_cache_dir)
                     .map_err(|error| format!("YouTube cache directory: {error}"))?;
                 let cache_lookup_started = Instant::now();
-                let cached = find_youtube_cache(&yt_cache_dir, &safe);
+                let registered = db.resolve_registered_audio_path(None, Some("youtube"), Some(&safe))?;
+                if registered.is_none() && db.has_cached_audio_identity("youtube", &safe)? {
+                    crate::library_identity::request_background_refresh();
+                }
+                let cached = registered
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_file())
+                    .or_else(|| find_youtube_cache(&yt_cache_dir, &safe));
                 log_startup_timing(
                     "youtube_cache_lookup",
                     if cached.is_some() { "hit" } else { "miss" },
@@ -337,6 +350,8 @@ pub fn prepare_track(
                     artwork,
                     size,
                 )?;
+                let _ = db.mark_cached_audio_path("youtube", &safe, &path)?;
+                crate::library_identity::request_background_refresh();
                 if let Some(object) = track.as_object_mut() {
                     object.insert("dbId".into(), json!(db_id));
                     object.insert(

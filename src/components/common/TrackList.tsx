@@ -49,7 +49,7 @@ export default function TrackList({ tracks, showAlbum = true, showIndex = true, 
         </div>
       ) : null}
       {tracks.map((t, i) => {
-        const playing = player.currentTrack?.sourceId === String(t.id)
+        const playing = player.currentTrack?.source === t.source && player.currentTrack?.sourceId === (t.source === 'local' ? String(t.id) : t.externalId)
         return (
           <div
             key={t.id}

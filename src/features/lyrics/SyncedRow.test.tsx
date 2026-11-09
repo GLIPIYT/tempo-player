@@ -9,10 +9,19 @@ const line: LyricSegment = {
   text: 'На время завязал, теперь\nещё  одна строка',
 }
 const props = {
+  capitalizeLines: false,
   index: 0, past: false, textFillMode: 'words' as const, progressDirection: 'center-out' as const,
   skipLabel: 'Skip instrumental', registerRow: noop, setTextRef: noop, setUnderlineRef: noop,
   onSeek: noop, onPauseEnd: noop, onMeasure: noop, onMeasureProgress: noop,
 }
+
+it('capitalizes displayed lines without changing word slots or the source', () => {
+  const original = line.text
+  const markup = renderToStaticMarkup(<SyncedRow {...props} capitalizeLines segment={line} active />)
+  const words = [...markup.matchAll(/data-lyric-token="word" class="lyr-word">([^<]*)<\/span>/gu)].map(match => match[1])
+  expect(words).toEqual(['На', 'время', 'завязал,', 'теперь', 'Ещё', 'одна', 'строка'])
+  expect(line.text).toBe(original)
+})
 
 it('normalizes repeated spaces while preserving punctuation and newlines between highlighted words', () => {
   const markup = renderToStaticMarkup(<SyncedRow {...props} segment={line} active />)

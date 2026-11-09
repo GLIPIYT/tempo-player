@@ -1,6 +1,7 @@
 import type { Track } from '../types/models'
+import type { CustomMixRule } from '../features/mixes/types'
 
-export type HomeMixKind = 'hour' | 'artist' | 'smart'
+export type HomeMixKind = 'hour' | 'artist' | 'smart' | 'custom'
 
 export interface HourMix {
   key: string
@@ -8,6 +9,8 @@ export interface HourMix {
   title: string
   description: string
   tracks: Track[]
+  rule?: CustomMixRule
+  warnings?: string[]
 }
 
 export interface SmartMixTitles {

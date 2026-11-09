@@ -666,7 +666,10 @@ export class PlayerController {
   private soundcloudFallbackInFlight = new Set<string>()
 
   private async resolveTrackUrl(t: UnifiedTrack): Promise<ResolvedTrack | null> {
-    if (t.localPath) return { url: convertFileSrc(t.localPath), format: null, channel: 'local', cached: true }
+    if (t.localPath) {
+      const path = t.dbId != null ? await api.resolveLibraryAudioPath(t.dbId) ?? t.localPath : t.localPath
+      return { url: convertFileSrc(path), format: null, channel: 'local', cached: true }
+    }
     if (t.source === 'soundcloud') {
       if (t.dbId === null) {
         // tracks started from search have no library row yet - create one so the

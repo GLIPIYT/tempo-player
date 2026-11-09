@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,6 +13,29 @@ pub struct KnownYtTrack {
     pub artist: Option<String>,
     pub album: Option<String>,
     pub duration_ms: Option<i64>,
+}
+
+/// A local or downloaded audio row whose bytes can be identified independently
+/// of its current path.
+#[derive(Debug, Clone)]
+pub struct RegisteredAudioIdentity {
+    pub id: i64,
+    pub path: String,
+    pub source: String,
+    pub file_size: i64,
+    pub file_mtime_ns: i64,
+    pub sha256: Option<String>,
+    pub hash_file_size: Option<i64>,
+    pub hash_file_mtime_ns: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IndexedAudioFile {
+    pub path: String,
+    pub file_name: String,
+    pub file_size: i64,
+    pub file_mtime_ns: i64,
+    pub sha256: String,
 }
 
 use crate::models::{
@@ -480,6 +503,30 @@ CREATE TABLE IF NOT EXISTS lyric_vocal_analysis (
 CREATE INDEX IF NOT EXISTS idx_lyric_vocal_analysis_key ON lyric_vocal_analysis(audio_key);
 "#;
 
+const MIGRATION_23: &str = r#"
+-- A missing path does not mean a library item was deleted. Keep its identity
+-- and references until the same bytes are found elsewhere.
+ALTER TABLE tracks ADD COLUMN missing_at INTEGER;
+CREATE TABLE IF NOT EXISTS track_content_hashes (
+    track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+    sha256 TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    file_mtime_ns INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_track_content_hashes_sha256 ON track_content_hashes(sha256, track_id);
+CREATE TABLE IF NOT EXISTS audio_file_index (
+    path TEXT PRIMARY KEY COLLATE NOCASE,
+    file_name TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    file_mtime_ns INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    indexed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audio_file_index_hash ON audio_file_index(sha256, file_name COLLATE NOCASE, path COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_audio_file_index_name_size ON audio_file_index(file_name COLLATE NOCASE, file_size);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
     MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_13,
@@ -490,7 +537,7 @@ const MIGRATIONS: &[&str] = &[
     crate::recommendation_store::PERSONALIZATION_MIGRATION,
     crate::recommendation_audio::AUDIO_MIGRATION,
     MIGRATION_21,
-    MIGRATION_22,
+    MIGRATION_22, MIGRATION_23,
 ];
 
 pub struct Db {
@@ -756,7 +803,7 @@ impl Db {
         self.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT path, file_size, file_mtime_ns FROM tracks WHERE folder_id IS NOT NULL",
+                    "SELECT path, file_size, file_mtime_ns FROM tracks WHERE folder_id IS NOT NULL AND missing_at IS NULL",
                 )
                 .map_err(db_err)?;
             let mapped = stmt
@@ -805,7 +852,7 @@ impl Db {
             return Ok(0);
         }
         // A scan may have observed the brief source-missing interval between
-        // the two atomic renames. Recheck before deleting the library row.
+        // the two atomic renames. Recheck before marking the row unavailable.
         let missing_paths: Vec<&str> = paths
             .iter()
             .map(String::as_str)
@@ -816,21 +863,281 @@ impl Db {
         }
         let conn = self.lock_conn()?;
         let tx = conn.unchecked_transaction().map_err(db_err)?;
-        let mut placeholders = String::new();
-        for i in 0..missing_paths.len() {
-            if i > 0 {
-                placeholders.push_str(", ");
-            }
-            placeholders.push('?');
-        }
+        let placeholders = (2..(missing_paths.len() + 2))
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
         let sql = format!(
-            "DELETE FROM tracks WHERE path IN ({}) AND NOT EXISTS (SELECT 1 FROM track_metadata_edit_journal j WHERE j.track_id = tracks.id)",
+            "UPDATE tracks SET missing_at = ?1 WHERE path IN ({}) AND missing_at IS NULL \
+             AND source = 'local' AND folder_id IS NOT NULL \
+             AND NOT EXISTS (SELECT 1 FROM track_metadata_edit_journal j WHERE j.track_id = tracks.id)",
             placeholders
         );
-        let deleted = tx.execute(&sql, params_from_iter(missing_paths)).map_err(db_err)? as u32;
-        prune_orphans(&tx)?;
+        let mut values: Vec<Value> = vec![Value::Integer(now())];
+        values.extend(missing_paths.iter().map(|path| Value::Text((*path).to_owned())));
+        let newly_missing = tx.execute(&sql, params_from_iter(values)).map_err(db_err)? as u32;
         tx.commit().map_err(db_err)?;
-        Ok(deleted)
+        Ok(newly_missing)
+    }
+
+    /// Paths, file stamps, and hashes for local library files and cached remote
+    /// audio. Hashes are populated by the background identity indexer.
+    pub fn list_registered_audio_identities(&self) -> Result<Vec<RegisteredAudioIdentity>, String> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT t.id, t.path, t.source, t.file_size, t.file_mtime_ns, h.sha256, h.file_size, h.file_mtime_ns \
+                 FROM tracks t LEFT JOIN track_content_hashes h ON h.track_id = t.id \
+                 WHERE (t.source = 'local' AND t.folder_id IS NOT NULL) OR t.cached_at IS NOT NULL OR h.sha256 IS NOT NULL \
+                 ORDER BY t.id",
+            ).map_err(db_err)?;
+            let mapped = stmt.query_map([], |row| Ok(RegisteredAudioIdentity {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                source: row.get(2)?,
+                file_size: row.get(3)?,
+                file_mtime_ns: row.get(4)?,
+                sha256: row.get(5)?,
+                hash_file_size: row.get(6)?,
+                hash_file_mtime_ns: row.get(7)?,
+            })).map_err(db_err)?;
+            let mut rows = Vec::new();
+            for row in mapped { rows.push(row.map_err(db_err)?); }
+            Ok(rows)
+        })
+    }
+
+    /// Save an audio-file hash only if the track still points at the exact
+    /// path/stamp that was hashed. This closes races with scans and tag edits.
+    pub fn remember_registered_audio_hash(
+        &self,
+        track_id: i64,
+        path: &str,
+        file_size: i64,
+        file_mtime_ns: i64,
+        sha256: &str,
+    ) -> Result<bool, String> {
+        if !is_sha256_hex(sha256) || file_size < 0 || file_mtime_ns < 0 {
+            return Err("invalid audio identity hash or file stamp".into());
+        }
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction().map_err(db_err)?;
+            let kind: Option<String> = tx.query_row(
+                "SELECT source FROM tracks WHERE id = ?1 AND path = ?2 \
+                 AND ((source = 'local' AND folder_id IS NOT NULL AND file_size = ?3 AND file_mtime_ns = ?4) \
+                      OR (source <> 'local' AND (cached_at IS NOT NULL OR EXISTS (SELECT 1 FROM track_content_hashes h WHERE h.track_id = tracks.id))))",
+                params![track_id, path, file_size, file_mtime_ns], |row| row.get(0),
+            ).optional().map_err(db_err)?;
+            let exists = kind.is_some();
+            if exists {
+                tx.execute(
+                    "INSERT INTO track_content_hashes(track_id, sha256, file_size, file_mtime_ns, updated_at) \
+                     VALUES(?1, ?2, ?3, ?4, ?5) ON CONFLICT(track_id) DO UPDATE SET \
+                     sha256=excluded.sha256, file_size=excluded.file_size, file_mtime_ns=excluded.file_mtime_ns, updated_at=excluded.updated_at",
+                    params![track_id, sha256.to_ascii_lowercase(), file_size, file_mtime_ns, now()],
+                ).map_err(db_err)?;
+                if kind.as_deref() != Some("local") {
+                    tx.execute(
+                        "UPDATE tracks SET cached_at = COALESCE(cached_at, ?6), file_size = ?1, file_mtime_ns = ?2, modified_at = ?3 WHERE id = ?4 AND path = ?5",
+                        params![file_size, file_mtime_ns, file_mtime_ns / 1_000_000_000, track_id, path, now()],
+                    ).map_err(db_err)?;
+                }
+            }
+            tx.commit().map_err(db_err)?;
+            Ok(exists)
+        })
+    }
+
+    /// Store a fully hashed candidate discovered outside the current library
+    /// roots, so later playback recovery does not need to walk the disk again.
+    pub fn index_audio_file(&self, file: &IndexedAudioFile) -> Result<(), String> {
+        if !is_sha256_hex(&file.sha256) || file.file_size < 0 || file.file_mtime_ns < 0 {
+            return Err("invalid indexed audio hash or file stamp".into());
+        }
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO audio_file_index(path, file_name, file_size, file_mtime_ns, sha256, indexed_at) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(path) DO UPDATE SET \
+                 file_name=excluded.file_name, file_size=excluded.file_size, file_mtime_ns=excluded.file_mtime_ns, \
+                 sha256=excluded.sha256, indexed_at=excluded.indexed_at",
+                params![file.path, file.file_name, file.file_size, file.file_mtime_ns, file.sha256.to_ascii_lowercase(), now()],
+            ).map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    pub fn indexed_audio_file_for_stamp(
+        &self,
+        path: &str,
+        file_size: i64,
+        file_mtime_ns: i64,
+    ) -> Result<Option<IndexedAudioFile>, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT path, file_name, file_size, file_mtime_ns, sha256 FROM audio_file_index \
+                 WHERE path = ?1 COLLATE NOCASE AND file_size = ?2 AND file_mtime_ns = ?3",
+                params![path, file_size, file_mtime_ns],
+                |row| Ok(IndexedAudioFile {
+                    path: row.get(0)?, file_name: row.get(1)?, file_size: row.get(2)?,
+                    file_mtime_ns: row.get(3)?, sha256: row.get(4)?,
+                }),
+            ).optional().map_err(db_err)
+        })
+    }
+
+    /// List deterministic exact-hash candidates. A filename match is only a
+    /// preference; it never bypasses the SHA-256 equality check.
+    pub fn indexed_audio_candidates(
+        &self,
+        sha256: &str,
+        preferred_file_name: Option<&str>,
+    ) -> Result<Vec<IndexedAudioFile>, String> {
+        if !is_sha256_hex(sha256) { return Ok(Vec::new()); }
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT path, file_name, file_size, file_mtime_ns, sha256 FROM audio_file_index \
+                 WHERE sha256 = ?1 AND NOT EXISTS (SELECT 1 FROM hidden_tracks hidden \
+                   WHERE hidden.path = audio_file_index.path COLLATE NOCASE) \
+                 ORDER BY CASE WHEN ?2 IS NOT NULL AND file_name = ?2 COLLATE NOCASE THEN 0 ELSE 1 END, \
+                 path COLLATE NOCASE, path",
+            ).map_err(db_err)?;
+            let mapped = stmt.query_map(params![sha256.to_ascii_lowercase(), preferred_file_name], |row| Ok(IndexedAudioFile {
+                path: row.get(0)?, file_name: row.get(1)?, file_size: row.get(2)?, file_mtime_ns: row.get(3)?, sha256: row.get(4)?,
+            })).map_err(db_err)?;
+            let mut files = Vec::new();
+            for row in mapped { files.push(row.map_err(db_err)?); }
+            Ok(files)
+        })
+    }
+
+    pub fn mark_registered_audio_missing(&self, track_id: i64) -> Result<bool, String> {
+        self.with_conn(|conn| {
+            let changed = conn.execute(
+                "UPDATE tracks SET missing_at = COALESCE(missing_at, ?1) WHERE id = ?2 \
+                 AND source = 'local' AND folder_id IS NOT NULL",
+                params![now(), track_id],
+            ).map_err(db_err)?;
+            Ok(changed > 0)
+        })
+    }
+
+    pub fn has_cached_audio_identity(&self, source: &str, external_id: &str) -> Result<bool, String> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM tracks t WHERE t.source = ?1 AND t.external_id = ?2 \
+                 AND (t.cached_at IS NOT NULL OR EXISTS (SELECT 1 FROM track_content_hashes h WHERE h.track_id = t.id)))",
+                params![source, external_id],
+                |row| row.get(0),
+            ).map_err(db_err)
+        })
+    }
+
+    /// Resolve a local/cache audio row to an indexed file with identical bytes.
+    /// Supplying a provider identity instead of an id is useful when a cache
+    /// entry is recreated and its row id is not retained by the caller.
+    pub fn resolve_registered_audio_path(
+        &self,
+        track_id: Option<i64>,
+        source: Option<&str>,
+        external_id: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        let identity = self.with_conn(|conn| {
+            let sql = "SELECT t.id, t.path, t.source, t.file_size, t.file_mtime_ns, h.sha256, h.file_size, h.file_mtime_ns \
+                       FROM tracks t LEFT JOIN track_content_hashes h ON h.track_id = t.id \
+                       WHERE (?1 IS NOT NULL AND t.id = ?1) OR (?1 IS NULL AND ?2 IS NOT NULL AND ?3 IS NOT NULL AND t.source = ?2 AND t.external_id = ?3) \
+                       ORDER BY t.id LIMIT 1";
+            conn.query_row(sql, params![track_id, source, external_id], |row| Ok(RegisteredAudioIdentity {
+                id: row.get(0)?, path: row.get(1)?, source: row.get(2)?,
+                file_size: row.get(3)?, file_mtime_ns: row.get(4)?, sha256: row.get(5)?,
+                hash_file_size: row.get(6)?, hash_file_mtime_ns: row.get(7)?,
+            })).optional().map_err(db_err)
+        })?;
+        let Some(identity) = identity else { return Ok(None); };
+        if Path::new(&identity.path).is_file() {
+            self.with_conn(|conn| {
+                conn.execute("UPDATE tracks SET missing_at = NULL WHERE id = ?1", params![identity.id]).map_err(db_err)?;
+                Ok(())
+            })?;
+            return Ok(Some(identity.path));
+        }
+        let Some(sha256) = identity.sha256.filter(|_| {
+            identity.hash_file_size == Some(identity.file_size)
+                && identity.hash_file_mtime_ns == Some(identity.file_mtime_ns)
+        }) else { return Ok(None); };
+        let preferred_name = Path::new(&identity.path).file_name().and_then(|name| name.to_str());
+        let candidates = self.indexed_audio_candidates(&sha256, preferred_name)?;
+        for candidate in candidates {
+            let candidate_path = Path::new(&candidate.path);
+            let Some(stamp) = file_stamp_precise(candidate_path) else { continue; };
+            if stamp != (candidate.file_size, candidate.file_mtime_ns) { continue; }
+            let current_hash: Option<String> = self.with_conn(|conn| {
+                conn.query_row("SELECT sha256 FROM audio_file_index WHERE path = ?1 COLLATE NOCASE AND file_size = ?2 AND file_mtime_ns = ?3",
+                    params![candidate.path, candidate.file_size, candidate.file_mtime_ns], |row| row.get(0)).optional().map_err(db_err)
+            })?;
+            if current_hash.as_deref() != Some(sha256.as_str()) { continue; }
+            if self.relink_registered_audio(identity.id, &candidate)? {
+                return Ok(Some(candidate.path));
+            }
+        }
+        Ok(None)
+    }
+
+    fn relink_registered_audio(&self, track_id: i64, file: &IndexedAudioFile) -> Result<bool, String> {
+        let updated = self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction().map_err(db_err)?;
+            let expected_hash: Option<String> = tx.query_row(
+                "SELECT h.sha256 FROM tracks t JOIN track_content_hashes h ON h.track_id = t.id \
+                 AND h.file_size = t.file_size AND h.file_mtime_ns = t.file_mtime_ns WHERE t.id = ?1",
+                params![track_id], |row| row.get(0),
+            ).optional().map_err(db_err)?.ok_or_else(|| "audio row no longer exists".to_string())?;
+            if expected_hash.as_deref() != Some(file.sha256.as_str()) { return Ok(false); }
+            let occupied_id: Option<i64> = tx.query_row(
+                "SELECT id FROM tracks WHERE path = ?1 COLLATE NOCASE AND id <> ?2 ORDER BY id LIMIT 1",
+                params![file.path, track_id], |row| row.get(0),
+            ).optional().map_err(db_err)?;
+            let mut destination_folder = None;
+            if let Some(duplicate_id) = occupied_id {
+                let (target_source, target_folder, duplicate_source, duplicate_folder, pending_edit):
+                    (String, Option<i64>, String, Option<i64>, bool) = tx.query_row(
+                    "SELECT target.source, target.folder_id, duplicate.source, duplicate.folder_id, \
+                     EXISTS(SELECT 1 FROM track_metadata_edit_journal j WHERE j.track_id IN (target.id, duplicate.id)) \
+                     FROM tracks target JOIN tracks duplicate ON duplicate.id = ?2 WHERE target.id = ?1",
+                    params![track_id, duplicate_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                ).optional().map_err(db_err)?.ok_or_else(|| "audio row no longer exists".to_string())?;
+                // A fresh scanner row can claim a moved local or provider
+                // file before the older library identity is recovered. Merge
+                // only a local scan row into a valid local/provider identity.
+                let merge_local_scan = duplicate_source == "local" && duplicate_folder.is_some();
+                let target_is_local = target_source == "local" && target_folder.is_some();
+                let target_is_cached_provider = target_source != "local" && target_folder.is_none();
+                if !merge_local_scan || (!target_is_local && !target_is_cached_provider) || pending_edit {
+                    tx.commit().map_err(db_err)?;
+                    return Ok(false);
+                }
+                if target_is_local {
+                    destination_folder = duplicate_folder;
+                }
+                merge_local_duplicate(&tx, track_id, duplicate_id)?;
+            }
+            let updated = tx.execute(
+                "UPDATE tracks SET path = ?1, folder_id = COALESCE(?7, folder_id), cached_at = COALESCE(cached_at, ?6), \
+                 file_size = ?2, file_mtime_ns = ?3, modified_at = ?4, missing_at = NULL \
+                 WHERE id = ?5 AND ((source = 'local' AND folder_id IS NOT NULL) OR source <> 'local')",
+                params![file.path, file.file_size, file.file_mtime_ns, file.file_mtime_ns / 1_000_000_000, track_id, now(), destination_folder],
+            ).map_err(db_err)?;
+            if updated > 0 {
+                tx.execute(
+                    "UPDATE track_content_hashes SET file_size = ?1, file_mtime_ns = ?2, updated_at = ?3 WHERE track_id = ?4 AND sha256 = ?5",
+                    params![file.file_size, file.file_mtime_ns, now(), track_id, file.sha256],
+                ).map_err(db_err)?;
+            }
+            tx.commit().map_err(db_err)?;
+            Ok(updated > 0)
+        })?;
+        if updated {
+            crate::library_identity::notify_after_relink();
+        }
+        Ok(updated)
     }
 
     /// Drops a local file out of the library without touching the file itself: the
@@ -1134,20 +1441,26 @@ impl Db {
         let duration_sec = duration_ms as f64 / 1000.0;
         let search_text = build_search_text(title, artist, album, "");
         self.with_conn(|conn| {
-            let track_id: i64 = conn
-                .query_row(
+            let existing: Option<i64> = conn.query_row(
+                "SELECT id FROM tracks WHERE source = 'youtube' AND external_id = ?1 ORDER BY id LIMIT 1",
+                params![video_id], |row| row.get(0),
+            ).optional().map_err(db_err)?;
+            let track_id = if let Some(id) = existing {
+                conn.execute(
+                    "UPDATE tracks SET title = ?1, artist_name = ?2, duration_sec = ?3, cover_path = ?4, search_text = ?5 \
+                     WHERE id = ?6",
+                    params![title, artist, duration_sec, artwork_url, search_text, id],
+                ).map_err(db_err)?;
+                id
+            } else {
+                conn.query_row(
                     "INSERT INTO tracks(path, folder_id, title, artist_name, duration_sec, cover_path, \
                      file_size, modified_at, added_at, source, external_id, search_text) \
-                     VALUES(?1, NULL, ?2, ?3, ?4, ?5, 0, 0, ?6, 'youtube', ?7, ?8) \
-                     ON CONFLICT(path) DO UPDATE SET \
-                     title = excluded.title, artist_name = excluded.artist_name, \
-                     duration_sec = excluded.duration_sec, cover_path = excluded.cover_path, \
-                     search_text = excluded.search_text \
-                     RETURNING id",
+                     VALUES(?1, NULL, ?2, ?3, ?4, ?5, 0, 0, ?6, 'youtube', ?7, ?8) RETURNING id",
                     params![path, title, artist, duration_sec, artwork_url, now(), video_id, search_text],
                     |row| row.get(0),
-                )
-                .map_err(db_err)?;
+                ).map_err(db_err)?
+            };
 
             let artist_name = artist.trim();
             let artist_id = if artist_name.is_empty() {
@@ -1206,27 +1519,34 @@ impl Db {
         let duration_sec = duration_ms as f64 / 1000.0;
         let search_text = build_search_text(title, artist, "", "");
         self.with_conn(|conn| {
-            conn.query_row(
-                "INSERT INTO tracks(path, folder_id, title, artist_name, duration_sec, cover_path, \
-                 file_size, modified_at, added_at, source, external_id, search_text) \
-                 VALUES(?1, NULL, ?2, ?3, ?4, ?5, 0, 0, ?6, 'soundcloud', ?7, ?8) \
-                 ON CONFLICT(path) DO UPDATE SET \
-                 title = CASE WHEN trim(excluded.title) <> '' THEN excluded.title ELSE tracks.title END, \
-                 artist_name = CASE WHEN trim(excluded.artist_name) <> '' AND lower(trim(excluded.artist_name)) <> 'unknown' \
-                                    THEN excluded.artist_name ELSE tracks.artist_name END, \
-                 duration_sec = CASE WHEN excluded.duration_sec > 0 THEN excluded.duration_sec ELSE tracks.duration_sec END, \
-                 cover_path = COALESCE(NULLIF(trim(excluded.cover_path), ''), tracks.cover_path) \
-                 RETURNING id, title, artist_name",
-                params![path, title, artist, duration_sec, artwork_url, now(), sc_id, search_text],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?)),
-            )
-            .map_err(db_err)
-            .and_then(|(id, saved_title, saved_artist)| {
-                let search_text = build_search_text(&saved_title, saved_artist.as_deref().unwrap_or(""), "", "");
-                conn.execute("UPDATE tracks SET search_text = ?1 WHERE id = ?2", params![search_text, id])
-                    .map_err(db_err)?;
-                Ok(id)
-            })
+            let existing: Option<(i64, String, Option<String>)> = conn.query_row(
+                "SELECT id, title, artist_name FROM tracks WHERE source = 'soundcloud' AND external_id = ?1 ORDER BY id LIMIT 1",
+                params![sc_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).optional().map_err(db_err)?;
+            let (id, saved_title, saved_artist) = if let Some((id, saved_title, saved_artist)) = existing {
+                conn.execute(
+                    "UPDATE tracks SET \
+                     title = CASE WHEN trim(?1) <> '' THEN ?1 ELSE title END, \
+                     artist_name = CASE WHEN trim(?2) <> '' AND lower(trim(?2)) <> 'unknown' THEN ?2 ELSE artist_name END, \
+                     duration_sec = CASE WHEN ?3 > 0 THEN ?3 ELSE duration_sec END, \
+                     cover_path = COALESCE(NULLIF(trim(?4), ''), cover_path) WHERE id = ?5",
+                    params![title, artist, duration_sec, artwork_url, id],
+                ).map_err(db_err)?;
+                let new_title = if title.trim().is_empty() { saved_title } else { title.to_string() };
+                let new_artist = if artist.trim().is_empty() || artist.eq_ignore_ascii_case("unknown") { saved_artist } else { Some(artist.to_string()) };
+                (id, new_title, new_artist)
+            } else {
+                conn.query_row(
+                    "INSERT INTO tracks(path, folder_id, title, artist_name, duration_sec, cover_path, \
+                     file_size, modified_at, added_at, source, external_id, search_text) \
+                     VALUES(?1, NULL, ?2, ?3, ?4, ?5, 0, 0, ?6, 'soundcloud', ?7, ?8) RETURNING id, title, artist_name",
+                    params![path, title, artist, duration_sec, artwork_url, now(), sc_id, search_text],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?)),
+                ).map_err(db_err)?
+            };
+            let updated_search = build_search_text(&saved_title, saved_artist.as_deref().unwrap_or(""), "", "");
+            conn.execute("UPDATE tracks SET search_text = ?1 WHERE id = ?2", params![updated_search, id]).map_err(db_err)?;
+            Ok(id)
         })
     }
 
@@ -2299,6 +2619,46 @@ impl Db {
         })
     }
 
+    /// Register the actual file behind a downloaded provider row. The real path
+    /// lets playback recover a cache file after it is moved out of Tempo's cache
+    /// directory. A new path invalidates any old digest until it is rehashed.
+    pub fn mark_cached_audio_path(
+        &self,
+        source: &str,
+        external_id: &str,
+        path: &Path,
+    ) -> Result<bool, String> {
+        if !matches!(source, "soundcloud" | "youtube") {
+            return Err("unsupported cached audio source".into());
+        }
+        let Some((file_size, file_mtime_ns)) = file_stamp_precise(path) else {
+            return Ok(false);
+        };
+        let path = path.to_string_lossy().into_owned();
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction().map_err(db_err)?;
+            let row: Option<(i64, String)> = tx.query_row(
+                "SELECT id, path FROM tracks WHERE source = ?1 AND external_id = ?2",
+                params![source, external_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional().map_err(db_err)?;
+            let Some((track_id, old_path)) = row else {
+                tx.commit().map_err(db_err)?;
+                return Ok(false);
+            };
+            if !old_path.eq_ignore_ascii_case(&path) {
+                tx.execute("DELETE FROM track_content_hashes WHERE track_id = ?1", params![track_id]).map_err(db_err)?;
+            }
+            tx.execute(
+                "UPDATE tracks SET path = ?1, cached_at = COALESCE(cached_at, ?2), file_size = ?3, \
+                 file_mtime_ns = ?4, modified_at = ?5, missing_at = NULL WHERE id = ?6",
+                params![path, now(), file_size, file_mtime_ns, file_mtime_ns / 1_000_000_000, track_id],
+            ).map_err(db_err)?;
+            tx.commit().map_err(db_err)?;
+            Ok(true)
+        })
+    }
+
     /// Pulls album/artist/year/genre from the cached file's tags and links the
     /// SoundCloud row into the normal albums and artists catalogs. Returns false
     /// when the row is gone or the file has no readable tags.
@@ -2404,7 +2764,7 @@ impl Db {
     pub fn mark_sc_uncached(&self, external_id: &str) -> Result<(), String> {
         self.with_conn(|conn| {
             conn.execute(
-                "UPDATE tracks SET cached_at = NULL, file_size = 0 \
+                "UPDATE tracks SET cached_at = NULL \
                  WHERE source = 'soundcloud' AND external_id = ?1",
                 params![external_id],
             )
@@ -2413,18 +2773,16 @@ impl Db {
         })
     }
 
-    pub fn oldest_cached_sc_track(&self) -> Result<Option<String>, String> {
+    pub fn cached_sc_tracks_oldest_first(&self) -> Result<Vec<String>, String> {
         self.with_conn(|conn| {
-            conn.query_row(
+            let mut stmt = conn.prepare(
                 "SELECT external_id FROM tracks \
                  WHERE source = 'soundcloud' AND cached_at IS NOT NULL AND external_id IS NOT NULL \
                  AND id NOT IN (SELECT track_id FROM playlist_tracks) \
-                 ORDER BY COALESCE(last_played_at, cached_at, 0) ASC LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(db_err)
+                 ORDER BY COALESCE(last_played_at, cached_at, 0) ASC, id ASC",
+            ).map_err(db_err)?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(db_err)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_err)
         })
     }
 
@@ -2437,35 +2795,47 @@ impl Db {
         let mut cached_files: Vec<(String, std::path::PathBuf)> = Vec::new();
         self.with_conn(|conn| {
             let mut stmt = conn
-                .prepare("SELECT id, external_id FROM tracks WHERE source = 'soundcloud'")
+                .prepare("SELECT id, external_id, path, cached_at FROM tracks WHERE source = 'soundcloud'")
                 .map_err(db_err)?;
             let mapped = stmt
-                .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)))
+                .query_map([], |row| Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                )))
                 .map_err(db_err)?;
-            let mut rows: Vec<(i64, Option<String>)> = Vec::new();
+            let mut rows: Vec<(i64, Option<String>, String, Option<i64>)> = Vec::new();
             for row in mapped {
                 rows.push(row.map_err(db_err)?);
             }
             drop(stmt);
             let tx = conn.unchecked_transaction().map_err(db_err)?;
-            for (id, external_id) in rows {
+            for (id, external_id, stored_path, cached_at) in rows {
                 let Some(external_id) = external_id else { continue };
-                if let Some(file) = crate::soundcloud_store::find_cached_file(cache_dir, &external_id) {
-                    let size = std::fs::metadata(&file).map(|m| m.len() as i64).unwrap_or(0);
-                    tx.execute(
-                        "UPDATE tracks SET cached_at = COALESCE(cached_at, ?1), file_size = ?2 WHERE id = ?3",
-                        params![now(), size, id],
-                    )
-                    .map_err(db_err)?;
+                let file = crate::soundcloud_store::find_cached_file(cache_dir, &external_id)
+                    .or_else(|| Path::new(&stored_path).is_file().then(|| PathBuf::from(&stored_path)));
+                if let Some(file) = file {
+                    let stamp = file_stamp_precise(&file).unwrap_or((0, 0));
+                    if !stored_path.eq_ignore_ascii_case(&file.to_string_lossy()) {
+                        tx.execute("DELETE FROM track_content_hashes WHERE track_id = ?1", params![id])
+                            .map_err(db_err)?;
+                    }
                     tx.execute(
                         "DELETE FROM tracks WHERE source = 'local' AND path = ?1 COLLATE NOCASE",
                         params![file.to_string_lossy()],
                     )
                     .map_err(db_err)?;
-                    cached_files.push((external_id, file));
-                } else {
                     tx.execute(
-                        "UPDATE tracks SET cached_at = NULL, file_size = 0 WHERE id = ?1 AND cached_at IS NOT NULL",
+                        "UPDATE tracks SET path = ?1, cached_at = COALESCE(cached_at, ?2), file_size = ?3, \
+                         file_mtime_ns = ?4, modified_at = ?5, missing_at = NULL WHERE id = ?6",
+                        params![file.to_string_lossy(), now(), stamp.0, stamp.1, stamp.1 / 1_000_000_000, id],
+                    )
+                    .map_err(db_err)?;
+                    cached_files.push((external_id, file));
+                } else if cached_at.is_some() {
+                    tx.execute(
+                        "UPDATE tracks SET cached_at = NULL WHERE id = ?1 AND cached_at IS NOT NULL",
                         params![id],
                     )
                     .map_err(db_err)?;
@@ -3367,6 +3737,10 @@ fn file_stamp_precise(path: &Path) -> Option<(i64, i64)> {
 
 fn db_err(e: rusqlite::Error) -> String {
     format!("database error: {}", e)
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn validate_lyrics_editor_document(
@@ -4367,6 +4741,74 @@ fn prune_orphans(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn merge_local_duplicate(conn: &Connection, keep_id: i64, duplicate_id: i64) -> Result<(), String> {
+    conn.execute(
+        "UPDATE playlist_tracks SET track_id = ?1 WHERE track_id = ?2",
+        params![keep_id, duplicate_id],
+    ).map_err(db_err)?;
+    conn.execute(
+        "UPDATE listening_history SET track_id = ?1 WHERE track_id = ?2",
+        params![keep_id, duplicate_id],
+    ).map_err(db_err)?;
+    conn.execute(
+        "INSERT OR IGNORE INTO recommendation_manual_memberships(playlist_id, track_id) \
+         SELECT playlist_id, ?1 FROM recommendation_manual_memberships WHERE track_id = ?2",
+        params![keep_id, duplicate_id],
+    ).map_err(db_err)?;
+
+    // Copy singleton user data only when the older row has no saved version.
+    conn.execute(
+        "INSERT OR IGNORE INTO track_lyrics_override(track_id, provider, source_artist, source_title, lrc, offset_ms, updated_at) \
+         SELECT ?1, provider, source_artist, source_title, lrc, offset_ms, updated_at FROM track_lyrics_override WHERE track_id = ?2",
+        params![keep_id, duplicate_id],
+    ).map_err(db_err)?;
+    conn.execute(
+        "INSERT OR IGNORE INTO track_lyrics_editor_documents(track_id, document_json, updated_at, provider, source_artist, source_title, lrc, offset_ms) \
+         SELECT ?1, document_json, updated_at, provider, source_artist, source_title, lrc, offset_ms FROM track_lyrics_editor_documents WHERE track_id = ?2",
+        params![keep_id, duplicate_id],
+    ).map_err(db_err)?;
+    conn.execute(
+        "INSERT OR IGNORE INTO track_loudness(track_id, gain_db, peak_db, checked) \
+         SELECT ?1, gain_db, peak_db, checked FROM track_loudness WHERE track_id = ?2",
+        params![keep_id, duplicate_id],
+    ).map_err(db_err)?;
+    conn.execute(
+        "INSERT OR IGNORE INTO track_metadata_entity_override(track_id, artist_id, album_id) \
+         SELECT ?1, artist_id, album_id FROM track_metadata_entity_override WHERE track_id = ?2",
+        params![keep_id, duplicate_id],
+    ).map_err(db_err)?;
+    conn.execute(
+        "INSERT OR IGNORE INTO track_metadata_original(track_id, snapshot_json, captured_at) \
+         SELECT ?1, snapshot_json, captured_at FROM track_metadata_original WHERE track_id = ?2",
+        params![keep_id, duplicate_id],
+    ).map_err(db_err)?;
+    conn.execute(
+        "INSERT OR IGNORE INTO track_metadata_original_pictures(track_id, tag_type, position, picture_type, mime_type, description, data) \
+         SELECT ?1, tag_type, position, picture_type, mime_type, description, data FROM track_metadata_original_pictures WHERE track_id = ?2",
+        params![keep_id, duplicate_id],
+    ).map_err(db_err)?;
+    conn.execute(
+        "INSERT OR IGNORE INTO track_metadata_original_state(track_id, source_path, file_size, file_mtime_ns) \
+         SELECT ?1, source_path, file_size, file_mtime_ns FROM track_metadata_original_state WHERE track_id = ?2",
+        params![keep_id, duplicate_id],
+    ).map_err(db_err)?;
+    conn.execute(
+        "UPDATE tracks SET \
+         play_count = play_count + (SELECT play_count FROM tracks WHERE id = ?2), \
+         skip_count = skip_count + (SELECT skip_count FROM tracks WHERE id = ?2), \
+         added_at = MIN(added_at, (SELECT added_at FROM tracks WHERE id = ?2)), \
+         last_played_at = CASE \
+             WHEN last_played_at IS NULL THEN (SELECT last_played_at FROM tracks WHERE id = ?2) \
+             WHEN (SELECT last_played_at FROM tracks WHERE id = ?2) IS NULL THEN last_played_at \
+             ELSE MAX(last_played_at, (SELECT last_played_at FROM tracks WHERE id = ?2)) END, \
+         lyrics = COALESCE(lyrics, (SELECT lyrics FROM tracks WHERE id = ?2)) \
+         WHERE id = ?1",
+        params![keep_id, duplicate_id],
+    ).map_err(db_err)?;
+    conn.execute("DELETE FROM tracks WHERE id = ?1", params![duplicate_id]).map_err(db_err)?;
+    Ok(())
+}
+
 fn upsert_track_input(conn: &Connection, input: &TrackInput) -> Result<(), String> {
     // A scan can finish after a tag edit. Ignore inputs read from an earlier
     // file version so they cannot replace the just-committed metadata.
@@ -4397,6 +4839,11 @@ fn upsert_track_input(conn: &Connection, input: &TrackInput) -> Result<(), Strin
         .map_err(db_err)?;
     if let Some((prior_size, prior_mtime_ns)) = prior_stamp {
         if prior_size != input.file_size || prior_mtime_ns != input.modified_at_ns {
+            conn.execute(
+                "DELETE FROM track_content_hashes WHERE track_id = (SELECT id FROM tracks WHERE path = ?1)",
+                params![input.path],
+            )
+            .map_err(db_err)?;
             conn.execute(
                 "DELETE FROM track_metadata_entity_override WHERE track_id = (SELECT id FROM tracks WHERE path = ?1)",
                 params![input.path],
@@ -4470,7 +4917,7 @@ fn upsert_track_input(conn: &Connection, input: &TrackInput) -> Result<(), Strin
          duration_sec = excluded.duration_sec, year = excluded.year, genre = excluded.genre, \
          cover_path = excluded.cover_path, file_size = excluded.file_size, \
          modified_at = excluded.modified_at, file_mtime_ns = excluded.file_mtime_ns, folder_id = excluded.folder_id, \
-         lyrics = excluded.lyrics, search_text = excluded.search_text",
+         lyrics = excluded.lyrics, search_text = excluded.search_text, missing_at = NULL",
         params![
             input.path,
             input.folder_id,
@@ -4959,7 +5406,12 @@ mod tests {
         std::fs::remove_file(&media_0).unwrap();
         let deleted = db.delete_tracks_by_paths(&[media_0.clone()]).unwrap();
         assert_eq!(deleted, 1);
-        assert_eq!(db.count_tracks().unwrap(), 0);
+        assert_eq!(db.count_tracks().unwrap(), 1);
+        let retained_id = db.find_track_id_by_path(&media_0).unwrap().unwrap();
+        let missing_at: Option<i64> = db.with_conn(|c| {
+            c.query_row("SELECT missing_at FROM tracks WHERE id = ?1", params![retained_id], |r| r.get(0)).map_err(db_err)
+        }).unwrap();
+        assert!(missing_at.is_some());
         let orphan_counts: (i64, i64) = db
             .with_conn(|c| {
                 let artists_left: i64 = c
@@ -4971,9 +5423,244 @@ mod tests {
                 Ok((artists_left, albums_left))
             })
             .unwrap();
-        assert_eq!(orphan_counts, (0, 0));
+        assert_eq!(orphan_counts, (1, 1));
         let deleted_again = db.delete_tracks_by_paths(&[media_0.clone()]).unwrap();
         assert_eq!(deleted_again, 0);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn moved_audio_relinks_by_sha256_and_keeps_track_relationships() {
+        let (db, dir) = test_db("identity-relink");
+        let old_path = fixture_file(&dir, "original.mp3");
+        std::fs::write(&old_path, b"abc").unwrap();
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let input = track_input(&old_path, folder.id, "Original", Some("Artist"), Some("Album"));
+        let stamp = file_stamp_precise(Path::new(&old_path)).unwrap();
+        db.upsert_scanned_tracks(&[input], &[]).unwrap();
+        let track_id = db.find_track_id_by_path(&old_path).unwrap().unwrap();
+        let sha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert!(db.remember_registered_audio_hash(track_id, &old_path, stamp.0, stamp.1, sha256).unwrap());
+
+        let playlist = db.create_playlist("Keep identity").unwrap();
+        db.playlist_add_track(playlist.id, track_id).unwrap();
+        db.like_track(track_id).unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO listening_history(track_id, played_at, listened_sec, completed, skipped) VALUES(?1, ?2, 12.0, 1, 0)",
+                params![track_id, now()],
+            ).map_err(db_err)?;
+            Ok(())
+        }).unwrap();
+
+        std::fs::remove_file(&old_path).unwrap();
+        assert_eq!(db.delete_tracks_by_paths(&[old_path.clone()]).unwrap(), 1);
+        let moved_path = dir.join("renamed.flac");
+        std::fs::write(&moved_path, b"abc").unwrap();
+        let candidate_stamp = file_stamp_precise(&moved_path).unwrap();
+        db.index_audio_file(&IndexedAudioFile {
+            path: moved_path.to_string_lossy().into_owned(),
+            file_name: "renamed.flac".into(),
+            file_size: candidate_stamp.0,
+            file_mtime_ns: candidate_stamp.1,
+            sha256: sha256.into(),
+        }).unwrap();
+
+        let resolved = db.resolve_registered_audio_path(Some(track_id), None, None).unwrap().unwrap();
+        assert_eq!(resolved, moved_path.to_string_lossy());
+        let tracks = db.get_tracks_by_ids(&[track_id]).unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].id, track_id);
+        assert_eq!(tracks[0].path, resolved);
+        assert_eq!(db.get_playlist_tracks(playlist.id).unwrap()[0].track.id, track_id);
+        assert_eq!(db.list_liked_track_ids().unwrap(), vec![track_id]);
+        let history_count: i64 = db.with_conn(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM listening_history WHERE track_id = ?1", params![track_id], |r| r.get(0)).map_err(db_err)
+        }).unwrap();
+        assert_eq!(history_count, 1);
+        assert_eq!(db.find_track_id_by_path(&old_path).unwrap(), None);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn moved_audio_does_not_relink_to_a_hidden_path() {
+        let (db, dir) = test_db("identity-hidden-candidate");
+        let path = dir.join("hidden.mp3");
+        std::fs::write(&path, b"abc").unwrap();
+        let stamp = file_stamp_precise(&path).unwrap();
+        let sha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        db.index_audio_file(&IndexedAudioFile {
+            path: path.to_string_lossy().into_owned(),
+            file_name: "hidden.mp3".into(),
+            file_size: stamp.0,
+            file_mtime_ns: stamp.1,
+            sha256: sha256.into(),
+        }).unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO hidden_tracks(path, title, added_at) VALUES(?1, 'Hidden', ?2)",
+                params![path.to_string_lossy().to_ascii_uppercase(), now()],
+            ).map_err(db_err)?;
+            Ok(())
+        }).unwrap();
+
+        assert!(db.indexed_audio_candidates(sha256, None).unwrap().is_empty());
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn moved_audio_merges_fresh_scan_duplicate_into_original_track_id() {
+        let (db, dir) = test_db("identity-scan-duplicate");
+        let old_path = fixture_file(&dir, "old-name.mp3");
+        std::fs::write(&old_path, b"abc").unwrap();
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let old_input = track_input(&old_path, folder.id, "Original title", Some("Artist"), Some("Album"));
+        let old_stamp = file_stamp_precise(Path::new(&old_path)).unwrap();
+        db.upsert_scanned_tracks(&[old_input], &[]).unwrap();
+        let original_id = db.find_track_id_by_path(&old_path).unwrap().unwrap();
+        let sha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert!(db.remember_registered_audio_hash(original_id, &old_path, old_stamp.0, old_stamp.1, sha256).unwrap());
+        let playlist = db.create_playlist("Keep original ID").unwrap();
+        db.playlist_add_track(playlist.id, original_id).unwrap();
+        db.like_track(original_id).unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO listening_history(track_id, played_at, listened_sec, completed, skipped) VALUES(?1, 2, 10.0, 1, 0)",
+                params![original_id],
+            ).map_err(db_err)?;
+            Ok(())
+        }).unwrap();
+
+        std::fs::remove_file(&old_path).unwrap();
+        db.delete_tracks_by_paths(&[old_path.clone()]).unwrap();
+        let moved_path = dir.join("renamed.flac");
+        std::fs::write(&moved_path, b"abc").unwrap();
+        let scanned_duplicate = track_input(
+            moved_path.to_str().unwrap(),
+            folder.id,
+            "Scanner title",
+            Some("New Artist"),
+            Some("New Album"),
+        );
+        db.upsert_scanned_tracks(&[scanned_duplicate], &[]).unwrap();
+        let scanned_id = db.find_track_id_by_path(moved_path.to_str().unwrap()).unwrap().unwrap();
+        assert_ne!(scanned_id, original_id);
+        let moved_stamp = file_stamp_precise(&moved_path).unwrap();
+        db.index_audio_file(&IndexedAudioFile {
+            path: moved_path.to_string_lossy().into_owned(),
+            file_name: "renamed.flac".into(),
+            file_size: moved_stamp.0,
+            file_mtime_ns: moved_stamp.1,
+            sha256: sha256.into(),
+        }).unwrap();
+
+        let resolved = db.resolve_registered_audio_path(Some(original_id), None, None).unwrap().unwrap();
+        assert_eq!(resolved, moved_path.to_string_lossy());
+        assert_eq!(db.find_track_id_by_path(&resolved).unwrap(), Some(original_id));
+        assert_eq!(db.get_tracks_by_ids(&[scanned_id]).unwrap().len(), 0);
+        assert_eq!(db.count_tracks().unwrap(), 1);
+        assert_eq!(db.get_playlist_tracks(playlist.id).unwrap()[0].track.id, original_id);
+        assert_eq!(db.list_liked_track_ids().unwrap(), vec![original_id]);
+        let history: i64 = db.with_conn(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM listening_history WHERE track_id = ?1", params![original_id], |r| r.get(0)).map_err(db_err)
+        }).unwrap();
+        assert_eq!(history, 1);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn moved_soundcloud_cache_merges_scanned_local_duplicate_without_losing_source_id() {
+        let (db, dir) = test_db("identity-provider-scan-duplicate");
+        let cache = dir.join("sc-cache");
+        let music = dir.join("Music");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::create_dir_all(&music).unwrap();
+        let old_cache_path = cache.join("77.mp3");
+        std::fs::write(&old_cache_path, b"abc").unwrap();
+        let folder = db.add_library_folder(music.to_str().unwrap()).unwrap();
+        let original_id = db.upsert_sc_track("77", "Cloud original", "Cloud artist", 1000, None).unwrap();
+        db.mark_sc_cached("77", 3).unwrap();
+        assert!(db.mark_cached_audio_path("soundcloud", "77", &old_cache_path).unwrap());
+        let old_stamp = file_stamp_precise(&old_cache_path).unwrap();
+        let sha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert!(db.remember_registered_audio_hash(original_id, old_cache_path.to_str().unwrap(), old_stamp.0, old_stamp.1, sha256).unwrap());
+        let playlist = db.create_playlist("Cloud history").unwrap();
+        db.playlist_add_track(playlist.id, original_id).unwrap();
+        db.like_track(original_id).unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO listening_history(track_id, played_at, listened_sec, completed, skipped) VALUES(?1, 3, 10.0, 1, 0)",
+                params![original_id],
+            ).map_err(db_err)?;
+            Ok(())
+        }).unwrap();
+
+        let moved_path = music.join("renamed.mp3");
+        std::fs::rename(&old_cache_path, &moved_path).unwrap();
+        let local_input = track_input(moved_path.to_str().unwrap(), folder.id, "Scanner copy", Some("File artist"), None);
+        db.upsert_scanned_tracks(&[local_input], &[]).unwrap();
+        let scan_id = db.find_track_id_by_path(moved_path.to_str().unwrap()).unwrap().unwrap();
+        assert_ne!(scan_id, original_id);
+        let moved_stamp = file_stamp_precise(&moved_path).unwrap();
+        db.index_audio_file(&IndexedAudioFile {
+            path: moved_path.to_string_lossy().into_owned(),
+            file_name: "renamed.mp3".into(),
+            file_size: moved_stamp.0,
+            file_mtime_ns: moved_stamp.1,
+            sha256: sha256.into(),
+        }).unwrap();
+
+        let resolved = db.resolve_registered_audio_path(None, Some("soundcloud"), Some("77")).unwrap().unwrap();
+        assert_eq!(resolved, moved_path.to_string_lossy());
+        assert_eq!(db.find_track_id_by_path(&resolved).unwrap(), Some(original_id));
+        assert_eq!(db.get_tracks_by_ids(&[scan_id]).unwrap().len(), 0);
+        let (source, external_id, folder_id): (String, Option<String>, Option<i64>) = db.with_conn(|conn| {
+            conn.query_row("SELECT source, external_id, folder_id FROM tracks WHERE id = ?1", params![original_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).map_err(db_err)
+        }).unwrap();
+        assert_eq!(source, "soundcloud");
+        assert_eq!(external_id.as_deref(), Some("77"));
+        assert_eq!(folder_id, None);
+        assert_eq!(db.get_playlist_tracks(playlist.id).unwrap()[0].track.id, original_id);
+        assert_eq!(db.list_liked_track_ids().unwrap(), vec![original_id]);
+        let history: i64 = db.with_conn(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM listening_history WHERE track_id = ?1", params![original_id], |row| row.get(0)).map_err(db_err)
+        }).unwrap();
+        assert_eq!(history, 1);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn matching_name_and_size_without_matching_hash_never_relinks() {
+        let (db, dir) = test_db("identity-hash-required");
+        let old_path = fixture_file(&dir, "same-name.mp3");
+        std::fs::write(&old_path, b"abc").unwrap();
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let input = track_input(&old_path, folder.id, "Song", None, None);
+        let stamp = file_stamp_precise(Path::new(&old_path)).unwrap();
+        db.upsert_scanned_tracks(&[input], &[]).unwrap();
+        let track_id = db.find_track_id_by_path(&old_path).unwrap().unwrap();
+        let expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert!(db.remember_registered_audio_hash(track_id, &old_path, stamp.0, stamp.1, expected).unwrap());
+        std::fs::remove_file(&old_path).unwrap();
+        db.delete_tracks_by_paths(&[old_path.clone()]).unwrap();
+        let candidate = dir.join("other").join("same-name.mp3");
+        std::fs::create_dir_all(candidate.parent().unwrap()).unwrap();
+        std::fs::write(&candidate, b"xyz").unwrap();
+        let candidate_stamp = file_stamp_precise(&candidate).unwrap();
+        db.index_audio_file(&IndexedAudioFile {
+            path: candidate.to_string_lossy().into_owned(),
+            file_name: "same-name.mp3".into(),
+            file_size: candidate_stamp.0,
+            file_mtime_ns: candidate_stamp.1,
+            sha256: "3608bca1e44ea6c4d268eb6db02260269892c0b42b86bbf1e77a6fa16c3c9282".into(),
+        }).unwrap();
+        assert_eq!(db.resolve_registered_audio_path(Some(track_id), None, None).unwrap(), None);
+        assert_eq!(db.find_track_id_by_path(&old_path).unwrap(), Some(track_id));
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

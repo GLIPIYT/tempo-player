@@ -11,6 +11,13 @@ describe('persisted lyrics analysis preferences', () => {
     return loadSettings().lyrics
   }
 
+  it('keeps cached-text search opt-in and preserves the capitalization choice', () => {
+    expect(loadLyrics({ lyrics: {} }).searchCached).toBe(false)
+    expect(loadLyrics({ lyrics: {} }).capitalizeLines).toBe(true)
+    expect(loadLyrics({ lyrics: { searchCached: true, capitalizeLines: false } }).searchCached).toBe(true)
+    expect(loadLyrics({ lyrics: { searchCached: true, capitalizeLines: false } }).capitalizeLines).toBe(false)
+  })
+
   it('defaults to vocal timing and keeps Whisper opt-in for new and existing settings', () => {
     expect(defaultSettings.lyrics.vocalAnalysisEnabled).toBe(true)
     expect(defaultSettings.lyrics.whisperWordTimingsEnabled).toBe(false)

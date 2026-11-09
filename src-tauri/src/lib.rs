@@ -1,5 +1,8 @@
 mod child;
 mod commands;
+mod cached_lyrics_search;
+mod custom_mixes;
+mod library_identity;
 mod database;
 mod background_search;
 mod pinterest_backgrounds;
@@ -33,7 +36,7 @@ mod native_media;
 
 use std::sync::Arc;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -90,6 +93,7 @@ pub fn run() {
             std::fs::create_dir_all(&yt_cache_dir)?;
             std::fs::create_dir_all(&bin_dir)?;
             let db = database::Db::open_at(&data_dir.join("tempo.db"))?;
+            custom_mixes::init_schema(&db)?;
             app.manage(commands::AppState {
                 db: Arc::new(db),
                 covers_dir,
@@ -102,6 +106,11 @@ pub fn run() {
             });
             {
                 let state = app.state::<commands::AppState>();
+                let change_app = app.handle().clone();
+                library_identity::set_change_notifier(Arc::new(move || {
+                    let _ = change_app.emit(soundcloud_store::LIBRARY_CHANGED_EVENT, String::new());
+                }));
+                library_identity::start_background_indexer(state.db.clone(), vec![state.sc_cache_dir.clone(), state.yt_cache_dir.clone()])?;
                 let audio_analysis = Arc::new(lyric_analysis::AudioAnalysisStore::new(
                     state.db.clone(), state.sc_cache_dir.clone(), state.yt_cache_dir.clone(),
                 ));
@@ -131,6 +140,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            cached_lyrics_search::search_cached_lyrics,
+            commands::list_custom_mix_rules,
+            commands::save_custom_mix_rule,
+            commands::delete_custom_mix_rule,
+            commands::get_custom_mix_candidates,
+            commands::resolve_library_audio_path,
             native_audio::native_audio_command,
             native_audio::native_audio_snapshot,
             recommendation_store::record_listening_session,
@@ -316,6 +331,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            if matches!(&event, tauri::RunEvent::Exit) {
+                library_identity::cancel_background_indexer();
+            }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if !tray::exit_ready() {
                     api.prevent_exit();

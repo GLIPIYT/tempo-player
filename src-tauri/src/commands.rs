@@ -33,6 +33,37 @@ pub struct AppState {
     pub bin_dir: PathBuf,
 }
 
+#[tauri::command]
+pub async fn resolve_library_audio_path(state: State<'_, AppState>, track_id: i64) -> Result<Option<String>, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.resolve_registered_audio_path(Some(track_id), None, None))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn list_custom_mix_rules(state: State<'_, AppState>) -> Result<Vec<crate::custom_mixes::CustomMixRule>, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.list_custom_mix_rules()).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn save_custom_mix_rule(state: State<'_, AppState>, rule: crate::custom_mixes::CustomMixRule) -> Result<crate::custom_mixes::CustomMixRule, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.save_custom_mix_rule(rule)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_custom_mix_rule(state: State<'_, AppState>, rule_id: i64) -> Result<(), String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.delete_custom_mix_rule(rule_id)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_custom_mix_candidates(state: State<'_, AppState>) -> Result<Vec<crate::custom_mixes::CustomMixCandidate>, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.get_custom_mix_candidates()).await.map_err(|e| e.to_string())?
+}
+
 fn sc_cache_options(state: &AppState, configured: Option<String>) -> crate::soundcloud_store::CacheOptions {
     let ytdlp_path = configured.unwrap_or_else(|| {
         state.db.get_app_setting(crate::native_audio::models::NATIVE_STATE_SETTING)
@@ -168,6 +199,7 @@ fn scan_folder_blocking(
 
     let (added, updated) = db.upsert_scanned_tracks(&outcome.new, &outcome.updated)?;
     let removed_count = db.delete_tracks_by_paths(&outcome.removed)?;
+    crate::library_identity::request_background_refresh();
 
     let summary = ScanSummary {
         scanned_files: outcome.scanned_files,
@@ -2109,6 +2141,9 @@ pub async fn ytdlp_cache(
         return Err("invalid cache key".to_string());
     }
     let dir = state.yt_cache_dir.clone();
+    if let Some(path) = state.db.resolve_registered_audio_path(None, Some("youtube"), Some(&safe))? {
+        return Ok(path);
+    }
     let destination = dir.join(&safe);
     // Playback, queue prefetch and collection downloads share this cache.
     // Serialize the check and download for one destination so yt-dlp cannot
@@ -2128,14 +2163,19 @@ pub async fn ytdlp_cache(
                     .unwrap_or(false)
             })
         {
+            state.db.mark_cached_audio_path("youtube", &safe, &found)?;
+            crate::library_identity::request_background_refresh();
             return Ok(found.to_string_lossy().to_string());
         }
     }
 
     let bin_dir = state.bin_dir.clone();
+    let cache_db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::ytdlp::download(&configured, &bin_dir, &url, &destination)
-            .map(|p| p.to_string_lossy().to_string())
+        let path = crate::ytdlp::download(&configured, &bin_dir, &url, &destination)?;
+        cache_db.mark_cached_audio_path("youtube", &safe, &path)?;
+        crate::library_identity::request_background_refresh();
+        Ok(path.to_string_lossy().to_string())
     })
     .await
     .map_err(|e| e.to_string())?

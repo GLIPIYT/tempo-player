@@ -1,0 +1,54 @@
+{
+  "date": "2026-11-09",
+  "sourceReport": "word-alignment-experiment-2026-11-09.md",
+  "fixture": {
+    "id": "en-jamendo",
+    "wordCount": 24,
+    "manualWordOnsets": true,
+    "audioIncluded": false,
+    "lyricsIncluded": false
+  },
+  "model": {
+    "id": "onnx-community/whisper-tiny_timestamped",
+    "revision": "517244293732ee2d58139af5814231b7e6830a0d",
+    "transformersJs": "3.8.1",
+    "onnxRuntimeWeb": "1.22.0-dev.20250409-89f8206ba4"
+  },
+  "runtimeProof": {
+    "actualBrowserWorker": true,
+    "wasm": true,
+    "requestType": "align-known-text",
+    "sampleRateHz": 16000,
+    "maxWindowSeconds": 12,
+    "acceptedLines": 3,
+    "returnedWords": 24
+  },
+  "timing": {
+    "meanAbsoluteOnsetErrorMs": 184.3,
+    "medianAbsoluteOnsetErrorMs": 112.7,
+    "within150ms": 16,
+    "within200ms": 18,
+    "within250ms": 20,
+    "comparison": {
+      "fireRedMeanAbsoluteOnsetErrorMs": 406,
+      "stableTsBoundedMeanAbsoluteOnsetErrorMs": 155
+    }
+  },
+  "controls": [
+    {
+      "kind": "unrelated-text-on-speech",
+      "returnedWords": 0,
+      "confidence": 0
+    },
+    {
+      "kind": "correct-text-on-silence",
+      "returnedWords": 0,
+      "confidence": 0
+    }
+  ],
+  "limitations": [
+    "One 24-word English fixture does not estimate performance across songs or languages.",
+    "Confidence is an uncalibrated token-likelihood gate.",
+    "The controls do not constitute comprehensive mismatch or silence validation."
+  ]
+}

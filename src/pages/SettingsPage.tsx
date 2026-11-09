@@ -2039,6 +2039,18 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div className="set-note">{t('Online lyrics are cached for offline playback.')}</div>
+                {settings.lyrics.cacheOnline && <div className="set-row">
+                  <span className="set-row-label">{t('Search cached lyrics')}</span>
+                  <button className={settings.lyrics.searchCached ? 'switch is-on' : 'switch'} role="switch"
+                    aria-checked={settings.lyrics.searchCached} aria-label={t('Search cached lyrics')}
+                    onClick={() => update({ lyrics: { searchCached: !settings.lyrics.searchCached } })} />
+                </div>}
+                <div className="set-row">
+                  <span className="set-row-label">{t('Capitalize lyric lines')}</span>
+                  <button className={settings.lyrics.capitalizeLines ? 'switch is-on' : 'switch'} role="switch"
+                    aria-checked={settings.lyrics.capitalizeLines} aria-label={t('Capitalize lyric lines')}
+                    onClick={() => update({ lyrics: { capitalizeLines: !settings.lyrics.capitalizeLines } })} />
+                </div>
                 <div className="set-row" style={{ marginTop: 12 }}>
                   <span className="set-row-label">{t('Lyrics alignment')}</span>
                 </div>
