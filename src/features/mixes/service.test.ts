@@ -23,7 +23,7 @@ vi.mock('../recommendations/profile', async (importOriginal) => {
 })
 vi.mock('../recommendations/service', () => ({ recommendationLanguagePreference: () => null }))
 
-import { augmentOnlineGenreCandidates, generateCustomMixSelection } from './service'
+import { augmentOnlineGenreCandidates, generateCustomMixSelection, getReusableCustomMixSnapshot } from './service'
 import { customMixRuleFingerprint } from './snapshot'
 
 function localCandidate(
@@ -233,5 +233,33 @@ describe('generateCustomMixSelection', () => {
     expect(refreshed).toMatchObject({ tracks: [oldTrack.track], generatedAt: 1_000, fromCache: true })
     expect(refreshed.warnings).toContain('The mix could not be refreshed; its previous selection is still available.')
     expect(mocks.invoke).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads only matching unexpired snapshots for positive-interval hydration', async () => {
+    const rule = createCustomMixRule('Timed hydration')
+    rule.id = 12
+    rule.refreshIntervalMinutes = 30
+    const cachedTrack = localCandidate(99, 'Ambient').track
+    const snapshot = {
+      ruleFingerprint: customMixRuleFingerprint(rule), generatedAt: 1_000,
+      tracks: [cachedTrack], warnings: ['cached warning'],
+    }
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'get_custom_mix_snapshot') return snapshot
+      throw new Error(`Unexpected command ${command}`)
+    })
+
+    await expect(getReusableCustomMixSnapshot(rule, 1_001)).resolves.toEqual({
+      tracks: [cachedTrack], warnings: ['cached warning'], generatedAt: 1_000, fromCache: true,
+    })
+    expect(mocks.invoke).toHaveBeenCalledOnce()
+
+    rule.description = 'Edited'
+    await expect(getReusableCustomMixSnapshot(rule, 1_001)).resolves.toBeNull()
+    expect(mocks.invoke).toHaveBeenCalledTimes(2)
+
+    rule.refreshIntervalMinutes = 0
+    await expect(getReusableCustomMixSnapshot(rule, 1_001)).resolves.toBeNull()
+    expect(mocks.invoke).toHaveBeenCalledTimes(2)
   })
 })

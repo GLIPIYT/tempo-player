@@ -12,7 +12,7 @@ export default function ReleaseTypeBadge({ type }: { type: ReleaseType }) {
       <Icon size={10} strokeWidth={1.7} aria-hidden="true" />
       <span className="update-release-kind-label">
         {t(RELEASE_TYPE_LABELS[type])}
-        {type === 'major' && <span className="update-release-kind-particles" aria-hidden="true"><i /><i /><i /></span>}
+        {type === 'major' && <span className="update-release-kind-particles" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /></span>}
       </span>
     </span>
   )

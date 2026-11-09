@@ -4628,22 +4628,35 @@ html.has-bg .app-content {
 .update-release-kind-particles { position: absolute; inset: 0; pointer-events: none; }
 .update-release-kind-particles i {
   position: absolute;
-  top: 45%;
-  left: 18%;
+  top: 55%;
+  left: 10%;
   width: 2px;
   height: 2px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 0 3px #ffffff70;
+  box-shadow: 0 0 3px #ffffff80;
   opacity: 0;
-  animation: release-kind-spark 12s linear 2.2s infinite;
+  --spark-x: -7px;
+  --spark-y: -17px;
+  animation: release-kind-spark 5.4s linear -.3s infinite;
 }
-.update-release-kind-particles i:nth-child(2) { left: 60%; top: 30%; animation-delay: 6.6s; }
-.update-release-kind-particles i:nth-child(3) { left: 85%; top: 60%; animation-delay: 10.4s; }
+.update-release-kind-particles i:nth-child(2) { left: 22%; top: 30%; --spark-x: 4px; --spark-y: -13px; animation-delay: -2.9s; }
+.update-release-kind-particles i:nth-child(3) { left: 33%; top: 65%; --spark-x: -3px; --spark-y: 12px; animation-delay: -1.5s; }
+.update-release-kind-particles i:nth-child(4) { left: 44%; top: 35%; --spark-x: -6px; --spark-y: -19px; animation-delay: -4.1s; }
+.update-release-kind-particles i:nth-child(5) { left: 55%; --spark-x: 6px; --spark-y: -15px; animation-delay: -2.1s; }
+.update-release-kind-particles i:nth-child(6) { left: 65%; top: 70%; --spark-x: 4px; --spark-y: 11px; animation-delay: -4.8s; }
+.update-release-kind-particles i:nth-child(7) { left: 75%; top: 25%; --spark-x: -4px; --spark-y: -16px; animation-delay: -.9s; }
+.update-release-kind-particles i:nth-child(8) { left: 85%; --spark-x: 8px; --spark-y: -12px; animation-delay: -3.5s; }
+.update-release-kind-particles i:nth-child(9) { left: 96%; top: 40%; --spark-x: 9px; --spark-y: -18px; animation-delay: -5.1s; }
 @keyframes release-kind-spark {
-  0% { opacity: 0; transform: translate3d(0, 0, 0) scale(.7); }
-  2% { opacity: .8; }
-  9%, 100% { opacity: 0; transform: translate3d(4px, -13px, 0) scale(.35); }
+  0% { opacity: 0; transform: translate3d(0, 0, 0) scale(.6); }
+  5% { opacity: .9; }
+  25%, 100% { opacity: 0; transform: translate3d(var(--spark-x), var(--spark-y), 0) scale(.3); }
+}
+.update-version.is-major-release,
+.update-version-choice.is-major-release .update-version-choice-main > strong {
+  color: #fff7dc;
+  text-shadow: 0 0 10px #efc34d65, 0 0 22px #efc34d20;
 }
 @media (prefers-reduced-motion: reduce) { .update-release-kind-particles { display: none; } }
 .update-confetti i:nth-child(3n) { border-radius: 50%; }

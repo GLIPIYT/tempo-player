@@ -59,6 +59,29 @@ export const getCustomMixCandidates = (): Promise<CustomMixCandidate[]> =>
 export const getCustomMixSnapshot = (ruleId: number): Promise<CustomMixSnapshot | null> =>
   invoke<CustomMixSnapshot | null>('get_custom_mix_snapshot', { ruleId })
 
+/**
+ * Read a still-valid persisted selection without loading the candidate library.
+ * Interval-zero mixes intentionally stay on the normal open-and-regenerate path.
+ */
+export async function getReusableCustomMixSnapshot(
+  rawRule: CustomMixRule,
+  nowSeconds = Date.now() / 1000,
+): Promise<CustomMixGeneratedSelection | null> {
+  const rule = normalizeCustomMixRule(rawRule)
+  if (rule.id == null || rule.refreshIntervalMinutes <= 0) return null
+
+  let saved: CustomMixSnapshot | null
+  try {
+    saved = await getCustomMixSnapshot(rule.id)
+  } catch {
+    return null
+  }
+  if (!saved || !Array.isArray(saved.tracks) || saved.tracks.length === 0
+    || !Array.isArray(saved.warnings)
+    || shouldRegenerateCustomMixSnapshot(rule, saved, 'open', nowSeconds)) return null
+  return { tracks: saved.tracks, warnings: saved.warnings, generatedAt: saved.generatedAt, fromCache: true }
+}
+
 export const saveCustomMixSnapshot = (ruleId: number, snapshot: CustomMixSnapshot): Promise<void> =>
   invoke<void>('save_custom_mix_snapshot', { ruleId, snapshot })
 
@@ -146,6 +169,7 @@ export const customMixService = {
   delete: deleteCustomMixRule,
   getCandidates: getCustomMixCandidates,
   getSnapshot: getCustomMixSnapshot,
+  getReusableSnapshot: getReusableCustomMixSnapshot,
   saveSnapshot: saveCustomMixSnapshot,
   generate: generateCustomMixSelection,
   augmentOnlineGenre: augmentOnlineGenreCandidates,

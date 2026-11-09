@@ -256,7 +256,7 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
                 <button
                   type="button"
                   key={item.version}
-                  className={`update-version-choice${selected ? ' is-selected' : ''}${latest ? ' is-latest' : ''}${current ? ' is-installed' : ''}`}
+                  className={`update-version-choice${selected ? ' is-selected' : ''}${latest ? ' is-latest' : ''}${current ? ' is-installed' : ''}${kind === 'major' ? ' is-major-release' : ''}`}
                   aria-pressed={selected}
                   disabled={unavailable || busy}
                   onClick={() => selectVersion(item.version)}
@@ -284,7 +284,7 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
           <div className="update-summary">
             <div className="update-head">
               <div className="update-version-heading">
-                <span className="update-version">{release.name || release.tag}</span>
+                <span className={`update-version${selectedType === 'major' ? ' is-major-release' : ''}`}>{release.name || release.tag}</span>
                 {selectedType && <ReleaseTypeBadge type={selectedType} />}
               </div>
               {release.assetSize ? <span className="muted update-size">{formatBytes(release.assetSize)}</span> : null}

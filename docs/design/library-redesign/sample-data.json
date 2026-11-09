@@ -1,0 +1,119 @@
+{
+  "albums": [
+    {
+      "id": "1",
+      "title": "неуравновешеннолетниепесни Pt.1",
+      "artist": "CUPSIZE",
+      "cover": "cover-1.jpg",
+      "year": 2025
+    },
+    {
+      "id": "2",
+      "title": "заставь меня плакать",
+      "artist": "CUPSIZE",
+      "cover": "cover-2.png",
+      "year": 2025
+    },
+    {
+      "id": "3",
+      "title": "Ringtones",
+      "artist": "Егор Воронеж",
+      "cover": "cover-3.jpg",
+      "year": 2025
+    },
+    {
+      "id": "4",
+      "title": "Everybody can gaze love, again (Breakgaze Version.)",
+      "artist": "Hhnglee",
+      "cover": "cover-4.jpg",
+      "year": 2025
+    },
+    {
+      "id": "5",
+      "title": "Модель (Model)",
+      "artist": "DJ ZUP RAlii",
+      "cover": "cover-5.png",
+      "year": 2025
+    },
+    {
+      "id": "6",
+      "title": "револьвер",
+      "artist": "DJ ZUP RAlii",
+      "cover": "cover-6.jpg",
+      "year": 2025
+    },
+    {
+      "id": "7",
+      "title": "soturnidade",
+      "artist": "Разные исполнители",
+      "cover": "cover-7.jpg",
+      "year": 2025
+    },
+    {
+      "id": "8",
+      "title": "рисунки",
+      "artist": "nyan.mp3",
+      "cover": "cover-8.png",
+      "year": 2025
+    },
+    {
+      "id": "9",
+      "title": "zatru - titled *full song*",
+      "artist": "deceit",
+      "cover": "cover-9.jpg",
+      "year": 2025
+    }
+  ],
+  "artists": [
+    {
+      "name": "Clarion",
+      "image": "artist-1.jpg"
+    },
+    {
+      "name": "CUPSIZE",
+      "image": "artist-2.jpg"
+    },
+    {
+      "name": "ssshhhiiittt!",
+      "image": "artist-3.jpg"
+    }
+  ],
+  "tracks": [
+    {
+      "title": "детская травма",
+      "artist": "CUPSIZE",
+      "duration": 132.754,
+      "cover": "cover-2.png"
+    },
+    {
+      "title": "вся моя жизнь говно",
+      "artist": "CUPSIZE",
+      "duration": 170.838,
+      "cover": "cover-2.png"
+    },
+    {
+      "title": "урод",
+      "artist": "CUPSIZE",
+      "duration": 182.073,
+      "cover": "cover-2.png"
+    },
+    {
+      "title": "будка",
+      "artist": "CUPSIZE",
+      "duration": 248.346,
+      "cover": "cover-2.png"
+    },
+    {
+      "title": "семнадцать ножевых",
+      "artist": "CUPSIZE",
+      "duration": 144.248,
+      "cover": "cover-2.png"
+    },
+    {
+      "title": "тетрадь",
+      "artist": "CUPSIZE",
+      "duration": 156.891,
+      "cover": "cover-2.png"
+    }
+  ]
+}

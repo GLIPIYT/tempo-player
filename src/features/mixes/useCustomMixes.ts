@@ -3,6 +3,7 @@ import type { HourMix } from '../../utils/hourMixes'
 import type { CustomMixCandidate, CustomMixGenerationReason, CustomMixRule } from './types'
 import { customMixService } from './service'
 import { customMixRuleFingerprint } from './snapshot'
+import { beginFastCustomMixLoad, isMixRequestVersionCurrent } from './hydration'
 
 const OVERDUE_RETRY_MS = 60_000
 const MAX_PARALLEL_GENERATIONS = 2
@@ -33,6 +34,7 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
   const rulesRef = useRef<CustomMixRule[]>([])
   const candidatesRef = useRef<CustomMixCandidate[]>([])
   const generatedAtRef = useRef(new Map<number, number>())
+  const mixRequestVersionRef = useRef(new Map<number, number>())
   const firstLoadRef = useRef(true)
   const mountedRef = useRef(false)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -56,7 +58,12 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
     isActive: () => boolean = () => true,
   ): Promise<HourMix | null> => {
     const fingerprint = customMixRuleFingerprint(rule)
+    const requestVersion = rule.id == null
+      ? null
+      : (mixRequestVersionRef.current.get(rule.id) ?? 0) + 1
+    if (rule.id != null) mixRequestVersionRef.current.set(rule.id, requestVersion!)
     const isCurrent = () => mountedRef.current && isActive() && rule.id != null
+      && mixRequestVersionRef.current.get(rule.id) === requestVersion
       && rulesRef.current.some((current) => current.id === rule.id
         && customMixRuleFingerprint(current) === fingerprint)
     const result = await withGenerationSlot(async () => {
@@ -114,16 +121,54 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
     let cancelled = false
     void customMixService.list()
       .then(async (saved) => {
-        const library = saved.length ? await customMixService.getCandidates() : candidatesRef.current
         if (cancelled) return
         rulesRef.current = saved
-        candidatesRef.current = library
         setRules(saved)
-        setCandidates(library)
-        setMixes((current) => current.filter((mix) => saved.some((rule) => mix.key === `custom:${rule.id}`)))
+        setMixes((current) => current.filter((mix) => saved.some((rule) =>
+          mix.key === `custom:${rule.id}` && mix.rule != null
+          && customMixRuleFingerprint(mix.rule) === customMixRuleFingerprint(rule))))
         setError('')
         const reason: CustomMixGenerationReason = firstLoadRef.current ? 'open' : 'scheduled'
+
+        const hydrationVersions = new Map(saved.flatMap((rule) => rule.id == null
+          ? []
+          : [[rule.id, mixRequestVersionRef.current.get(rule.id) ?? 0] as const]))
+        const isCurrentRule = (rule: CustomMixRule) => !cancelled && mountedRef.current
+          && rule.id != null
+          && isMixRequestVersionCurrent(
+            mixRequestVersionRef.current.get(rule.id), hydrationVersions.get(rule.id),
+          )
+          && rulesRef.current.some((current) => current.id === rule.id
+            && customMixRuleFingerprint(current) === customMixRuleFingerprint(rule))
+        let candidatesReady = false
+        let generationsComplete = false
+        const load = beginFastCustomMixLoad(saved, {
+          readSnapshot: (rule) => customMixService.getReusableSnapshot(rule),
+          loadCandidates: () => customMixService.getCandidates(),
+          emptyCandidates: candidatesRef.current,
+          isCurrent: isCurrentRule,
+          onSnapshot: (rule, selection) => {
+            if (rule.id == null) return
+            const existingGeneratedAt = generatedAtRef.current.get(rule.id)
+            if (existingGeneratedAt != null && existingGeneratedAt > selection.generatedAt) return
+            generatedAtRef.current.set(rule.id, selection.generatedAt)
+            const mix = makeMix(rule, selection.tracks, selection.warnings, selection.generatedAt)
+            setMixes((current) => {
+              if (!isCurrentRule(rule)) return current
+              const existing = current.find((item) => item.key === mix.key)
+              if (existing?.generatedAt != null && existing.generatedAt > selection.generatedAt) return current
+              return [...current.filter((item) => item.key !== mix.key), mix]
+            })
+            if (candidatesReady && generationsComplete) scheduleTimerRef.current()
+          },
+        })
+        void load.snapshots.catch((cause) => { if (!cancelled) setError(String(cause)) })
+        const library = await load.candidates
+        if (cancelled) return
         firstLoadRef.current = false
+        candidatesRef.current = library
+        setCandidates(library)
+        candidatesReady = true
         let next = 0
         const worker = async () => {
           while (!cancelled && next < saved.length) {
@@ -133,16 +178,18 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
         }
         await Promise.all([worker(), worker()])
         if (cancelled) return
+        generationsComplete = true
         scheduleTimerRef.current()
       })
       .catch((cause) => {
         if (!cancelled) setError(String(cause))
-        cancelled = true
+        // Candidate loading can fail while valid snapshot reads are still in flight.
+        // Keep those independent reads alive until the effect is actually replaced.
       })
     return () => {
       cancelled = true
     }
-  }, [libraryVersion, revision, generateMix])
+  }, [libraryVersion, revision, generateMix, makeMix])
 
   useEffect(() => {
     if (!editorOpen || rules.length > 0) return
@@ -160,6 +207,10 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
   const save = useCallback(async (rule: CustomMixRule) => {
     const saved = await customMixService.save(rule)
     rulesRef.current = [...rulesRef.current.filter((current) => current.id !== saved.id), saved]
+    if (saved.id != null) {
+      mixRequestVersionRef.current.set(saved.id, (mixRequestVersionRef.current.get(saved.id) ?? 0) + 1)
+      generatedAtRef.current.delete(saved.id)
+    }
     setRules(rulesRef.current)
     setRevision((value) => value + 1)
   }, [])
@@ -167,6 +218,7 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
   const remove = useCallback(async (id: number) => {
     await customMixService.delete(id)
     rulesRef.current = rulesRef.current.filter((rule) => rule.id !== id)
+    mixRequestVersionRef.current.set(id, (mixRequestVersionRef.current.get(id) ?? 0) + 1)
     setRules(rulesRef.current)
     setMixes((current) => current.filter((mix) => mix.key !== `custom:${id}`))
     generatedAtRef.current.delete(id)
