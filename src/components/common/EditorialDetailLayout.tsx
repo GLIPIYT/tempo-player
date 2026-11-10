@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ArrowLeft, Folder, Maximize2 } from 'lucide-react'
 import { useT } from '../../i18n'
 import Cover from './Cover'
@@ -24,6 +24,7 @@ export default function EditorialDetailLayout({
   artworkPreview,
   kindIcon,
   byline,
+  afterContent,
 }: {
   className?: string
   onBack: () => void
@@ -42,18 +43,25 @@ export default function EditorialDetailLayout({
   artworkPreview?: ReactNode
   kindIcon?: ReactNode
   byline?: ReactNode
+  afterContent?: ReactNode
 }) {
   const t = useT()
   const [viewingArtwork, setViewingArtwork] = useState(false)
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  const backdropRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const surface = surfaceRef.current
+    const backdrop = backdropRef.current
+    if (!variant || !surface || !backdrop) return
+    const resize = () => { backdrop.style.height = `${surface.offsetHeight}px` }
+    resize()
+    const observer = new ResizeObserver(resize)
+    observer.observe(surface)
+    return () => observer.disconnect()
+  }, [variant])
   useEffect(() => setViewingArtwork(false), [artworkLabel])
   const artwork = <>{art}{variant && artworkLabel && <span className="collection-art-zoom" aria-hidden="true"><Maximize2 size={18} /></span>}</>
-  return (
-    <div className={`page editorial-detail-page ${variant ? `collection-detail collection-detail--${variant} ` : ''}${className}`.trim()}>
-      <button className="back-link" onClick={onBack}>
-        <ArrowLeft size={14} />
-        <span>{backLabel}</span>
-      </button>
-
+  const content = <>
       <header className="editorial-detail-hero">
         {variant && artworkPath && <div className="collection-detail-glow" aria-hidden="true"><Cover path={artworkPath} label="" size={500} loading="eager" /></div>}
         {variant && artworkLabel ? <button type="button" className={`editorial-detail-art collection-art-open${round ? ' is-round' : ''}`} aria-label={`${t('View artwork')}: ${artworkLabel}`} onClick={() => setViewingArtwork(true)}>{artwork}</button> : <div className={round ? 'editorial-detail-art is-round' : 'editorial-detail-art'}>{art}</div>}
@@ -68,6 +76,18 @@ export default function EditorialDetailLayout({
       </header>
 
       <div className="editorial-detail-content">{children}</div>
+    </>
+  return (
+    <div className={`page editorial-detail-page ${variant ? `collection-detail collection-detail--${variant} ` : ''}${className}`.trim()}>
+      <button className="back-link" onClick={onBack}>
+        <ArrowLeft size={14} />
+        <span>{backLabel}</span>
+      </button>
+      {variant ? <div className="collection-detail-surface" ref={surfaceRef}>
+        <div className="collection-detail-backdrop" ref={backdropRef} aria-hidden="true" />
+        {content}
+      </div> : content}
+      {afterContent}
       {viewingArtwork && <ArtworkView track={{ title: artworkLabel ?? '', coverPath: artworkPath ?? null }} artwork={artworkPreview} onClose={() => setViewingArtwork(false)} />}
     </div>
   )

@@ -1,5 +1,7 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useState, type CSSProperties } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { buildCoverSources } from './coverSources'
+import { firstAvailableArtwork } from './artworkFallback'
 
 interface CoverProps {
   path?: string | null
@@ -7,6 +9,8 @@ interface CoverProps {
   size?: number
   rounded?: boolean
   loading?: 'eager' | 'lazy'
+  /** Try the provider's original image first when the URL can be safely upgraded. */
+  preferOriginal?: boolean
 }
 
 function srcFor(path: string): string {
@@ -25,30 +29,56 @@ function hueFor(label: string): number {
   return h
 }
 
-export default function Cover({ path, label, size = 48, rounded = false, loading = 'lazy' }: CoverProps) {
-  const [failed, setFailed] = useState(false)
-
-  useEffect(() => {
-    setFailed(false)
-  }, [path])
-
+export default function Cover({ path, label, size = 48, rounded = false, loading = 'lazy', preferOriginal = false }: CoverProps) {
+  const sources = buildCoverSources(path, preferOriginal)
   const radius = rounded ? '9999px' : 'var(--radius-sm)'
   const base: CSSProperties = { width: size, height: size, borderRadius: radius }
 
-  if (path && !failed) {
+  if (sources.length > 0) {
+    return (
+      <CoverImage
+        key={JSON.stringify(sources)}
+        sources={sources}
+        label={label}
+        size={size}
+        loading={loading}
+        base={base}
+      />
+    )
+  }
+
+  return <CoverFallback label={label} size={size} base={base} />
+}
+
+function CoverImage({ sources, label, size, loading, base }: {
+  sources: string[]
+  label: string
+  size: number
+  loading: 'eager' | 'lazy'
+  base: CSSProperties
+}) {
+  const [failedSources, setFailedSources] = useState<string[]>([])
+  const source = firstAvailableArtwork(sources, failedSources)
+
+  if (source) {
     return (
       <img
         className="cover"
-        src={srcFor(path)}
+        src={srcFor(source)}
         alt=""
         loading={loading}
+        decoding="async"
         draggable={false}
-        onError={() => setFailed(true)}
+        onError={() => setFailedSources(failed => [...new Set([...failed, source])])}
         style={base}
       />
     )
   }
 
+  return <CoverFallback label={label} size={size} base={base} />
+}
+
+function CoverFallback({ label, size, base }: { label: string; size: number; base: CSSProperties }) {
   const h = hueFor(label)
   return (
     <div

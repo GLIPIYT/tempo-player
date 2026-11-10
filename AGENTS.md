@@ -4,6 +4,10 @@
 
 - Keep interface copy short and useful. Every heading, label, hint, and empty state must help the user understand a control or make a decision.
 - Avoid decorative or generic descriptions, repeated information, and placeholder marketing phrases. Prefer the control and its value when they explain themselves.
+
+## Visual consistency
+
+- Similar pages must use the same visual rules and shared controls. Keep equivalent actions, icons, sizes, spacing, states, and animations consistent across playlist, album, artist, and mix pages; reuse shared components rather than styling each page separately.
 - In previews and finished screens alike, use real product labels and minimal sample content. Review new text and remove anything that does not improve clarity.
 
 ## Task planning

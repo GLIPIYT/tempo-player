@@ -46,7 +46,7 @@ export default function ArtworkView({ track, onClose, artwork }: ArtworkViewProp
     <div className={`artwork-view${closing ? ' is-closing' : ''}`} role="dialog" aria-modal="true" aria-label={`${t('Artwork')}: ${track.title}`}>
       <div className="artwork-view__backdrop" aria-hidden="true" onClick={() => close()} />
       <div className="artwork-view__image" role="img" aria-label={`${t('Artwork')}: ${track.title}`}>
-        {artwork ?? <Cover path={track.coverPath} label={track.title} size={640} loading="eager" />}
+        {artwork ?? <Cover path={track.coverPath} label={track.title} size={640} loading="eager" preferOriginal />}
       </div>
       <button ref={closeRef} type="button" className="artwork-view__close" onClick={() => close()} aria-label={t('Close')} title={t('Close')}>
         <X size={20} aria-hidden="true" />

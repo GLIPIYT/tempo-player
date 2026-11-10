@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useFormatCount } from '../i18n/count'
-import { ArrowRight, Disc3, Folder, Heart, Play, Shuffle, Users } from 'lucide-react'
+import { ArrowRight, Disc3, Folder, Play, Shuffle, Users } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
@@ -11,6 +11,7 @@ import { tracksToUnified } from '../utils/unified'
 import { CollectionTrackHeading } from '../components/common/CollectionCatalog'
 import Cover from '../components/common/Cover'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
+import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
 import EmptyState from '../components/common/EmptyState'
 import TrackList from '../components/common/TrackList'
 import { useT } from '../i18n'
@@ -74,23 +75,9 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
               <Play size={14} />
               {t('Play all')}
             </button>
-            <button
-              className={'collection-icon-action' + (fav.data ? ' is-active' : '')}
-              aria-label={fav.data ? t('Remove from favorites') : t('Add to favorites')}
-              aria-pressed={fav.data ?? false}
-              title={t('Favorite album')}
-              onClick={() =>
-                void api
-                  .toggleFavoriteAlbum(albumId)
-                  .then(() => {
-                    fav.reload()
-                    bumpLibraryVersion()
-                  })
-                  .catch(() => {})
-              }
-            >
-              <Heart size={14} fill={fav.data ? 'currentColor' : 'none'} />
-            </button>
+            <CollectionFavoriteButton active={fav.data ?? false} onClick={() => {
+              void api.toggleFavoriteAlbum(albumId).then(() => { fav.reload(); bumpLibraryVersion() }).catch(() => {})
+            }} />
             <button type="button" className={`collection-icon-action${player.shuffle ? ' is-active' : ''}`} aria-label={t('Shuffle')} title={t('Shuffle')} onClick={() => { if (!player.shuffle) player.toggleShuffle(); player.playTracks(tracksToUnified(tracks), 0) }}><Shuffle size={19} /></button>
           </>
         ) : undefined

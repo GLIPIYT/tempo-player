@@ -1,4 +1,4 @@
-import { ArrowUpDown, Search, Star, X } from 'lucide-react'
+import { ArrowUpDown, Heart, Search, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useT } from '../../i18n'
 import './collectionDesign.css'
@@ -17,7 +17,7 @@ export function CollectionCatalogToolbar({ query, onQuery, placeholder, favorite
 }) {
   const t = useT()
   return <div className="collection-catalog-toolbar">
-    <div className="collection-catalog-filter"><button type="button" aria-pressed={!favoritesOnly} onClick={() => onFavoritesOnly(false)}>{allLabel}</button><button type="button" aria-pressed={favoritesOnly} onClick={() => onFavoritesOnly(true)}><Star size={13} />{t('Favorites')}</button></div>
+    <div className="collection-catalog-filter"><button type="button" aria-pressed={!favoritesOnly} onClick={() => onFavoritesOnly(false)}>{allLabel}</button><button type="button" aria-pressed={favoritesOnly} onClick={() => onFavoritesOnly(true)}><Heart size={13} />{t('Favorites')}</button></div>
     <label className="collection-catalog-search"><Search size={15} /><input type="search" aria-label={placeholder} placeholder={placeholder} value={query} onChange={event => onQuery(event.target.value)} />{query && <button type="button" onClick={() => onQuery('')} aria-label={t('Clear search')}><X size={13} /></button>}</label>
     <span className="collection-catalog-sort"><ArrowUpDown size={14} />{children}</span>
   </div>

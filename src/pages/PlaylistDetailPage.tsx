@@ -1,7 +1,7 @@
 import { useFormatCount } from '../i18n/count'
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { save } from '@tauri-apps/plugin-dialog'
-import { Check, Download, Ellipsis, FileDown, Folder, ListMusic, Pencil, Play, Shuffle, Star, Trash2, X } from 'lucide-react'
+import { Check, Download, Ellipsis, FileDown, Folder, ListMusic, Pencil, Play, Shuffle, Trash2, X } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { useT } from '../i18n'
 import { api } from '../api/client'
@@ -16,6 +16,7 @@ import { playlistDisplayName } from '../utils/playlists'
 import Cover from '../components/common/Cover'
 import { CollectionTrackHeading } from '../components/common/CollectionCatalog'
 import CollectionArtwork from '../components/common/CollectionArtwork'
+import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import CacheBadge from '../soundcloud/CacheBadge'
@@ -248,7 +249,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
       variant="panorama"
       artworkPath={artworkPaths.find(Boolean)}
       artworkLabel={displayName}
-      artworkPreview={artwork}
+      artworkPreview={<CollectionArtwork paths={artworkPaths} label={displayName} likes={isLikes} eager preferOriginal />}
       kindIcon={<ListMusic size={13} />}
       onBack={() => navigate({ name: 'playlists' })}
       backLabel={t('Playlists')}
@@ -293,7 +294,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
       actions={<>
         {tracks.length > 0 && <button className="btn btn-primary" onClick={() => playAll()}><Play size={15} fill="currentColor" />{t('Play all')}</button>}
         {playlist && <>
-          <button type="button" className={`collection-icon-action${playlist.pinned ? ' is-active' : ''}`} title={playlist.pinned ? t('Remove from favorites') : t('Add to favorites')} aria-label={playlist.pinned ? t('Remove from favorites') : t('Add to favorites')} aria-pressed={playlist.pinned ?? false} onClick={() => void togglePin()}><Star size={21} fill={playlist.pinned ? 'currentColor' : 'none'} /></button>
+          <CollectionFavoriteButton active={playlist.pinned ?? false} onClick={() => void togglePin()} />
           <button type="button" className={`collection-icon-action${player.shuffle ? ' is-active' : ''}`} title={t('Shuffle')} aria-label={t('Shuffle')} disabled={!tracks.length} onClick={() => playAll(true)}><Shuffle size={19} /></button>
           <button type="button" className="collection-icon-action" aria-label={t('More')} title={t('More')} onClick={collectionMenu}><Ellipsis size={22} /></button>
         </>}

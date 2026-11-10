@@ -1,6 +1,6 @@
 import { useFormatCount } from '../i18n/count'
 import { useEffect, useId, useState } from 'react'
-import { Heart, ImagePlus, MicVocal, Play, Search, Shuffle } from 'lucide-react'
+import { ImagePlus, MicVocal, Play, Search, Shuffle } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
@@ -12,6 +12,7 @@ import { usePlayer } from '../player'
 import { tracksToUnified, trackToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
+import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
 import CacheBadge from '../soundcloud/CacheBadge'
 import CollectionAlbumGrid from '../components/common/CollectionAlbumGrid'
 import TrackList from '../components/common/TrackList'
@@ -135,9 +136,15 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
     }
   }
 
+  const discography = <section className="collection-discography">
+          <div className="collection-section-heading"><h2>{t('Albums')}<span>{albums.length}</span></h2></div>
+          {albums.length ? <CollectionAlbumGrid albums={albums} favoriteIds={albumFavoriteIds} onOpen={album => navigate({ name: 'album', id: album.id })} onPlay={album => void playAlbum(album.id)} onFavorite={album => { void api.toggleFavoriteAlbum(album.id).then(bumpLibraryVersion).catch(() => undefined) }} /> : <EmptyState title={t('No albums for this artist')} hint={t('Tracks may be filed without album metadata.')} />}
+        </section>
+
   return (
     <EditorialDetailLayout
       className="local-artist-page"
+      afterContent={tab === 'popular' && albums.length > 0 ? discography : undefined}
       variant="panorama"
       artworkPath={artist.imagePath}
       artworkLabel={artist.name}
@@ -168,23 +175,9 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
               <Play size={14} />
               {t('Play all')}
             </button>
-            <button
-              className={'collection-icon-action' + (fav.data ? ' is-active' : '')}
-              aria-label={fav.data ? t('Remove from favorites') : t('Add to favorites')}
-              aria-pressed={fav.data ?? false}
-              title={t('Favorite artist')}
-              onClick={() =>
-                void api
-                  .toggleFavoriteArtist(artistId)
-                  .then(() => {
-                    fav.reload()
-                    bumpLibraryVersion()
-                  })
-                  .catch(() => {})
-              }
-            >
-              <Heart size={21} fill={fav.data ? 'currentColor' : 'none'} />
-            </button>
+            <CollectionFavoriteButton active={fav.data ?? false} onClick={() => {
+              void api.toggleFavoriteArtist(artistId).then(() => { fav.reload(); bumpLibraryVersion() }).catch(() => {})
+            }} />
             <button type="button" className={`collection-icon-action${player.shuffle ? ' is-active' : ''}`} disabled={!artistTracks.length} title={t('Shuffle')} aria-label={t('Shuffle')} onClick={() => { if (!player.shuffle) player.toggleShuffle(); playAll() }}><Shuffle size={19} /></button>
             <button type="button" className="collection-icon-action" title={t('Change image')} aria-label={t('Change image')} disabled={imageBusy || imageSearchBusy} onClick={openImagePicker}><ImagePlus size={19} /></button>
           </>
@@ -200,15 +193,12 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
       }}>
         {[['popular', 'Popular'], ['albums', 'Albums'], ['tracks', 'All tracks']].map(([key, label]) => <button key={key} id={`${panelId}-${key}`} type="button" role="tab" aria-selected={tab === key} aria-controls={`${panelId}-panel`} tabIndex={tab === key ? 0 : -1} onClick={() => setTab(key)}>{t(label)}</button>)}
       </div>
-      <div id={`${panelId}-panel`} role="tabpanel" aria-labelledby={`${panelId}-${tab}`}>
+      <div key={tab} className={`collection-tab-panel is-${tab}`} id={`${panelId}-panel`} role="tabpanel" aria-labelledby={`${panelId}-${tab}`}>
         {tab !== 'albums' && <section>
           <div className="collection-section-heading"><h2>{t(tab === 'popular' ? 'Popular tracks' : 'Tracks')}<span>{shownTracks.length}</span></h2><label className="collection-catalog-search"><Search size={14} /><input type="search" aria-label={t('Search tracks')} placeholder={t('Search tracks')} value={query} onChange={event => setQuery(event.target.value)} /></label></div>
           {tracks.loading && !tracks.data ? <p className="muted">{t('Loading…')}</p> : shownTracks.length ? <TrackList showSource tracks={shownTracks} showHeader /> : <EmptyState icon={<Search size={26} />} title={t(query ? 'No tracks found' : 'No tracks')} hint={query ? t('Try another search.') : t('No saved tracks by this artist yet.')} />}
         </section>}
-        {tab !== 'tracks' && (albums.length > 0 || tab === 'albums') && <section className="collection-discography">
-          <div className="collection-section-heading"><h2>{t('Albums')}<span>{albums.length}</span></h2></div>
-          {albums.length ? <CollectionAlbumGrid albums={albums} favoriteIds={albumFavoriteIds} onOpen={album => navigate({ name: 'album', id: album.id })} onPlay={album => void playAlbum(album.id)} onFavorite={album => { void api.toggleFavoriteAlbum(album.id).then(bumpLibraryVersion).catch(() => undefined) }} /> : <EmptyState title={t('No albums for this artist')} hint={t('Tracks may be filed without album metadata.')} />}
-        </section>}
+        {tab === 'albums' && discography}
       </div>
 
       <Modal

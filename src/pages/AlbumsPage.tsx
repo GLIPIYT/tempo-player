@@ -1,5 +1,5 @@
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { Play, Search, Star, StarOff } from 'lucide-react'
+import { Heart, Play, Search } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
 import type { Album } from '../types/models'
@@ -61,7 +61,7 @@ export default function AlbumsPage() {
           {
             id: 'fav',
             label: isFav ? t('Remove from favorites') : t('Add to favorites'),
-            icon: isFav ? <StarOff size={13} /> : <Star size={13} />,
+            icon: <Heart size={13} fill={isFav ? 'currentColor' : 'none'} />,
             onSelect: () => {
               void api
                 .toggleFavoriteAlbum(a.id)

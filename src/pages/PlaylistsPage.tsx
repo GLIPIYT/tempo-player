@@ -1,5 +1,5 @@
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { Clock3, Ellipsis, ListMusic, Play, Plus, Search, Star, StarOff, Trash2, Upload } from 'lucide-react'
+import { Clock3, Ellipsis, Heart, ListMusic, Play, Plus, Search, Trash2, Upload } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
@@ -15,6 +15,7 @@ import { trackToUnified } from '../utils/unified'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import CollectionArtwork from '../components/common/CollectionArtwork'
+import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
 import { CollectionCatalogHeading, CollectionCatalogToolbar } from '../components/common/CollectionCatalog'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
@@ -88,7 +89,7 @@ export default function PlaylistsPage() {
       {
         id: 'favorite',
         label: playlist.pinned ? t('Remove from favorites') : t('Add to favorites'),
-        icon: playlist.pinned ? <StarOff size={13} /> : <Star size={13} />,
+        icon: <Heart size={13} fill={playlist.pinned ? 'currentColor' : 'none'} />,
         onSelect: () => {
           void api
             .setPlaylistPinned(playlist.id, !playlist.pinned)
@@ -181,7 +182,7 @@ export default function PlaylistsPage() {
                 <span className="collection-playlist-meta"><span>{formatCount(playlist.trackCount ?? 0, 'track', t, lang)}</span><span title={t('Recently updated')}><Clock3 size={10} />{updated}</span></span>
               </button>
               <div className="collection-playlist-card-actions">
-                <button type="button" className={`collection-icon-action${playlist.pinned ? ' is-active' : ''}`} aria-label={`${playlist.pinned ? t('Remove from favorites') : t('Add to favorites')}: ${displayName}`} aria-pressed={playlist.pinned ?? false} onClick={() => { void api.setPlaylistPinned(playlist.id, !playlist.pinned).then(bumpLibraryVersion).catch(cause => toast.show(String(cause), 'error')) }}><Star size={15} fill={playlist.pinned ? 'currentColor' : 'none'} /></button>
+                <CollectionFavoriteButton active={playlist.pinned ?? false} label={displayName} onClick={() => { void api.setPlaylistPinned(playlist.id, !playlist.pinned).then(bumpLibraryVersion).catch(cause => toast.show(String(cause), 'error')) }} />
                 <button type="button" className="collection-icon-action" aria-label={`${t('More')}: ${displayName}`} onClick={event => playlistMenu(event, playlist, displayName)}><Ellipsis size={18} /></button>
               </div>
               <button type="button" className="collection-card-play" disabled={(playlist.trackCount ?? 0) === 0} aria-label={`${t('Play all')}: ${displayName}`} onClick={() => void playPlaylist(playlist)}><Play size={17} fill="currentColor" /></button>

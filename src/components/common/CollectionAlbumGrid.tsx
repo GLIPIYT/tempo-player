@@ -1,8 +1,9 @@
-import { Disc3, Play, Star } from 'lucide-react'
+import { Disc3, Play } from 'lucide-react'
 import type { MouseEvent } from 'react'
 import type { Album } from '../../types/models'
 import { useT } from '../../i18n'
 import Cover from './Cover'
+import CollectionFavoriteButton from './CollectionFavoriteButton'
 import './collectionDesign.css'
 
 export default function CollectionAlbumGrid({ albums, panorama = false, favoriteIds, onOpen, onPlay, onFavorite, onMenu }: {
@@ -18,7 +19,7 @@ export default function CollectionAlbumGrid({ albums, panorama = false, favorite
         <strong>{album.title}</strong><small>{album.artistName ?? t('Unknown artist')}</small>{album.year != null && <span className="collection-album-year">{album.year}</span>}
       </button>
       <button type="button" className="collection-card-play" disabled={album.trackCount === 0} aria-label={`${t('Play all')}: ${album.title}`} onClick={() => onPlay(album)}><Play size={17} fill="currentColor" /></button>
-      {onFavorite && <button type="button" className={`collection-album-favorite${favoriteIds?.has(album.id) ? ' is-active' : ''}`} aria-label={`${favoriteIds?.has(album.id) ? t('Remove from favorites') : t('Add to favorites')}: ${album.title}`} aria-pressed={favoriteIds?.has(album.id) ?? false} onClick={() => onFavorite(album)}><Star size={15} fill={favoriteIds?.has(album.id) ? 'currentColor' : 'none'} /></button>}
+      {onFavorite && <CollectionFavoriteButton className="collection-album-favorite" active={favoriteIds?.has(album.id) ?? false} label={album.title} onClick={() => onFavorite(album)} />}
     </article>)}
   </div>
 }
