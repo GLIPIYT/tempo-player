@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createCustomMixRule, normalizeCustomMixRule, type CustomMixSnapshot } from './types'
-import { customMixRuleFingerprint, customMixSnapshotDueAt, shouldRegenerateCustomMixSnapshot } from './snapshot'
+import { createCustomMixRule, normalizeCustomMixRule, type CustomMixGeneratedSelection, type CustomMixSnapshot } from './types'
+import { customMixRuleFingerprint, customMixSnapshotDueAt, shouldRegenerateCustomMixSelection, shouldRegenerateCustomMixSnapshot } from './snapshot'
 
 const track = {
   id: 1, path: 'C:/music/1.mp3', title: 'Track', artistId: null, artistName: null,
@@ -14,6 +14,10 @@ function snapshot(rule = createCustomMixRule('Set'), generatedAt = 1_000): Custo
   return {
     ruleFingerprint: customMixRuleFingerprint(rule), generatedAt, tracks: [track], warnings: [],
   }
+}
+
+function selection(generatedAt: number): CustomMixGeneratedSelection {
+  return { tracks: [track], warnings: [], generatedAt, fromCache: true }
 }
 
 describe('custom mix snapshot cadence', () => {
@@ -96,5 +100,17 @@ describe('custom mix snapshot cadence', () => {
     expect(shouldRegenerateCustomMixSnapshot(rule, saved, 'scheduled', 2_800)).toBe(true)
     rule.trackCount = 25
     expect(shouldRegenerateCustomMixSnapshot(rule, saved, 'open', 1_001)).toBe(true)
+  })
+
+  it('skips candidate scans for valid cadence snapshots and preserves open regeneration for interval zero', () => {
+    const timed = createCustomMixRule('Timed selection')
+    timed.refreshIntervalMinutes = 30
+    expect(shouldRegenerateCustomMixSelection(timed, selection(1_000), 'open', 2_799)).toBe(false)
+    expect(shouldRegenerateCustomMixSelection(timed, selection(1_000), 'open', 2_800)).toBe(true)
+    expect(shouldRegenerateCustomMixSelection(timed, null, 'open', 1_001)).toBe(true)
+
+    const everyOpen = createCustomMixRule('Every open selection')
+    expect(shouldRegenerateCustomMixSelection(everyOpen, selection(1_000), 'open', 1_001)).toBe(true)
+    expect(shouldRegenerateCustomMixSelection(everyOpen, selection(1_000), 'scheduled', 1_001)).toBe(false)
   })
 })

@@ -333,3 +333,33 @@ it('resumes a cached partial word analysis after a delayed decode and repeated p
   expect(runner.getSnapshot().phase).toBe('complete')
   runner.stop()
 })
+
+it('distinguishes missing cached audio from a file the decoder cannot read and retries the lookup', async () => {
+  const missing = setup()
+  let available = false
+  let identityCalls = 0
+  missing.deps.native.identity = async () => {
+    identityCalls += 1
+    return available ? { fingerprint: 'audio', absolutePath: '/audio.wav', fileSize: 1000,
+      durationSec: 30, sampleRate: 16000, channels: 1 } : null
+  }
+  missing.runner.setTrack(input)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(missing.runner.getSnapshot()).toMatchObject({ phase: 'unavailable', unavailableReason: 'missing-file' })
+
+  available = true
+  missing.runner.retry()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(identityCalls).toBe(2)
+  expect(missing.runner.getSnapshot()).toMatchObject({ phase: 'idle', unavailableReason: null })
+  missing.runner.stop()
+
+  const unreadable = setup()
+  unreadable.deps.decode = async () => null
+  unreadable.runner.setEnabled(true)
+  unreadable.runner.setTrack(input)
+  unreadable.runner.setPosition(2, true)
+  await vi.advanceTimersByTimeAsync(20)
+  expect(unreadable.runner.getSnapshot()).toMatchObject({ phase: 'unavailable', unavailableReason: 'unreadable-file' })
+  unreadable.runner.stop()
+})

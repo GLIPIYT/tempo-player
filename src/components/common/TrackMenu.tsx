@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { ArrowDown, ArrowUp, Check, Disc3, FolderOpen, Heart, MoreHorizontal, PencilLine, Plus, Trash2, User } from 'lucide-react'
+import { ArrowDown, ArrowUp, Disc3, FolderOpen, Heart, MoreHorizontal, PencilLine, Plus, Trash2, User } from 'lucide-react'
 import { api } from '../../api/client'
 import type { Playlist, Track } from '../../types/models'
 import { usePlayer } from '../../player'
@@ -20,6 +20,7 @@ import { bumpLibraryVersion } from '../../utils/libraryVersion'
 import { addTrackToPlaylistAndCache } from '../../soundcloud/cacheJobs'
 import { trackMenuNavigationVisibility } from '../../utils/trackMenuNavigation'
 import { toast } from './Toast'
+import CreatePlaylistDialog from './CreatePlaylistDialog'
 import TrackMetadataEditor from './TrackMetadataEditor'
 
 interface TrackMenuProps {
@@ -72,7 +73,6 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const [sub, setSub] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [newName, setNewName] = useState('')
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const popRef = useRef<HTMLDivElement | null>(null)
@@ -129,14 +129,12 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
     setPos(null)
     setSub(false)
     setCreating(false)
-    setNewName('')
     setPlaylists(null)
   }, [])
 
   const openFresh = useCallback(() => {
     setSub(false)
     setCreating(false)
-    setNewName('')
     setPlaylists(null)
     setPos(null)
     setOpen(true)
@@ -145,7 +143,6 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
   const openAtPoint = useCallback((x: number, y: number) => {
     setSub(false)
     setCreating(false)
-    setNewName('')
     setPlaylists(null)
     setPos({ x, y })
     setOpen(true)
@@ -196,19 +193,11 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
     }
   }
 
-  const createAndAdd = async () => {
-    const name = newName.trim()
-    if (name.length === 0) return
-    try {
-      const pl = await api.createPlaylist(name)
-      await addTrackToPlaylistAndCache(pl.id, track)
-      setCreating(false)
-      setNewName('')
-      setSub(false)
-      flash(`${t('Added to')} ${playlistDisplayName(pl, pl.name, t)}`, false)
-    } catch (e: unknown) {
-      flash(errText(e), true)
-    }
+  const createAndAdd = async (name: string, coverPath: string | null) => {
+    const playlist = await api.createPlaylist(name, coverPath)
+    await addTrackToPlaylistAndCache(playlist.id, track)
+    setSub(false)
+    flash(`${t('Added to')} ${playlistDisplayName(playlist, playlist.name, t)}`, false)
   }
 
   const removeFromPlaylist = async () => {
@@ -427,42 +416,10 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
                 })
               )}
               <div className="menu-sep" />
-              {creating ? (
-                <div className="tm-create">
-                  <input
-                    className="menu-input"
-                    autoFocus
-                    value={newName}
-                    placeholder={t('Playlist name')}
-                    spellCheck={false}
-                    onChange={(e) => setNewName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') void createAndAdd()
-                      if (e.key === 'Escape') setCreating(false)
-                    }}
-                  />
-                  <button
-                    className="icon-btn tm-create-btn"
-                    aria-label={t('Create playlist and add track')}
-                    disabled={newName.trim().length === 0}
-                    onClick={() => void createAndAdd()}
-                  >
-                    <Check size={14} />
-                  </button>
-                </div>
-              ) : (
-                <button
-                  className="menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    setNewName('')
-                    setCreating(true)
-                  }}
-                >
-                  <Plus size={13} />
-                  {t('New playlist…')}
-                </button>
-              )}
+              <button className="menu-item" role="menuitem" onClick={() => setCreating(true)}>
+                <Plus size={13} />
+                {t('New playlist…')}
+              </button>
             </>
           ) : (
             <>
@@ -504,6 +461,12 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
           }}
         />
       ) : null}
+      {creating ? <CreatePlaylistDialog
+        initialCoverPath={track.coverPath}
+        forTrack
+        onClose={() => setCreating(false)}
+        onCreate={createAndAdd}
+      /> : null}
     </div>
   )
 })

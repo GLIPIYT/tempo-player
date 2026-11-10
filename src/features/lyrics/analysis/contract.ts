@@ -9,7 +9,7 @@ export const LYRIC_MODEL_STATE_EVENT = 'lyrics-analysis://model-state'
 
 export interface ModelState {
   enabled: boolean
-  phase: 'absent' | 'downloading' | 'ready' | 'error'
+  phase: 'absent' | 'checking' | 'downloading' | 'ready' | 'error'
   loadedBytes: number
   totalBytes: number
   error: string | null

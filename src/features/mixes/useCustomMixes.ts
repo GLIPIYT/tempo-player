@@ -2,9 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { HourMix } from '../../utils/hourMixes'
 import type { CustomMixCandidate, CustomMixGenerationReason, CustomMixRule } from './types'
 import { customMixService } from './service'
-import { customMixRuleFingerprint } from './snapshot'
+import { customMixRuleFingerprint, shouldRegenerateCustomMixSelection } from './snapshot'
 import { beginFastCustomMixLoad, isMixRequestVersionCurrent } from './hydration'
 import type { CustomMixMemoryState } from './service'
+import {
+  createMixForegroundGate,
+  updateMixForegroundGate,
+  waitForMixForegroundReady,
+  type MixForegroundGate,
+  type MixForegroundWait,
+} from './foregroundGate'
 
 const OVERDUE_RETRY_MS = 60_000
 const MAX_PARALLEL_GENERATIONS = 2
@@ -36,9 +43,18 @@ async function withGenerationSlot<T>(job: () => Promise<T>): Promise<T> {
   }
 }
 
-export function useCustomMixes(libraryVersion: number, editorOpen = false) {
+export function useCustomMixes(
+  libraryVersion: number,
+  editorOpen = false,
+  foregroundReady = false,
+) {
   const memoryRef = useRef<CustomMixMemoryState | null>(null)
   if (memoryRef.current === null) memoryRef.current = customMixService.getMemoryState()
+  const foregroundGateRef = useRef<MixForegroundGate | null>(null)
+  if (foregroundGateRef.current === null || foregroundGateRef.current.libraryVersion !== libraryVersion) {
+    foregroundGateRef.current = createMixForegroundGate(libraryVersion, foregroundGateRef.current !== null)
+  }
+  const foregroundGate = foregroundGateRef.current
   const initialMemory = memoryRef.current
   const [revision, setRevision] = useState(0)
   const [rules, setRules] = useState<CustomMixRule[]>(initialMemory.rules)
@@ -117,7 +133,17 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
         const generatedAt = generatedAtRef.current.get(rule.id)
         return generatedAt != null && generatedAt + rule.refreshIntervalMinutes * 60 <= scheduledAt
       })
-      void Promise.all(dueRules.map((rule) => generateMix(rule, candidatesRef.current, 'scheduled')))
+      if (dueRules.length === 0) {
+        scheduleTimerRef.current()
+        return
+      }
+      void customMixService.getCandidates()
+        .then(async (library) => {
+          if (!mountedRef.current) return
+          candidatesRef.current = library
+          setCandidates(library)
+          await Promise.all(dueRules.map((rule) => generateMix(rule, library, 'scheduled')))
+        })
         .catch((cause) => { if (mountedRef.current) setError(String(cause)) })
         .finally(() => scheduleTimerRef.current())
     }, delay)
@@ -132,7 +158,14 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
   }, [])
 
   useEffect(() => {
+    const gate = foregroundGateRef.current
+    if (gate?.libraryVersion !== libraryVersion) return
+    updateMixForegroundGate(gate, foregroundReady, editorOpen)
+  }, [libraryVersion, foregroundReady, editorOpen])
+
+  useEffect(() => {
     let cancelled = false
+    let candidateWait: MixForegroundWait | null = null
     void customMixService.list()
       .then(async (saved) => {
         if (cancelled) return
@@ -147,6 +180,7 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
         const hydrationVersions = new Map(saved.flatMap((rule) => rule.id == null
           ? []
           : [[rule.id, mixRequestVersionRef.current.get(rule.id) ?? 0] as const]))
+        const rulesNeedingGeneration = new Set<number>()
         const isCurrentRule = (rule: CustomMixRule) => !cancelled && mountedRef.current
           && rule.id != null
           && isMixRequestVersionCurrent(
@@ -158,9 +192,19 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
         let generationsComplete = false
         const load = beginFastCustomMixLoad(saved, {
           readSnapshot: (rule) => customMixService.getDisplayableSnapshot(rule),
-          loadCandidates: () => customMixService.getCandidates(),
+          loadCandidates: async () => {
+            candidateWait = waitForMixForegroundReady(foregroundGate)
+            await candidateWait.promise
+            if (cancelled || !mountedRef.current) return []
+            return customMixService.getCandidates()
+          },
           emptyCandidates: candidatesRef.current,
           isCurrent: isCurrentRule,
+          needsCandidateLoad: (rule, selection) => {
+            const needsGeneration = shouldRegenerateCustomMixSelection(rule, selection, reason)
+            if (needsGeneration && rule.id != null) rulesNeedingGeneration.add(rule.id)
+            return editorOpen || needsGeneration
+          },
           onSnapshot: (rule, selection) => {
             if (rule.id == null) return
             const existingGeneratedAt = generatedAtRef.current.get(rule.id)
@@ -178,15 +222,19 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
         })
         void load.snapshots.catch((cause) => { if (!cancelled) setError(String(cause)) })
         const library = await load.candidates
+        // Candidate loading may finish before a slower snapshot read. Collect
+        // every rule's decision before choosing which rules to regenerate.
+        await load.snapshots
         if (cancelled) return
         firstLoadRef.current = false
         candidatesRef.current = library
         setCandidates(library)
         candidatesReady = true
+        const generationRules = saved.filter((rule) => rule.id != null && rulesNeedingGeneration.has(rule.id))
         let next = 0
         const worker = async () => {
-          while (!cancelled && next < saved.length) {
-            const rule = saved[next++]
+          while (!cancelled && next < generationRules.length) {
+            const rule = generationRules[next++]
             await generateMix(rule, library, reason, () => !cancelled)
           }
         }
@@ -202,8 +250,9 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
       })
     return () => {
       cancelled = true
+      candidateWait?.cancel()
     }
-  }, [libraryVersion, revision, generateMix, makeMix])
+  }, [libraryVersion, revision, editorOpen, generateMix, makeMix, foregroundGate])
 
   useEffect(() => {
     if (!editorOpen || rules.length > 0) return

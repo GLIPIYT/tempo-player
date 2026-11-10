@@ -143,10 +143,10 @@ const PLAYLIST_COLUMNS: &str =
     "p.id, p.name, p.created_at, p.updated_at, \
      (SELECT COUNT(*) FROM playlist_tracks pc WHERE pc.playlist_id = p.id), \
      p.pinned, p.pin_order, p.is_likes, \
-     (SELECT tc.cover_path FROM playlist_tracks ptc \
+     COALESCE(p.custom_cover_path, (SELECT tc.cover_path FROM playlist_tracks ptc \
       JOIN tracks tc ON tc.id = ptc.track_id \
       WHERE ptc.playlist_id = p.id AND tc.cover_path IS NOT NULL \
-      ORDER BY ptc.added_at DESC, ptc.id DESC LIMIT 1)";
+      ORDER BY ptc.added_at DESC, ptc.id DESC LIMIT 1))";
 
 const PLAYLIST_VISIBLE_PRED: &str =
     "t.folder_id IS NOT NULL OR (t.source <> 'local' AND t.cached_at IS NOT NULL)";
@@ -528,6 +528,8 @@ CREATE INDEX IF NOT EXISTS idx_audio_file_index_hash ON audio_file_index(sha256,
 CREATE INDEX IF NOT EXISTS idx_audio_file_index_name_size ON audio_file_index(file_name COLLATE NOCASE, file_size);
 "#;
 
+const MIGRATION_24: &str = "ALTER TABLE playlists ADD COLUMN custom_cover_path TEXT;";
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
     MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_13,
@@ -538,7 +540,7 @@ const MIGRATIONS: &[&str] = &[
     crate::recommendation_store::PERSONALIZATION_MIGRATION,
     crate::recommendation_audio::AUDIO_MIGRATION,
     MIGRATION_21,
-    MIGRATION_22, MIGRATION_23,
+    MIGRATION_22, MIGRATION_23, MIGRATION_24,
 ];
 
 pub struct Db {
@@ -1720,7 +1722,7 @@ impl Db {
                 LibraryElementKind::Album => "SELECT cover_path FROM albums WHERE id = ?1",
                 LibraryElementKind::Artist => "SELECT image_path FROM artists WHERE id = ?1",
                 LibraryElementKind::Playlist => {
-                    "SELECT (SELECT t.cover_path FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id WHERE pt.playlist_id = p.id AND t.cover_path IS NOT NULL ORDER BY pt.added_at DESC, pt.id DESC LIMIT 1) FROM playlists p WHERE p.id = ?1"
+                    "SELECT COALESCE(p.custom_cover_path, (SELECT t.cover_path FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id WHERE pt.playlist_id = p.id AND t.cover_path IS NOT NULL ORDER BY pt.added_at DESC, pt.id DESC LIMIT 1)) FROM playlists p WHERE p.id = ?1"
                 }
             };
             conn.query_row(sql, params![id], |row| row.get::<_, Option<String>>(0))
@@ -2124,6 +2126,17 @@ impl Db {
                 let (playlist_id, cover_path) = row.map_err(db_err)?;
                 previews.entry(playlist_id).or_default().push(cover_path);
             }
+            let mut custom_stmt = conn.prepare(
+                "SELECT id, custom_cover_path FROM playlists \
+                 WHERE custom_cover_path IS NOT NULL AND trim(custom_cover_path) <> ''",
+            ).map_err(db_err)?;
+            let custom_rows = custom_stmt.query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            }).map_err(db_err)?;
+            for row in custom_rows {
+                let (playlist_id, cover_path) = row.map_err(db_err)?;
+                previews.insert(playlist_id, vec![cover_path]);
+            }
             Ok(previews)
         })
     }
@@ -2208,7 +2221,16 @@ impl Db {
     /// Creates a playlist and pins it, because one the user just made should
     /// show up in the sidebar.
     pub fn create_playlist(&self, name: &str) -> Result<Playlist, String> {
-        self.create_playlist_pinned(name, true)
+        self.create_playlist_with_cover(name, None)
+    }
+
+    /// Creates and pins a playlist with an optional user-selected cover path.
+    pub fn create_playlist_with_cover(
+        &self,
+        name: &str,
+        cover_path: Option<&str>,
+    ) -> Result<Playlist, String> {
+        self.create_playlist_pinned_with_cover(name, true, cover_path)
     }
 
     /// Creates a playlist, optionally without pinning it.
@@ -2217,15 +2239,25 @@ impl Db {
     /// one the user just made, and pinning it would drop every cached playlist
     /// into favorites without anyone asking for that.
     pub fn create_playlist_pinned(&self, name: &str, pinned: bool) -> Result<Playlist, String> {
+        self.create_playlist_pinned_with_cover(name, pinned, None)
+    }
+
+    fn create_playlist_pinned_with_cover(
+        &self,
+        name: &str,
+        pinned: bool,
+        cover_path: Option<&str>,
+    ) -> Result<Playlist, String> {
+        let cover_path = cover_path.filter(|path| !path.trim().is_empty());
         let conn = self.lock_conn()?;
         let ts = now();
         conn.execute(
-            "INSERT INTO playlists(name, created_at, updated_at, pinned, pin_order) \
+            "INSERT INTO playlists(name, created_at, updated_at, pinned, pin_order, custom_cover_path) \
              VALUES(?1, ?2, ?2, ?3, \
              CASE WHEN ?3 = 1 \
                   THEN COALESCE((SELECT MAX(pin_order) + 1 FROM playlists WHERE pinned = 1), 0) \
-                  ELSE NULL END)",
-            params![name, ts, pinned],
+                  ELSE NULL END, ?4)",
+            params![name, ts, pinned, cover_path],
         )
         .map_err(db_err)?;
         let id = conn.last_insert_rowid();
@@ -2243,7 +2275,7 @@ impl Db {
             pinned: Some(pinned),
             pin_order,
             is_likes: Some(false),
-            cover_path: None,
+            cover_path: cover_path.map(str::to_owned),
         })
     }
 
@@ -7045,6 +7077,52 @@ mod tests {
             .cover_path;
         assert_eq!(cover.as_deref(), Some("covers/b.png"));
         drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn custom_playlist_cover_persists_and_overrides_track_collages() {
+        let (db, dir) = test_db("customplcover");
+        let media = [
+            fixture_file(&dir, "a.mp3"),
+            fixture_file(&dir, "b.mp3"),
+            fixture_file(&dir, "c.mp3"),
+        ];
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let tracks = [
+            seed_track(&db, folder.id, &media[0], "One", "A", None, 60.0),
+            seed_track(&db, folder.id, &media[1], "Two", "B", None, 60.0),
+            seed_track(&db, folder.id, &media[2], "Three", "C", None, 60.0),
+        ];
+        db.with_conn(|conn| {
+            for (track_id, cover) in tracks.iter().zip(["covers/a.png", "covers/b.png", "covers/c.png"]) {
+                conn.execute("UPDATE tracks SET cover_path = ?1 WHERE id = ?2", params![cover, track_id])
+                    .map_err(db_err)?;
+            }
+            Ok(())
+        }).unwrap();
+
+        let custom = db.create_playlist_with_cover("Custom cover", Some("covers/selected.png")).unwrap();
+        let automatic = db.create_playlist("Track covers").unwrap();
+        for track_id in tracks {
+            db.playlist_add_track(custom.id, track_id).unwrap();
+            db.playlist_add_track(automatic.id, track_id).unwrap();
+        }
+
+        let listed = db.list_playlists().unwrap();
+        assert_eq!(listed.iter().find(|playlist| playlist.id == custom.id).unwrap().cover_path.as_deref(), Some("covers/selected.png"));
+        assert_eq!(listed.iter().find(|playlist| playlist.id == automatic.id).unwrap().cover_path.as_deref(), Some("covers/c.png"));
+        let previews = db.list_playlist_cover_previews().unwrap();
+        assert_eq!(previews.get(&custom.id).unwrap(), &vec!["covers/selected.png".to_string()]);
+        assert_eq!(previews.get(&automatic.id).unwrap().len(), 3);
+        assert_eq!(db.library_cover_path(LibraryElementKind::Playlist, custom.id).unwrap().as_deref(), Some("covers/selected.png"));
+
+        drop(db);
+        let reopened = Db::open_at(&dir.join("tempo.db")).unwrap();
+        let restored = reopened.list_playlists().unwrap().into_iter().find(|playlist| playlist.id == custom.id).unwrap();
+        assert_eq!(restored.cover_path.as_deref(), Some("covers/selected.png"));
+        assert_eq!(reopened.list_playlist_cover_previews().unwrap().get(&custom.id).unwrap(), &vec!["covers/selected.png".to_string()]);
+        drop(reopened);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

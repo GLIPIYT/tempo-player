@@ -177,6 +177,13 @@ describe('lyrics visualizer settings', () => {
     expect(clampLyricsVisualizer({ useThemeColor: true, useBackgroundColor: false })).toMatchObject({ useThemeColor: true, useBackgroundColor: false })
     expect(clampLyricsVisualizer({ useBackgroundColor: 'true' as never }).useBackgroundColor).toBe(false)
   })
+
+  it('persists the taller lyrics-only amplitude without widening the player range', () => {
+    expect(clampLyricsVisualizer({ heightPx: 240 }).heightPx).toBe(240)
+    expect(clampLyricsVisualizer({ heightPx: 999 }).heightPx).toBe(240)
+    expect(clampVisualizer({ heightPx: 240 }).heightPx).toBe(160)
+    expect(loadVisualizer({ lyricsVisualizer: { heightPx: 224 } }).lyricsVisualizer.heightPx).toBe(224)
+  })
 })
 
 describe('clampMiniShowMs', () => {

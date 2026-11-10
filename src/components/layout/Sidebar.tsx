@@ -45,8 +45,9 @@ import {
 import Cover from '../common/Cover'
 import CacheBadge from '../../soundcloud/CacheBadge'
 import { addTrackToPlaylistAndCache } from '../../soundcloud/cacheJobs'
-import Modal from '../common/Modal'
-import ConfirmModal from '../common/ConfirmModal'
+import CreatePlaylistDialog from '../common/CreatePlaylistDialog'
+import DeletePlaylistDialog from '../common/DeletePlaylistDialog'
+import { sidebarMarkerLayout } from './sidebarMarker'
 
 const WIDTH_KEY = 'tempo.sidebar.width'
 const COLLAPSED_KEY = 'tempo.sidebar.collapsed'
@@ -94,11 +95,6 @@ interface FavMenu {
   isLikes: boolean
   x: number
   y: number
-}
-
-interface DeleteTarget {
-  id: number
-  name: string
 }
 
 /**
@@ -177,10 +173,9 @@ export default function Sidebar() {
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [override, setOverride] = useState<string[] | null>(null)
   const [menu, setMenu] = useState<FavMenu | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Playlist | null>(null)
   const [newOpen, setNewOpen] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [creating, setCreating] = useState(false)
+  const createdPlaylistId = useRef<number | null>(null)
 
   const widthRef = useRef(width)
   widthRef.current = width
@@ -204,15 +199,13 @@ export default function Sidebar() {
         return
       }
 
-      const sidebarRect = sidebar.getBoundingClientRect()
-      const targetRect = target.getBoundingClientRect()
-      // CSS zoom scales getBoundingClientRect() values, but also scales the
-      // marker's CSS transform. Convert back to the sidebar's layout pixels.
-      const zoom = Math.max(50, Math.min(200, settings.font.uiScalePct)) / 100
-      const x = (targetRect.left - sidebarRect.left) / zoom
-      const y = (targetRect.top - sidebarRect.top) / zoom + 6
+      const { x, y, height } = sidebarMarkerLayout({
+        left: target.offsetLeft,
+        top: target.offsetTop,
+        height: target.offsetHeight,
+      })
       marker.style.transform = `translate3d(${x}px, ${y}px, 0)`
-      marker.style.height = `${Math.max(0, targetRect.height / zoom - 12)}px`
+      marker.style.height = `${height}px`
       marker.dataset.visible = 'true'
 
       if (!marker.classList.contains('is-ready')) {
@@ -457,33 +450,25 @@ export default function Sidebar() {
     localStorage.setItem(WIDTH_KEY, String(DEFAULT_W))
   }
 
-  const createNew = async () => {
-    const trimmed = newName.trim()
-    if (trimmed.length === 0 || creating) return
-    setCreating(true)
-    try {
-      // new playlists are pinned (favorites) by the backend by default
-      const pl = await api.createPlaylist(trimmed)
-      setNewOpen(false)
-      setNewName('')
-      bumpLibraryVersion()
-      navigate({ name: 'playlist', id: pl.id })
-    } catch {} finally {
-      setCreating(false)
-    }
+  const createNew = async (name: string, coverPath: string | null) => {
+    const playlist = await api.createPlaylist(name, coverPath)
+    createdPlaylistId.current = playlist.id
+    bumpLibraryVersion()
   }
 
-  const confirmDelete = async () => {
+  const closeCreate = (created?: boolean) => {
+    setNewOpen(false)
+    const playlistId = created ? createdPlaylistId.current : null
+    createdPlaylistId.current = null
+    if (playlistId != null) navigate({ name: 'playlist', id: playlistId })
+  }
+
+  const deletePlaylist = async () => {
     const target = deleteTarget
     if (!target) return
-    try {
-      await api.deletePlaylist(target.id)
-      setDeleteTarget(null)
-      bumpLibraryVersion()
-      if (view.name === 'playlist' && view.id === target.id) navigate({ name: 'playlists' })
-    } catch {
-      setDeleteTarget(null)
-    }
+    await api.deletePlaylist(target.id)
+    bumpLibraryVersion()
+    if (view.name === 'playlist' && view.id === target.id) navigate({ name: 'playlists' })
   }
 
   const trackDragActive = dragState?.kind === 'track'
@@ -634,7 +619,7 @@ export default function Sidebar() {
   const albumRows = rowsOf('album')
   const headerCount = interleaved ? favorites.length : playlistRows.length
   const renderNewPlaylistAction = () => (
-    <button className="fav-new" title={t('New playlist')} onClick={() => setNewOpen(true)}>
+    <button className="fav-new" title={t('New playlist')} onClick={() => { createdPlaylistId.current = null; setNewOpen(true) }}>
       <Plus size={15} />
       {!collapsed ? <span>{t('New playlist')}</span> : null}
     </button>
@@ -802,7 +787,7 @@ export default function Sidebar() {
                 onClick={() => {
                   const m = menu
                   setMenu(null)
-                  setDeleteTarget({ id: m.id, name: m.name })
+                  setDeleteTarget(playlists.find(playlist => playlist.id === m.id) ?? null)
                 }}
               >
                 <Trash2 size={13} />
@@ -812,53 +797,8 @@ export default function Sidebar() {
           ) : null}
         </div>
       ) : null}
-      <ConfirmModal
-        open={deleteTarget !== null}
-        danger
-        title={t('Delete playlist')}
-        message={`"${deleteTarget?.name ?? ''}" ${t('will be deleted. This cannot be undone.')}`}
-        confirmLabel={t('Delete')}
-        onConfirm={() => void confirmDelete()}
-        onClose={() => setDeleteTarget(null)}
-      />
-      <Modal
-        open={newOpen}
-        title={t('New playlist')}
-        onClose={() => {
-          setNewOpen(false)
-          setNewName('')
-        }}
-      >
-        <input
-          className="text-input"
-          autoFocus
-          value={newName}
-          placeholder={t('Playlist name')}
-          spellCheck={false}
-          onChange={(e) => setNewName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void createNew()
-          }}
-        />
-        <div className="modal-actions">
-          <button
-            className="btn"
-            onClick={() => {
-              setNewOpen(false)
-              setNewName('')
-            }}
-          >
-            {t('Cancel')}
-          </button>
-          <button
-            className="btn btn-primary"
-            disabled={creating || newName.trim().length === 0}
-            onClick={() => void createNew()}
-          >
-            {t('Create')}
-          </button>
-        </div>
-      </Modal>
+      {newOpen ? <CreatePlaylistDialog onClose={closeCreate} onCreate={createNew} /> : null}
+      {deleteTarget ? <DeletePlaylistDialog playlist={deleteTarget} onDelete={deletePlaylist} onClose={() => setDeleteTarget(null)} /> : null}
     </>
   )
 }

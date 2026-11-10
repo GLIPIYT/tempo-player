@@ -39,6 +39,7 @@ import { normalizeSearchText } from '../../utils/searchText'
 import { useSettings } from '../../state/settings'
 import Cover from '../common/Cover'
 import BrandIcon from '../common/BrandIcon'
+import DeleteRuleDialog from '../common/DeleteRuleDialog'
 import './customMixEditor.css'
 
 export interface MixRulePreset {
@@ -502,6 +503,7 @@ export default function CustomMixEditor({
   const [error, setError] = useState('')
   const [menu, setMenu] = useState(false)
   const [copyOpen, setCopyOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [descriptionMode, setDescriptionMode] = useState(false)
   const nameInput = useRef<HTMLInputElement>(null)
   const descriptionInput = useRef<HTMLTextAreaElement>(null)
@@ -979,17 +981,7 @@ export default function CustomMixEditor({
               type="button"
               className="mix-rule-delete"
               disabled={busy}
-              onClick={async () => {
-                setBusy(true)
-                try {
-                  await onDelete()
-                  setClosing(true)
-                  closeTimer.current = setTimeout(onClose, 170)
-                } catch (e) {
-                  setError(String(e))
-                  setBusy(false)
-                }
-              }}
+              onClick={() => setDeleteOpen(true)}
             >
               <Trash2 size={15} />
               {t('Delete')}
@@ -1013,6 +1005,7 @@ export default function CustomMixEditor({
             {t(busy ? 'Saving…' : 'Save rule')}
           </button>
         </footer>
+        {deleteOpen && onDelete ? <DeleteRuleDialog name={initial?.name ?? rule.name} onDelete={onDelete} onClose={deleted => { setDeleteOpen(false); if (deleted) close() }} /> : null}
         {copyOpen ? (
           <div
             className="mix-rule-copy-backdrop"

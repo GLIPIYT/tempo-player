@@ -1,4 +1,4 @@
-import { useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { Clock3, Ellipsis, Heart, ListMusic, Play, Plus, Search, Trash2, Upload } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useNav } from '../state/nav'
@@ -17,8 +17,9 @@ import { openContextMenu, type ContextMenuItem } from '../components/common/Cont
 import CollectionArtwork from '../components/common/CollectionArtwork'
 import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
 import { CollectionCatalogHeading, CollectionCatalogToolbar } from '../components/common/CollectionCatalog'
+import CreatePlaylistDialog from '../components/common/CreatePlaylistDialog'
+import DeletePlaylistDialog from '../components/common/DeletePlaylistDialog'
 import EmptyState from '../components/common/EmptyState'
-import Modal from '../components/common/Modal'
 import { toast } from '../components/common/Toast'
 import CacheBadge from '../soundcloud/CacheBadge'
 import { normalizeSearchText } from '../utils/searchText'
@@ -35,8 +36,8 @@ export default function PlaylistsPage() {
   const { data, loading, error, reload } = useAsync(() => api.listPlaylists(), [version])
   const previews = useAsync(() => api.listPlaylistCoverPreviews(), [version])
   const [creating, setCreating] = useState(false)
-  const [name, setName] = useState('')
-  const [busy, setBusy] = useState(false)
+  const createdPlaylistId = useRef<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Playlist | null>(null)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<PlaylistSort>('updated')
   const [favoritesOnly, setFavoritesOnly] = useState(false)
@@ -55,18 +56,6 @@ export default function PlaylistsPage() {
       if (tracks.length === 0) return
       player.playTracks(tracks.map(trackToUnified), 0)
       await api.recordPlaylistStart(playlist.id)
-      bumpLibraryVersion()
-    } catch (cause: unknown) {
-      toast.show(cause instanceof Error ? cause.message : String(cause), 'error')
-    }
-  }
-
-  const deletePlaylist = async (playlist: Playlist, displayName: string) => {
-    if (playlist.isLikes) return
-    const confirmed = window.confirm(`${t('Delete playlist')} "${displayName}"? ${t('This cannot be undone.')}`)
-    if (!confirmed) return
-    try {
-      await api.deletePlaylist(playlist.id)
       bumpLibraryVersion()
     } catch (cause: unknown) {
       toast.show(cause instanceof Error ? cause.message : String(cause), 'error')
@@ -105,7 +94,7 @@ export default function PlaylistsPage() {
         label: t('Delete playlist'),
         icon: <Trash2 size={13} />,
         danger: true,
-        onSelect: () => void deletePlaylist(playlist, displayName),
+        onSelect: () => setDeleteTarget(playlist),
       })
     }
     openContextMenu({ x: event.clientX, y: event.clientY, title: displayName, items })
@@ -130,25 +119,31 @@ export default function PlaylistsPage() {
     }
   }
 
-  const create = async () => {
-    const trimmed = name.trim()
-    if (trimmed.length === 0) return
-    setBusy(true)
-    try {
-      const pl: Playlist = await api.createPlaylist(trimmed)
-      setCreating(false)
-      setName('')
+  const create = async (name: string, coverPath: string | null) => {
+    const playlist = await api.createPlaylist(name, coverPath)
+    createdPlaylistId.current = playlist.id
+  }
+
+  const closeCreate = (created?: boolean) => {
+    setCreating(false)
+    const playlistId = created ? createdPlaylistId.current : null
+    createdPlaylistId.current = null
+    if (playlistId != null) {
       reload()
-      navigate({ name: 'playlist', id: pl.id })
-    } finally {
-      setBusy(false)
+      navigate({ name: 'playlist', id: playlistId })
     }
+  }
+
+  const deletePlaylist = async () => {
+    if (!deleteTarget) return
+    await api.deletePlaylist(deleteTarget.id)
+    bumpLibraryVersion()
   }
 
   return (
     <div className="page playlist-list-page collection-catalog collection-playlists-air">
       <CollectionCatalogHeading title={t('Playlists')} count={data?.length} actions={<>
-        <button className="btn btn-primary" onClick={() => { setName(''); setCreating(true) }}><Plus size={15} />{t('New playlist')}</button>
+        <button className="btn btn-primary" onClick={() => { createdPlaylistId.current = null; setCreating(true) }}><Plus size={15} />{t('New playlist')}</button>
         <button className="collection-icon-action" onClick={() => void importM3u8()} title={t('Import playlist (m3u8)')} aria-label={t('Import playlist (m3u8)')}><Upload size={18} /></button>
       </>} />
       <CollectionCatalogToolbar query={query} onQuery={setQuery} placeholder={t('Search playlists')} favoritesOnly={favoritesOnly} onFavoritesOnly={setFavoritesOnly} allLabel={t('All playlists')}>
@@ -174,7 +169,7 @@ export default function PlaylistsPage() {
         <div className="collection-playlist-grid">
           {visiblePlaylists.map(playlist => {
             const displayName = playlistDisplayName(playlist, playlist.name, t)
-            const paths = playlist.coverPath ? [playlist.coverPath] : previews.data?.[playlist.id] ?? []
+            const paths = previews.data?.[playlist.id] ?? (playlist.coverPath ? [playlist.coverPath] : [])
             const updated = new Date(playlist.updatedAt * 1000).toLocaleDateString(lang, { day: 'numeric', month: 'short' })
             return <article key={playlist.id} className="collection-playlist-card" onContextMenu={event => playlistMenu(event, playlist, displayName)}>
               <button type="button" className="collection-playlist-open" title={displayName} onClick={() => navigate({ name: 'playlist', id: playlist.id })}>
@@ -189,35 +184,12 @@ export default function PlaylistsPage() {
               <button type="button" className="collection-card-play" disabled={(playlist.trackCount ?? 0) === 0} aria-label={`${t('Play all')}: ${displayName}`} onClick={() => void playPlaylist(playlist)}><Play size={17} fill="currentColor" /></button>
             </article>
           })}
-          <button type="button" className="collection-create-card" onClick={() => { setName(''); setCreating(true) }}><span><Plus size={29} /></span><strong>{t('New playlist')}</strong></button>
+          <button type="button" className="collection-create-card" onClick={() => { createdPlaylistId.current = null; setCreating(true) }}><span><Plus size={29} /></span><strong>{t('New playlist')}</strong></button>
         </div>
       )}
 
-      <Modal open={creating} title={t('New playlist')} onClose={() => setCreating(false)}>
-        <input
-          className="text-input"
-          autoFocus
-          value={name}
-          placeholder={t('Playlist name')}
-          spellCheck={false}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void create()
-          }}
-        />
-        <div className="modal-actions">
-          <button className="btn" onClick={() => setCreating(false)}>
-            {t('Cancel')}
-          </button>
-          <button
-            className="btn btn-primary"
-            disabled={busy || name.trim().length === 0}
-            onClick={() => void create()}
-          >
-            {t('Create')}
-          </button>
-        </div>
-      </Modal>
+      {creating ? <CreatePlaylistDialog onClose={closeCreate} onCreate={create} /> : null}
+      {deleteTarget ? <DeletePlaylistDialog playlist={deleteTarget} onDelete={deletePlaylist} onClose={() => setDeleteTarget(null)} /> : null}
     </div>
   )
 }

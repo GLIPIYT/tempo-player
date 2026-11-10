@@ -110,8 +110,8 @@ function scale(color: Rgb, amount: number): Rgb {
 function lyricsBackdropColor(artwork: Rgb | null, themeBackground: Rgb): Rgb {
   if (!artwork) return themeBackground
   // Match the bottom of the current lyrics backdrop: its cover is rendered at
-  // 40% brightness, then the shade blends 88% of the theme background there.
-  return blend(scale(artwork, 0.4), themeBackground, 0.88)
+  // 58% brightness, then the shade blends 66% of the theme background there.
+  return blend(scale(artwork, 0.58), themeBackground, 0.66)
 }
 
 export default function LyricsVisualizer({ coverPath }: { coverPath: string | null }) {

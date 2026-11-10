@@ -78,6 +78,7 @@
 .collection-detail { container: collection-detail / inline-size; }
 .collection-detail.editorial-detail-page > .back-link { margin-bottom: 24px; font-size: 10px; color: var(--text-muted); }
 .collection-detail .editorial-detail-hero { isolation: isolate; grid-template-columns: clamp(200px, 28cqw, 310px) minmax(0, 1fr); align-items: center; gap: 35px; min-height: 0; padding: 13px 0 35px; margin: 0 0 22px; overflow: visible; border: 0; border-radius: 0; background: transparent; }
+.collection-detail .editorial-detail-hero::after { content: ''; position: absolute; inset: auto 25px 0; height: 1px; pointer-events: none; background: linear-gradient(90deg, transparent, #ffffff1a 15%, #ffffff1a 85%, transparent); }
 .collection-detail .collection-detail-glow { position: absolute; inset: -40px 0 -30px; overflow: hidden; z-index: -1; pointer-events: none; opacity: .19; filter: blur(60px) saturate(.7); mask-image: radial-gradient(ellipse at 50% 40%, #000, #0004 45%, transparent 72%); }
 .collection-detail-glow > .cover { display: block; width: 100% !important; height: 100% !important; object-fit: cover; }
 .collection-detail .editorial-detail-art { display: block; width: 100%; max-width: 310px; padding: 0; aspect-ratio: 1; border: 0; border-radius: 11px; box-shadow: 0 17px 40px #0005; }

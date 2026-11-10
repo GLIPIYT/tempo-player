@@ -98,7 +98,8 @@ export const api = {
   getArtist: (artistId: number) => invoke<ArtistDetail>('get_artist', { artistId }),
   getArtistTracks: (artistId: number) => invoke<Track[]>('get_artist_tracks', { artistId }),
 
-  createPlaylist: (name: string) => invoke<Playlist>('create_playlist', { name }),
+  createPlaylist: (name: string, coverPath: string | null = null) =>
+    invoke<Playlist>('create_playlist', { name, coverPath }),
   renamePlaylist: (playlistId: number, name: string) =>
     invoke<void>('rename_playlist', { playlistId, name }),
   deletePlaylist: (playlistId: number) => invoke<void>('delete_playlist', { playlistId }),

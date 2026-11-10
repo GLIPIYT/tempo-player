@@ -12,7 +12,13 @@ import { knownTextAlignmentKey, knownTextLineWindow, knownTextWords, matchCached
 import { createAsrWorker } from './workerClient'
 import type { AsrRequest, AsrResponse } from './workerProtocol'
 export interface AnalysisTrackInput { track: AnalysisTrack; sourceLines: readonly LyricsLine[]; durationSec: number; offsetMs: number; lyricKey: string; sourceLyricKey: string }
-export interface AnalysisSnapshot { lyricKey: string | null; phase: 'idle' | 'loading' | 'analyzing' | 'waiting' | 'paused' | 'complete' | 'unavailable' | 'error'; analysis: LyricTimingAnalysis; error: string | null }
+export interface AnalysisSnapshot {
+  lyricKey: string | null
+  phase: 'idle' | 'loading' | 'analyzing' | 'waiting' | 'paused' | 'complete' | 'unavailable' | 'error'
+  analysis: LyricTimingAnalysis
+  error: string | null
+  unavailableReason: 'missing-file' | 'unreadable-file' | null
+}
 export interface RunnerDependencies {
   native: AnalysisNativeClient
   decode: (identity: AudioIdentity, signal: AbortSignal) => Promise<AnalysisPcm | null>
@@ -47,7 +53,7 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
   let worker: ReturnType<RunnerDependencies['worker']> | null = null
   let controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined, idleTimer: ReturnType<typeof setTimeout> | undefined
-  let snapshot: AnalysisSnapshot = { lyricKey: null, phase: 'idle', analysis: { bpm: null, matchedEnds: [] }, error: null }
+  let snapshot: AnalysisSnapshot = { lyricKey: null, phase: 'idle', analysis: { bpm: null, matchedEnds: [] }, error: null, unavailableReason: null }
   const listeners = new Set<() => void>()
 
   const sourceEnds = (): MatchedSourceEnd[] => cache?.lyricMatches.find(m => m.sourceLyricKey === input?.sourceLyricKey)?.ends ?? EMPTY_SOURCE_ENDS
@@ -103,8 +109,10 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
     resolvedMemo = { sourceLines: input.sourceLines, offsetMs: input.offsetMs, durationSec: input.durationSec, analysis, lines }
     return lines
   }
-  function publish(phase = snapshot.phase, error: string | null = null): void {
-    snapshot = { lyricKey: input?.lyricKey ?? null, phase, error, analysis: currentAnalysis() }
+  function publish(phase = snapshot.phase, error: string | null = null,
+    unavailableReason?: AnalysisSnapshot['unavailableReason']): void {
+    snapshot = { lyricKey: input?.lyricKey ?? null, phase, error, analysis: currentAnalysis(),
+      unavailableReason: phase === 'unavailable' ? unavailableReason ?? snapshot.unavailableReason : null }
     for (const listener of listeners) listener()
   }
   function release(): void { worker?.dispose(); worker = null; pcm = null; clearTimeout(idleTimer) }
@@ -163,7 +171,7 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
       const found = await deps.native.identity(track)
       if (job !== generation) return
       identity = found
-      if (!found) { publish('unavailable'); return }
+      if (!found) { publish('unavailable', null, 'missing-file'); return }
       const saved = await deps.native.get(found.fingerprint)
       if (job !== generation) return
       cache = saved
@@ -246,7 +254,7 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
         // decodeForAnalysis owns the lane itself. Keep cancelled decode in it until it settles.
         const decoded = await charged(() => deps.decode(identity!, signal))
         signal.throwIfAborted()
-        if (!decoded) { publish('unavailable'); return }
+        if (!decoded) { publish('unavailable', null, 'unreadable-file'); return }
         pcm = decoded
         if (cache?.bpm == null) {
           const bpm = await withAnalysisLane(signal, () => charged(async () => (deps.estimateBpm ?? estimateBpm)(decoded.pcm, decoded.sampleRate)))
@@ -359,7 +367,11 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
       schedule()
     },
     retry(): void {
-      if (snapshot.phase !== 'error') return
+      if (snapshot.phase !== 'error' && snapshot.phase !== 'unavailable') return
+      if (snapshot.phase === 'unavailable' && input) {
+        cancel(); identity = null; cache = null; publish('loading'); void restore(generation, input.track)
+        return
+      }
       publish('idle')
       schedule()
     },

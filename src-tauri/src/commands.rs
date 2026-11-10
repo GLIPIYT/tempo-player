@@ -1139,8 +1139,12 @@ pub fn get_artist(state: State<'_, AppState>, artist_id: i64) -> Result<ArtistDe
 }
 
 #[tauri::command]
-pub fn create_playlist(state: State<'_, AppState>, name: String) -> Result<Playlist, String> {
-    state.db.create_playlist(&name)
+pub fn create_playlist(
+    state: State<'_, AppState>,
+    name: String,
+    cover_path: Option<String>,
+) -> Result<Playlist, String> {
+    state.db.create_playlist_with_cover(&name, cover_path.as_deref())
 }
 
 #[tauri::command]

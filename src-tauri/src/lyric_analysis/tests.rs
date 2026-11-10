@@ -176,7 +176,12 @@ fn manager(root: &Path, server: &Server, enabled: bool) -> Arc<ModelManager> {
 async fn ready_requires_every_verified_file_and_reuses_offline_artifacts() {
     let root = Temp::new();
     let server = Server::new(Reply::Good);
-    let model = manager(&root.0, &server, true);
+    let mut model = manager(&root.0, &server, true);
+    let states = Arc::new(Mutex::new(Vec::<ModelState>::new()));
+    let captured = states.clone();
+    Arc::get_mut(&mut model).unwrap().publish = Arc::new(move |state| {
+        captured.lock().unwrap().push(state.clone());
+    });
     let bundle = model.ensure_model().await.unwrap();
     assert_eq!(bundle.files.len(), 7);
     assert_eq!(model.status().phase, ModelPhase::Ready);
@@ -188,13 +193,30 @@ async fn ready_requires_every_verified_file_and_reuses_offline_artifacts() {
     }
     assert_eq!(model.status().loaded_bytes, model.status().total_bytes);
     assert_eq!(server.hits.load(Ordering::SeqCst), 7);
+    states.lock().unwrap().clear();
     model.ensure_model().await.unwrap();
     assert_eq!(server.hits.load(Ordering::SeqCst), 7);
-    let second = manager(&root.0, &server, true);
+    assert!(
+        states.lock().unwrap().is_empty(),
+        "a warm ensure must preserve Ready without republishing progress"
+    );
+
+    let mut second = manager(&root.0, &server, true);
+    let restart_states = Arc::new(Mutex::new(Vec::<ModelState>::new()));
+    let captured = restart_states.clone();
+    Arc::get_mut(&mut second).unwrap().publish = Arc::new(move |state| {
+        captured.lock().unwrap().push(state.clone());
+    });
     second.ensure_model().await.unwrap();
     assert_eq!(server.hits.load(Ordering::SeqCst), 7);
+    let restart_states = restart_states.lock().unwrap();
+    assert!(restart_states.iter().any(|state| state.phase == ModelPhase::Checking));
+    assert!(restart_states.iter().any(|state| state.phase == ModelPhase::Ready));
+    assert!(!restart_states.iter().any(|state| state.phase == ModelPhase::Downloading));
+    drop(restart_states);
     std::fs::write(&bundle.files[6].absolute_path, b"bad").unwrap();
-    second.ensure_model().await.unwrap();
+    let third = manager(&root.0, &server, true);
+    third.ensure_model().await.unwrap();
     assert_eq!(server.hits.load(Ordering::SeqCst), 8);
 }
 

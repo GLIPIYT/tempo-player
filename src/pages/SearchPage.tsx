@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { Check, Ellipsis, ExternalLink, Lock, Plus, Search } from 'lucide-react'
+import { Ellipsis, ExternalLink, Lock, Plus, Search } from 'lucide-react'
 import { api } from '../api/client'
 import type {
   Playlist,
@@ -18,6 +18,7 @@ import { useSearchQuery } from '../hooks/useSearchQuery'
 import { useSettings } from '../state/settings'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import TrackList from '../components/common/TrackList'
+import CreatePlaylistDialog from '../components/common/CreatePlaylistDialog'
 import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import ScArtwork, { Spinner } from '../components/common/ScArtwork'
@@ -153,7 +154,6 @@ function ScRowMenu({ track }: { track: ScTrack }) {
   const [open, setOpen] = useState(false)
   const [sub, setSub] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [newName, setNewName] = useState('')
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
 
@@ -193,7 +193,6 @@ function ScRowMenu({ track }: { track: ScTrack }) {
     setOpen(false)
     setSub(false)
     setCreating(false)
-    setNewName('')
     setPlaylists(null)
   }, [])
 
@@ -204,7 +203,6 @@ function ScRowMenu({ track }: { track: ScTrack }) {
     }
     setSub(false)
     setCreating(false)
-    setNewName('')
     setPlaylists(null)
     setOpen(true)
   }
@@ -220,20 +218,12 @@ function ScRowMenu({ track }: { track: ScTrack }) {
     }
   }
 
-  const createAndAdd = async () => {
-    const name = newName.trim()
-    if (name.length === 0) return
-    try {
-      const pl = await api.createPlaylist(name)
-      await api.addScTrackToPlaylist(pl.id, track, ytdlpPath())
-      bumpLibraryVersion()
-      setCreating(false)
-      setNewName('')
-      setSub(false)
-      toast.show(`${t('Added to')} ${pl.name}`)
-    } catch (e: unknown) {
-      toast.show(errText(e), 'error')
-    }
+  const createAndAdd = async (name: string, coverPath: string | null) => {
+    const playlist = await api.createPlaylist(name, coverPath)
+    await api.addScTrackToPlaylist(playlist.id, track, ytdlpPath())
+    bumpLibraryVersion()
+    setSub(false)
+    toast.show(`${t('Added to')} ${playlist.name}`)
   }
 
   const openOnSoundCloud = () => {
@@ -278,42 +268,10 @@ function ScRowMenu({ track }: { track: ScTrack }) {
                 ))
               )}
               <div className="menu-sep" />
-              {creating ? (
-                <div className="tm-create">
-                  <input
-                    className="menu-input"
-                    autoFocus
-                    value={newName}
-                    placeholder={t('Playlist name')}
-                    spellCheck={false}
-                    onChange={(e) => setNewName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') void createAndAdd()
-                      if (e.key === 'Escape') setCreating(false)
-                    }}
-                  />
-                  <button
-                    className="icon-btn tm-create-btn"
-                    aria-label={t('Create playlist and add track')}
-                    disabled={newName.trim().length === 0}
-                    onClick={() => void createAndAdd()}
-                  >
-                    <Check size={14} />
-                  </button>
-                </div>
-              ) : (
-                <button
-                  className="menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    setNewName('')
-                    setCreating(true)
-                  }}
-                >
-                  <Plus size={13} />
-                  {t('New playlist…')}
-                </button>
-              )}
+              <button className="menu-item" role="menuitem" onClick={() => setCreating(true)}>
+                <Plus size={13} />
+                {t('New playlist…')}
+              </button>
             </>
           ) : (
             <>
@@ -340,6 +298,12 @@ function ScRowMenu({ track }: { track: ScTrack }) {
           )}
         </div>
       ) : null}
+      {creating ? <CreatePlaylistDialog
+        initialCoverPath={track.artworkUrl}
+        forTrack
+        onClose={() => setCreating(false)}
+        onCreate={createAndAdd}
+      /> : null}
     </div>
   )
 }

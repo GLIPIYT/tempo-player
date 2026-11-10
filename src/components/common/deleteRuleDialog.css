@@ -1,0 +1,31 @@
+.rule-delete-layer { position: fixed; inset: 0; z-index: 1500; display: grid; place-items: center; padding: 24px; background: #06081099; backdrop-filter: blur(16px); animation: rule-delete-fade 160ms ease both; }
+.rule-delete-dialog { position: relative; width: min(500px, 100%); max-height: calc(100dvh - 48px); overflow: auto; scrollbar-width: thin; scrollbar-color: #ffffff24 transparent; padding: 0; border: 1px solid #ffffff16; border-radius: 18px; color: var(--text); background: color-mix(in srgb, var(--bg-elevated) 96%, transparent); box-shadow: 0 24px 90px #0006; animation: rule-delete-enter 200ms cubic-bezier(.2,.7,.2,1) both; }
+.rule-delete-close { position: absolute; right: 16px; top: 16px; display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 7px; color: var(--text-muted); background: transparent; }
+.rule-delete-close:hover { color: var(--text); background: #ffffff08; }
+.rule-delete-panorama { position: relative; height: 110px; overflow: hidden; isolation: isolate; background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.rule-delete-art-glow { position: absolute; inset: -40px; z-index: -1; filter: blur(24px) brightness(.42); opacity: .7; mask-image: linear-gradient(#000, transparent); }
+.rule-delete-art-glow .cover { width: 100% !important; height: 100% !important; object-fit: cover; }
+.rule-delete-art-card { position: absolute; right: 34px; top: 24px; width: 65px; height: 65px; transform: rotate(8deg); opacity: .65; }
+.rule-delete-art-card .cover { width: 100% !important; height: 100% !important; }
+.rule-delete-symbol { position: absolute; left: 30px; bottom: 5px; display: grid; place-items: center; width: 45px; height: 45px; border: 1px solid #ff64782b; border-radius: 12px; color: #ff879a; background: color-mix(in srgb, var(--bg-elevated) 85%, transparent); backdrop-filter: blur(10px); }
+.rule-delete-content { padding: 14px 30px 28px; }
+.rule-delete-dialog h2 { margin: 0 0 10px; font-size: 24px; line-height: 1.2; letter-spacing: -.5px; }
+.rule-delete-content > p { color: var(--text-muted); font-size: 12px; line-height: 1.65; margin: 0; }
+.rule-delete-item { display: flex; align-items: center; gap: 10px; margin: 23px 0 28px; padding: 13px 14px; border-radius: 9px; background: color-mix(in srgb, var(--text) 4%, transparent); }
+.rule-delete-item > svg { flex: none; color: var(--text-muted); }
+.rule-delete-item > strong { min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.rule-delete-item > span { margin-left: auto; flex: none; color: var(--text-muted); font-size: 10px; }
+.rule-delete-dialog footer { display: flex; justify-content: flex-end; align-items: center; gap: 20px; }
+.rule-delete-dialog footer button { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; border: 0; font-size: 12px; }
+.rule-delete-cancel { padding: 6px 0; color: var(--text-muted); background: transparent; }
+.rule-delete-cancel:hover { color: var(--text); }
+.rule-delete-confirm { padding: 9px 14px; color: #fff; border-radius: 8px; background: #bd394e; transition: background 150ms; }
+.rule-delete-confirm:hover { background: #d0445a; }
+.playlist-confirm-primary { padding: 9px 14px; color: #fff; border-radius: 8px; background: var(--accent); }
+.rule-delete-dialog button:disabled { opacity: .5; cursor: default; }
+.rule-delete-dialog .rule-delete-error { display: flex; align-items: center; gap: 7px; color: #ff879a; overflow-wrap: anywhere; margin: -10px 0 18px; }
+.rule-delete-layer.is-closing { animation: rule-delete-fade 150ms ease reverse both; }
+.rule-delete-layer.is-closing .rule-delete-dialog { animation: rule-delete-enter 150ms ease reverse both; pointer-events: none; }
+@keyframes rule-delete-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rule-delete-enter { from { opacity: 0; transform: translateY(7px) scale(.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .rule-delete-layer, .rule-delete-dialog { animation: none !important; } .rule-delete-confirm { transition: none; } }

@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState, type MouseEvent } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
-import { BarChart3, Grid2X2, ImagePlus, Pencil, User } from 'lucide-react'
+import { BarChart3, CheckCircle2, ChevronRight, Clock3, ImagePlus, ListMusic, Music2, Pencil, Play, Plus, User, Users } from 'lucide-react'
 import { api } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
@@ -11,6 +11,14 @@ import { resolveLang, useT } from '../i18n'
 import { playerController } from '../player/controller'
 import { trackToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
+import type { Playlist, Track } from '../types/models'
+import TrackContextMenu, { type TrackContextRequest } from '../components/common/TrackContextMenu'
+import TrackSourceIcon from '../components/common/TrackSourceIcon'
+import CreatePlaylistDialog from '../components/common/CreatePlaylistDialog'
+import DeletePlaylistDialog from '../components/common/DeletePlaylistDialog'
+import { createProfileEntityMenus } from '../features/profile/entityMenus'
+import { bumpLibraryVersion } from '../utils/libraryVersion'
+import { playlistDisplayName } from '../utils/playlists'
 import { historyDialogState } from '../features/listening-history/dialogState'
 import './profile-page.css'
 
@@ -28,9 +36,9 @@ function monthLabel(date: Date, lang: 'ru' | 'en'): string {
   return date.toLocaleDateString(localeFor(lang), { month: 'short' })
 }
 
-function hourLabel(minutes: number): string {
-  if (minutes >= 60) return `${(minutes / 60).toFixed(1)} h`
-  return `${Math.round(minutes)} min`
+function hourLabel(minutes: number, lang: 'ru' | 'en'): string {
+  if (minutes >= 60) return `${(minutes / 60).toLocaleString(localeFor(lang), { maximumFractionDigits: 1 })} ${lang === 'ru' ? 'ч' : 'h'}`
+  return `${Math.round(minutes)} ${lang === 'ru' ? 'мин' : 'min'}`
 }
 
 export default function ProfilePage() {
@@ -40,7 +48,6 @@ export default function ProfilePage() {
   const version = useLibraryVersion()
   const lang = resolveLang(settings.lang)
   const [range, setRange] = useState<30 | 365>(365)
-  const [activityView, setActivityView] = useState<'graph' | 'grid'>('graph')
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
   const [avatarBusy, setAvatarBusy] = useState(false)
@@ -49,6 +56,20 @@ export default function ProfilePage() {
   const stats = useAsync(() => api.getAnalytics('all'), [version])
   const daily = useAsync(() => api.getDailyMinutes(range), [version, range])
   const recent = useAsync(() => api.getHistory(12, 0), [version])
+  const playlists = useAsync(() => api.listPlaylists(), [version])
+  const [trackContext, setTrackContext] = useState<TrackContextRequest | null>(null)
+  const [deletingPlaylist, setDeletingPlaylist] = useState<Playlist | null>(null)
+  const [creatingPlaylist, setCreatingPlaylist] = useState(false)
+  const createdPlaylistId = useRef<number | null>(null)
+  const [chartHover, setChartHover] = useState<number | null>(null)
+  const skipRestoredChartFocus = useRef(false)
+  const entityMenus = useMemo(() => createProfileEntityMenus({ t, navigate, onDeletePlaylist: setDeletingPlaylist }), [t, navigate])
+  const openTrackMenu = (event: MouseEvent, track: Track, tracks: Track[], index: number) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setTrackContext({ x: event.clientX, y: event.clientY, track, tracks, index })
+  }
+
 
   const nickname = settings.profile.nickname
   const summary = stats.data?.summary
@@ -99,22 +120,6 @@ export default function ProfilePage() {
     })
   }, [activityDays, lang, range])
   const chartMax = Math.max(30, ...chart.map((d) => d.minutes))
-  const activityGrid = useMemo(() => {
-    if (activityDays.length === 0) return []
-    if (range === 30) return activityDays
-    const first = new Date(`${activityDays[0].date}T00:00:00`)
-    const mondayOffset = (first.getDay() + 6) % 7
-    const daysWithLeadingPadding = mondayOffset + activityDays.length
-    const trailingPadding = (7 - (daysWithLeadingPadding % 7)) % 7
-    return [
-      ...Array.from({ length: mondayOffset }, () => null),
-      ...activityDays,
-      ...Array.from({ length: trailingPadding }, () => null),
-    ]
-  }, [activityDays, range])
-  const activeDays = activityDays.filter((day) => day.minutes > 0).length
-  const activityTotal = activityDays.reduce((sum, day) => sum + day.minutes, 0)
-  const weekdays = lang === 'ru' ? ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
   const saveName = () => {
     const trimmed = nameDraft.trim()
@@ -138,264 +143,62 @@ export default function ProfilePage() {
     }
   }
 
+  const favoriteTracks = (stats.data?.topTracks ?? []).map(item => item.track)
+  const recentTracks = (recent.data ?? []).map(entry => entry.track)
+  const profilePlaylists = (playlists.data ?? []).filter(playlist => !playlist.isLikes).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt - a.updatedAt).slice(0, 4)
+  const headerArtwork = favoriteTracks.find(track => track.coverPath)?.coverPath ?? recentTracks.find(track => track.coverPath)?.coverPath ?? null
+  const selectedChart = chartHover === null ? null : chart[chartHover]
+  const displayedActivityTotal = chart.reduce((sum, bucket) => sum + bucket.minutes, 0)
+  const displayedActiveDays = activityDays.filter(day => day.date >= (chart[0]?.date ?? '') && day.minutes > 0).length
   return (
-    <div className="page profile-page-remaster profile-layout-b">
-      <div className="profile-head profile-passport">
-        <button
-          className="avatar-edit"
-          title={settings.profile.avatarPath ? t('Change avatar') : t('Pick an avatar')}
-          disabled={avatarBusy}
-          onClick={() => void changeAvatar()}
-        >
-          {settings.profile.avatarPath ? (
-            <img className="profile-avatar" src={convertFileSrc(settings.profile.avatarPath)} alt="" draggable={false} />
-          ) : (
-            <div className="profile-avatar profile-avatar-fallback">
-              <User size={38} />
-            </div>
-          )}
-          <span className="avatar-edit-overlay">
-            <ImagePlus size={16} />
-            <span>{settings.profile.avatarPath ? t('Change avatar') : t('Pick an avatar')}</span>
-          </span>
+    <div className="page profile-panorama">
+      <div className="pf-page-backdrop" aria-hidden="true" />
+      <header className="pf-passport">
+        <div className="pf-passport-glow" aria-hidden="true"><Cover path={headerArtwork} label={nickname ?? t('Profile')} size={900} /></div>
+        <div className="pf-identity">
+          <span className="pf-kicker">{t('Profile')}</span>
+          {editingName ? <form className="pf-name-form" onSubmit={event => { event.preventDefault(); saveName() }}><input className="text-input" autoFocus value={nameDraft} aria-label={t('What should we call you?')} placeholder={t('What should we call you?')} maxLength={32} onChange={event => setNameDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setEditingName(false) }} /><button type="submit" className="icon-btn" aria-label={t('Save')}><CheckCircle2 size={21} /></button></form> : <h1><button onClick={() => { setNameDraft(nickname ?? ''); setEditingName(true) }}>{nickname ?? t('Your profile')}<Pencil size={18} /></button></h1>}
+          <p>{t('Your music in numbers')}</p>
+        </div>
+        <button className="pf-avatar" title={t('Change avatar')} disabled={avatarBusy} onClick={() => void changeAvatar()}>
+          {settings.profile.avatarPath ? <img src={convertFileSrc(settings.profile.avatarPath)} alt="" draggable={false} /> : <span className="pf-avatar-fallback"><User size={40} /></span>}
+          <span className="pf-avatar-edit"><ImagePlus size={20} /></span>
         </button>
-        <div className="profile-info">
-          <div className="section-label">{t('Profile')}</div>
-          {editingName ? (
-            <div className="profile-name-edit">
-              <input
-                className="text-input"
-                autoFocus
-                value={nameDraft}
-                placeholder={t('What should we call you?')}
-                maxLength={32}
-                spellCheck={false}
-                onChange={(e) => setNameDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveName()
-                  if (e.key === 'Escape') setEditingName(false)
-                }}
-              />
-              <button className="btn btn-primary" onClick={saveName}>
-                {t('Save')}
-              </button>
-            </div>
-          ) : (
-            <h1 className="profile-name">
-              {nickname ?? t('Listener')}
-              <button
-                className="icon-btn"
-                aria-label={t('Rename')}
-                onClick={() => {
-                  setNameDraft(nickname ?? '')
-                  setEditingName(true)
-                }}
-              >
-                <Pencil size={14} />
-              </button>
-            </h1>
-          )}
+        <div className="pf-summary">
+          <div><Clock3 size={18} /><strong>{totalHours.toLocaleString(localeFor(lang))}</strong><span>{t('Listening hours')}</span></div>
+          <div><Music2 size={18} /><strong>{(summary?.plays ?? 0).toLocaleString(localeFor(lang))}</strong><span>{t('plays')}</span></div>
+          <div><Users size={18} /><strong>{summary?.uniqueArtists ?? 0}</strong><span>{t('Artists')}</span></div>
+          <div><CheckCircle2 size={18} /><strong>{summary ? `${Math.round(summary.avgCompletionPct)}%` : '—'}</strong><span>{t('Avg completion')}</span></div>
         </div>
-        <div className="profile-stats">
-          <div className="profile-stat">
-            <span className="profile-stat-num">{totalHours}</span>
-            <span className="profile-stat-label">{t('Listening hours')}</span>
-          </div>
-          <div className="profile-stat">
-            <span className="profile-stat-num">{summary?.plays ?? 0}</span>
-            <span className="profile-stat-label">{t('plays')}</span>
-          </div>
-          <div className="profile-stat">
-            <span className="profile-stat-num">{summary ? `${Math.round(summary.avgCompletionPct)}%` : '—'}</span>
-            <span className="profile-stat-label">{t('Avg completion')}</span>
-          </div>
-        </div>
-      </div>
+      </header>
+      {stats.error ? <div className="error-line">{stats.error}</div> : null}
+      <section className="pf-activity">
+        <div className="pf-section-head"><h2><BarChart3 size={17} />{t('Listening activity')}</h2><div className="pf-chart-controls">
 
-      <section className="home-section profile-activity">
-        <div className="home-section-head profile-chart-head">
-          <span className="home-section-title">{t('Listening activity')}</span>
-          <div className="profile-chart-controls">
-            <div className="seg profile-view-toggle" role="group" aria-label={t('Activity view')}>
-              <button
-                className={activityView === 'graph' ? 'seg-btn is-active' : 'seg-btn'}
-                aria-pressed={activityView === 'graph'}
-                onClick={() => setActivityView('graph')}
-              >
-                <BarChart3 size={13} />
-                {t('Graph')}
-              </button>
-              <button
-                className={activityView === 'grid' ? 'seg-btn is-active' : 'seg-btn'}
-                aria-pressed={activityView === 'grid'}
-                onClick={() => setActivityView('grid')}
-              >
-                <Grid2X2 size={13} />
-                {t('Grid')}
-              </button>
-            </div>
-            <div className="seg profile-range-toggle" role="group" aria-label={t('Time range')}>
-              <button
-                className={range === 30 ? 'seg-btn is-active' : 'seg-btn'}
-                aria-pressed={range === 30}
-                onClick={() => setRange(30)}
-              >
-                {t('Last 30 days')}
-              </button>
-              <button
-                className={range === 365 ? 'seg-btn is-active' : 'seg-btn'}
-                aria-pressed={range === 365}
-                onClick={() => setRange(365)}
-              >
-                {t('Last 12 months')}
-              </button>
-            </div>
-          </div>
+          <div className="seg" role="group" aria-label={t('Time range')}>{([30, 365] as const).map(value => <button key={value} className={`seg-btn${range === value ? ' is-active' : ''}`} aria-pressed={range === value} onClick={() => { setChartHover(null); setRange(value) }}>{t(value === 30 ? 'Last 30 days' : 'Last 12 months')}</button>)}</div>
+        </div></div>
+        <div className="pf-chart-caption"><div><strong>{selectedChart ? range === 365 ? new Date(`${selectedChart.date}T00:00:00`).toLocaleDateString(localeFor(lang), { month: 'long', year: 'numeric' }) : dayLabel(selectedChart.date, lang) : t(range === 365 ? 'Last 12 months' : 'Last 30 days')}</strong><span>{displayedActiveDays} {t('active days')}</span></div><strong className="pf-chart-hours">{hourLabel(selectedChart?.minutes ?? displayedActivityTotal, lang)}</strong></div>
+        {daily.error ? <div className="error-line">{daily.error}</div> : null}
+        <div className={`pf-chart${range === 365 ? ' is-year' : ''}`} aria-label={t('Listening activity')} onPointerLeave={() => setChartHover(null)}>
+          {chart.map((day, index) => <button type="button" key={day.date} className={`pf-chart-column${chartHover === index ? ' is-hovered' : ''}${chartHover !== null && chartHover !== index ? ' is-muted' : ''}`} onPointerEnter={() => setChartHover(index)} onFocus={event => { if (skipRestoredChartFocus.current) { skipRestoredChartFocus.current = false; return } if (event.currentTarget.matches(':focus-visible')) setChartHover(index) }} onBlur={() => setChartHover(null)} onClick={() => { skipRestoredChartFocus.current = true; setChartHover(null); setHistorySelection({ kind: range === 365 ? 'month' : 'day', date: day.date }) }} aria-label={`${t(range === 365 ? 'Show month details' : 'Show day details')}: ${day.label}`} title={`${day.label} — ${hourLabel(day.minutes, lang)}`}><span className="pf-bar-slot"><i style={{ height: `${Math.max(2, day.minutes / chartMax * 100)}%`, animationDelay: `${index * 10}ms` }} /></span><span>{day.label}</span></button>)}
         </div>
-        {activityView === 'graph' ? (
-          <div className={range === 365 ? 'chart is-year' : 'chart'} aria-label={t('Listening activity')}>
-            {chart.map((d) => (
-              <button
-                type="button"
-                key={d.date}
-                className="chart-bar-wrap"
-                onClick={() => setHistorySelection({ kind: range === 365 ? 'month' : 'day', date: d.date })}
-                aria-label={`${t(range === 365 ? 'Show month details' : 'Show day details')}: ${d.label}`}
-                title={`${range === 365 ? d.label : dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
-              >
-                <div
-                  className="chart-bar"
-                  style={{ height: `${Math.max(3, (d.minutes / chartMax) * 100)}%` }}
-                />
-                <span className="chart-day">{d.label}</span>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className={`activity-grid-wrap ${range === 365 ? 'is-year' : 'is-month'}`}>
-            <div className="activity-grid-board">
-              <div className="activity-weekdays" aria-hidden="true">
-                {weekdays.map((day) => <span key={day}>{day}</span>)}
-              </div>
-              <div className="activity-grid-scroll">
-                <div className="activity-grid" role="grid" aria-label={t('Listening activity')}>
-                  {activityGrid.map((d, index) => {
-                    if (d === null) return <span key={`empty-${index}`} className="activity-cell is-empty" role="presentation" />
-                    const level = d.minutes === 0 ? 0 : Math.max(1, Math.ceil((d.minutes / chartMax) * 4))
-                    return (
-                      <button
-                        type="button"
-                        onClick={() => setHistorySelection({ kind: 'day', date: d.date })}
-                        key={d.date}
-                        className="activity-cell"
-                        data-level={Math.min(4, level)}
-                        role="gridcell"
-                        aria-label={`${dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
-                        title={`${dayLabel(d.date, lang)} — ${hourLabel(d.minutes)}`}
-                      />
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
-            <div className="activity-grid-footer">
-              <span>{activeDays} {t('active days')} · {hourLabel(activityTotal)}</span>
-              <span className="activity-legend" aria-label={t('Less to more listening')}>
-                <span /> <i data-level="1" /> <i data-level="2" /> <i data-level="3" /> <i data-level="4" />
-              </span>
-            </div>
-          </div>
-        )}
+        <div className="pf-chart-foot"><span><i />{t('Listening activity')}</span><span>{t('Click a period to see details')}</span></div>
       </section>
-
-      <div className="profile-columns profile-rankings">
-        <section className="home-section profile-col">
-          <div className="home-section-head">
-            <span className="home-section-title">{t('Top artists')}</span>
-          </div>
-          {(stats.data?.topArtists ?? []).length === 0 ? (
-            <div className="muted">{t('Nothing here yet')}</div>
-          ) : (
-            <div className="arow-list">
-              {(stats.data?.topArtists ?? []).map((item) => (
-                <button
-                  key={item.artist.id}
-                  type="button"
-                  className="arow profile-play-row"
-                  aria-label={item.artist.name}
-                  onClick={() => navigate({ name: 'artist', id: item.artist.id })}
-                >
-                  <Cover path={item.artist.imagePath} label={item.artist.name} size={30} rounded />
-                  <span className="arow-name">{item.artist.name}</span>
-                  <span className="arow-sub">{item.playCount} {t('plays')}</span>
-                </button>
-              ))}
-            </div>
-          )}
+      <div className="pf-rankings">
+        <section className="pf-top-tracks"><div className="pf-section-head"><h2>{t('Top tracks')}</h2><span>{t('All time')}</span></div>
+          {!favoriteTracks.length ? <p className="muted">{t(stats.loading ? 'Loading…' : 'Nothing here yet')}</p> : <div className="pf-track-list">{(stats.data?.topTracks ?? []).slice(0, 6).map((item, index) => <article key={item.track.id} onContextMenu={event => openTrackMenu(event, item.track, favoriteTracks, index)}><span className="pf-rank">{index + 1}</span><button className="pf-track-open" onClick={() => playTopTrackAt(index)}><span className="pf-track-art"><Cover path={item.track.coverPath} label={item.track.title} size={39} /><i><Play size={15} fill="currentColor" /></i></span><span><strong>{item.track.title}</strong><small>{item.track.artistName ?? t('Unknown artist')}</small></span></button><TrackSourceIcon source={item.track.source} /><span className="pf-play-count">{item.playCount} {t('plays')}</span></article>)}</div>}
         </section>
-        <section className="home-section profile-col">
-          <div className="home-section-head">
-            <span className="home-section-title">{t('Top tracks')}</span>
-          </div>
-          {(stats.data?.topTracks ?? []).length === 0 ? (
-            <div className="muted">{t('Nothing here yet')}</div>
-          ) : (
-            <div className="arow-list">
-              {(stats.data?.topTracks ?? []).map((item, index) => (
-                <button
-                  key={item.track.id}
-                  type="button"
-                  className="arow profile-play-row"
-                  aria-label={`${t('Play')}: ${item.track.title} — ${item.track.artistName ?? t('Unknown artist')}`}
-                  onClick={() => playTopTrackAt(index)}
-                >
-                  <Cover path={item.track.coverPath} label={item.track.title} size={30} />
-                  <span className="arow-name">{item.track.title}</span>
-                  <span className="arow-sub">{item.playCount} {t('plays')}</span>
-                </button>
-              ))}
-            </div>
-          )}
+        <section className="pf-top-artists"><div className="pf-section-head"><h2>{t('Top artists')}</h2><span>{t('All time')}</span></div>
+          {!(stats.data?.topArtists ?? []).length ? <p className="muted">{t(stats.loading ? 'Loading…' : 'Nothing here yet')}</p> : <div className="pf-artist-list">{(stats.data?.topArtists ?? []).slice(0, 5).map((item, index) => <button key={item.artist.id} type="button" onClick={() => navigate({ name: 'artist', id: item.artist.id })} onContextMenu={event => entityMenus.artist(event, item.artist)}><span className="pf-rank">{index + 1}</span><Cover path={item.artist.imagePath} label={item.artist.name} size={46} rounded /><span><strong>{item.artist.name}</strong><small>{item.playCount} {t('plays')}</small></span><ChevronRight size={15} /></button>)}</div>}
         </section>
       </div>
-
-      <section className="home-section profile-recent">
-        <div className="home-section-head">
-          <span className="home-section-title">{t('Recent plays')}</span>
-        </div>
-        {(recent.data ?? []).length === 0 ? (
-          <div className="muted">{t('Nothing here yet')}</div>
-        ) : (
-          <div className="tl">
-            {(recent.data ?? []).map((entry, index) => (
-              <button
-                key={entry.id}
-                type="button"
-                className="tl-row profile-play-row"
-                aria-label={`${t('Play')}: ${entry.track.title} — ${entry.track.artistName ?? t('Unknown artist')}`}
-                onClick={() => playRecentAt(index)}
-              >
-                <div className="tl-main">
-                  <Cover path={entry.track.coverPath} label={entry.track.title} size={30} />
-                  <div className="tl-meta">
-                    <span className="tl-title">{entry.track.title}</span>
-                    <span className="tl-artist">{entry.track.artistName ?? t('Unknown artist')}</span>
-                  </div>
-                </div>
-                <div className="tl-album">{entry.track.albumTitle ?? '—'}</div>
-                <div className="tl-duration">
-                  {new Date(entry.playedAt * 1000).toLocaleDateString(localeFor(lang), {
-                    day: 'numeric',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
+      <section className="pf-recent"><div className="pf-section-head"><h2>{t('Recent plays')}</h2><Clock3 size={15} /></div>
+        {!recentTracks.length ? <p className="muted">{t(recent.loading ? 'Loading…' : 'Nothing here yet')}</p> : <div className="pf-recent-list">{(recent.data ?? []).slice(0, 8).map((entry, index) => <article key={entry.id} onContextMenu={event => openTrackMenu(event, entry.track, recentTracks, index)}><button className="pf-track-open" onClick={() => playRecentAt(index)}><span className="pf-track-art"><Cover path={entry.track.coverPath} label={entry.track.title} size={38} /><i><Play size={15} fill="currentColor" /></i></span><span><strong>{entry.track.title}</strong><small>{entry.track.artistName ?? t('Unknown artist')}</small></span></button><TrackSourceIcon source={entry.track.source} />{entry.track.albumId != null ? <button className="pf-album-link" onClick={() => navigate({ name: 'album', id: entry.track.albumId! })} onContextMenu={event => { event.stopPropagation(); entityMenus.album(event, { id: entry.track.albumId!, title: entry.track.albumTitle ?? t('Unknown album') }) }}>{entry.track.albumTitle ?? t('Unknown album')}</button> : <span className="pf-album-link">—</span>}<time>{new Date(entry.playedAt * 1000).toLocaleDateString(localeFor(lang), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</time></article>)}</div>}
       </section>
+      <section className="pf-playlists"><div className="pf-section-head"><h2><ListMusic size={16} />{t('Your playlists')}<span className="pf-count">{(playlists.data ?? []).filter(playlist => !playlist.isLikes).length}</span></h2><button className="pf-text-action" onClick={() => { createdPlaylistId.current = null; setCreatingPlaylist(true) }}><Plus size={14} />{t('New playlist')}</button></div><div className="pf-playlist-grid">{profilePlaylists.map(playlist => <button key={playlist.id} onClick={() => navigate({ name: 'playlist', id: playlist.id })} onContextMenu={event => entityMenus.playlist(event, playlist)}><Cover path={playlist.coverPath ?? null} label={playlist.name} size={52} /><span><strong>{playlistDisplayName(playlist, playlist.name, t)}</strong><small>{playlist.trackCount ?? 0} {t('tracks')}</small></span><ChevronRight size={15} /></button>)}</div></section>
+      <TrackContextMenu req={trackContext} onClose={() => setTrackContext(null)} />
+      {deletingPlaylist && <DeletePlaylistDialog playlist={deletingPlaylist} onDelete={async () => { await api.deletePlaylist(deletingPlaylist.id); bumpLibraryVersion() }} onClose={() => setDeletingPlaylist(null)} />}
+      {creatingPlaylist && <CreatePlaylistDialog onCreate={async (name, coverPath) => { const created = await api.createPlaylist(name, coverPath); createdPlaylistId.current = created.id; bumpLibraryVersion() }} onClose={created => { setCreatingPlaylist(false); if (created && createdPlaylistId.current != null) navigate({ name: 'playlist', id: createdPlaylistId.current }) }} />}
     </div>
   )
 }

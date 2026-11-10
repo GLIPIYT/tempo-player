@@ -39,6 +39,7 @@ const MODEL_PATHS: &[&str] = &[
 #[serde(rename_all = "camelCase")]
 pub enum ModelPhase {
     Absent,
+    Checking,
     Downloading,
     Ready,
     Error,
@@ -296,15 +297,26 @@ impl ModelManager {
 
     pub async fn ensure_model(&self) -> Result<ModelBundle, String> {
         let mut cancelled = self.cancellation.subscribe();
-        let (generation, attempt, was_downloading) = {
+        let (generation, attempt, was_preparing) = {
             let runtime = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
             if !runtime.state.enabled {
                 return Err("lyric analysis is disabled".into());
             }
+            if runtime.state.phase == ModelPhase::Ready {
+                if let Some(Ok(bundle)) = &runtime.last_result {
+                    // A ready bundle was fully checked by this manager. Reuse it
+                    // for every later worker initialization; disable/re-enable
+                    // clears this result, and a new manager verifies disk again.
+                    return Ok(bundle.clone());
+                }
+            }
             (
                 runtime.generation,
                 runtime.attempt,
-                runtime.state.phase == ModelPhase::Downloading,
+                matches!(
+                    &runtime.state.phase,
+                    ModelPhase::Checking | ModelPhase::Downloading
+                ),
             )
         };
         let _writer = tokio::select! {
@@ -314,7 +326,10 @@ impl ModelManager {
         self.check_generation(generation)?;
         {
             let mut runtime = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
-            if runtime.attempt != attempt || was_downloading {
+            if runtime.attempt != attempt
+                || was_preparing
+                || runtime.state.phase == ModelPhase::Ready
+            {
                 if let Some(result) = &runtime.last_result {
                     return result.clone();
                 }
@@ -322,7 +337,7 @@ impl ModelManager {
             runtime.attempt += 1;
             runtime.last_result = None;
         }
-        self.update(generation, ModelPhase::Downloading, 0, None);
+        self.update(generation, ModelPhase::Checking, 0, None);
         let result = self.fetch_bundle(generation, &mut cancelled).await;
         if let Err(error) = &result {
             self.update(
@@ -355,6 +370,10 @@ impl ModelManager {
             self.check_generation(generation)?;
             let path = self.file_path(&expected.relative_path)?;
             if !self.verify_file(&path, expected, generation)? {
+                // Report downloading only once an artifact actually needs a
+                // network request. Valid files are checked locally and never
+                // shown as a new model download.
+                self.update(generation, ModelPhase::Downloading, loaded, None);
                 if path.exists() {
                     fs::remove_file(&path).map_err(|e| e.to_string())?;
                 }
@@ -371,7 +390,6 @@ impl ModelManager {
                 result?;
             }
             loaded += expected.size;
-            self.update(generation, ModelPhase::Downloading, loaded, None);
             files.push(ModelFile {
                 relative_path: expected.relative_path.clone(),
                 absolute_path: path.to_string_lossy().into_owned(),

@@ -281,6 +281,7 @@ function normalizeLyrics(value: Partial<AppSettings['lyrics']>): AppSettings['ly
 export const VISUALIZER_BARS_MIN = 8
 export const VISUALIZER_BARS_MAX = 192
 export const LYRICS_VISUALIZER_BARS_MAX = 288
+export const LYRICS_VISUALIZER_HEIGHT_MAX = 240
 const VIZ_BARS_RANGE = [VISUALIZER_BARS_MIN, VISUALIZER_BARS_MAX] as const
 const LYRICS_VIZ_BARS_RANGE = [VISUALIZER_BARS_MIN, LYRICS_VISUALIZER_BARS_MAX] as const
 const VIZ_HEIGHT_RANGE = [24, 160] as const
@@ -301,13 +302,14 @@ function clampVisualizerFields(
   value: Partial<VisualizerSettings>,
   barsRange: readonly [number, number],
   base: VisualizerSettings,
+  heightRange: readonly [number, number] = VIZ_HEIGHT_RANGE,
 ): VisualizerSettings {
   return {
     style: VISUALIZER_STYLES.includes(value.style as VisualizerStyle)
       ? (value.style as VisualizerStyle)
       : base.style,
     bars: clampInt(value.bars, barsRange, base.bars),
-    heightPx: clampInt(value.heightPx, VIZ_HEIGHT_RANGE, base.heightPx),
+    heightPx: clampInt(value.heightPx, heightRange, base.heightPx),
     opacityPct: clampInt(value.opacityPct, VIZ_OPACITY_RANGE, base.opacityPct),
     smoothing: clampInt(value.smoothing, VIZ_SMOOTHING_RANGE, base.smoothing),
     mirror: value.mirror === true,
@@ -325,7 +327,7 @@ export function clampLyricsVisualizer(
   const base = defaultSettings.lyricsVisualizer
   const useBackgroundColor = value.useBackgroundColor === true
   return {
-    ...clampVisualizerFields(value, LYRICS_VIZ_BARS_RANGE, base),
+    ...clampVisualizerFields(value, LYRICS_VIZ_BARS_RANGE, base, [24, LYRICS_VISUALIZER_HEIGHT_MAX]),
     useThemeColor: useBackgroundColor ? false : value.useThemeColor !== false,
     useBackgroundColor,
   }

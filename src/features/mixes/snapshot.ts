@@ -1,4 +1,5 @@
 import type {
+  CustomMixGeneratedSelection,
   CustomMixGenerationReason,
   CustomMixRule,
   CustomMixSnapshot,
@@ -60,4 +61,24 @@ export function shouldRegenerateCustomMixSnapshot(
   if (normalized.refreshIntervalMinutes === 0) return reason === 'open'
   const dueAt = customMixSnapshotDueAt(normalized, snapshot)
   return dueAt == null || nowSeconds >= dueAt
+}
+
+/**
+ * Check whether a displayable selection needs a new candidate scan for this
+ * load. A null selection means no usable snapshot was found. Callers only pass
+ * selections returned after matching the current rule fingerprint.
+ */
+export function shouldRegenerateCustomMixSelection(
+  rule: CustomMixRule,
+  selection: CustomMixGeneratedSelection | null,
+  reason: CustomMixGenerationReason,
+  nowSeconds = Date.now() / 1000,
+): boolean {
+  if (!selection) return true
+  return shouldRegenerateCustomMixSnapshot(rule, {
+    ruleFingerprint: customMixRuleFingerprint(rule),
+    generatedAt: selection.generatedAt,
+    tracks: selection.tracks,
+    warnings: selection.warnings,
+  }, reason, nowSeconds)
 }

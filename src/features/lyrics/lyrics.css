@@ -31,7 +31,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: blur(70px) brightness(0.4) saturate(1.25);
+  filter: blur(50px) brightness(0.58) saturate(1.15);
   transform: scale(1.25);
   animation: lyr-bg-in 0.7s ease both;
 }
@@ -58,9 +58,9 @@
   inset: 0;
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--bg) 85%, transparent) 0%,
-    color-mix(in srgb, var(--bg) 42%, transparent) 50%,
-    color-mix(in srgb, var(--bg) 88%, transparent) 100%
+    color-mix(in srgb, var(--bg) 65%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 30%, transparent) 50%,
+    color-mix(in srgb, var(--bg) 66%, transparent) 100%
   );
 }
 
@@ -70,7 +70,7 @@
   background: radial-gradient(
     125% 110% at 50% 42%,
     transparent 40%,
-    color-mix(in srgb, var(--bg) 84%, transparent) 100%
+    color-mix(in srgb, var(--bg) 70%, transparent) 100%
   );
 }
 
@@ -1563,7 +1563,7 @@
 .lyr-restore-player { position: absolute; top: 50%; left: 5px; z-index: 4; display: grid; place-items: center; width: 25px; height: 44px; border: 0; border-radius: 0 8px 8px 0; background: #ffffff05; color: var(--text-muted); opacity: 0; transform: translateX(-14px); pointer-events: none; transition: opacity 180ms, transform 260ms, background 150ms; }
 .lyr-restore-player.is-visible { opacity: .35; transform: none; pointer-events: auto; }
 .lyr-restore-player:hover, .lyr-restore-player:focus-visible { opacity: 1; background: #ffffff12; }
-.lyr-visualizer { position: absolute; z-index: 1; pointer-events: none; inset: auto 0 0; height: 180px; overflow: hidden; mask-image: linear-gradient(0deg, #000, #000a 55%, transparent); }
+.lyr-visualizer { position: absolute; z-index: 1; pointer-events: none; inset: auto 0 0; height: 270px; overflow: hidden; mask-image: linear-gradient(0deg, #0003, #000a 12%, #000 34%, #000 76%, transparent); }
 .lyr-visualizer > canvas { width: 100%; height: 100%; }
 @media (max-width: 760px) { .lyr-body.is-player-hidden .lyr-side { display: none; } .lyr-body.is-player-hidden { display: flex; } .lyr-body.is-player-hidden .lyr-stage-col { flex: 1; } }
 @media (prefers-reduced-motion: reduce) { .lyr-body, .lyr-side, .lyr-divider-wrap, .lyr-restore-player { transition: none; } }

@@ -1,6 +1,6 @@
 import { useState, type CSSProperties } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { useSettings, VISUALIZER_BARS_MIN, VISUALIZER_BARS_MAX, LYRICS_VISUALIZER_BARS_MAX, type AppSettings, type VisualizerStyle } from '../../state/settings'
+import { useSettings, VISUALIZER_BARS_MIN, VISUALIZER_BARS_MAX, LYRICS_VISUALIZER_BARS_MAX, LYRICS_VISUALIZER_HEIGHT_MAX, type AppSettings, type VisualizerStyle } from '../../state/settings'
 import { useT } from '../../i18n'
 import VisualizerPreview from './VisualizerPreview'
 import './visualizerSettings.css'
@@ -40,7 +40,7 @@ export default function VisualizerSettingsPanel() {
       <div className={viz.style === 'off' ? 'set-block is-dim' : 'set-block'}>
         <div className="set-viz-sliders">
           {slider('bars', 'Detail', VISUALIZER_BARS_MIN, lyrics ? LYRICS_VISUALIZER_BARS_MAX : VISUALIZER_BARS_MAX, 4)}
-          {slider('heightPx', 'Height', 24, 160, 4, 'px')}
+          {slider('heightPx', 'Height', 24, lyrics ? LYRICS_VISUALIZER_HEIGHT_MAX : 160, 4, 'px')}
           {slider('opacityPct', 'Opacity', 10, 100, 5, '%')}
           {slider('smoothing', 'Smoothing', 0, 100, 5, '%')}
         </div>

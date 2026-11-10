@@ -5,7 +5,7 @@ import { Check, Download, Ellipsis, FileDown, Folder, ListMusic, Pencil, Play, S
 import { useNav } from '../state/nav'
 import { useT } from '../i18n'
 import { api } from '../api/client'
-import type { PlaylistTrack, Track } from '../types/models'
+import type { Playlist, PlaylistTrack, Track } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
@@ -24,6 +24,7 @@ import { requestTrackCacheForSource } from '../soundcloud/cacheJobs'
 import { toast } from '../components/common/Toast'
 import EmptyState from '../components/common/EmptyState'
 import TrackSourceIcon from '../components/common/TrackSourceIcon'
+import DeletePlaylistDialog from '../components/common/DeletePlaylistDialog'
 import TrackMenu, { type TrackMenuHandle } from '../components/common/TrackMenu'
 import { beginTrackDrag } from '../dnd/trackDrag'
 import { normalizeSearchText } from '../utils/searchText'
@@ -46,6 +47,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const [name, setName] = useState('')
   const [savedRename, setSavedRename] = useState<{ playlistId: number; name: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Playlist | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragFromPos, setDragFromPos] = useState<number | null>(null)
   const [dropEdge, setDropEdge] = useState<{ pos: number; after: boolean } | null>(null)
@@ -209,20 +211,8 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
 
   const destroy = async () => {
     if (!playlist) return
-    const ok = window.confirm(`${t('Delete playlist')} "${playlist.name}"? ${t('This cannot be undone.')}`)
-    if (!ok) return
-    setBusy(true)
-    try {
-      await api.deletePlaylist(playlistId)
-      // The sidebar's favorites are built from the playlist list, so it has to
-      // be told the list changed - otherwise the deleted playlist sits there
-      // until something unrelated refreshes it.
-      bumpLibraryVersion()
-      navigate({ name: 'playlists' })
-    } catch (e: unknown) {
-      setError(errText(e))
-      setBusy(false)
-    }
+    await api.deletePlaylist(playlistId)
+    bumpLibraryVersion()
   }
 
   const playAria = t('Play')
@@ -260,10 +250,11 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
     if (!isLikes) items.push({ id: 'rename', label: t('Rename'), icon: <Pencil size={14} />, disabled: busy, onSelect: beginRename })
     items.push({ id: 'export', label: t('Export playlist (m3u8)'), icon: <FileDown size={14} />, disabled: exportBusy || !tracks.length, onSelect: () => void exportM3u8() })
     if (isLikes) items.push({ id: 'cache', label: t('Download to cache'), icon: <Download size={14} />, disabled: downloadBusy || !tracks.some(track => track.source === 'soundcloud'), onSelect: () => void downloadToCache() })
-    else items.push({ id: 'delete', label: t('Delete'), icon: <Trash2 size={14} />, danger: true, disabled: busy, onSelect: () => void destroy() })
+    else items.push({ id: 'delete', label: t('Delete'), icon: <Trash2 size={14} />, danger: true, disabled: busy, onSelect: () => { if (playlist) setDeleteTarget(playlist) } })
     openContextMenu({ x: event.clientX, y: event.clientY, title: displayName, items, trigger: event.currentTarget as HTMLElement })
   }
   return (
+    <>
     <EditorialDetailLayout
       className="local-playlist-page"
       variant="panorama"
@@ -278,6 +269,8 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
       title={playlist && !isLikes ? (
         renaming ? (
           <span className="playlist-title-editor">
+            <span className="playlist-title-input-wrap">
+              <span className="playlist-title-sizer" aria-hidden="true">{name || ' '}</span>
             <input
               className="playlist-title-input"
               autoFocus
@@ -290,6 +283,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                 if (event.key === 'Escape') cancelRename()
               }}
             />
+            </span>
             <button className="playlist-title-action is-save" type="button" aria-label={t('Save')} title={t('Save')}
               disabled={busy || name.trim().length === 0} onClick={() => void rename()}>
               <Check size={16} />
@@ -444,5 +438,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
 
       <footer className="collection-detail-footnote"><Folder size={13} />{t('In library')}</footer>
     </EditorialDetailLayout>
+    {deleteTarget && <DeletePlaylistDialog playlist={deleteTarget} onDelete={destroy} onClose={deleted => { setDeleteTarget(null); if (deleted) navigate({ name: 'playlists' }) }} />}
+    </>
   )
 }
