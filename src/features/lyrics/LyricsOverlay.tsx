@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { Check, ChevronDown, ChevronLeft, MicVocal, Pause, Pencil, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, MicVocal, Pause, Pencil, Pin, Play, RotateCcw, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { usePlayer } from '../../player'
 import { playerController } from '../../player/controller'
@@ -8,6 +8,7 @@ import { getNativePlayerController, isNativePlayback } from '../../player/native
 import { useT } from '../../i18n'
 import { useSettings } from '../../state/settings'
 import Cover from '../../components/common/Cover'
+import LyricsVisualizer from '../../components/player/LyricsVisualizer'
 import ArtistLinks from '../../components/common/ArtistLinks'
 import { fmtTime } from '../../utils/format'
 import { api } from '../../api/client'
@@ -665,11 +666,16 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
   const trackKey = track ? `${track.source}|${track.sourceId}|${track.title}|${track.artists.join(',')}` : ''
   const manualTrackIdentity = manualLyricsTrackIdentity(track)
   const [sideWidth, setSideWidth] = useState(readLyricsPaneWidth)
+  const [sideCollapsed, setSideCollapsed] = useState(false)
+  const [resizingSide, setResizingSide] = useState(false)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const updateSideWidth = (clientX: number) => {
     const body = bodyRef.current
     if (!body || body.offsetWidth <= 24) return
     const bounds = body.getBoundingClientRect()
+    const ratio = (clientX - bounds.left) / bounds.width
+    if (ratio < .18) { setSideCollapsed(true); return }
+    if (sideCollapsed) return
     setSideWidth(lyricsPaneWidthAtPointer(clientX, bounds.left, bounds.width, body.offsetWidth))
   }
   useEffect(() => { writeLyricsPaneWidth(sideWidth) }, [sideWidth])
@@ -1388,10 +1394,12 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
   return (
     <div className="lyr-overlay" role="dialog" aria-modal="true" aria-label={t('Lyrics')}>
       <Backdrop coverPath={track?.coverPath ?? null} />
+      <LyricsVisualizer coverPath={track?.coverPath ?? null} />
+      <button type="button" className={`lyr-restore-player${sideCollapsed ? ' is-visible' : ''}`} tabIndex={sideCollapsed ? 0 : -1} aria-hidden={!sideCollapsed} aria-label={t('Show player')} onClick={() => setSideCollapsed(false)}><ChevronRight size={19} /></button>
       <button className="lyr-close" onClick={onClose} aria-label={t('Close')}>
         <X size={20} />
       </button>
-      <div className="lyr-body" ref={bodyRef} style={{ '--lyr-side-ratio': sideWidth / 100 } as CSSProperties}>
+      <div className={`lyr-body${sideCollapsed ? ' is-player-hidden' : ''}${resizingSide ? ' is-resizing' : ''}`} ref={bodyRef} style={{ '--lyr-side-ratio': sideCollapsed ? 0 : sideWidth / 100, '--lyr-divider-width': sideCollapsed ? '0px' : '24px' } as CSSProperties}>
         <aside className="lyr-side" id="lyrics-player-pane">
           <div className="lyr-cover-shell">
             <button type="button" className="lyr-cover lyr-cover-button" onClick={onArtwork} disabled={!track} aria-label={t('View artwork')}>
@@ -1425,27 +1433,33 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
             aria-label={t('Player width')}
             aria-controls="lyrics-player-pane"
             aria-orientation="vertical"
-            aria-valuemin={25}
+            aria-valuemin={0}
             aria-valuemax={65}
-            aria-valuenow={sideWidth}
+            aria-valuenow={sideCollapsed ? 0 : sideWidth}
             onPointerDown={(event) => {
               if (event.button !== 0) return
               event.preventDefault()
               event.currentTarget.focus()
               event.currentTarget.setPointerCapture(event.pointerId)
+              setResizingSide(true)
               updateSideWidth(event.clientX)
             }}
             onPointerMove={(event) => {
               if (event.currentTarget.hasPointerCapture(event.pointerId)) updateSideWidth(event.clientX)
             }}
+            onPointerUp={() => setResizingSide(false)}
+            onPointerCancel={() => setResizingSide(false)}
+            onLostPointerCapture={() => setResizingSide(false)}
             onKeyDown={(event) => {
               const delta = event.key === 'ArrowLeft' ? -2 : event.key === 'ArrowRight' ? 2 : 0
               if (delta) {
                 event.preventDefault()
-                setSideWidth(value => clamp(value + delta, 25, 65))
+                if (delta < 0 && sideWidth <= 25) setSideCollapsed(true)
+                else { setSideCollapsed(false); setSideWidth(value => clamp(value + delta, 25, 65)) }
               } else if (event.key === 'Home' || event.key === 'End') {
                 event.preventDefault()
-                setSideWidth(event.key === 'Home' ? 25 : 65)
+                if (event.key === 'Home') setSideCollapsed(true)
+                else { setSideCollapsed(false); setSideWidth(65) }
               }
             }}
           />
@@ -1453,7 +1467,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
         <section
           className={`lyr-stage-col lyr-align-${settings.lyrics.alignment}${settings.lyrics.progressClipToText ? ' lyr-progress-clip-to-text' : ''}${settings.lyrics.progressColorMode === 'theme' ? ' lyr-progress-theme' : ' lyr-progress-custom'}${editingLyrics ? ' lyr-stage-col-editing' : ''}`}
           style={{
-            '--lyr-text-size': `${settings.lyrics.textSizePx}px`,
+            '--lyr-text-size': `${settings.lyrics.textSizePx * (sideCollapsed && settings.lyrics.enlargeWhenCollapsed ? 1.5 : 1)}px`,
             '--lyr-progress-color': settings.lyrics.progressColor,
             '--lyr-progress-opacity': settings.lyrics.progressOpacityPct / 100,
             '--lyr-progress-thickness': `${settings.lyrics.progressThicknessPx}px`,

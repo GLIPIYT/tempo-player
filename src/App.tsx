@@ -85,7 +85,7 @@ function CurrentPage() {
     case 'sc-playlist':
       return <ScPlaylistPage key={view.id} playlistId={view.id} />
     case 'sc-artist':
-      return <ScArtistPage key={view.id} artistId={view.id} />
+      return <ScArtistPage key={view.id} artistId={view.id} fallback={view.fallback} />
     case 'yt-collection':
       return <YtCollectionPage key={`${view.kind}:${view.id}`} kind={view.kind} id={view.id} />
     case 'track-details':

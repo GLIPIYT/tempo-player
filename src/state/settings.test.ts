@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clampMiniShowMs, clampVisualizer, defaultSettings, loadSettings } from './settings'
+import {
+  clampLyricsVisualizer,
+  clampMiniShowMs,
+  clampVisualizer,
+  defaultSettings,
+  LYRICS_VISUALIZER_BARS_MAX,
+  loadSettings,
+} from './settings'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -26,6 +33,13 @@ describe('persisted lyrics analysis preferences', () => {
     vi.stubGlobal('localStorage', { getItem: () => null })
     expect(loadSettings().lyrics.vocalAnalysisEnabled).toBe(true)
     expect(loadSettings().lyrics.whisperWordTimingsEnabled).toBe(false)
+  })
+
+  it('enlarges the lyrics player pane by default and preserves an explicit opt-out', () => {
+    expect(defaultSettings.lyrics.enlargeWhenCollapsed).toBe(true)
+    expect(loadLyrics({ lyrics: {} }).enlargeWhenCollapsed).toBe(true)
+    expect(loadLyrics({ lyrics: { enlargeWhenCollapsed: false } }).enlargeWhenCollapsed).toBe(false)
+    expect(loadLyrics({ lyrics: { enlargeWhenCollapsed: 'no' as never } }).enlargeWhenCollapsed).toBe(true)
   })
 
   it.each([true, false])('preserves an explicit vocal timing preference of %s', value => {
@@ -125,6 +139,43 @@ describe('clampVisualizer', () => {
     expect(clampVisualizer({ mirror: 'yes' as never }).mirror).toBe(false)
     expect(clampVisualizer({}).useThemeColor).toBe(true)
     expect(clampVisualizer({ useThemeColor: false }).useThemeColor).toBe(false)
+  })
+})
+
+describe('lyrics visualizer settings', () => {
+  function loadVisualizer(value: unknown) {
+    vi.stubGlobal('localStorage', { getItem: () => JSON.stringify(value) })
+    return loadSettings()
+  }
+
+  it('starts from the player visualizer defaults with a mutually exclusive theme-color mode', () => {
+    expect(defaultSettings.lyricsVisualizer).toEqual({
+      ...defaultSettings.visualizer,
+      useBackgroundColor: false,
+    })
+    expect(loadVisualizer({}).lyricsVisualizer).toEqual(defaultSettings.lyricsVisualizer)
+  })
+
+  it('migrates the current player visualizer once and then honors independent lyrics values', () => {
+    const migrated = loadVisualizer({ visualizer: { style: 'wave', bars: 180, mirror: true } })
+    expect(migrated.lyricsVisualizer).toMatchObject({ style: 'wave', bars: 180, mirror: true, useThemeColor: true, useBackgroundColor: false })
+
+    const independent = loadVisualizer({
+      visualizer: { style: 'wave', bars: 180 },
+      lyricsVisualizer: { style: 'line', bars: 250, useBackgroundColor: false },
+    })
+    expect(independent.lyricsVisualizer).toMatchObject({ style: 'line', bars: 250, useBackgroundColor: false })
+  })
+
+  it('allows 288 lyrics bars without increasing the player visualizer limit', () => {
+    expect(LYRICS_VISUALIZER_BARS_MAX).toBe(288)
+    expect(clampLyricsVisualizer({ bars: 999 }).bars).toBe(288)
+    expect(clampLyricsVisualizer({ bars: 1 }).bars).toBe(8)
+    expect(clampVisualizer({ bars: 999 }).bars).toBe(192)
+    expect(clampLyricsVisualizer({ useBackgroundColor: true }).useThemeColor).toBe(false)
+    expect(clampLyricsVisualizer({ useThemeColor: true, useBackgroundColor: true })).toMatchObject({ useThemeColor: false, useBackgroundColor: true })
+    expect(clampLyricsVisualizer({ useThemeColor: true, useBackgroundColor: false })).toMatchObject({ useThemeColor: true, useBackgroundColor: false })
+    expect(clampLyricsVisualizer({ useBackgroundColor: 'true' as never }).useBackgroundColor).toBe(false)
   })
 })
 

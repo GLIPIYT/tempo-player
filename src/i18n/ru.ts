@@ -1,4 +1,28 @@
 export const ru: Record<string, string> = {
+  'The selected artist shares cannot be met with the available tracks.': 'Не хватает подходящих песен для заданных долей исполнителей.',
+  'Tracks fitting artist shares: {count} of {total}.': 'Под заданные доли исполнителей подходит песен: {count} из {total}.',
+
+  'Use word-by-word mode to run analysis': 'Для анализа включите заполнение по словам',
+  'Analyzing word timings': 'Уточнение таймингов слов',
+  'Word timing analysis failed': 'Не удалось уточнить тайминги слов',
+  'Retry analysis': 'Повторить анализ',
+
+  'Lyrics visualizer': 'Визуализатор в лирике',
+  'Player visualizer': 'Визуализатор плеера',
+  'Match background': 'Под цвет фона',
+  'Enlarge lyrics when player is hidden': 'Увеличивать лирику при скрытом плеере',
+  'Show player': 'Показать плеер',
+  'Share per selected artist': 'Доля каждого исполнителя',
+  'Remaining places can use other artists. Incompatible shares are split equally.': 'Остальные места — для других исполнителей. Несовместимые доли распределяются поровну.',
+  'Compared with the previous period': 'По сравнению с предыдущим периодом',
+  'By five minutes': 'По пять минут',
+  'By listening start time': 'По началу прослушивания',
+  'Back to day': 'К статистике дня',
+  'Artist of the hour': 'Исполнитель часа',
+  'Minutes': 'Минуты',
+  'Seconds': 'Секунды',
+  'New': 'Новое',
+
   'Search tracks': 'Найти песню',
   'In library': 'В медиатеке',
   'All playlists': 'Все плейлисты',

@@ -832,3 +832,14 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.mix-rule-dialog .mix-rule-save { color: #fff; }
+.mix-rule-cancel { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 12px; border: 0; background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; transition: color 150ms; }
+.mix-rule-cancel:hover { color: #ff627b; }
+.mix-rule-options { scrollbar-color: #ffffff28 transparent; }
+.mix-rule-options::-webkit-scrollbar { width: 5px; height: 5px; }
+.mix-rule-options::-webkit-scrollbar-track { background: transparent; }
+.mix-rule-options::-webkit-scrollbar-thumb { background: #ffffff28; border-radius: 8px; }
+.mix-rule-options::-webkit-scrollbar-thumb:hover { background: #ffffff50; }
+
+.mix-rule-share-hint { margin: 6px 0 0; color: var(--text-muted); font-size: 10px; line-height: 1.5; }

@@ -49,6 +49,7 @@
 .collection-album-card:hover > .collection-card-play, .collection-album-card:focus-within > .collection-card-play { opacity: 1; transform: none; }
 .collection-card-play:hover { transform: scale(1.07) !important; }
 .collection-card-play:disabled { opacity: 0; cursor: default; }
+.collection-album-card > .collection-card-play { left: 12px; right: auto; }
 .collection-create-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 13px; min-height: 200px; border: 1px dashed color-mix(in srgb, var(--text-muted) 28%, transparent); border-radius: 11px; color: var(--text-muted); transition: background .18s, border-color .18s, color .18s; }
 .collection-create-card > span { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: color-mix(in srgb, var(--text) 3%, transparent); }
 .collection-create-card > strong { font-size: 12px; font-weight: 500; }
@@ -99,7 +100,7 @@
 .collection-detail.collection-detail--panorama .editorial-detail-hero { grid-template-columns: minmax(0, 1fr) clamp(190px, 28cqw, 280px); gap: 45px; min-height: 310px; padding: 30px 35px 26px; overflow: hidden; border-radius: 14px; background: transparent; }
 .collection-detail--panorama .editorial-detail-art { order: 2; max-width: none; }
 .collection-detail--panorama .editorial-detail-copy { order: 1; }
-.collection-detail--panorama .collection-detail-glow { inset: 0; opacity: .24; filter: blur(45px) brightness(.7); mask-image: linear-gradient(90deg, transparent, #000); }
+.collection-detail--panorama .collection-detail-glow { inset: 0; opacity: .24; filter: blur(45px) brightness(.7); mask-image: linear-gradient(90deg, transparent, #000), linear-gradient(180deg, #000 48%, #000b 76%, transparent 100%); mask-composite: intersect; }
 .collection-detail--panorama .collection-local-badge { display: none; }
 .collection-detail .editorial-detail-content { min-width: 0; padding: 0 25px 18px; }
 .collection-detail .tl { width: 100%; }
@@ -208,6 +209,7 @@ html.theme-gradient .collection-card-play { background: var(--tempo-gradient); }
 }
 .collection-favorite > svg { width: 21px; height: 21px; flex: none; }
 .collection-icon-action.collection-favorite { width: 35px; height: 35px; }
+.collection-playlists-air .collection-catalog-actions .btn-primary { color: #fff; }
 html[data-bright-wallpaper='true'] .collection-detail-surface .adaptive-text-outline,
 html[data-bright-wallpaper='true'] .collection-detail-surface .adaptive-text-outline-soft { text-shadow: none; }
 .collection-catalog-heading { animation: collection-content-in 300ms ease-out backwards; }

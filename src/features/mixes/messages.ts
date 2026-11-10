@@ -10,6 +10,8 @@ export function mixMessage(
     return t('Matching tracks: {count} of {total}.')
       .replace('{count}', count[1])
       .replace('{total}', count[2])
+  const artists = /^Only (\d+) (?:track fits|tracks fit) the selected artist shares; (\d+) requested\.$/u.exec(message)
+  if (artists) return t('Tracks fitting artist shares: {count} of {total}.').replace('{count}', artists[1]).replace('{total}', artists[2])
   const genres =
     /^Online search covered (\d+) of (\d+) selected genres\.$/u.exec(message)
   if (genres)

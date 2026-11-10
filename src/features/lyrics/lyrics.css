@@ -102,7 +102,7 @@
   min-height: 0;
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, calc((100% - 24px) * var(--lyr-side-ratio, 0.4))) 24px minmax(0, 1fr);
+  grid-template-columns: minmax(0, calc((100% - var(--lyr-divider-width, 24px)) * var(--lyr-side-ratio, 0.4))) var(--lyr-divider-width, 24px) minmax(0, 1fr);
   align-items: stretch;
 }
 
@@ -1554,3 +1554,16 @@
   cursor: pointer;
   border-radius: var(--radius-sm);
 }
+
+.lyr-body { transition: grid-template-columns 360ms cubic-bezier(.22,.75,.2,1); }
+.lyr-body.is-resizing:not(.is-player-hidden) { transition: none; }
+.lyr-side, .lyr-divider-wrap { transition: opacity 200ms, transform 360ms cubic-bezier(.22,.75,.2,1); }
+.lyr-body.is-player-hidden .lyr-side, .lyr-body.is-player-hidden .lyr-divider-wrap { opacity: 0; transform: translateX(-36px); overflow: hidden; pointer-events: none; visibility: hidden; transition: opacity 200ms, transform 360ms, visibility 0s 360ms; }
+.lyr-body.is-player-hidden .lyr-stage-col { padding-inline: clamp(32px, 6vw, 100px); }
+.lyr-restore-player { position: absolute; top: 50%; left: 5px; z-index: 4; display: grid; place-items: center; width: 25px; height: 44px; border: 0; border-radius: 0 8px 8px 0; background: #ffffff05; color: var(--text-muted); opacity: 0; transform: translateX(-14px); pointer-events: none; transition: opacity 180ms, transform 260ms, background 150ms; }
+.lyr-restore-player.is-visible { opacity: .35; transform: none; pointer-events: auto; }
+.lyr-restore-player:hover, .lyr-restore-player:focus-visible { opacity: 1; background: #ffffff12; }
+.lyr-visualizer { position: absolute; z-index: 1; pointer-events: none; inset: auto 0 0; height: 180px; overflow: hidden; mask-image: linear-gradient(0deg, #000, #000a 55%, transparent); }
+.lyr-visualizer > canvas { width: 100%; height: 100%; }
+@media (max-width: 760px) { .lyr-body.is-player-hidden .lyr-side { display: none; } .lyr-body.is-player-hidden { display: flex; } .lyr-body.is-player-hidden .lyr-stage-col { flex: 1; } }
+@media (prefers-reduced-motion: reduce) { .lyr-body, .lyr-side, .lyr-divider-wrap, .lyr-restore-player { transition: none; } }

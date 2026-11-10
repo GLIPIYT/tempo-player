@@ -122,23 +122,7 @@ export default function HomePage() {
   const [ctx, setCtx] = useState<TrackContextRequest | null>(null)
   useHiddenSections()
 
-  if (recent.loading && recent.data === null) {
-    return (
-      <div className="page">
-        <div className="muted">{t('Loading…')}</div>
-      </div>
-    )
-  }
-
   const error = recent.error ?? foldersApi.error
-  if (error && recent.data === null) {
-    return (
-      <div className="page">
-        <div className="error-line">{error}</div>
-      </div>
-    )
-  }
-
   const totalTracks = total.data ?? 0
   const topTracks: TopTrackItem[] = top.data ?? []
   const recentPlays = played.data ?? []

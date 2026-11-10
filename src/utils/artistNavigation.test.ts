@@ -3,7 +3,7 @@ import type { ScTrack, UnifiedTrack } from '../types/models'
 
 const mocks = vi.hoisted(() => ({ listArtists: vi.fn(), scGetArtist: vi.fn() }))
 vi.mock('../api/client', () => ({ api: mocks }))
-import { resolveArtistView } from './artistNavigation'
+import { resolveArtistView, resolveLocalArtistView } from './artistNavigation'
 import { getKnownSoundCloudTrack, rememberSoundCloudSourceTrack, rememberSoundCloudTrack } from '../soundcloud/cacheMetadata'
 
 const track = (overrides: Partial<UnifiedTrack> = {}): UnifiedTrack => ({
@@ -21,14 +21,22 @@ describe('artist navigation', () => {
   })
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 
-  it('prefers a known available SoundCloud profile over an existing local artist', async () => {
-    await expect(resolveArtistView(track({ artistSourceId: '42' }), 'Artist')).resolves.toEqual({ name: 'sc-artist', id: '42' })
-    expect(mocks.scGetArtist).toHaveBeenCalledWith('42')
+  it('opens a known online SoundCloud artist without waiting for verification or local lookup', async () => {
+    mocks.scGetArtist.mockReturnValue(new Promise(() => {}))
+    mocks.listArtists.mockReturnValue(new Promise(() => {}))
+    await expect(resolveArtistView(track({ artistSourceId: '42' }), 'Artist')).resolves.toEqual({
+      name: 'sc-artist', id: '42', fallback: { artistName: 'Artist', imagePath: null },
+    })
+    expect(mocks.scGetArtist).not.toHaveBeenCalled()
+    expect(mocks.listArtists).not.toHaveBeenCalled()
   })
 
-  it('uses the local artist when SoundCloud is unreachable', async () => {
-    mocks.scGetArtist.mockRejectedValue(new Error('Offline'))
-    await expect(resolveArtistView(track({ artistSourceId: '42' }), 'Artist')).resolves.toEqual({ name: 'artist', id: 7 })
+  it('resolves a local fallback after a live SoundCloud page fails', async () => {
+    await expect(resolveLocalArtistView('Artist', '/artist.png')).resolves.toEqual({ name: 'artist', id: 7 })
+    mocks.listArtists.mockResolvedValue([])
+    await expect(resolveLocalArtistView('Unfiled Artist', null)).resolves.toEqual({
+      name: 'local-artist', artistName: 'Unfiled Artist', imagePath: null,
+    })
   })
 
   it('does not query SoundCloud without artist identity or while offline', async () => {
@@ -48,14 +56,6 @@ describe('artist navigation', () => {
     expect(mocks.scGetArtist).not.toHaveBeenCalled()
   })
 
-  it('falls back locally after the online lookup timeout', async () => {
-    vi.useFakeTimers()
-    mocks.scGetArtist.mockReturnValue(new Promise(() => {}))
-    const result = resolveArtistView(track({ artistSourceId: '42' }), 'Artist')
-    await vi.advanceTimersByTimeAsync(2500)
-    await expect(result).resolves.toEqual({ name: 'artist', id: 7 })
-  })
-
   it('keeps the known uploader identity when a saved-track update has less metadata', async () => {
     const source: ScTrack = { id: '54321', title: 'Song', artist: 'Artist', durationMs: 180000,
       artworkUrl: null, artistAvatarUrl: null, permalinkUrl: null, streamable: true,
@@ -64,6 +64,8 @@ describe('artist navigation', () => {
     const saved = track({ sourceId: source.id })
     rememberSoundCloudSourceTrack(saved)
     expect(getKnownSoundCloudTrack(source.id)?.uploaderId).toBe('42')
-    await expect(resolveArtistView(saved, 'Artist')).resolves.toEqual({ name: 'sc-artist', id: '42' })
+    await expect(resolveArtistView(saved, 'Artist')).resolves.toEqual({
+      name: 'sc-artist', id: '42', fallback: { artistName: 'Artist', imagePath: null },
+    })
   })
 })

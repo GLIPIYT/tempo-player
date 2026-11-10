@@ -19,9 +19,14 @@ export type BaseView =
   | { name: 'hour-mix'; mix: HourMix }
   /** SoundCloud pages, browsed live and not written to the library. */
   | { name: 'sc-playlist'; id: string }
-  | { name: 'sc-artist'; id: string }
+  | { name: 'sc-artist'; id: string; fallback?: ScArtistFallback }
   /** YouTube Music collections, browsed live the same way. */
   | { name: 'yt-collection'; kind: 'album' | 'artist' | 'playlist'; id: string }
+
+export interface ScArtistFallback {
+  artistName: string
+  imagePath: string | null
+}
 
 export type View = BaseView | { name: 'track-details'; track: UnifiedTrack; previous: BaseView }
 

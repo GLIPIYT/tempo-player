@@ -16,6 +16,8 @@ export interface CustomMixRule {
   refreshIntervalMinutes: number
   artistMode: MixArtistMode
   artistIds: number[]
+  /** Target share of the final mix for each selected artist in allow mode. */
+  artistPercent: PercentRange
   timeWindow: MinuteRange
   completionPercent: PercentRange
   genreMode: MixGenreMode
@@ -79,6 +81,7 @@ export const DEFAULT_CUSTOM_MIX_RULE: Omit<CustomMixRule, 'id' | 'name'> = {
   refreshIntervalMinutes: 0,
   artistMode: 'allow',
   artistIds: [],
+  artistPercent: [0, 100],
   timeWindow: [0, 1440],
   completionPercent: [0, 100],
   genreMode: 'allow',
@@ -100,6 +103,7 @@ export function createCustomMixRule(name = ''): CustomMixRule {
     forgottenPercent: [...DEFAULT_CUSTOM_MIX_RULE.forgottenPercent],
     forgottenDays: [...DEFAULT_CUSTOM_MIX_RULE.forgottenDays],
     artistIds: [...DEFAULT_CUSTOM_MIX_RULE.artistIds],
+    artistPercent: [...DEFAULT_CUSTOM_MIX_RULE.artistPercent],
     genres: [...DEFAULT_CUSTOM_MIX_RULE.genres],
   }
 }
@@ -118,6 +122,7 @@ export function normalizeCustomMixRule(rule: CustomMixRule): CustomMixRule {
     trackCount,
     refreshIntervalMinutes,
     artistIds: [...rule.artistIds],
+    artistPercent: [...(rule.artistPercent ?? DEFAULT_CUSTOM_MIX_RULE.artistPercent)],
     timeWindow: [...rule.timeWindow],
     completionPercent: [...rule.completionPercent],
     genres: [...rule.genres],

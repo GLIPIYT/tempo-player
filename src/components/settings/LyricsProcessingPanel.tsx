@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { useT } from '../../i18n'
 import type { ModelState } from '../../features/lyrics/analysis/contract'
+import type { AnalysisSnapshot } from '../../features/lyrics/analysis/runner'
 import type { VocalSnapshot } from '../../features/lyrics/analysis/vocalRunner'
 import './lyricsProcessing.css'
 
@@ -19,10 +20,12 @@ interface Props {
   wordEnabled: boolean
   wordMode: boolean
   modelState: ModelState
+  wordAnalysisState: Pick<AnalysisSnapshot, 'phase' | 'error'>
   vocalState: Pick<VocalSnapshot, 'phase' | 'error'>
   onVocalChange: (enabled: boolean) => void
   onWordChange: (enabled: boolean) => void
   onRetryModel: () => void
+  onRetryAnalysis: () => void
   onRetryVocal: () => void
 }
 
@@ -31,10 +34,12 @@ export default function LyricsProcessingPanel({
   wordEnabled,
   wordMode,
   modelState,
+  wordAnalysisState,
   vocalState,
   onVocalChange,
   onWordChange,
   onRetryModel,
+  onRetryAnalysis,
   onRetryVocal,
 }: Props) {
   const t = useT()
@@ -67,19 +72,42 @@ export default function LyricsProcessingPanel({
           Math.max(0, (modelState.loadedBytes / modelState.totalBytes) * 100),
         )
       : 0
-  const wordWorking = modelState.phase === 'downloading'
-  const wordReady = modelState.phase === 'ready'
-  const wordError = modelState.phase === 'error'
-  const wordLabel = wordWorking
-    ? t('Downloading model')
-    : wordReady
-      ? t('Ready')
-      : wordError
-        ? t('Model download failed')
-        : wordEnabled && wordMode
-          ? t('Preparing model download')
-          : t('Not downloaded')
-  const wordNote = wordReady
+  const wordEnabledInMode = wordEnabled && wordMode
+  const wordModelDownloading = wordEnabledInMode && modelState.phase === 'downloading'
+  const wordAnalysisWorking = wordEnabledInMode &&
+    ['loading', 'analyzing', 'waiting'].includes(wordAnalysisState.phase)
+  const wordWorking = wordModelDownloading || wordAnalysisWorking
+  const wordAnalysisUnavailable = wordEnabledInMode && wordAnalysisState.phase === 'unavailable'
+  const wordError = wordEnabledInMode && (modelState.phase === 'error' || wordAnalysisState.phase === 'error')
+  const wordErrorMessage = wordAnalysisState.phase === 'error'
+    ? wordAnalysisState.error ?? modelState.error
+    : modelState.error
+  const wordReady = wordEnabledInMode && modelState.phase === 'ready'
+    && !wordWorking && !wordAnalysisUnavailable && !wordError
+  const wordLabel = !wordEnabled
+    ? t('Off')
+    : !wordMode
+      ? t('Use word-by-word mode to run analysis')
+      : wordModelDownloading
+        ? t('Downloading model')
+        : modelState.phase === 'error'
+          ? t('Model download failed')
+          : wordAnalysisState.phase === 'loading'
+            ? t('Preparing audio')
+            : wordAnalysisState.phase === 'analyzing'
+              ? t('Analyzing word timings')
+              : wordAnalysisState.phase === 'waiting'
+                ? t('Analysis queued')
+                : wordAnalysisState.phase === 'complete'
+                  ? t('Track analyzed')
+                  : wordAnalysisUnavailable
+                    ? t('Audio file required')
+                    : wordAnalysisState.phase === 'error'
+                      ? t('Word timing analysis failed')
+                      : modelState.phase === 'ready'
+                        ? t('Ready')
+                        : t('Preparing model download')
+  const wordNote = modelState.phase === 'ready'
     ? t('Model is available on this computer.')
     : t(
         'The model downloads when this option is enabled in word-by-word mode.',
@@ -196,13 +224,13 @@ export default function LyricsProcessingPanel({
                 <Download size={15} />
               )}
               <strong>{wordLabel}</strong>
-              {wordWorking && (
+              {wordModelDownloading && (
                 <span className="processing-percent">
                   {Math.floor(progress)}%
                 </span>
               )}
             </div>
-            {wordWorking ? (
+            {wordModelDownloading ? (
               <>
                 <div
                   className="processing-progress"
@@ -222,20 +250,20 @@ export default function LyricsProcessingPanel({
             ) : (
               <p className="processing-state-note">{wordNote}</p>
             )}
-            {wordError && modelState.error ? (
+            {wordError && wordErrorMessage ? (
               <details className="processing-error">
                 <summary>{t('Details')}</summary>
-                <p>{modelState.error}</p>
+                <p>{wordErrorMessage}</p>
               </details>
             ) : null}
             {wordError && wordEnabled && wordMode ? (
               <button
                 type="button"
                 className="processing-retry"
-                onClick={onRetryModel}
+                onClick={modelState.phase === 'error' ? onRetryModel : onRetryAnalysis}
               >
                 <RefreshCw size={12} />
-                {t('Retry download')}
+                {modelState.phase === 'error' ? t('Retry download') : t('Retry analysis')}
               </button>
             ) : null}
           </div>

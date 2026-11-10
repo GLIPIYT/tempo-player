@@ -28,6 +28,7 @@ export function validateCustomMixRule(rule: CustomMixRule): string[] {
     errors.push('Listening-time boundaries must use half-hour steps.')
   }
   for (const [label, range] of [
+    ['Artist', rule.artistPercent],
     ['Completion', rule.completionPercent],
     ['Genre', rule.genrePercent],
     ['Forgotten-track', rule.forgottenPercent],
@@ -99,7 +100,13 @@ function passesHardFilters(
 
   if (rule.artistIds.length > 0) {
     const artistId = track.artistId
-    if (rule.artistMode === 'allow' && (artistId == null || !rule.artistIds.includes(artistId))) return false
+    if (rule.artistMode === 'allow') {
+      const selectedArtist = artistId != null && rule.artistIds.includes(artistId)
+      // A restrictive per-artist range reserves those shares and lets other
+      // identified artists fill the remaining slots. The legacy full range
+      // keeps the original allow-list behavior.
+      if (artistId == null || (!selectedArtist && isFullRange(rule.artistPercent, FULL_PERCENT_RANGE))) return false
+    }
     if (rule.artistMode === 'deny' && artistId != null && rule.artistIds.includes(artistId)) return false
   }
 
@@ -306,6 +313,220 @@ function quotaWarning(
   return []
 }
 
+interface ArtistSelectionGroup {
+  artistId: number | null
+  candidates: readonly CustomMixCandidate[]
+  count: number
+}
+
+type CandidateBuckets = [
+  CustomMixCandidate[],
+  CustomMixCandidate[],
+  CustomMixCandidate[],
+  CustomMixCandidate[],
+]
+
+interface ArtistBucketPlan {
+  counts: [number, number, number, number]
+  genreCount: number
+  forgottenCount: number
+}
+
+function bucketCandidates(
+  candidates: readonly CustomMixCandidate[],
+  genrePool: ReadonlySet<string>,
+  forgottenActive: boolean,
+  nowSeconds: number,
+  forgottenDays: readonly [number, number],
+): CandidateBuckets {
+  const groups: CandidateBuckets = [[], [], [], []]
+  for (const candidate of candidates) {
+    const genreMatch = matchesGenre(candidate, genrePool)
+    const forgottenMatch = forgottenActive && isForgotten(candidate, nowSeconds, forgottenDays)
+    const index = genreMatch ? (forgottenMatch ? 0 : 1) : (forgottenMatch ? 2 : 3)
+    groups[index].push(candidate)
+  }
+  return groups
+}
+
+function fillArtistCounts(
+  ids: readonly number[],
+  counts: Map<number, number>,
+  capacities: ReadonlyMap<number, number>,
+  limits: ReadonlyMap<number, number>,
+  size: number,
+  random: RandomSource,
+): void {
+  const order = shuffled(ids, random)
+  let remaining = size - [...counts.values()].reduce((sum, count) => sum + count, 0)
+  while (remaining > 0) {
+    const available = order.filter((id) => (counts.get(id) ?? 0) < Math.min(
+      capacities.get(id) ?? 0,
+      limits.get(id) ?? 0,
+    ))
+    if (available.length === 0) break
+    const lowest = Math.min(...available.map((id) => counts.get(id) ?? 0))
+    const tied = available.filter((id) => (counts.get(id) ?? 0) === lowest)
+    for (const id of tied) {
+      if (remaining === 0) break
+      counts.set(id, (counts.get(id) ?? 0) + 1)
+      remaining -= 1
+    }
+  }
+}
+
+/** Spread tracks evenly across selected artists when their combined minimum exceeds the mix. */
+function allocateEvenly(
+  artistIds: readonly number[],
+  capacities: ReadonlyMap<number, number>,
+  size: number,
+  random: RandomSource,
+): Map<number, number> {
+  const ids = [...new Set(artistIds)]
+  const counts = new Map<number, number>(ids.map((id) => [id, 0]))
+  fillArtistCounts(ids, counts, capacities, capacities, size, random)
+  return counts
+}
+
+function artistQuotaWarning(
+  selected: readonly CustomMixCandidate[],
+  rule: CustomMixRule,
+): string[] {
+  if (selected.length === 0 || rule.artistMode !== 'allow' || rule.artistIds.length === 0
+    || isFullRange(rule.artistPercent, FULL_PERCENT_RANGE)) return []
+  const size = selected.length
+  const counts = new Map<number, number>()
+  for (const candidate of selected) {
+    const artistId = candidate.track.artistId
+    if (artistId != null) counts.set(artistId, (counts.get(artistId) ?? 0) + 1)
+  }
+  const missed = [...new Set(rule.artistIds)].some((artistId) => {
+    const percent = (counts.get(artistId) ?? 0) * 100 / size
+    return percent < rule.artistPercent[0] - 1e-9 || percent > rule.artistPercent[1] + 1e-9
+  })
+  return missed ? ['The selected artist shares cannot be met with the available tracks.'] : []
+}
+
+/** Choose category counts after artist allocation so artist targets remain primary. */
+function selectWithArtistShares(
+  eligible: readonly CustomMixCandidate[],
+  rule: CustomMixRule,
+  size: number,
+  genrePool: ReadonlySet<string>,
+  genreActive: boolean,
+  forgottenActive: boolean,
+  nowSeconds: number,
+  scores: ReadonlyMap<string, number>,
+  random: RandomSource,
+): CustomMixCandidate[] {
+  const candidatesByArtist = new Map<number, CustomMixCandidate[]>()
+  for (const candidate of eligible) {
+    const id = candidate.track.artistId
+    if (id == null) continue
+    const group = candidatesByArtist.get(id) ?? []
+    group.push(candidate)
+    candidatesByArtist.set(id, group)
+  }
+  const artistIds = [...new Set(rule.artistIds)]
+  const capacities = new Map(artistIds.map((id) => [id, candidatesByArtist.get(id)?.length ?? 0] as const))
+  const otherCandidates = eligible.filter((candidate) => !artistIds.includes(candidate.track.artistId ?? -1))
+  const minimumPercentTotal = rule.artistPercent[0] * artistIds.length
+  const minimumCount = Math.ceil(size * rule.artistPercent[0] / 100 - 1e-9)
+  const maximumCount = Math.floor(size * rule.artistPercent[1] / 100 + 1e-9)
+  const aggregateImpossible = minimumPercentTotal > 100
+    || minimumCount * artistIds.length > size
+    || maximumCount < minimumCount
+  let allocation: Map<number, number>
+  let otherCount = 0
+  if (aggregateImpossible) {
+    allocation = allocateEvenly(artistIds, capacities, size, random)
+    const selectedCount = [...allocation.values()].reduce((sum, count) => sum + count, 0)
+    otherCount = Math.min(size - selectedCount, otherCandidates.length)
+  } else {
+    allocation = new Map<number, number>(artistIds.map((id) => [id, Math.min(minimumCount, capacities.get(id) ?? 0)]))
+    const initialSelectedCount = [...allocation.values()].reduce((sum, count) => sum + count, 0)
+    otherCount = Math.min(size - initialSelectedCount, otherCandidates.length)
+    const maxCounts = new Map(artistIds.map((id) => [id, maximumCount] as const))
+    const selectedCountAfterOther = initialSelectedCount + otherCount
+    fillArtistCounts(
+      artistIds,
+      allocation,
+      capacities,
+      maxCounts,
+      size - selectedCountAfterOther + initialSelectedCount,
+      random,
+    )
+  }
+  const groups = artistIds.flatMap((artistId): ArtistSelectionGroup[] => {
+    const count = allocation.get(artistId) ?? 0
+    const candidates = candidatesByArtist.get(artistId) ?? []
+    return count > 0 ? [{ artistId, candidates, count }] : []
+  })
+  if (otherCount > 0) groups.push({ artistId: null, candidates: otherCandidates, count: otherCount })
+
+  const candidatesByArtistAndBucket = groups.map((group) => ({
+    group,
+    buckets: bucketCandidates(group.candidates, genrePool, forgottenActive, nowSeconds, rule.forgottenDays),
+  }))
+  let states = new Map<string, { genre: number; forgotten: number; plans: ArtistBucketPlan[] }>([
+    ['0:0', { genre: 0, forgotten: 0, plans: [] }],
+  ])
+  for (const { group, buckets } of candidatesByArtistAndBucket) {
+    const options: ArtistBucketPlan[] = []
+    const count = group.count
+    for (let both = 0; both <= Math.min(buckets[0].length, count); both += 1) {
+      for (let genreOnly = 0; genreOnly <= Math.min(buckets[1].length, count - both); genreOnly += 1) {
+        for (let forgottenOnly = 0; forgottenOnly <= Math.min(buckets[2].length, count - both - genreOnly); forgottenOnly += 1) {
+          const neither = count - both - genreOnly - forgottenOnly
+          if (neither < 0 || neither > buckets[3].length) continue
+          options.push({
+            counts: [both, genreOnly, forgottenOnly, neither],
+            genreCount: (genreActive ? both + genreOnly : 0),
+            forgottenCount: (forgottenActive ? both + forgottenOnly : 0),
+          })
+        }
+      }
+    }
+    const next = new Map<string, { genre: number; forgotten: number; plans: ArtistBucketPlan[] }>()
+    for (const state of states.values()) {
+      for (const option of options) {
+        const genre = state.genre + option.genreCount
+        const forgotten = state.forgotten + option.forgottenCount
+        if (genre > size || forgotten > size) continue
+        const key = `${genre}:${forgotten}`
+        const existing = next.get(key)
+        if (!existing || random.next() < 0.5) {
+          next.set(key, { genre, forgotten, plans: [...state.plans, option] })
+        }
+      }
+    }
+    states = next
+  }
+
+  let bestScore = Number.POSITIVE_INFINITY
+  let best: Array<{ genre: number; forgotten: number; plans: ArtistBucketPlan[] }> = []
+  for (const state of states.values()) {
+    const score = quotaDistance(state.genre, size, rule.genrePercent, genreActive)
+      + quotaDistance(state.forgotten, size, rule.forgottenPercent, forgottenActive)
+    if (score < bestScore) {
+      bestScore = score
+      best = [state]
+    } else if (score === bestScore) {
+      best.push(state)
+    }
+  }
+  const choice = best[Math.floor(random.next() * best.length)]
+  if (!choice) return []
+  const selected: CustomMixCandidate[] = []
+  choice.plans.forEach((plan, index) => {
+    const { buckets } = candidatesByArtistAndBucket[index]
+    plan.counts.forEach((count, bucketIndex) => {
+      selected.push(...rankedTake(buckets[bucketIndex], count, scores, random))
+    })
+  })
+  return selected
+}
+
 /** Generate a distinct, randomly ordered mix while keeping both quotas feasible together. */
 export function generateCustomMix(
   rule: CustomMixRule,
@@ -344,30 +565,45 @@ export function generateCustomMix(
   const genreActive = genrePool.size > 0 && !isFullRange(rule.genrePercent, FULL_PERCENT_RANGE)
   const forgottenActive = rule.specials.includes('forgotten')
     && !isFullRange(rule.forgottenPercent, FULL_PERCENT_RANGE)
-  const groups: CustomMixCandidate[][] = [[], [], [], []]
-  for (const candidate of eligible) {
-    const genreMatch = matchesGenre(candidate, genrePool)
-    const forgottenMatch = forgottenActive
-      && isForgotten(candidate, nowSeconds, rule.forgottenDays)
-    const index = genreMatch ? (forgottenMatch ? 0 : 1) : (forgottenMatch ? 2 : 3)
-    groups[index].push(candidate)
-  }
-  const counts = chooseQuotaCounts(
-    groups.map((group) => group.length) as [number, number, number, number],
-    actualCount,
-    rule.genrePercent,
-    rule.forgottenPercent,
-    genreActive,
-    forgottenActive,
-    random,
-  )
   const scores = specialScores([...unique.values()], rule, nowSeconds)
-  const selected = [
-    ...rankedTake(groups[0], counts.both, scores, random),
-    ...rankedTake(groups[1], counts.genreOnly, scores, random),
-    ...rankedTake(groups[2], counts.forgottenOnly, scores, random),
-    ...rankedTake(groups[3], counts.neither, scores, random),
-  ]
+  const artistSharesActive = rule.artistMode === 'allow' && rule.artistIds.length > 0
+    && !isFullRange(rule.artistPercent, FULL_PERCENT_RANGE)
+  let selected: CustomMixCandidate[]
+  if (artistSharesActive) {
+    selected = selectWithArtistShares(
+      eligible,
+      rule,
+      actualCount,
+      genrePool,
+      genreActive,
+      forgottenActive,
+      nowSeconds,
+      scores,
+      random,
+    )
+    warnings.push(...artistQuotaWarning(selected, rule))
+    if (selected.length < actualCount) {
+      const fit = selected.length === 1 ? 'track fits' : 'tracks fit'
+      warnings.push(`Only ${selected.length} ${fit} the selected artist shares; ${requestedCount} requested.`)
+    }
+  } else {
+    const groups = bucketCandidates(eligible, genrePool, forgottenActive, nowSeconds, rule.forgottenDays)
+    const counts = chooseQuotaCounts(
+      groups.map((group) => group.length) as [number, number, number, number],
+      actualCount,
+      rule.genrePercent,
+      rule.forgottenPercent,
+      genreActive,
+      forgottenActive,
+      random,
+    )
+    selected = [
+      ...rankedTake(groups[0], counts.both, scores, random),
+      ...rankedTake(groups[1], counts.genreOnly, scores, random),
+      ...rankedTake(groups[2], counts.forgottenOnly, scores, random),
+      ...rankedTake(groups[3], counts.neither, scores, random),
+    ]
+  }
   warnings.push(...quotaWarning(selected, genrePool, rule, nowSeconds))
   const tracks = shuffled(selected, random).map((candidate) => candidate.track)
   return { tracks, warnings, requestedCount, actualCount: tracks.length }

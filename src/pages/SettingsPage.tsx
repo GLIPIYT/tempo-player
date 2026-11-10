@@ -30,12 +30,9 @@ import { useAsync } from '../hooks/useAsync'
 import { useFolders } from '../hooks/useFolders'
 import { useScanProgress } from '../hooks/useScanProgress'
 import {
-  VISUALIZER_BARS_MAX,
-  VISUALIZER_BARS_MIN,
   clampMiniShowMs,
   useSettings,
   type StartupPage,
-  type VisualizerStyle,
 } from '../state/settings'
 import { resolveLang, useT } from '../i18n'
 
@@ -56,7 +53,7 @@ import { TOKEN_VARS } from '../types/theme'
 import { CUSTOM_DEFAULT_BASE, PRESETS, getPreset } from '../theme/presets'
 import { applyTheme, parseHex, toHex } from '../theme/engine'
 import UpdateDialog from '../updater/UpdateDialog'
-import VisualizerPreview from '../components/settings/VisualizerPreview'
+import VisualizerSettingsPanel from '../components/settings/VisualizerSettingsPanel'
 import BackgroundSearchPanel from '../components/settings/BackgroundSearchPanel'
 import BackgroundImageLibrary from '../components/settings/BackgroundImageLibrary'
 import LyricsAnalysisCard from '../components/settings/LyricsAnalysisCard'
@@ -2127,6 +2124,7 @@ export default function SettingsPage() {
                     )}
                   </div>
                 </div>
+                <div className="set-row lyrics-toggle-row"><span className="set-row-label">{t('Enlarge lyrics when player is hidden')}</span><button type="button" className={settings.lyrics.enlargeWhenCollapsed ? 'switch is-on' : 'switch'} role="switch" aria-label={t('Enlarge lyrics when player is hidden')} aria-checked={settings.lyrics.enlargeWhenCollapsed} onClick={() => update({ lyrics: { enlargeWhenCollapsed: !settings.lyrics.enlargeWhenCollapsed } })} /></div>
                 <SliderRow label={t('Progress opacity')} min={5} max={100} step={1}
                   value={settings.lyrics.progressOpacityPct} display={`${settings.lyrics.progressOpacityPct}%`}
                   onChange={progressOpacityPct => update({ lyrics: { progressOpacityPct } })} />
@@ -2141,87 +2139,7 @@ export default function SettingsPage() {
                 </div>
               </Card>
 
-              <Card title={t('Visualizer')}>
-                <Segmented<VisualizerStyle>
-                  value={settings.visualizer.style}
-                  options={[
-                    { value: 'off', label: t('Off') },
-                    { value: 'bars', label: t('Bars') },
-                    { value: 'wave', label: t('Wave') },
-                    { value: 'line', label: t('Line') },
-                  ]}
-                  onChange={(style) => update({ visualizer: { style } })}
-                />
-                <VisualizerPreview
-                  visualizer={settings.visualizer}
-                  theme={settings.theme}
-                  offLabel={t('Off')}
-                />
-                <div className={settings.visualizer.style === 'off' ? 'set-block is-dim' : 'set-block'}>
-                  <div className="set-viz-sliders">
-                    <SliderRow
-                      label={t('Detail')}
-                      min={VISUALIZER_BARS_MIN}
-                      max={VISUALIZER_BARS_MAX}
-                      step={4}
-                      value={settings.visualizer.bars}
-                      display={String(settings.visualizer.bars)}
-                      onChange={(bars) => update({ visualizer: { bars } })}
-                    />
-                    <SliderRow
-                      label={t('Height')}
-                      min={24}
-                      max={160}
-                      step={4}
-                      value={settings.visualizer.heightPx}
-                      display={`${settings.visualizer.heightPx}px`}
-                      onChange={(heightPx) => update({ visualizer: { heightPx } })}
-                    />
-                    <SliderRow
-                      label={t('Opacity')}
-                      min={10}
-                      max={100}
-                      step={5}
-                      value={settings.visualizer.opacityPct}
-                      display={`${settings.visualizer.opacityPct}%`}
-                      onChange={(opacityPct) => update({ visualizer: { opacityPct } })}
-                    />
-                    <SliderRow
-                      label={t('Smoothing')}
-                      min={0}
-                      max={100}
-                      step={5}
-                      value={settings.visualizer.smoothing}
-                      display={`${settings.visualizer.smoothing}%`}
-                      onChange={(smoothing) => update({ visualizer: { smoothing } })}
-                    />
-                  </div>
-                  <div className="set-viz-toggles">
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Theme colour')}</span>
-                      <button
-                        className={settings.visualizer.useThemeColor ? 'switch is-on' : 'switch'}
-                        role="switch"
-                        aria-checked={settings.visualizer.useThemeColor}
-                        aria-label={t('Theme colour')}
-                        onClick={() =>
-                          update({ visualizer: { useThemeColor: !settings.visualizer.useThemeColor } })
-                        }
-                      />
-                    </div>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Mirror')}</span>
-                      <button
-                        className={settings.visualizer.mirror ? 'switch is-on' : 'switch'}
-                        role="switch"
-                        aria-checked={settings.visualizer.mirror}
-                        aria-label={t('Mirror')}
-                        onClick={() => update({ visualizer: { mirror: !settings.visualizer.mirror } })}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </Card>
+              <VisualizerSettingsPanel />
               <Card title={t('Companion')}>
                 <div className="set-row">
                   <span className="set-row-label">{t('Enable companion')}</span>

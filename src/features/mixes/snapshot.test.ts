@@ -19,9 +19,46 @@ function snapshot(rule = createCustomMixRule('Set'), generatedAt = 1_000): Custo
 describe('custom mix snapshot cadence', () => {
   it('normalizes legacy saved rules to the new defaults', () => {
     const legacy = { ...createCustomMixRule('Old'), description: undefined, trackCount: undefined,
-      refreshIntervalMinutes: undefined } as unknown as Parameters<typeof normalizeCustomMixRule>[0]
+      refreshIntervalMinutes: undefined, artistPercent: undefined } as unknown as Parameters<typeof normalizeCustomMixRule>[0]
 
-    expect(normalizeCustomMixRule(legacy)).toMatchObject({ description: '', trackCount: 24, refreshIntervalMinutes: 0 })
+    expect(normalizeCustomMixRule(legacy)).toMatchObject({
+      description: '', trackCount: 24, refreshIntervalMinutes: 0, artistPercent: [0, 100],
+    })
+  })
+
+  it('includes artist shares in snapshot identity while retaining the legacy full-range default', () => {
+    const rule = createCustomMixRule('By artist')
+    const legacy = { ...rule, artistPercent: undefined } as unknown as typeof rule
+    const changed = { ...rule, artistPercent: [20, 25] as [number, number] }
+
+    expect(customMixRuleFingerprint(legacy)).toBe(customMixRuleFingerprint(rule))
+    expect(customMixRuleFingerprint(changed)).not.toBe(customMixRuleFingerprint(rule))
+  })
+
+  it('reuses an unexpired snapshot with the exact pre-artist-share fingerprint', () => {
+    const rule = createCustomMixRule('Legacy cached')
+    rule.refreshIntervalMinutes = 30
+    const preFeatureFingerprint = JSON.stringify({
+      name: rule.name,
+      description: rule.description,
+      trackCount: rule.trackCount,
+      refreshIntervalMinutes: rule.refreshIntervalMinutes,
+      artistMode: rule.artistMode,
+      artistIds: rule.artistIds,
+      timeWindow: rule.timeWindow,
+      completionPercent: rule.completionPercent,
+      genreMode: rule.genreMode,
+      genres: rule.genres,
+      genrePercent: rule.genrePercent,
+      sources: rule.sources,
+      specials: rule.specials,
+      forgottenPercent: rule.forgottenPercent,
+      forgottenDays: rule.forgottenDays,
+    })
+    const saved = { ...snapshot(rule, 1_000), ruleFingerprint: preFeatureFingerprint }
+
+    expect(customMixRuleFingerprint(rule)).toBe(preFeatureFingerprint)
+    expect(shouldRegenerateCustomMixSnapshot(rule, saved, 'open', 2_799)).toBe(false)
   })
 
   it('regenerates interval-zero mixes on open but not on background checks', () => {

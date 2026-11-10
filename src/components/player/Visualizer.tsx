@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { SPECTRUM_BINS, subscribeSpectrum } from '../../audio/spectrum'
 import {
+  LYRICS_VISUALIZER_BARS_MAX,
   VISUALIZER_BARS_MAX,
   VISUALIZER_BARS_MIN,
   type VisualizerStyle,
@@ -10,6 +11,8 @@ export interface VisualizerProps {
   style: Exclude<VisualizerStyle, 'off'>
   /** Bar count. The 64 incoming bins are interpolated up or down to this. */
   bars: number
+  /** Highest bar count accepted by this instance; player visualisers default to 192. */
+  maxBars?: number
   /** 0 is twitchy, 100 is very smooth. */
   smoothing: number
   /** Peak opacity, 10..100. */
@@ -46,11 +49,11 @@ export default function Visualizer(props: VisualizerProps) {
     let canRound = false
 
     /** Per-bar values after the user-controlled lerp. */
-    const level = new Float32Array(VISUALIZER_BARS_MAX)
+    const level = new Float32Array(LYRICS_VISUALIZER_BARS_MAX)
     /** Where each bar is heading this frame, before the lerp. */
-    const target = new Float32Array(VISUALIZER_BARS_MAX)
+    const target = new Float32Array(LYRICS_VISUALIZER_BARS_MAX)
     /** Curve heights for the wave and line styles. */
-    const curve = new Float32Array(VISUALIZER_BARS_MAX)
+    const curve = new Float32Array(LYRICS_VISUALIZER_BARS_MAX)
 
     const unsubscribe = subscribeSpectrum((spectrum) => {
       if (!ctx) {
@@ -87,7 +90,11 @@ export default function Visualizer(props: VisualizerProps) {
       }
       ctx.clearRect(0, 0, width, height)
 
-      const count = Math.max(VISUALIZER_BARS_MIN, Math.min(VISUALIZER_BARS_MAX, Math.round(o.bars)))
+      const maxBars = Math.max(
+        VISUALIZER_BARS_MIN,
+        Math.min(LYRICS_VISUALIZER_BARS_MAX, Math.round(o.maxBars ?? VISUALIZER_BARS_MAX)),
+      )
+      const count = Math.max(VISUALIZER_BARS_MIN, Math.min(maxBars, Math.round(o.bars)))
       const ampLimit = Math.min(o.maxAmplitudePx, height)
       const opacity = Math.max(0.1, Math.min(1, o.opacityPct / 100))
       // 100 means "very smooth" to the user, so it has to map to a small step

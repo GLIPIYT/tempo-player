@@ -8,7 +8,7 @@ import BrandIcon from '../components/common/BrandIcon'
 import { ScPlaylistCard } from '../components/common/ScCards'
 import { toast } from '../components/common/Toast'
 import CacheBadge, { CacheProgress } from '../soundcloud/CacheBadge'
-import { useNav } from '../state/nav'
+import { useNav, type ScArtistFallback } from '../state/nav'
 import { usePlayer } from '../player'
 import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
@@ -17,6 +17,7 @@ import { requestArtistCache, requestTrackCache } from '../soundcloud/cacheJobs'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import { openExternalUrl } from '../utils/externalLinks'
 import { canPlaySoundCloudTrack } from '../soundcloud/playability'
+import { resolveLocalArtistView } from '../utils/artistNavigation'
 
 /** SoundCloud returns a user's tracks in pages; one page is plenty to look at. */
 const TRACK_LIMIT = 50
@@ -28,7 +29,7 @@ const TRACK_LIMIT = 50
  * view, and the full crawl belongs to the caching flow, where it can report
  * progress instead of blocking the page.
  */
-export default function ScArtistPage({ artistId }: { artistId: string }) {
+export default function ScArtistPage({ artistId, fallback }: { artistId: string; fallback?: ScArtistFallback }) {
   const t = useT()
   const { navigate } = useNav()
   const player = usePlayer()
@@ -38,6 +39,8 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const fallbackArtistName = fallback?.artistName
+  const fallbackImagePath = fallback?.imagePath
 
   useEffect(() => {
     let cancelled = false
@@ -55,15 +58,21 @@ export default function ScArtistPage({ artistId }: { artistId: string }) {
         setReleases(pls)
         setLoading(false)
       })
-      .catch((e: unknown) => {
+      .catch(async (e: unknown) => {
         if (cancelled) return
+        if (fallbackArtistName) {
+          const localView = await resolveLocalArtistView(fallbackArtistName, fallbackImagePath ?? null)
+          if (cancelled) return
+          navigate(localView)
+          return
+        }
         setError(e instanceof Error ? e.message : String(e))
         setLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [artistId])
+  }, [artistId, fallbackArtistName, fallbackImagePath, navigate])
 
   if (loading) {
     return (

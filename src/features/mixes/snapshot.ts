@@ -15,6 +15,9 @@ export function customMixRuleFingerprint(rule: CustomMixRule): string {
     refreshIntervalMinutes: value.refreshIntervalMinutes,
     artistMode: value.artistMode,
     artistIds: value.artistIds,
+    ...(value.artistPercent[0] === 0 && value.artistPercent[1] === 100
+      ? {}
+      : { artistPercent: value.artistPercent }),
     timeWindow: value.timeWindow,
     completionPercent: value.completionPercent,
     genreMode: value.genreMode,

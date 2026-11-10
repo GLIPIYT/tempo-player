@@ -141,3 +141,24 @@ button.history-featured-track:hover strong { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   .history-detail-layer *, .history-detail-backdrop { animation: none !important; transition: none !important; }
 }
+
+.history-detail-dialog { display: flex; flex-direction: column; overflow: hidden; height: min(610px, calc(100dvh - 40px)); }
+.history-detail-header { flex: none; }
+.history-detail-body { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.history-detail-body:hover { scrollbar-color: color-mix(in srgb, var(--text) 18%, transparent) transparent; }
+.history-detail-body::-webkit-scrollbar { width: 5px; }
+.history-detail-body::-webkit-scrollbar-track { background: transparent; }
+.history-detail-body::-webkit-scrollbar-thumb { background: transparent; border-radius: 8px; }
+.history-detail-body:hover::-webkit-scrollbar-thumb { background: #ffffff28; }
+.history-summary .history-stat-main { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.history-delta { display: inline-flex; align-items: center; justify-content: center; gap: 3px; padding: 3px 5px; border-radius: 20px; background: #ffffff0b; color: var(--text-muted); font-size: 9px; font-weight: 550; line-height: 1.15; font-variant-numeric: tabular-nums; transition: background-color 150ms, color 150ms; }
+.history-delta[data-direction='1'] { color: #74d8ad; background: #36bf8124; }
+.history-delta[data-direction='-1'] { color: #ff8b99; background: #e8547224; }
+.history-delta-icons { position: relative; width: 11px; height: 11px; }
+.history-delta-icons > svg { position: absolute; inset: 0; color: inherit; opacity: 0; transform: scale(.7); transition: opacity 130ms, transform 150ms; }
+.history-delta[data-direction='1'] .is-up, .history-delta[data-direction='-1'] .is-down, .history-delta[data-direction='0'] .is-flat { opacity: 1; transform: scale(1); }
+.history-detail-body.is-zoom-in { transform-origin: var(--history-zoom-origin, 50%) 36%; animation: history-zoom-in 340ms cubic-bezier(.2,.75,.2,1) both; }
+.history-detail-body.is-zoom-out { transform-origin: var(--history-zoom-origin, 50%) 36%; animation: history-zoom-out 300ms cubic-bezier(.2,.75,.2,1) both; }
+@keyframes history-zoom-in { from { opacity: .15; transform: scale(.87); } to { opacity: 1; transform: none; } }
+@keyframes history-zoom-out { from { opacity: .15; transform: scale(1.12); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .history-detail-body.is-zoom-in, .history-detail-body.is-zoom-out { animation: none; } }

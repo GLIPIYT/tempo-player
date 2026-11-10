@@ -16,6 +16,36 @@ export type VisualizerStyle = 'off' | 'bars' | 'wave' | 'line'
 
 const VISUALIZER_STYLES: VisualizerStyle[] = ['off', 'bars', 'wave', 'line']
 
+export interface VisualizerSettings {
+  style: VisualizerStyle
+  /** Bar count. The 64 incoming bins are interpolated up or down to this. */
+  bars: number
+  /** Peak amplitude in pixels. Does not change the band's own height. */
+  heightPx: number
+  /** Peak opacity, 10-100. */
+  opacityPct: number
+  /** 0 is twitchy, 100 is very smooth. */
+  smoothing: number
+  mirror: boolean
+  /** Draw in the theme accent rather than the plain text colour. */
+  useThemeColor: boolean
+}
+
+export interface LyricsVisualizerSettings extends VisualizerSettings {
+  /** Adapt the spectrum colour to the current lyrics artwork. */
+  useBackgroundColor: boolean
+}
+
+const DEFAULT_VISUALIZER_SETTINGS: VisualizerSettings = {
+  style: 'bars',
+  bars: 56,
+  heightPx: 56,
+  opacityPct: 80,
+  smoothing: 45,
+  mirror: false,
+  useThemeColor: true,
+}
+
 export interface ProfileSettings {
   nickname: string | null
   avatarPath: string | null
@@ -42,6 +72,8 @@ export interface AppSettings {
     vocalAnalysisEnabled: boolean
     /** Explicit opt-in to known-text word alignment; only used in word-fill mode. */
     whisperWordTimingsEnabled: boolean
+    /** Enlarge the lyrics player pane when it is collapsed. */
+    enlargeWhenCollapsed: boolean
     alignment: 'left' | 'center' | 'right'
     textSizePx: number
     fillEnabled: boolean
@@ -124,20 +156,8 @@ export interface AppSettings {
      */
     path: string
   }
-  visualizer: {
-    style: VisualizerStyle
-    /** Bar count. The 64 incoming bins are interpolated up or down to this. */
-    bars: number
-    /** Peak amplitude in pixels. Does not change the band's own height. */
-    heightPx: number
-    /** Peak opacity, 10-100. */
-    opacityPct: number
-    /** 0 is twitchy, 100 is very smooth. */
-    smoothing: number
-    mirror: boolean
-    /** Draw in the theme accent rather than the plain text colour. */
-    useThemeColor: boolean
-  }
+  visualizer: VisualizerSettings
+  lyricsVisualizer: LyricsVisualizerSettings
 }
 
 export const defaultSettings: AppSettings = {
@@ -153,6 +173,7 @@ export const defaultSettings: AppSettings = {
     capitalizeLines: true,
     vocalAnalysisEnabled: true,
     whisperWordTimingsEnabled: false,
+    enlargeWhenCollapsed: true,
     alignment: 'left',
     textSizePx: 21,
     fillEnabled: true,
@@ -188,15 +209,8 @@ export const defaultSettings: AppSettings = {
   ytdlp: { path: '' },
   // On by default: the band is the whole point of the setting, and it only
   // ever routes the same-origin channel - the same thing normalisation does.
-  visualizer: {
-    style: 'bars',
-    bars: 56,
-    heightPx: 56,
-    opacityPct: 80,
-    smoothing: 45,
-    mirror: false,
-    useThemeColor: true,
-  },
+  visualizer: { ...DEFAULT_VISUALIZER_SETTINGS },
+  lyricsVisualizer: { ...DEFAULT_VISUALIZER_SETTINGS, useBackgroundColor: false },
 }
 
 const MINI_SHOW_MS_MIN = 1000
@@ -246,6 +260,8 @@ function normalizeLyrics(value: Partial<AppSettings['lyrics']>): AppSettings['ly
       ? stored.vocalAnalysisEnabled : base.vocalAnalysisEnabled,
     whisperWordTimingsEnabled: typeof stored.whisperWordTimingsEnabled === 'boolean'
       ? stored.whisperWordTimingsEnabled : base.whisperWordTimingsEnabled,
+    enlargeWhenCollapsed: typeof stored.enlargeWhenCollapsed === 'boolean'
+      ? stored.enlargeWhenCollapsed : base.enlargeWhenCollapsed,
     textSizePx: clampLyricNumber(value.textSizePx, 16, 40, 1, base.textSizePx),
     fillEnabled: typeof value.fillEnabled === 'boolean' ? value.fillEnabled : base.fillEnabled,
     motionStyle: value.motionStyle === 'accelerated' ? 'accelerated' : 'smooth',
@@ -264,7 +280,9 @@ function normalizeLyrics(value: Partial<AppSettings['lyrics']>): AppSettings['ly
 
 export const VISUALIZER_BARS_MIN = 8
 export const VISUALIZER_BARS_MAX = 192
+export const LYRICS_VISUALIZER_BARS_MAX = 288
 const VIZ_BARS_RANGE = [VISUALIZER_BARS_MIN, VISUALIZER_BARS_MAX] as const
+const LYRICS_VIZ_BARS_RANGE = [VISUALIZER_BARS_MIN, LYRICS_VISUALIZER_BARS_MAX] as const
 const VIZ_HEIGHT_RANGE = [24, 160] as const
 const VIZ_OPACITY_RANGE = [10, 100] as const
 const VIZ_SMOOTHING_RANGE = [0, 100] as const
@@ -279,18 +297,37 @@ function clampInt(value: unknown, [min, max]: readonly [number, number], fallbac
  * be anything at all, and the canvas trusts them - clamping on the way in is
  * cheaper than defending in the render loop.
  */
-export function clampVisualizer(value: Partial<AppSettings['visualizer']>): AppSettings['visualizer'] {
-  const base = defaultSettings.visualizer
+function clampVisualizerFields(
+  value: Partial<VisualizerSettings>,
+  barsRange: readonly [number, number],
+  base: VisualizerSettings,
+): VisualizerSettings {
   return {
     style: VISUALIZER_STYLES.includes(value.style as VisualizerStyle)
       ? (value.style as VisualizerStyle)
       : base.style,
-    bars: clampInt(value.bars, VIZ_BARS_RANGE, base.bars),
+    bars: clampInt(value.bars, barsRange, base.bars),
     heightPx: clampInt(value.heightPx, VIZ_HEIGHT_RANGE, base.heightPx),
     opacityPct: clampInt(value.opacityPct, VIZ_OPACITY_RANGE, base.opacityPct),
     smoothing: clampInt(value.smoothing, VIZ_SMOOTHING_RANGE, base.smoothing),
     mirror: value.mirror === true,
     useThemeColor: value.useThemeColor !== false,
+  }
+}
+
+export function clampVisualizer(value: Partial<AppSettings['visualizer']>): AppSettings['visualizer'] {
+  return clampVisualizerFields(value, VIZ_BARS_RANGE, defaultSettings.visualizer)
+}
+
+export function clampLyricsVisualizer(
+  value: Partial<AppSettings['lyricsVisualizer']>,
+): AppSettings['lyricsVisualizer'] {
+  const base = defaultSettings.lyricsVisualizer
+  const useBackgroundColor = value.useBackgroundColor === true
+  return {
+    ...clampVisualizerFields(value, LYRICS_VIZ_BARS_RANGE, base),
+    useThemeColor: useBackgroundColor ? false : value.useThemeColor !== false,
+    useBackgroundColor,
   }
 }
 
@@ -362,6 +399,9 @@ export function loadSettings(): AppSettings {
       },
       ytdlp: { ...defaultSettings.ytdlp, ...parsed.ytdlp },
       visualizer: clampVisualizer(parsed.visualizer ?? {}),
+      // Seed the first lyrics-specific configuration from the current player
+      // visualiser, then persist it independently on the next settings write.
+      lyricsVisualizer: clampLyricsVisualizer({ ...parsed.visualizer, ...parsed.lyricsVisualizer }),
     }
   } catch {
     return defaultSettings
@@ -430,6 +470,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       soundcloud: { ...prev.soundcloud, ...patch.soundcloud },
       ytdlp: { ...prev.ytdlp, ...patch.ytdlp },
       visualizer: clampVisualizer({ ...prev.visualizer, ...patch.visualizer }),
+      lyricsVisualizer: clampLyricsVisualizer({ ...prev.lyricsVisualizer, ...patch.lyricsVisualizer }),
     }))
   }, [])
 

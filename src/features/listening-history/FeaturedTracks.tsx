@@ -19,7 +19,7 @@ function SourceIcon({ source }: { source: SourceId }) {
   </span>
 }
 
-export const FeaturedTracks = memo(function FeaturedTracks({ tracks, lang }: { tracks: readonly ListeningPeriodTopTrack[]; lang: 'ru' | 'en' }) {
+export const FeaturedTracks = memo(function FeaturedTracks({ tracks, lang, minutes = false }: { minutes?: boolean; tracks: readonly ListeningPeriodTopTrack[]; lang: 'ru' | 'en' }) {
   const t = useT()
   const [rotation, setRotation] = useState({ index: 0, previous: -1 })
   const [hovered, setHovered] = useState(false)
@@ -47,7 +47,7 @@ export const FeaturedTracks = memo(function FeaturedTracks({ tracks, lang }: { t
     <span className="history-track-copy">
       <span className="history-track-title"><strong>{entry.track.title}</strong><SourceIcon source={entry.track.source} /></span>
       <small>{entry.track.artistName ?? t('Unknown artist')}</small>
-      <em>{historyHours(entry.listenedSec, lang)} {lang === 'ru' ? 'ч' : 'h'} · {entry.playCount} {t('plays')}</em>
+      <em>{minutes ? (entry.listenedSec / 60).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US', { maximumFractionDigits: 2 }) : historyHours(entry.listenedSec, lang)} {minutes ? t('Minutes') : lang === 'ru' ? 'ч' : 'h'} · {entry.playCount} {t('plays')}</em>
     </span>
   </button>
   return <div className="history-track-rotation" onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}

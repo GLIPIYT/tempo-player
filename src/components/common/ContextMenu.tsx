@@ -23,6 +23,7 @@ export interface ContextMenuRequest {
   y: number
   title?: string
   items: ContextMenuItem[]
+  trigger?: HTMLElement
 }
 
 let current: ContextMenuRequest | null = null
@@ -33,6 +34,10 @@ function notify(): void {
 }
 
 export function openContextMenu(req: ContextMenuRequest): void {
+  if (req.trigger && current?.trigger === req.trigger) {
+    closeContextMenu()
+    return
+  }
   current = req
   notify()
 }
@@ -87,6 +92,7 @@ export default function ContextMenuHost() {
     if (!req) return
     const onDown = (e: PointerEvent) => {
       if (ref.current && ref.current.contains(e.target as Node)) return
+      if (req.trigger?.contains(e.target as Node)) return
       closeContextMenu()
     }
     const onKey = (e: KeyboardEvent) => {

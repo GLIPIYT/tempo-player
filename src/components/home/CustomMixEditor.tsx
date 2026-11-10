@@ -823,6 +823,14 @@ export default function CustomMixEditor({
                 </>,
               )}
               {field(
+                'Share per selected artist',
+                <Users size={15} />,
+                <><Range label={t('Share per selected artist')} value={rule.artistPercent ?? [0, 100]}
+                  disabled={rule.artistMode === 'deny' || rule.artistIds.length === 0}
+                  onChange={artistPercent => change({ artistPercent })} />
+                  <p className="mix-rule-share-hint">{t('Remaining places can use other artists. Incompatible shares are split equally.')}</p></>,
+              )}
+              {field(
                 'Track sources',
                 <Folder size={15} />,
                 <MultiSelect
@@ -991,12 +999,13 @@ export default function CustomMixEditor({
           <span className="mix-rule-error" role="status">
             {error}
           </span>
-          <button type="button" className="btn" disabled={busy} onClick={close}>
+          <button type="button" className="mix-rule-cancel" disabled={busy} onClick={close}>
+            <X size={15} />
             {t('Cancel')}
           </button>
           <button
             type="button"
-            className="btn btn-primary"
+            className="btn btn-primary mix-rule-save"
             disabled={busy || !rule.name.trim() || !rule.sources.length}
             onClick={() => void submit()}
           >

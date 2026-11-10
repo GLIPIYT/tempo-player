@@ -34,6 +34,7 @@ pub enum MixSpecial {
 }
 
 fn default_artist_mode() -> MixMode { MixMode::Allow }
+fn default_artist_percent() -> [u8; 2] { [0, 100] }
 fn default_genre_mode() -> MixMode { MixMode::Allow }
 fn default_time_window() -> [u16; 2] { [0, 1440] }
 fn default_completion_percent() -> [u8; 2] { [0, 100] }
@@ -60,6 +61,8 @@ pub struct CustomMixRule {
     pub artist_mode: MixMode,
     #[serde(default)]
     pub artist_ids: Vec<i64>,
+    #[serde(default = "default_artist_percent")]
+    pub artist_percent: [u8; 2],
     #[serde(default = "default_time_window")]
     pub time_window: [u16; 2],
     #[serde(default = "default_completion_percent")]
@@ -104,6 +107,7 @@ impl CustomMixRule {
             return Err("timeWindow must be an ordered half-hour range from 0 to 1440".to_string());
         }
         for (name, range) in [
+            ("artistPercent", self.artist_percent),
             ("completionPercent", self.completion_percent),
             ("genrePercent", self.genre_percent),
             ("forgottenPercent", self.forgotten_percent),
@@ -402,6 +406,7 @@ mod tests {
             refresh_interval_minutes: 0,
             artist_mode: MixMode::Allow,
             artist_ids: Vec::new(),
+            artist_percent: [0, 100],
             time_window: [0, 1440],
             completion_percent: [0, 100],
             genre_mode: MixMode::Allow,
@@ -423,8 +428,10 @@ mod tests {
         let mut saved = db.save_custom_mix_rule(rule("Evening set")).unwrap();
         assert!(saved.id.is_some());
         saved.time_window = [1080, 1440];
+        saved.artist_percent = [20, 25];
         let updated = db.save_custom_mix_rule(saved.clone()).unwrap();
         assert_eq!(updated.time_window, [1080, 1440]);
+        assert_eq!(updated.artist_percent, [20, 25]);
         assert_eq!(db.list_custom_mix_rules().unwrap(), vec![updated.clone()]);
 
         db.delete_custom_mix_rule(updated.id.unwrap()).unwrap();
@@ -446,11 +453,15 @@ mod tests {
         assert_eq!(legacy.description, "");
         assert_eq!(legacy.track_count, 24);
         assert_eq!(legacy.refresh_interval_minutes, 0);
+        assert_eq!(legacy.artist_percent, [0, 100]);
     }
 
     #[test]
     fn custom_mix_rule_validation_enforces_description_count_and_cadence() {
         let mut value = rule("Valid");
+        value.artist_percent = [80, 60];
+        assert!(value.validate().unwrap_err().contains("artistPercent"));
+        value.artist_percent = [0, 100];
         value.description = "x".repeat(151);
         assert!(value.validate().unwrap_err().contains("description"));
         value.description.clear();

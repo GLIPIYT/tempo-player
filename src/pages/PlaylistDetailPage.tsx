@@ -20,6 +20,7 @@ import CollectionFavoriteButton from '../components/common/CollectionFavoriteBut
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import CacheBadge from '../soundcloud/CacheBadge'
+import { requestTrackCacheForSource } from '../soundcloud/cacheJobs'
 import { toast } from '../components/common/Toast'
 import EmptyState from '../components/common/EmptyState'
 import TrackSourceIcon from '../components/common/TrackSourceIcon'
@@ -75,15 +76,34 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const downloadToCache = async () => {
     setDownloadBusy(true)
     try {
+      const cacheable = baseItems.map(item => item.track).filter(track => track.source === 'soundcloud' && track.externalId)
+      if (cacheable.length === 0) {
+        toast.show(t('Nothing to download'), 'info')
+        return
+      }
+
       let started = 0
-      for (const item of baseItems) {
-        const tr = item.track
-        if (tr.source === 'soundcloud' && tr.externalId) {
-          await api.scGetPlayback(tr.externalId).catch(() => {})
-          started += 1
+      let cached = 0
+      let failed = 0
+      let firstFailure = ''
+      for (let offset = 0; offset < cacheable.length; offset += 4) {
+        const batch = cacheable.slice(offset, offset + 4)
+        const results = await Promise.allSettled(batch.map(track => requestTrackCacheForSource(track)))
+        for (const result of results) {
+          if (result.status === 'rejected') {
+            failed += 1
+            if (!firstFailure) firstFailure = errText(result.reason)
+          } else if (result.value === 'started') started += 1
+          else if (result.value === 'cached') cached += 1
         }
       }
-      toast.show(started > 0 ? t('Downloads started') : t('Nothing to download'))
+      if (started > 0) toast.show(t('Downloads started'))
+      else if (cached > 0) toast.show(t('Cached'))
+      else if (failed === 0) toast.show(t('Nothing to download'), 'info')
+      if (failed > 0) {
+        const more = failed > 1 ? ` (+${failed - 1} more)` : ''
+        toast.show(`${firstFailure}${more}`, 'error', 6000)
+      }
     } finally {
       setDownloadBusy(false)
     }
@@ -167,7 +187,6 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
       setSavedRename({ playlistId, name: trimmed })
       setRenaming(false)
       bumpLibraryVersion()
-      lists.reload()
       setError(null)
     } catch (e: unknown) {
       setError(errText(e))
@@ -241,7 +260,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
     items.push({ id: 'export', label: t('Export playlist (m3u8)'), icon: <FileDown size={14} />, disabled: exportBusy || !tracks.length, onSelect: () => void exportM3u8() })
     if (isLikes) items.push({ id: 'cache', label: t('Download to cache'), icon: <Download size={14} />, disabled: downloadBusy || !tracks.some(track => track.source === 'soundcloud'), onSelect: () => void downloadToCache() })
     else items.push({ id: 'delete', label: t('Delete'), icon: <Trash2 size={14} />, danger: true, disabled: busy, onSelect: () => void destroy() })
-    openContextMenu({ x: event.clientX, y: event.clientY, title: displayName, items })
+    openContextMenu({ x: event.clientX, y: event.clientY, title: displayName, items, trigger: event.currentTarget as HTMLElement })
   }
   return (
     <EditorialDetailLayout

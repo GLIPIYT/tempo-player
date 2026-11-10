@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react'
-import { VISUALIZER_BARS_MAX, type AppSettings } from '../../state/settings'
+import { LYRICS_VISUALIZER_BARS_MAX, type AppSettings } from '../../state/settings'
 
 type Props = {
   visualizer: AppSettings['visualizer']
   theme: AppSettings['theme']
+  backgroundColor?: boolean
   offLabel: string
 }
 
@@ -25,9 +26,9 @@ function parseCanvasColor(value: string): { r: number; g: number; b: number } | 
 }
 
 /** A local sample: it stays animated even when no track is playing. */
-export default function VisualizerPreview({ visualizer, theme, offLabel }: Props) {
+export default function VisualizerPreview({ visualizer, theme, offLabel, backgroundColor = false }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const levelsRef = useRef(new Float32Array(VISUALIZER_BARS_MAX))
+  const levelsRef = useRef(new Float32Array(LYRICS_VISUALIZER_BARS_MAX))
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -152,7 +153,7 @@ export default function VisualizerPreview({ visualizer, theme, offLabel }: Props
     <div className="set-viz-preview" aria-hidden="true">
       <canvas
         ref={canvasRef}
-        className={visualizer.useThemeColor ? 'set-viz-preview-canvas' : 'set-viz-preview-canvas is-plain'}
+        className={`set-viz-preview-canvas${visualizer.useThemeColor ? '' : ' is-plain'}${backgroundColor ? ' is-background' : ''}`}
         aria-hidden="true"
       />
       {visualizer.style === 'off' ? <span className="set-viz-preview-off">{offLabel}</span> : null}

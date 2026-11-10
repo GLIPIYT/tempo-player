@@ -140,6 +140,108 @@ describe('generateCustomMix', () => {
     expect(result.tracks.map((track) => track.id)).toEqual([3])
   })
 
+  it('keeps every feasible selected artist share inside its configured range', () => {
+    const rule = baseRule()
+    rule.artistIds = [1, 2, 3]
+    rule.artistPercent = [33, 34]
+    rule.trackCount = 24
+    const candidates = [
+      ...Array.from({ length: 10 }, (_, index) => candidate(index + 1, { artistId: 1 })),
+      ...Array.from({ length: 10 }, (_, index) => candidate(index + 11, { artistId: 2 })),
+      ...Array.from({ length: 10 }, (_, index) => candidate(index + 21, { artistId: 3 })),
+      ...Array.from({ length: 10 }, (_, index) => candidate(index + 31, { artistId: 4 })),
+    ]
+
+    const result = generateCustomMix(rule, candidates, { limit: 24, seed: 17 })
+    const counts = [1, 2, 3].map((id) => result.tracks.filter((track) => track.artistId === id).length)
+
+    expect(result.tracks).toHaveLength(24)
+    expect(counts).toEqual([8, 8, 8])
+    expect(result.tracks.every((track) => track.artistId !== 4)).toBe(true)
+    expect(result.warnings).toEqual([])
+  })
+
+  it('reserves each selected artist share and fills the remainder from other artists', () => {
+    const rule = baseRule()
+    rule.artistIds = [1, 2, 3]
+    rule.artistPercent = [20, 25]
+    rule.trackCount = 24
+    const candidates = [
+      ...Array.from({ length: 12 }, (_, index) => candidate(index + 1, { artistId: 1 })),
+      ...Array.from({ length: 12 }, (_, index) => candidate(index + 13, { artistId: 2 })),
+      ...Array.from({ length: 12 }, (_, index) => candidate(index + 25, { artistId: 3 })),
+      ...Array.from({ length: 12 }, (_, index) => candidate(index + 37, { artistId: 4 })),
+    ]
+
+    const result = generateCustomMix(rule, candidates, { limit: 24, seed: 18 })
+    const selectedCounts = [1, 2, 3].map((id) => result.tracks.filter((track) => track.artistId === id).length)
+
+    expect(result.tracks).toHaveLength(24)
+    expect(selectedCounts.every((count) => count >= 5 && count <= 6)).toBe(true)
+    expect(result.tracks.filter((track) => track.artistId === 4)).toHaveLength(24 - selectedCounts.reduce((sum, count) => sum + count, 0))
+    expect(result.warnings).toEqual([])
+  })
+
+  it('caps selected artists at their maximum and warns when the remainder has no candidates', () => {
+    const rule = baseRule()
+    rule.artistIds = [1, 2, 3]
+    rule.artistPercent = [20, 25]
+    rule.trackCount = 24
+    const candidates = [
+      ...Array.from({ length: 12 }, (_, index) => candidate(index + 1, { artistId: 1 })),
+      ...Array.from({ length: 12 }, (_, index) => candidate(index + 13, { artistId: 2 })),
+      ...Array.from({ length: 12 }, (_, index) => candidate(index + 25, { artistId: 3 })),
+    ]
+
+    const result = generateCustomMix(rule, candidates, { limit: 24, seed: 18 })
+
+    expect(result.actualCount).toBe(18)
+    expect(result.tracks).toHaveLength(18)
+    expect(new Set(result.tracks.map((track) => `${track.artistId}:${track.id}`)).size).toBe(18)
+    expect(result.warnings).toContain('The selected artist shares cannot be met with the available tracks.')
+    expect(result.warnings).toContain('Only 18 tracks fit the selected artist shares; 24 requested.')
+  })
+
+  it('splits selected artist slots evenly when the aggregate minimum is impossible', () => {
+    const rule = baseRule()
+    rule.artistIds = Array.from({ length: 10 }, (_, index) => index + 1)
+    rule.artistPercent = [50, 50]
+    rule.trackCount = 24
+    const candidates = rule.artistIds.flatMap((artistId, artistIndex) =>
+      Array.from({ length: 5 }, (_, index) => candidate(artistIndex * 5 + index + 1, { artistId })),
+    )
+
+    const result = generateCustomMix(rule, candidates, { limit: 24, seed: 18 })
+    const counts = rule.artistIds.map((id) => result.tracks.filter((track) => track.artistId === id).length)
+
+    expect(result.tracks).toHaveLength(24)
+    expect(new Set(counts.map((count) => count)).size).toBeLessThanOrEqual(2)
+    expect(counts.every((count) => count === 2 || count === 3)).toBe(true)
+    expect(result.warnings).toContain('The selected artist shares cannot be met with the available tracks.')
+  })
+
+  it('keeps source and completion filters strict while allocating artist shares', () => {
+    const rule = baseRule()
+    rule.artistIds = [1, 2]
+    rule.artistPercent = [49, 51]
+    rule.trackCount = 8
+    rule.sources = ['local']
+    rule.completionPercent = [70, 100]
+    const candidates = [
+      ...Array.from({ length: 8 }, (_, index) => candidate(index + 1, { artistId: 1 }, { averageCompletionPercent: 90 })),
+      ...Array.from({ length: 8 }, (_, index) => candidate(index + 11, { artistId: 2 }, { averageCompletionPercent: 80 })),
+      candidate(30, { artistId: 1, source: 'youtube', externalId: 'yt-30' }, { averageCompletionPercent: 99 }),
+      candidate(31, { artistId: 2 }, { averageCompletionPercent: 10 }),
+    ]
+
+    const result = generateCustomMix(rule, candidates, { limit: 8, seed: 19 })
+
+    expect(result.tracks).toHaveLength(8)
+    expect(result.tracks.every((track) => track.source === 'local')).toBe(true)
+    expect(result.tracks.every((track) => track.artistId === 1 || track.artistId === 2)).toBe(true)
+    expect([1, 2].map((id) => result.tracks.filter((track) => track.artistId === id).length)).toEqual([4, 4])
+  })
+
   it('uses trusted, selected-genre online candidates only when onlineGenre is enabled', () => {
     const rule = baseRule()
     rule.genres = ['ambient']
