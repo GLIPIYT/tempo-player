@@ -1,11 +1,73 @@
-import type { ReactNode } from 'react'
+import { useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { toast } from '../components/common/Toast'
 import { useT } from '../i18n'
 import { openExternalUrl } from '../utils/externalLinks'
 import { RELEASE_TYPE_MARKER } from './releaseType'
 
+interface MarkdownImageTarget {
+  src: string
+  title?: string
+}
+
+function safeHttpUrl(value: string): string | null {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+function parseImageTarget(target: string): MarkdownImageTarget | null {
+  const match = /^(?:<([^<>]+)>|(\S+))(?:\s+(?:"([^"]*)"|'([^']*)'|\(([^)]*)\)))?$/.exec(target.trim())
+  if (!match) return null
+  const src = safeHttpUrl(match[1] ?? match[2] ?? '')
+  if (!src) return null
+  const title = match[3] ?? match[4] ?? match[5]
+  return title === undefined ? { src } : { src, title }
+}
+
+function openLink(href: string, t: (key: string) => string) {
+  return (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault()
+    void openExternalUrl(href).catch(() => toast.show(t('Could not open external link'), 'error'))
+  }
+}
+
+function MarkdownImage({ src, alt, title }: MarkdownImageTarget & { alt: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return <span className="update-markdown-image-fallback">{alt}</span>
+  return (
+    <img
+      className="update-markdown-image"
+      src={src}
+      alt={alt}
+      title={title}
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
+function externalAnchor(href: string, key: string, children: ReactNode, t: (key: string) => string, className?: string) {
+  return <a key={key} href={href} className={className} onClick={openLink(href, t)}>{children}</a>
+}
+
+function renderImage(imageTarget: string, alt: string, key: string, t: (key: string) => string): ReactNode {
+  const target = parseImageTarget(imageTarget)
+  if (!target) return alt
+  return externalAnchor(
+    target.src,
+    `${key}-link`,
+    <MarkdownImage src={target.src} alt={alt} title={target.title} />,
+    t,
+    'update-markdown-image-link',
+  )
+}
+
 function renderInline(text: string, keyPrefix: string, t: (key: string) => string): ReactNode[] {
-  const pattern = /(\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|`[^`]+`|\*[^*\n]+\*|_[^_\n]+_|\[[^\]]+\]\([^)]+\))/g
+  const pattern = /(\[!\[[^\]]*\]\([^)]+\)\]\([^)]+\)|!\[[^\]]*\]\([^)]+\)|\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|`[^`]+`|\*[^*\n]+\*|_[^_\n]+_|\[[^\]]+\]\([^)]+\))/g
   const nodes: ReactNode[] = []
   let cursor = 0
   for (const match of text.matchAll(pattern)) {
@@ -13,7 +75,23 @@ function renderInline(text: string, keyPrefix: string, t: (key: string) => strin
     const start = match.index ?? 0
     if (start > cursor) nodes.push(text.slice(cursor, start))
     const key = `${keyPrefix}-${start}`
-    if (value.startsWith('**') || value.startsWith('__')) {
+    const linkedImage = /^\[!\[([^\]]*)\]\(([^)]*)\)\]\(([^)]*)\)$/.exec(value)
+    const image = /^!\[([^\]]*)\]\(([^)]*)\)$/.exec(value)
+    if (linkedImage) {
+      const [, alt, imageTarget, linkTarget] = linkedImage
+      const parsedImage = parseImageTarget(imageTarget)
+      const imageNode = parsedImage
+        ? <MarkdownImage src={parsedImage.src} alt={alt} title={parsedImage.title} />
+        : alt
+      const safeHref = safeHttpUrl(linkTarget)
+      nodes.push(safeHref
+        ? externalAnchor(safeHref, key, imageNode, t, 'update-markdown-image-link')
+        : parsedImage
+          ? renderImage(imageTarget, alt, key, t)
+          : alt)
+    } else if (image) {
+      nodes.push(renderImage(image[2], image[1], key, t))
+    } else if (value.startsWith('**') || value.startsWith('__')) {
       nodes.push(<strong key={key}>{value.slice(2, -2)}</strong>)
     } else if (value.startsWith('~~')) {
       nodes.push(<del key={key}>{value.slice(2, -2)}</del>)
@@ -21,17 +99,9 @@ function renderInline(text: string, keyPrefix: string, t: (key: string) => strin
       nodes.push(<code key={key}>{value.slice(1, -1)}</code>)
     } else if (value.startsWith('[')) {
       const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(value)
-      const href = link?.[2]
-      let safeHref: string | null = null
-      try {
-        const url = new URL(href ?? '')
-        if (url.protocol === 'https:' || url.protocol === 'http:') safeHref = url.href
-      } catch { /* leave unsupported link syntax as readable text */ }
+      const safeHref = link ? safeHttpUrl(link[2]) : null
       nodes.push(safeHref && link
-        ? <a key={key} href={safeHref} onClick={(event) => {
-          event.preventDefault()
-          void openExternalUrl(safeHref).catch(() => toast.show(t('Could not open external link'), 'error'))
-        }}>{link[1]}</a>
+        ? externalAnchor(safeHref, key, link[1], t)
         : value)
     } else {
       nodes.push(<em key={key}>{value.slice(1, -1)}</em>)

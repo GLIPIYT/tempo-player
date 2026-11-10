@@ -4595,6 +4595,10 @@ html.has-bg .app-content {
 .update-markdown a { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 2px; }
 .update-markdown code { padding: 1px 4px; border-radius: 4px; background: var(--bg-elevated); font-family: var(--font-mono, monospace); font-size: .92em; }
 .update-markdown del { opacity: .75; }
+.update-markdown-image-link { display: block; margin: 12px 0 18px; border-radius: 12px; overflow: hidden; background: var(--bg-elevated); line-height: 0; }
+.update-markdown-image { display: block; width: 100%; max-width: 100%; height: auto; border-radius: 10px; }
+.update-markdown-image-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.update-markdown-image-fallback { display: inline-block; padding: 16px; line-height: 1.6; color: var(--text-muted); }
 .update-dialog-actions { grid-column: 1 / -1; margin-top: 0; padding-top: 12px; border-top: 1px solid var(--border); }
 .update-dialog-actions .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
 .update-confetti { position: absolute; inset: 0; z-index: 8; overflow: hidden; pointer-events: none; }

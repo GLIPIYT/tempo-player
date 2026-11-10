@@ -1,0 +1,136 @@
+@import url('../../../../src/styles/global.css');
+@import url('../../../../src/styles/theme.css');
+@import url('../../../../src/features/lyrics/lyrics.css');
+
+:root {
+  color-scheme: dark;
+  --bg: #0d0c15;
+  --bg-elevated: #171322;
+  --surface: #1c1830;
+  --surface-hover: #2b2441;
+  --border: #3c304f;
+  --text: #f7f2ff;
+  --text-muted: #c0b4d1;
+  --accent: #bd9bff;
+  --accent-strong: #ddc8ff;
+  --accent-soft: #bd9bff24;
+  --tempo-gradient: linear-gradient(110deg, #b28bff, #e0a5ff);
+  --radius: 16px;
+  --radius-sm: 9px;
+  --lyr-side-ratio: 0.4;
+  --lyr-divider-width: 24px;
+  --lyr-text-size: 23px;
+  --lyr-scroll-duration: 380ms;
+  --lyr-progress-opacity: 0.52;
+  --lyr-progress-thickness: 2px;
+  font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+body {
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.lyrics-artwork {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lyr-title {
+  margin-top: 19px;
+}
+
+.lyr-time-row {
+  margin-top: 20px;
+}
+
+body[data-view='processing'] {
+  overflow: hidden;
+}
+
+body[data-view='processing'] #root {
+  display: grid;
+  place-items: center;
+  padding: 16px 20px;
+}
+
+.processing-fixture {
+  width: 100%;
+  max-width: 1060px;
+}
+
+.processing-fixture .processing-card {
+  margin: 0;
+  padding: 18px 22px;
+  border-color: #b99bdf35;
+  background: linear-gradient(135deg, #1a1624f2, #171320f2);
+  box-shadow: 0 18px 50px #05030b70, 0 0 52px #8650ca12;
+}
+
+.processing-fixture .processing-title {
+  font-size: 15px;
+}
+
+.processing-fixture .processing-warning {
+  margin: 13px 0 17px;
+  padding: 9px 12px;
+}
+
+.processing-fixture .processing-warning p,
+.processing-fixture .processing-description {
+  font-size: 10px;
+}
+
+.processing-fixture .processing-description {
+  line-height: 1.5;
+  margin: 7px 0 11px;
+}
+
+.processing-fixture .processing-features {
+  gap: 18px;
+}
+
+.processing-fixture .processing-feature + .processing-feature {
+  padding-left: 18px;
+}
+
+.processing-fixture .processing-feature-heading {
+  min-height: 28px;
+}
+
+.processing-fixture .processing-feature-heading > h4 {
+  font-size: 11px;
+}
+
+.processing-fixture .processing-feature-heading > svg {
+  width: 17px;
+  height: 17px;
+}
+
+.processing-fixture .processing-state {
+  padding: 9px 11px;
+}
+
+.processing-fixture .processing-state-note {
+  font-size: 9px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

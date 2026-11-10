@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tempo · changelog fixture</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Only the avatar URL helper is needed; this render has no native IPC.
+      window.__TAURI_INTERNALS__ = {
+        convertFileSrc: path => new URL(path, location.origin).href,
+        invoke: async command => command === 'get_recommendation_context' ? { generation: 1 } : null,
+        transformCallback: () => 0,
+        unregisterCallback: () => {},
+      };
+    </script>
+    <script type="module" src="./entry.tsx"></script>
+  </body>
+</html>

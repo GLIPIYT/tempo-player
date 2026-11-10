@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1280, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Tempo 1.5.0 — твоя музыка, твои правила</title>
+  <link rel="stylesheet" href="poster.css">
+</head>
+<body>
+<svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+  <symbol id="rules" viewBox="0 0 24 24"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+  <symbol id="music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13M9 9l12-2"/><ellipse cx="6" cy="18" rx="3" ry="3"/><ellipse cx="18" cy="16" rx="3" ry="3"/></symbol>
+  <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="text" viewBox="0 0 24 24"><path d="M4 5h16M4 10h12M4 15h16M4 20h8"/></symbol>
+  <symbol id="wave" viewBox="0 0 24 24"><path d="M3 10v4m4-8v12m5-16v20m5-16v12m4-8v4"/></symbol>
+  <symbol id="chart" viewBox="0 0 24 24"><path d="M4 4v16h17M8 15v-4m5 4V7m5 8v-6"/></symbol>
+  <symbol id="heart" viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z"/></symbol>
+  <symbol id="folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z"/></symbol>
+  <symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1-3.8c-.7-.5-.3-1.7.6-1.7H17a4 4 0 0 0 4-4A9 9 0 0 0 12 3Z"/><path d="M7 11h.01M9 7h.01M14 6h.01M17 10h.01"/></symbol>
+  <symbol id="download" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4"/></symbol>
+  <symbol id="search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+  <symbol id="repeat" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4M3 11V8a2 2 0 0 1 2-2h16M7 22l-4-4 4-4m14-1v3a2 2 0 0 1-2 2H3"/></symbol>
+  <symbol id="shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Z"/><path d="m8 12 3 3 5-6"/></symbol>
+</defs></svg>
+<main class="poster" id="poster">
+  <header class="hero">
+    <div class="hero-haze"></div>
+    <div class="brand"><img src="../../brand/icon-concepts/variants/pulse-violet-cyan.png" alt=""><span>TEMPO</span></div>
+    <p class="hero-label">Обновление Tempo</p>
+    <h1>1.5.0</h1>
+    <h2>Твоя музыка.<br>Твои правила.</h2>
+    <p class="hero-copy">Собственные подборки, лирика по словам<br>и новый взгляд на всю твою медиатеку.</p>
+    <div class="hero-index"><span><svg><use href="#rules"/></svg>Свои миксы</span><i></i><span><svg><use href="#text"/></svg>Лирика</span><i></i><span><svg><use href="#chart"/></svg>Твоя история</span></div>
+    <div class="hero-line"></div>
+  </header>
+
+  <section class="chapter mixes">
+    <div class="chapter-heading"><span class="eyebrow"><svg><use href="#rules"/></svg>Свои подборки</span><h2>Собери микс.<br><em>По своим правилам.</em></h2><p>Выбирай исполнителей, жанры и источники.<br>Tempo подберёт песни из твоей музыки — и обновит микс, когда нужно.</p></div>
+    <figure class="screen wide home-screen"><img src="figures/home.png" alt="Главная Tempo с пользовательскими подборками"><figcaption><span class="live-dot"></span>Твоя подборка на главной</figcaption></figure>
+    <div class="three-features">
+      <article><svg><use href="#heart"/></svg><h3>Только нужные исполнители</h3><p>Белые и чёрные списки, доли артистов и фильтры по источникам.</p></article>
+      <article><svg><use href="#clock"/></svg><h3>Под твой час и привычки</h3><p>Время прослушивания, дослушивания и песни, к которым давно не возвращался.</p></article>
+      <article><svg><use href="#repeat"/></svg><h3>Собирается заново сама</h3><p>От 1 до 50 треков. Выбери пересборку при открытии или сохранение состава до следующего срока.</p></article>
+    </div>
+    <div class="rule-layout">
+      <div class="rule-art"><div class="orb"></div><figure class="screen rule-screen"><img src="figures/rule.png" alt="Редактор правил подборки Tempo"></figure><span class="art-caption">Название, состав и характер — всё твоё.</span></div>
+      <div class="rule-copy"><span class="small-label">Один микс. Много настроек.</span><h3>Решай, что попадёт<br>в следующий микс.</h3><div class="feature-note"><svg><use href="#rules"/></svg><div><h4>Тонкая настройка состава</h4><p>Доли жанров и исполнителей, диапазон дослушиваний и давность последнего запуска.</p></div></div><div class="feature-note"><svg><use href="#music"/></svg><div><h4>Начни с готовой подборки</h4><p>Скопируй её правило, измени условия и сохрани свой вариант.</p></div></div><div class="feature-note"><svg><use href="#search"/></svg><div><h4>Жанры за пределами библиотеки</h4><p>По желанию дополняй микс подходящими находками из SoundCloud.</p></div></div></div>
+    </div>
+  </section>
+
+  <section class="chapter lyrics">
+    <div class="chapter-heading"><span class="eyebrow"><svg><use href="#text"/></svg>Лирика в твоём ритме</span><h2>Больше контроля<br><em>над каждой строчкой.</em></h2><p>Подсветка по словам, уточнение таймингов по аудио<br>и отдельный визуализатор на всю ширину экрана.</p></div>
+    <figure class="screen wide lyrics-screen"><img src="figures/lyrics.png" alt="Лирика Tempo с подсветкой слов"><figcaption><svg><use href="#text"/></svg>Текст, движение и свет — в одном ритме</figcaption></figure>
+    <div class="three-features lyrics-notes"><article><span class="word-demo"><b>Ближе</b> к музыке</span><h3>Слово становится главным</h3><p>Текущие слова мягко выделяются, а уже спетые остаются заметнее следующих.</p></article><article><svg><use href="#wave"/></svg><h3>Опора на доступное аудио</h3><p>Вокальный анализ помогает уточнять строки. Анализ слов включается отдельно.</p></article><article><svg><use href="#palette"/></svg><h3>Весь экран под лирику</h3><p>Скрой панель трека, настрой размер текста, заполнение и движение строк.</p></article></div>
+    <figure class="processing-strip"><img src="figures/processing.png" alt="Одинаковые карточки готовности обработки лирики Tempo"></figure>
+    <p class="chapter-footnote">Анализ работает с локальным или полностью закэшированным аудио.<br>Уточнение слов остаётся экспериментальным: тайминги можно скорректировать вручную.</p>
+  </section>
+
+  <section class="chapter library">
+    <div class="chapter-heading"><span class="eyebrow"><svg><use href="#music"/></svg>Медиатека</span><h2>Знакомая музыка.<br><em>Совсем другой вид.</em></h2><p>Крупные обложки, спокойные полупрозрачные поверхности<br>и общий стиль плейлистов, альбомов, исполнителей и подборок.</p></div>
+    <figure class="screen wide library-screen"><img src="figures/library.png" alt="Обновлённый каталог альбомов Tempo"></figure>
+    <div class="three-features"><article><svg><use href="#music"/></svg><h3>Обложки на первом плане</h3><p>Плотный каталог альбомов и широкие страницы коллекций.</p></article><article><svg><use href="#heart"/></svg><h3>Привычные действия везде</h3><p>Избранное, воспроизведение и контекстные меню в едином оформлении.</p></article><article><svg><use href="#folder"/></svg><h3>Своё имя. Своя обложка.</h3><p>Создавай плейлисты с обложками из недавних песен и переименовывай прямо в шапке.</p></article></div>
+    <div class="cover-ribbon" aria-hidden="true"><img src="figures/covers/b767e2437eb375a0.jpg" alt=""><img src="figures/covers/f9c2fb818fdf694c.jpg" alt=""><img src="figures/covers/aa275eb74a632421.jpg" alt=""><img src="figures/covers/6227860a1f95943c.jpg" alt=""><img src="figures/covers/71bf1d7c0abed1ed.jpg" alt=""><img src="figures/covers/c355723f44bc55c0.jpg" alt=""><img src="figures/covers/0f38535969f67764.jpg" alt=""><img src="figures/covers/94bfbd8d5390e4fd.jpg" alt=""><img src="figures/covers/cb71f52509ad9024.jpg" alt=""></div>
+  </section>
+
+  <section class="chapter profile">
+    <div class="chapter-heading"><span class="eyebrow"><svg><use href="#chart"/></svg>Твоя история</span><h2>Сколько музыки<br><em>в твоём дне?</em></h2><p>Новый профиль собирает часто включаемые песни, исполнителей<br>и привычки прослушивания в одной картине.</p></div>
+    <div class="profile-stage"><figure class="screen wide profile-screen"><img src="figures/profile.png" alt="Новый профиль Tempo в варианте Панорама"></figure><figure class="screen history-screen"><img src="figures/history.png" alt="Подробная статистика месяца в Tempo"></figure><span class="profile-callout"><svg><use href="#arrow"/></svg>Нажми на период.<br>Узнай больше.</span></div>
+    <div class="three-features history-notes"><article><span class="type-number">Месяц <b>→</b> день <b>→</b> час</span><h3>От общей картины к деталям</h3><p>Переходи по графику до пятиминутных участков истории.</p></article><article><svg><use href="#chart"/></svg><h3>Понятные сравнения</h3><p>Время, запуски и дослушивания — относительно предыдущего активного периода.</p></article><article><svg><use href="#heart"/></svg><h3>Музыка за цифрами</h3><p>Смотри самые прослушиваемые песни и исполнителей периода. Открывай меню и включай их прямо из профиля.</p></article></div>
+    <p class="chapter-footnote">История распределяет прослушивания по времени начала сеанса.</p>
+  </section>
+
+  <section class="chapter comfort">
+    <div class="chapter-heading"><span class="eyebrow"><svg><use href="#shield"/></svg>Каждый день с Tempo</span><h2>Меньше ожидания.<br><em>Больше своей музыки.</em></h2><p>Главная помнит уже загруженные секции.<br>Сохранённые подборки остаются под рукой, пока данные обновляются.</p></div>
+    <div class="comfort-grid"><article class="comfort-lead"><div class="orb"></div><img src="../../brand/icon-concepts/variants/pulse-violet-cyan.png" alt="Знак Tempo"><h3>Открыл.<br>Вернулся.<br><em>Продолжил.</em></h3><p>Последние данные главной сохраняются между переходами по приложению.</p></article><div class="comfort-list"><article><svg><use href="#repeat"/></svg><div><h3>Подборки без лишней пересборки</h3><p>Готовые миксы используют сохранённый состав до выбранного срока обновления.</p></div></article><article><svg><use href="#download"/></svg><div><h3>Готовая модель остаётся готовой</h3><p>Проверка файлов, скачивание и анализ трека теперь показываются отдельно.</p></div></article><article><svg><use href="#folder"/></svg><div><h3>Файлы можно перемещать</h3><p>Знакомые файлы находятся в доступных папках по сохранённому отпечатку — вместе с историей, лирикой и плейлистами.</p></div></article><article><svg><use href="#wave"/></svg><div><h3>Waveform можно хранить локально</h3><p>Отдельная настройка хранит данные волны SoundCloud до 12 часов, в том числе между запусками.</p></div></article></div></div>
+  </section>
+
+  <section class="chapter details">
+    <div class="chapter-heading"><span class="eyebrow">И ещё</span><h2>Мелочи, которые<br><em>остаются с тобой.</em></h2></div>
+    <div class="detail-grid">
+      <article><svg><use href="#search"/></svg><div><h3>Поиск по сохранённой лирике</h3><p>Ищи знакомые слова, если включено кэширование текста.</p></div></article>
+      <article><svg><use href="#rules"/></svg><div><h3>Фильтры версий в обновлениях</h3><p>Отдельно показывай исправления и обновления нужного масштаба.</p></div></article>
+      <article><svg><use href="#text"/></svg><div><h3>Строки с заглавной буквы</h3><p>Новая настройка отображения, которую можно отключить.</p></div></article>
+      <article><svg><use href="#search"/></svg><div><h3>«Е» и «ё» не мешают поиску</h3><p>Названия находятся в обоих вариантах написания.</p></div></article>
+      <article><svg><use href="#heart"/></svg><div><h3>Подборки в своём порядке</h3><p>Перетаскивай их и скрывай до следующей сборки.</p></div></article>
+      <article><svg><use href="#shield"/></svg><div><h3>Удаление с подтверждением</h3><p>Общие новые окна для плейлистов и своих правил.</p></div></article>
+      <article><svg><use href="#palette"/></svg><div><h3>Новая иконка за пределами окна</h3><p>Актуальный знак Tempo в системных ресурсах приложения.</p></div></article>
+      <article><svg><use href="#music"/></svg><div><h3>Единый стиль коллекций</h3><p>Одинаковые избранное, отступы и действия на похожих страницах.</p></div></article>
+    </div>
+  </section>
+
+  <footer class="closing"><div class="closing-light"></div><div class="closing-mark"><img src="../../brand/icon-concepts/variants/pulse-violet-cyan.png" alt=""><span>TEMPO <b>1.5.0</b></span></div><h2>Твой темп.<br><em>Твой выбор.</em></h2><a href="https://github.com/GLIPIYT/tempo-player">github.com/GLIPIYT/tempo-player <svg><use href="#arrow"/></svg></a><p>Собрано из настоящих компонентов Tempo.</p></footer>
+</main>
+</body>
+</html>

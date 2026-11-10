@@ -13,17 +13,37 @@
 </p>
 
 <p align="center">
-  <a href="docs/screenshots/1.0.0/">
-    <img src="docs/screenshots/tempo-showcase-en.png" alt="Tempo walkthrough: Home, library, albums, artists, playlists, search, playback, lyrics, profile and settings" width="100%">
+  <a href="docs/design/changelog-1.5.0/tempo-1.5.0-changelog.webp">
+    <img src="docs/design/changelog-1.5.0/figures/home.png" alt="A personal mix rule in Tempo 1.5" width="100%">
   </a>
 </p>
+
+## Tempo 1.5 — your music, your rules
+
+A very large update: personal mixes, a new profile, detailed listening history, and more ways to follow your lyrics.
+
+- **Build your own mix.** Pick artists, genres, sources, listening hours and habits. Choose 1–50 songs and a rebuild interval. Copy a starting rule, reorder your mixes and rediscover forgotten tracks.
+- **Explore your listening day.** Open a month, day or hour in the chart. Compare time, plays and completion with the previous active period, and discover which songs and artists led the way.
+- **Follow every word.** Synced lyrics, word highlighting, a separate visualizer and a full-width focus view. Optional timing refinement uses local or fully cached audio; word analysis remains experimental.
+- **Enjoy your refreshed library.** New playlist, album, artist and profile pages. Pick artwork for a new playlist, rename it in its header and use familiar context actions throughout.
+
+<p align="center"><img src="docs/design/changelog-1.5.0/figures/profile.png" alt="Tempo profile, listening chart and a real music collection" width="100%"></p>
+
+<details>
+<summary><strong>Explore the 1.5 update in pictures</strong></summary>
+
+![Tempo 1.5.0 — visual changelog in Russian](docs/design/changelog-1.5.0/tempo-1.5.0-changelog.webp)
+
+</details>
+
+[What’s new in 1.5.0](docs/releases/v1.5.0.md) · [Download Tempo](https://github.com/GLIPIYT/tempo-player/releases/latest)
 
 ## What Tempo brings together
 
 - **Your local library.** Scan folders with MP3, FLAC, M4A, AAC, OGG, Opus and WAV files. Tempo reads track tags and artwork, then lets you browse by track, album, artist or playlist. Your original music files stay where they are.
 - **Online discovery.** Search SoundCloud and YouTube Music beside your own tracks. Build a queue from what you find, and cache supported tracks for later playback.
 - **A player you can tune.** Use playlists, shuffle, repeat, playback speed, crossfade and loudness normalization. The ten-band equalizer works with local and cached audio; choose a waveform or spectrum visualizer.
-- **Lyrics and listening history.** Follow synced lyrics, adjust their timing or edit the text. Your profile shows listening activity and recent plays.
+- **Lyrics and listening history.** Follow synced lines and words, edit lyrics or combine text with another version’s timings. Your profile opens listening details by month, day and hour.
 - **A space that feels personal.** Choose themes, backgrounds, fonts and interface scale. Tempo also includes a floating mini player, Discord Rich Presence and M3U8 playlist import and export.
 - **Recommendations on Home.** Browse a SoundCloud recommendation feed and a separate shelf for a frequently played genre.
 
