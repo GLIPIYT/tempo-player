@@ -26,6 +26,7 @@ import EmptyState from '../components/common/EmptyState'
 import TrackSourceIcon from '../components/common/TrackSourceIcon'
 import TrackMenu, { type TrackMenuHandle } from '../components/common/TrackMenu'
 import { beginTrackDrag } from '../dnd/trackDrag'
+import { normalizeSearchText } from '../utils/searchText'
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
@@ -127,8 +128,8 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const baseItems = detail.data ?? []
   const items = orderOverride ?? baseItems
   const tracks: Track[] = items.map((p) => p.track)
-  const search = query.trim().toLocaleLowerCase()
-  const shownItems = items.filter(item => `${item.track.title} ${item.track.artistName ?? ''}`.toLocaleLowerCase().includes(search))
+  const search = normalizeSearchText(query.trim())
+  const shownItems = items.filter(item => normalizeSearchText(`${item.track.title} ${item.track.artistName ?? ''}`).includes(search))
   const playlist = (lists.data ?? []).find((pl) => pl.id === playlistId)
 
   const reloadAll = () => {

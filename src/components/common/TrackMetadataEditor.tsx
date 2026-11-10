@@ -14,6 +14,7 @@ import type {
 } from '../../types/models'
 import { useT } from '../../i18n'
 import { bumpLibraryVersion } from '../../utils/libraryVersion'
+import { normalizeSearchText } from '../../utils/searchText'
 import Cover from './Cover'
 import './track-metadata-editor.css'
 
@@ -127,9 +128,9 @@ export default function TrackMetadataEditor({ track, onClose, onSaved }: TrackMe
             }))
           } else {
             const list: Playlist[] = await api.listPlaylists()
-            const query = libraryQuery.trim().toLocaleLowerCase()
+            const query = normalizeSearchText(libraryQuery.trim())
             results = list
-              .filter((item) => item.name.toLocaleLowerCase().includes(query))
+              .filter((item) => normalizeSearchText(item.name).includes(query))
               .map((item) => ({
                 id: item.id,
                 kind: 'playlist',

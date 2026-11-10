@@ -5,6 +5,7 @@ import type { AsrRequest, AsrResponse } from './workerProtocol'
 
 const input: AnalysisTrackInput = { track: { dbId: 1, source: 'local', sourceId: '1' }, durationSec: 30, offsetMs: 0,
   lyricKey: 'lyrics@0', sourceLyricKey: 'lyrics', sourceLines: [{ timeSec: 2, text: 'Silver rivers' }, { timeSec: 18, text: 'Golden mountains' }] }
+const activeRunners = new Set<ReturnType<typeof createLyricsAnalysisRunner>>()
 function setup(saved?: AudioAnalysis) {
   let stored = saved ?? null
   const calls: { time: number; request: AsrRequest }[] = []
@@ -40,10 +41,15 @@ function setup(saved?: AudioAnalysis) {
     }),
   }
   const runner = createLyricsAnalysisRunner(deps)
+  activeRunners.add(runner)
   return { runner, deps, calls, writes, saved: () => stored, counts: () => ({ decodes, ensures, disposed }) }
 }
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0) })
-afterEach(() => { vi.useRealTimers() })
+afterEach(() => {
+  for (const runner of activeRunners) runner.stop()
+  activeRunners.clear()
+  vi.useRealTimers()
+})
 it('serializes work, checkpoints empty windows and enforces 9x measured work pause across seek/provider change', async () => {
   const { runner, calls, writes } = setup()
   runner.setEnabled(true); runner.setTrack(input); runner.setPosition(2, true)
@@ -52,12 +58,14 @@ it('serializes work, checkpoints empty windows and enforces 9x measured work pau
   expect(writes.filter(w => w.completedFragment)).toHaveLength(1)
   runner.setPosition(20, true)
   runner.setTrack({ ...input, lyricKey: 'other', sourceLyricKey: 'other' })
-  await vi.advanceTimersByTimeAsync(929)
+  const firstInference = calls.find(call => call.request.type === 'transcribe')!
+  const nextAllowedAt = firstInference.time + 1000
+  await vi.advanceTimersByTimeAsync(Math.max(0, nextAllowedAt - Date.now() - 1))
   expect(calls.filter(c => c.request.type === 'transcribe')).toHaveLength(1)
-  await vi.advanceTimersByTimeAsync(1000)
+  await vi.advanceTimersByTimeAsync(1)
   const inference = calls.filter(c => c.request.type === 'transcribe')
   expect(inference).toHaveLength(2)
-  expect(inference[1].time - (inference[0].time + 100)).toBeGreaterThanOrEqual(1080)
+  expect(inference[1].time - (inference[0].time + 100)).toBeGreaterThanOrEqual(900)
   await vi.advanceTimersByTimeAsync(5000)
   expect(calls.filter(c => c.request.type === 'transcribe')).toHaveLength(2)
   expect(runner.getSnapshot().phase).toBe('complete')
@@ -254,4 +262,74 @@ it('waits for a slow cache restore before position updates can start decoding', 
   expect(counts().decodes).toBe(0)
   runner.stop()
   await vi.advanceTimersByTimeAsync(500)
+})
+it('does not leave a paused track in waiting after clearing its queued timer', async () => {
+  const { runner, calls } = setup()
+  runner.setEnabled(true); runner.setTrack(input); runner.setPosition(2, true)
+  await vi.advanceTimersByTimeAsync(20)
+  expect(runner.getSnapshot().phase).toBe('waiting')
+
+  runner.setPosition(2, false)
+  expect(runner.getSnapshot().phase).toBe('paused')
+  await vi.advanceTimersByTimeAsync(500)
+  expect(calls.filter(call => call.request.type === 'transcribe')).toHaveLength(0)
+  expect(runner.getSnapshot().phase).toBe('paused')
+
+  runner.setPosition(2, true)
+  await vi.advanceTimersByTimeAsync(2000)
+  expect(calls.filter(call => call.request.type === 'transcribe')).toHaveLength(2)
+  runner.stop()
+})
+
+it('resumes a cached partial word analysis after a delayed decode and repeated playback updates', async () => {
+  const sourceLyricKey = 'partial-source'
+  const sourceLines = [
+    { timeSec: 2, text: 'Silver rivers', endTimeSec: 5, endSource: 'manual' as const },
+    { timeSec: 18, text: 'Golden mountains', endTimeSec: 22, endSource: 'manual' as const },
+  ]
+  const cached: AudioAnalysis = { fingerprint: 'audio', algorithmVersion: LYRIC_ANALYSIS_ALGORITHM_VERSION,
+    modelRevision: LYRIC_MODEL_REVISION, durationSec: 30, bpm: 120, bpmConfidence: 1, fragments: [], lyricMatches: [],
+    alignedSources: [{ sourceLyricKey, lineIndex: 0, sourceText: 'Silver rivers', sourceStartSec: 2, sourceEndSec: 5,
+      confidence: 0.95, words: [{ text: 'Silver', startSec: 2.2, endSec: 2.8 }, { text: 'rivers', startSec: 3, endSec: 4 }] }] }
+  const { runner, deps } = setup(cached)
+  const requests: AsrRequest[] = []
+  const ensureModel = deps.native.ensureModel
+  deps.native.ensureModel = async () => {
+    await new Promise(resolve => setTimeout(resolve, 120))
+    return ensureModel()
+  }
+  deps.decode = async (_identity, signal) => {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    signal.throwIfAborted()
+    return { pcm: new Float32Array(480000), sampleRate: 16000, durationSec: 30 }
+  }
+  deps.worker = () => ({ dispose() {}, request: async request => {
+    requests.push(request)
+    if (request.type === 'init') return { type: 'ready', jobId: request.jobId }
+    if (request.type === 'align-known-text') return { type: 'alignment', jobId: request.jobId,
+      alignmentId: request.alignmentId, confidence: 0.95, elapsedMs: 1,
+      words: [{ text: 'Golden', startSec: 18.2, endSec: 18.9 }, { text: 'mountains', startSec: 19.1, endSec: 20.2 }] }
+    return { type: 'result', jobId: request.jobId, fragmentId: request.fragmentId, words: [], elapsedMs: 1 }
+  } })
+
+  runner.setEnabled(true)
+  runner.setWordTimingsEnabled(true)
+  runner.setTrack({ ...input, sourceLines, sourceLyricKey, lyricKey: `${sourceLyricKey}@0` })
+  runner.setPosition(2, true)
+  await vi.advanceTimersByTimeAsync(100)
+  expect(runner.getSnapshot().phase).toBe('waiting')
+
+  const positionUpdates = setInterval(() => runner.setPosition(2.1, true), 50)
+  await vi.advanceTimersByTimeAsync(890)
+  expect(runner.getSnapshot().phase).toBe('waiting')
+  await vi.advanceTimersByTimeAsync(110)
+  clearInterval(positionUpdates)
+  expect(runner.getSnapshot().phase).toBe('analyzing')
+  expect(requests.some(request => request.type === 'align-known-text')).toBe(false)
+  await vi.advanceTimersByTimeAsync(100)
+
+  expect(requests.some(request => request.type === 'align-known-text' && request.alignmentId.includes(':1:'))).toBe(true)
+  expect(runner.getSnapshot().analysis.matchedWords?.some(match => match.lineIndex === 1)).toBe(true)
+  expect(runner.getSnapshot().phase).toBe('complete')
+  runner.stop()
 })

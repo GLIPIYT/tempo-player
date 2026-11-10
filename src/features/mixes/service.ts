@@ -24,6 +24,9 @@ const MAX_ARTIST_SEEDS = 2
 const MAX_TRACK_SEEDS = 2
 const PERSONAL_ACOUSTIC_AFFINITY_MIN = 0.3
 
+let cachedRules: CustomMixRule[] | null = null
+const cachedSnapshots = new Map<number, CustomMixSnapshot | null>()
+
 export interface OnlineGenreAugmentationOptions {
   maxGenres?: number
   pageSize?: number
@@ -44,20 +47,35 @@ export interface GenerateCustomMixSelectionOptions {
 
 const pendingGenerations = new Map<string, Promise<CustomMixGeneratedSelection>>()
 
-export const listCustomMixRules = (): Promise<CustomMixRule[]> =>
-  invoke<CustomMixRule[]>('list_custom_mix_rules').then((rules) => rules.map(normalizeCustomMixRule))
+export const listCustomMixRules = async (): Promise<CustomMixRule[]> => {
+  const rules = (await invoke<CustomMixRule[]>('list_custom_mix_rules')).map(normalizeCustomMixRule)
+  rememberCustomMixRules(rules)
+  return rules.map(normalizeCustomMixRule)
+}
 
-export const saveCustomMixRule = async (rule: CustomMixRule): Promise<CustomMixRule> =>
-  normalizeCustomMixRule(await invoke<CustomMixRule>('save_custom_mix_rule', { rule: normalizeCustomMixRule(rule) }))
+export const saveCustomMixRule = async (rule: CustomMixRule): Promise<CustomMixRule> => {
+  const saved = normalizeCustomMixRule(await invoke<CustomMixRule>('save_custom_mix_rule', { rule: normalizeCustomMixRule(rule) }))
+  const rules = (cachedRules ?? []).filter((current) => current.id !== saved.id)
+  rules.unshift(saved)
+  rememberCustomMixRules(rules)
+  return normalizeCustomMixRule(saved)
+}
 
-export const deleteCustomMixRule = (ruleId: number): Promise<void> =>
-  invoke<void>('delete_custom_mix_rule', { ruleId })
+export const deleteCustomMixRule = async (ruleId: number): Promise<void> => {
+  await invoke<void>('delete_custom_mix_rule', { ruleId })
+  cachedRules = cachedRules?.filter((rule) => rule.id !== ruleId) ?? null
+  cachedSnapshots.delete(ruleId)
+}
 
 export const getCustomMixCandidates = (): Promise<CustomMixCandidate[]> =>
   invoke<CustomMixCandidate[]>('get_custom_mix_candidates')
 
-export const getCustomMixSnapshot = (ruleId: number): Promise<CustomMixSnapshot | null> =>
-  invoke<CustomMixSnapshot | null>('get_custom_mix_snapshot', { ruleId })
+export async function getCustomMixSnapshot(ruleId: number): Promise<CustomMixSnapshot | null> {
+  if (cachedSnapshots.has(ruleId)) return cloneSnapshot(cachedSnapshots.get(ruleId) ?? null)
+  const snapshot = await invoke<CustomMixSnapshot | null>('get_custom_mix_snapshot', { ruleId })
+  cachedSnapshots.set(ruleId, cloneSnapshot(snapshot))
+  return cloneSnapshot(snapshot)
+}
 
 /**
  * Read a still-valid persisted selection without loading the candidate library.
@@ -82,8 +100,71 @@ export async function getReusableCustomMixSnapshot(
   return { tracks: saved.tracks, warnings: saved.warnings, generatedAt: saved.generatedAt, fromCache: true }
 }
 
-export const saveCustomMixSnapshot = (ruleId: number, snapshot: CustomMixSnapshot): Promise<void> =>
-  invoke<void>('save_custom_mix_snapshot', { ruleId, snapshot })
+/** Return a rule-matching saved selection for immediate display, even when its cadence is due. */
+export async function getDisplayableCustomMixSnapshot(
+  rawRule: CustomMixRule,
+): Promise<CustomMixGeneratedSelection | null> {
+  const rule = normalizeCustomMixRule(rawRule)
+  if (rule.id == null) return null
+  const snapshot = await getCustomMixSnapshot(rule.id)
+  if (!isDisplayableSnapshot(rule, snapshot)) return null
+  return rememberSnapshot(rule, snapshot!)
+}
+
+export interface CustomMixMemoryState {
+  rules: CustomMixRule[]
+  selections: { ruleId: number; fingerprint: string; selection: CustomMixGeneratedSelection }[]
+}
+
+/** A warm, process-local view for returning to Home while disk refresh runs. */
+export function getCustomMixMemoryState(): CustomMixMemoryState {
+  const rules = (cachedRules ?? []).map(normalizeCustomMixRule)
+  const selections = rules.flatMap((rule) => {
+    if (rule.id == null) return []
+    const snapshot = cachedSnapshots.get(rule.id)
+    if (!isDisplayableSnapshot(rule, snapshot)) return []
+    return [{ ruleId: rule.id, fingerprint: customMixRuleFingerprint(rule), selection: selectionFromSnapshot(snapshot!) }]
+  })
+  return { rules, selections }
+}
+
+export const saveCustomMixSnapshot = async (ruleId: number, snapshot: CustomMixSnapshot): Promise<void> => {
+  await invoke<void>('save_custom_mix_snapshot', { ruleId, snapshot })
+  cachedSnapshots.set(ruleId, cloneSnapshot(snapshot))
+}
+
+function cloneSnapshot(snapshot: CustomMixSnapshot | null): CustomMixSnapshot | null {
+  if (!snapshot) return null
+  return { ...snapshot, tracks: snapshot.tracks.map((track) => ({ ...track })), warnings: [...snapshot.warnings] }
+}
+
+function isDisplayableSnapshot(
+  rule: CustomMixRule,
+  snapshot: CustomMixSnapshot | null | undefined,
+): snapshot is CustomMixSnapshot {
+  return rule.id != null && Boolean(snapshot) && Array.isArray(snapshot!.tracks) && snapshot!.tracks.length > 0
+    && Array.isArray(snapshot!.warnings) && Number.isFinite(snapshot!.generatedAt)
+    && snapshot!.ruleFingerprint === customMixRuleFingerprint(rule)
+}
+
+function selectionFromSnapshot(snapshot: CustomMixSnapshot): CustomMixGeneratedSelection {
+  return { tracks: snapshot.tracks.map((track) => ({ ...track })), warnings: [...snapshot.warnings],
+    generatedAt: snapshot.generatedAt, fromCache: true }
+}
+
+function rememberSnapshot(rule: CustomMixRule, snapshot: CustomMixSnapshot): CustomMixGeneratedSelection {
+  if (rule.id != null) cachedSnapshots.set(rule.id, cloneSnapshot(snapshot))
+  return selectionFromSnapshot(snapshot)
+}
+
+function rememberCustomMixRules(rules: readonly CustomMixRule[]): void {
+  cachedRules = rules.map(normalizeCustomMixRule)
+  const current = new Map(cachedRules.flatMap((rule) => rule.id == null ? [] : [[rule.id, rule] as const]))
+  for (const [id, snapshot] of cachedSnapshots) {
+    const rule = current.get(id)
+    if (!rule || !isDisplayableSnapshot(rule, snapshot)) cachedSnapshots.delete(id)
+  }
+}
 
 async function generateCustomMixSelectionNow(
   rawRule: CustomMixRule,
@@ -170,6 +251,8 @@ export const customMixService = {
   getCandidates: getCustomMixCandidates,
   getSnapshot: getCustomMixSnapshot,
   getReusableSnapshot: getReusableCustomMixSnapshot,
+  getDisplayableSnapshot: getDisplayableCustomMixSnapshot,
+  getMemoryState: getCustomMixMemoryState,
   saveSnapshot: saveCustomMixSnapshot,
   generate: generateCustomMixSelection,
   augmentOnlineGenre: augmentOnlineGenreCandidates,

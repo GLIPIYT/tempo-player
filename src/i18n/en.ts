@@ -1,4 +1,10 @@
 export const en: Record<string, string> = {
+  'Compared with': 'Compared with',
+  'No previous period': 'No earlier active period',
+  'Loading comparison': 'Loading comparison',
+  'Could not load comparison': 'Could not load comparison',
+  'Previous value': 'previous value',
+  'Current value': 'current value',
   'hours short': 'h',
   'minutes short': 'min',
   'Beta tester': 'Beta tester',
@@ -51,6 +57,7 @@ export const en: Record<string, string> = {
   'Use vocal timing analysis': 'Use vocal timing analysis',
   'Use speech recognition for word timing': 'Use speech recognition for word timing',
   'Only used in word-by-word mode': 'Only used in word-by-word mode',
+  'Paused — play to analyze': 'Paused — play to analyze',
   'Vocal timing analysis failed': 'Vocal timing analysis failed',
   'On repeat': 'On repeat',
   'New to you': 'New to you',

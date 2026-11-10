@@ -3,6 +3,7 @@ import type { ScTrack, UnifiedTrack } from '../types/models'
 import type { MusicProvider, SearchHit } from './provider'
 import { rememberSoundCloudTrack } from '../soundcloud/cacheMetadata'
 import { canPlaySoundCloudTrack } from '../soundcloud/playability'
+import { normalizeProviderSearchQuery } from '../utils/searchText'
 
 export function scTrackToUnified(t: ScTrack): UnifiedTrack {
   rememberSoundCloudTrack(t)
@@ -40,7 +41,7 @@ export const soundcloudProvider: MusicProvider = {
   },
   async search(query: string): Promise<SearchHit[]> {
     if (!query.trim()) return []
-    const tracks = await api.scSearchTracks(query, 50, 0)
+    const tracks = await api.scSearchTracks(normalizeProviderSearchQuery(query), 50, 0)
     return tracks.map<SearchHit>(t => ({ kind: 'track', track: scTrackToUnified(t) }))
   },
 }

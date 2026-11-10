@@ -1,9 +1,35 @@
+import { buildArtworkSources } from './artworkFallback'
+
 /** Build image candidates for a cover without changing its normal card size. */
 export function buildCoverSources(path: string | null | undefined, preferOriginal = false): string[] {
   if (!path) return []
 
   const original = preferOriginal ? originalYoutubeArtworkUrl(path) : null
-  return original && original !== path ? [original, path] : [path]
+  if (original && original !== path) return [original, path]
+
+  // SoundCloud's t500 rendition can fail transiently while its alternate `large`
+  // sibling is still available. Keep the exact saved URL first for existing UI.
+  const soundCloud = buildArtworkSources(path)
+  return soundCloud.length > 1 ? soundCloud : [path]
+}
+
+export interface CoverSourceRetry {
+  source: string
+  attempt: number
+}
+
+export const MAX_COVER_SOURCE_RETRIES = 2
+
+/** Retry a transient image failure a bounded number of times before trying a fallback source. */
+export function nextCoverSourceRetry(source: string, current: CoverSourceRetry | null): CoverSourceRetry | null {
+  const attempts = current?.source === source ? current.attempt : 0
+  if (attempts >= MAX_COVER_SOURCE_RETRIES) return null
+  return { source, attempt: attempts + 1 }
+}
+
+/** Leave a short gap so temporary local asset or network failures can recover. */
+export function coverSourceRetryDelay(attempt: number): number {
+  return Math.min(800, 160 * 2 ** Math.max(0, attempt - 1))
 }
 
 /**

@@ -23,6 +23,7 @@ import type {
   CustomMixRule,
 } from '../features/mixes/types'
 import { mixMessage } from '../features/mixes/messages'
+import { normalizeSearchText } from '../utils/searchText'
 
 export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
   const t = useT()
@@ -84,7 +85,8 @@ export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
       )
     return invalidateGeneration
   }, [initialMix.key, generate, invalidateGeneration])
-  const shownTracks = mix.tracks.filter(track => `${track.title} ${track.artistName ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+  const search = normalizeSearchText(query.trim())
+  const shownTracks = mix.tracks.filter(track => normalizeSearchText(`${track.title} ${track.artistName ?? ''}`).includes(search))
   const refreshMinutes = mix.rule?.refreshIntervalMinutes ?? 0
   useEffect(() => {
     if (refreshMinutes <= 0) return

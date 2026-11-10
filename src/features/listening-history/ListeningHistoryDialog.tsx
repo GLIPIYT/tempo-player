@@ -9,7 +9,7 @@ import { useSettings } from '../../state/settings'
 import { useNav } from '../../state/nav'
 import Cover from '../../components/common/Cover'
 import { useExitTransition } from '../../components/common/useExitTransition'
-import { historyDateLabel, historyHours, hourlyLine, smoothHourlyLine, listeningPeriod, previousListeningSelection, localDateKey, type ListeningSelection } from './period'
+import { historyDateLabel, historyHours, hourlyLine, smoothHourlyLine, listeningPeriod, listeningComparisonPeriod, localDateKey, type ListeningComparisonPeriod, type ListeningSelection } from './period'
 import AnimatedValue from './AnimatedValue'
 import AnimatedDelta from './AnimatedDelta'
 import { FeaturedTracks } from './FeaturedTracks'
@@ -17,14 +17,71 @@ import './history-dialog.css'
 
 const hour = (time: number, lang: 'ru' | 'en') => new Date(time * 1000).toLocaleTimeString(lang === 'ru' ? 'ru-RU' : 'en-US', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
-function PeriodContent({ selection, stats, previous, lang, onDay, onHour }: {
-  selection: ListeningSelection; stats: ListeningPeriodStats; previous: ListeningPeriodStats | null; lang: 'ru' | 'en'; onDay: (date: string) => void; onHour: (time: number) => void
+function comparisonPeriodLabel(period: ListeningComparisonPeriod, lang: 'ru' | 'en') {
+  if (period.kind === 'month' || period.kind === 'day') return historyDateLabel(period.from, lang, period.kind)
+  return `${historyDateLabel(period.from, lang, 'day')} ${hour(period.from, lang)}–${hour(period.to, lang)}`
+}
+
+function hoverComparisonKind(kind: ListeningSelection['kind']): ListeningComparisonPeriod['kind'] {
+  return kind === 'month' ? 'day' : kind === 'day' ? 'hour' : 'fiveMinutes'
+}
+
+interface PeriodComparison {
+  key: string
+  period: ListeningComparisonPeriod | null
+  stats: ListeningPeriodStats | null
+  error?: boolean
+}
+
+type ListeningPeriodRequestCache = Map<string, Promise<ListeningPeriodStats>>
+
+function requestListeningPeriod(cache: ListeningPeriodRequestCache, boundaries: number[], referenceBefore?: number) {
+  const key = `${boundaries.join(',')}:ref=${referenceBefore ?? ''}`
+  const cached = cache.get(key)
+  if (cached) return cached
+  const request = api.getListeningPeriod(boundaries, referenceBefore).catch(error => {
+    cache.delete(key)
+    throw error
+  })
+  cache.set(key, request)
+  if (cache.size > 128) {
+    const oldest = cache.keys().next().value
+    if (oldest !== undefined) cache.delete(oldest)
+  }
+  return request
+}
+
+function PeriodContent({ selection, stats, previous, previousError, previousLoading, requestCache, lang, onDay, onHour }: {
+  selection: ListeningSelection; stats: ListeningPeriodStats; previous: PeriodComparison | null; previousError: boolean; previousLoading: boolean; requestCache: ListeningPeriodRequestCache; lang: 'ru' | 'en'; onDay: (date: string) => void; onHour: (time: number) => void
 }) {
   const t = useT()
   const { navigate } = useNav()
   const [hover, setHover] = useState<number | null>(null)
+  const hoverCache = useRef(new Map<string, Promise<PeriodComparison>>())
   const gradient = useId().replace(/:/gu, '')
   const selected = hover === null ? null : stats.buckets[hover]
+  const hoverKey = selected ? `${stats.from}:${stats.to}:${selection.kind}:${selected.from}:${selected.to}` : ''
+  const hoverRequest = useAsync(async () => {
+    if (!selected) return null
+    const cached = hoverCache.current.get(hoverKey)
+    if (cached) return cached
+    const comparison = (async (): Promise<PeriodComparison> => {
+      try {
+        const lookup = await requestListeningPeriod(requestCache, [selected.from, selected.to], selected.from)
+        if (lookup.from !== selected.from || lookup.to !== selected.to || lookup.previousActiveAt == null) return { key: hoverKey, period: null, stats: null }
+        const period = listeningComparisonPeriod(lookup.previousActiveAt, hoverComparisonKind(selection.kind))
+        const previousStats = await requestListeningPeriod(requestCache, period.boundaries)
+        if (previousStats.from !== period.from || previousStats.to !== period.to) return { key: hoverKey, period: null, stats: null }
+        return { key: hoverKey, period, stats: previousStats }
+      } catch {
+        hoverCache.current.delete(hoverKey)
+        return { key: hoverKey, period: null, stats: null, error: true }
+      }
+    })()
+    hoverCache.current.set(hoverKey, comparison)
+    return comparison
+  }, [hoverKey])
+  const hoveredComparison = hoverRequest.data?.key === hoverKey ? hoverRequest.data : null
   const max = Math.max(60, ...stats.buckets.map(bucket => bucket.listenedSec))
   const line = (selection.kind === 'hour' ? smoothHourlyLine : hourlyLine)(stats.buckets.map(bucket => bucket.listenedSec))
   const title = historyDateLabel(selected?.from ?? stats.from, lang, selection.kind === 'month' && selected === null ? 'month' : 'day')
@@ -39,9 +96,14 @@ function PeriodContent({ selection, stats, previous, lang, onDay, onHour }: {
     uniqueTracks: selected.uniqueTracks ?? 0 } : { listenedSec: stats.totalListenedSec, plays: stats.plays,
     completedPlays: stats.completedPlays, completionPct: stats.completionPct, uniqueTracks: stats.uniqueTracks }
   const formatHours = useMemo(() => (value: number) => (Math.max(0, value) / durationDivisor).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US', { maximumFractionDigits: durationDivisor === 1 ? 0 : 2 }), [lang, durationDivisor])
-  const oldBucket = hover === null ? null : previous?.buckets[hover]
-  const old = previous && hover === null ? { listenedSec: previous.totalListenedSec, plays: previous.plays, completionPct: previous.completionPct, uniqueTracks: previous.uniqueTracks }
-    : oldBucket ? { listenedSec: oldBucket.listenedSec, plays: oldBucket.plays, completionPct: oldBucket.completionPct ?? (oldBucket.plays ? oldBucket.completedPlays / oldBucket.plays * 100 : 0), uniqueTracks: oldBucket.uniqueTracks ?? 0 } : null
+  const comparison = hover === null ? previous : hoveredComparison
+  const old = comparison?.stats ? { listenedSec: comparison.stats.totalListenedSec, plays: comparison.stats.plays,
+    completionPct: comparison.stats.completionPct, uniqueTracks: comparison.stats.uniqueTracks } : null
+  const comparisonLabel = comparison?.period ? comparisonPeriodLabel(comparison.period, lang)
+    : hover === null && previousLoading ? t('Loading comparison')
+      : hover !== null && hoverRequest.loading ? t('Loading comparison')
+        : hover === null && previousError || hover !== null && hoveredComparison?.error ? t('Could not load comparison')
+          : t('No previous period')
   const formatNumber = useMemo(() => (value: number) => Math.round(value).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US'), [lang])
   const formatPercent = useMemo(() => (value: number) => `${Math.round(value)}%`, [])
   return (
@@ -92,10 +154,10 @@ function PeriodContent({ selection, stats, previous, lang, onDay, onHour }: {
       </div>
       <p className="history-chart-note">{t(selection.kind === 'month' ? 'By day' : selection.kind === 'day' ? 'By hour' : 'By five minutes')}{selection.kind === 'hour' ? ` · ${t('By listening start time')}` : ''}</p>
       <div className="history-summary">
-        <div><Clock3 size={16} /><div className="history-stat-main"><strong><AnimatedValue value={summary.listenedSec} format={formatHours} /></strong><AnimatedDelta current={summary.listenedSec} previous={old?.listenedSec ?? null} /></div><span>{t(unit)}</span></div>
-        <div><Headphones size={16} /><div className="history-stat-main"><strong><AnimatedValue value={summary.plays} format={formatNumber} /></strong><AnimatedDelta current={summary.plays} previous={old?.plays ?? null} /></div><span>{t('Listens')}</span></div>
-        <div><CheckCircle2 size={16} /><div className="history-stat-main"><strong><AnimatedValue value={summary.plays ? summary.completionPct : null} format={formatPercent} /></strong><AnimatedDelta current={summary.completionPct} previous={old?.completionPct ?? null} /></div><span>{t('Completion rate')}{summary.plays > 0 ? ` · ${summary.completedPlays}/${summary.plays}` : ''}</span></div>
-        <div><Music2 size={16} /><div className="history-stat-main"><strong><AnimatedValue value={summary.uniqueTracks} format={formatNumber} /></strong><AnimatedDelta current={summary.uniqueTracks} previous={old?.uniqueTracks ?? null} /></div><span>{t('Unique tracks')}</span></div>
+        <div><Clock3 size={16} /><div className="history-stat-main"><strong><AnimatedValue value={summary.listenedSec} format={formatHours} /></strong><AnimatedDelta current={summary.listenedSec} previous={old?.listenedSec ?? null} referenceLabel={comparisonLabel} formatValue={formatHours} /></div><span>{t(unit)}</span></div>
+        <div><Headphones size={16} /><div className="history-stat-main"><strong><AnimatedValue value={summary.plays} format={formatNumber} /></strong><AnimatedDelta current={summary.plays} previous={old?.plays ?? null} referenceLabel={comparisonLabel} formatValue={formatNumber} /></div><span>{t('Listens')}</span></div>
+        <div><CheckCircle2 size={16} /><div className="history-stat-main"><strong><AnimatedValue value={summary.plays ? summary.completionPct : null} format={formatPercent} /></strong><AnimatedDelta current={summary.plays ? summary.completionPct : null} previous={old?.plays ? old.completionPct : null} referenceLabel={comparisonLabel} formatValue={formatPercent} /></div><span>{t('Completion rate')}{summary.plays > 0 ? ` · ${summary.completedPlays}/${summary.plays}` : ''}</span></div>
+        <div><Music2 size={16} /><div className="history-stat-main"><strong><AnimatedValue value={summary.uniqueTracks} format={formatNumber} /></strong><AnimatedDelta current={summary.uniqueTracks} previous={old?.uniqueTracks ?? null} referenceLabel={comparisonLabel} formatValue={formatNumber} /></div><span>{t('Unique tracks')}</span></div>
       </div>
       {stats.plays > 0 ? <div className="history-favorites">
         <div className="history-favorite">
@@ -121,12 +183,26 @@ export default function ListeningHistoryDialog({ initialSelection, onClose }: { 
   const [selection, setSelection] = useState(initialSelection)
   const [zoom, setZoom] = useState<'in' | 'out' | null>(null)
   const [zoomOrigin, setZoomOrigin] = useState(50)
+  const requestCache = useRef<ListeningPeriodRequestCache>(new Map())
   const period = useMemo(() => listeningPeriod(selection), [selection])
-  const request = useAsync(() => api.getListeningPeriod(period.boundaries), [period.from, period.to])
-  const previousPeriod = useMemo(() => listeningPeriod(previousListeningSelection(selection)), [selection])
-  const previousRequest = useAsync(() => api.getListeningPeriod(previousPeriod.boundaries), [previousPeriod.from, previousPeriod.to])
-  const previousStats = previousRequest.data?.from === previousPeriod.from && previousRequest.data?.to === previousPeriod.to ? previousRequest.data : null
+  const request = useAsync(() => requestListeningPeriod(requestCache.current, period.boundaries, period.from), [selection.kind, period.from, period.to])
   const stats = request.data?.from === period.from && request.data?.to === period.to ? request.data : null
+  const previousRequestKey = `${selection.kind}:${period.from}:${period.to}:${stats?.previousActiveAt ?? 'pending'}`
+  const previousRequest = useAsync(async (): Promise<PeriodComparison> => {
+    const key = previousRequestKey
+    if (!stats || stats.previousActiveAt == null) return { key, period: null, stats: null }
+    try {
+      const previousPeriod = listeningComparisonPeriod(stats.previousActiveAt, selection.kind)
+      const previousStats = await requestListeningPeriod(requestCache.current, previousPeriod.boundaries)
+      if (previousStats.from !== previousPeriod.from || previousStats.to !== previousPeriod.to) return { key, period: null, stats: null }
+      return { key, period: previousPeriod, stats: previousStats }
+    } catch {
+      return { key, period: null, stats: null, error: true }
+    }
+  }, [previousRequestKey])
+  const previous = previousRequest.data?.key === previousRequestKey ? previousRequest.data : null
+  const previousError = Boolean(previous?.error)
+  const previousLoading = Boolean(stats?.previousActiveAt != null && !previous && !previousError)
   const { closing, close } = useExitTransition(onClose, 180)
   const titleId = useId()
   const dialogRef = useRef<HTMLElement>(null)
@@ -166,7 +242,7 @@ export default function ListeningHistoryDialog({ initialSelection, onClose }: { 
         <div className={`history-detail-body${zoom ? ` is-zoom-${zoom}` : ''}`} style={{ '--history-zoom-origin': `${zoomOrigin}%` } as CSSProperties} key={`${selection.kind}:${period.from}`}>
           {request.error ? <div className="history-load-state" role="alert"><p>{t('Could not load listening details')}</p><button className="btn" type="button" onClick={request.reload}>{t('Retry')}</button></div>
             : !stats ? <div className="history-loading" aria-label={t('Loading…')} aria-busy="true"><span /><span /><span /><span /><span /><span /><span /></div>
-              : <PeriodContent key={`${selection.kind}:${period.from}`} selection={selection} stats={stats} previous={previousStats} lang={lang} onDay={date => { setZoom('in'); setZoomOrigin(50); setSelection({ kind: 'day', date }) }} onHour={hourFrom => { setZoom('in'); setZoomOrigin((hourFrom - period.from) / (period.to - period.from) * 100); setSelection({ kind: 'hour', date: localDateKey(new Date(hourFrom * 1000)), hourFrom }) }} />}
+              : <PeriodContent key={`${selection.kind}:${period.from}`} selection={selection} stats={stats} previous={previous} previousError={previousError} previousLoading={previousLoading} requestCache={requestCache.current} lang={lang} onDay={date => { setZoom('in'); setZoomOrigin(50); setSelection({ kind: 'day', date }) }} onHour={hourFrom => { setZoom('in'); setZoomOrigin((hourFrom - period.from) / (period.to - period.from) * 100); setSelection({ kind: 'hour', date: localDateKey(new Date(hourFrom * 1000)), hourFrom }) }} />}
         </div>
       </section>
     </div>, document.body,

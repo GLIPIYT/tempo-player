@@ -12,6 +12,7 @@ import { useT } from '../i18n'
 import { usePlayer } from '../player'
 import { useNav } from '../state/nav'
 import { tracksToUnified } from '../utils/unified'
+import { normalizeSearchText } from '../utils/searchText'
 
 /** Local view for a credited artist who has no filed library artist yet. */
 export default function LocalArtistPage({ name, imagePath }: { name: string; imagePath: string | null }) {
@@ -26,7 +27,8 @@ export default function LocalArtistPage({ name, imagePath }: { name: string; ima
     return tracks.filter(track => track.artistName?.trim().toLowerCase() === name.trim().toLowerCase())
   }, [name])
   const tracks = data ?? []
-  const shownTracks = tracks.filter(track => track.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+  const search = normalizeSearchText(query.trim())
+  const shownTracks = tracks.filter(track => normalizeSearchText(track.title).includes(search))
 
   return (
     <EditorialDetailLayout variant="panorama" artworkPath={imagePath} artworkLabel={name} kindIcon={<MicVocal size={13} />} className="local-artist-page" onBack={() => navigate({ name: 'artists' })} backLabel={t('Artists')}

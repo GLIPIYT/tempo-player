@@ -142,9 +142,9 @@ button.history-featured-track:hover strong { color: var(--accent); }
   .history-detail-layer *, .history-detail-backdrop { animation: none !important; transition: none !important; }
 }
 
-.history-detail-dialog { display: flex; flex-direction: column; overflow: hidden; height: min(610px, calc(100dvh - 40px)); }
+.history-detail-dialog { display: flex; flex-direction: column; overflow: hidden; height: auto; max-height: calc(100dvh - 40px); }
 .history-detail-header { flex: none; }
-.history-detail-body { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.history-detail-body { flex: 0 1 auto; min-height: 0; overflow: auto; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: transparent transparent; }
 .history-detail-body:hover { scrollbar-color: color-mix(in srgb, var(--text) 18%, transparent) transparent; }
 .history-detail-body::-webkit-scrollbar { width: 5px; }
 .history-detail-body::-webkit-scrollbar-track { background: transparent; }

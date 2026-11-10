@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
+use unicode_normalization::UnicodeNormalization;
 
 /// What the library already knows about a YouTube track.
 #[derive(Debug, Clone)]
@@ -116,7 +117,7 @@ const HISTORY_TRACKS_FROM: &str = "listening_history h \
      LEFT JOIN albums al ON al.id = t.album_id \
      LEFT JOIN track_loudness tl ON tl.track_id = t.id";
 
-const TRACK_SEARCH_PRED: &str = r"(t.folder_id IS NOT NULL OR (t.source <> 'local' AND t.cached_at IS NOT NULL)) AND t.search_text LIKE ?1 ESCAPE '\'";
+const TRACK_SEARCH_PRED: &str = r"(t.folder_id IS NOT NULL OR (t.source <> 'local' AND t.cached_at IS NOT NULL)) AND replace(t.search_text, 'ё', 'е') LIKE ?1 ESCAPE '\'";
 
 const TRACK_EXACT_TARGET: usize = 25;
 const CATALOG_EXACT_TARGET: usize = 15;
@@ -2962,16 +2963,18 @@ impl Db {
             let mut stmt = conn
                 .prepare(
                     "SELECT date(h.played_at, 'unixepoch', 'localtime') AS d, \
-                     COALESCE(SUM(h.listened_sec), 0) / 60.0 \
-                     FROM listening_history h WHERE h.played_at >= ?1 \
+                     COALESCE(SUM(CASE WHEN h.listened_sec >= 0 AND h.listened_sec <= 1.7976931348623157e308 \
+                         THEN h.listened_sec ELSE 0 END), 0) / 60.0 \
+                     FROM listening_history h JOIN tracks t ON t.id = h.track_id WHERE h.played_at >= ?1 \
                      GROUP BY d ORDER BY d",
                 )
                 .map_err(db_err)?;
             let mapped = stmt
                 .query_map(params![since], |row| {
+                    let minutes = row.get::<_, f64>(1)?;
                     Ok(crate::models::DailyMinutes {
                         date: row.get(0)?,
-                        minutes: row.get(1)?,
+                        minutes: if minutes.is_finite() { minutes.max(0.0) } else { f64::MAX / 60.0 },
                     })
                 })
                 .map_err(db_err)?;
@@ -3688,9 +3691,11 @@ impl Db {
     pub fn get_listening_period(
         &self,
         boundaries: &[i64],
+        reference_before: Option<i64>,
     ) -> Result<ListeningPeriodStats, String> {
         validate_listening_period_boundaries(boundaries)?;
-        self.with_conn(|conn| fetch_listening_period(conn, boundaries))
+        validate_listening_period_reference(boundaries, reference_before)?;
+        self.with_conn(|conn| fetch_listening_period(conn, boundaries, reference_before))
     }
 
     pub fn clear_history(&self) -> Result<u32, String> {
@@ -3825,7 +3830,17 @@ fn like_pattern(query: &str) -> String {
 }
 
 fn normalize_query(query: &str) -> String {
-    query.split_whitespace().collect::<Vec<&str>>().join(" ").to_lowercase()
+    normalize_search_text(query)
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ")
+}
+
+fn normalize_search_text(text: &str) -> String {
+    text.nfkc()
+        .flat_map(char::to_lowercase)
+        .map(|character| if character == 'ё' { 'е' } else { character })
+        .collect()
 }
 
 fn build_search_text(title: &str, artist: &str, album: &str, genre: &str) -> String {
@@ -3836,7 +3851,7 @@ fn build_search_text(title: &str, artist: &str, album: &str, genre: &str) -> Str
             parts.push(trimmed);
         }
     }
-    parts.join(" ").to_lowercase()
+    normalize_search_text(&parts.join(" "))
 }
 
 fn split_words(normalized: &str) -> Vec<String> {
@@ -4087,7 +4102,7 @@ fn search_tracks(
         }
         let mut best: Option<f64> = None;
         for (qv, qw) in &contexts {
-            if let Some(score) = fuzzy_score(qv, qw, &text) {
+            if let Some(score) = fuzzy_score(qv, qw, &normalize_search_text(&text)) {
                 if best.map_or(true, |b| score > b) {
                     best = Some(score);
                 }
@@ -4148,12 +4163,12 @@ fn search_albums(conn: &Connection, query: &str, limit: i64) -> Result<Vec<Album
 }
 
 fn album_contains(album: &Album, needle: &str) -> bool {
-    album.title.to_lowercase().contains(needle)
-        || album.artist_name.as_deref().unwrap_or("").to_lowercase().contains(needle)
+    normalize_search_text(&album.title).contains(needle)
+        || normalize_search_text(album.artist_name.as_deref().unwrap_or("")).contains(needle)
 }
 
 fn album_search_text(album: &Album) -> String {
-    format!("{} {}", album.title, album.artist_name.as_deref().unwrap_or("")).to_lowercase()
+    normalize_search_text(&format!("{} {}", album.title, album.artist_name.as_deref().unwrap_or("")))
 }
 
 fn append_fuzzy_albums(
@@ -4201,7 +4216,7 @@ fn search_artists(conn: &Connection, query: &str, limit: i64) -> Result<Vec<Arti
     let mut results: Vec<Artist> = Vec::new();
     let mut seen: HashSet<i64> = HashSet::new();
     for artist in &all {
-        if variants.iter().any(|v| artist.name.to_lowercase().contains(v.as_str())) {
+        if variants.iter().any(|v| normalize_search_text(&artist.name).contains(v.as_str())) {
             seen.insert(artist.id);
             results.push(artist.clone());
         }
@@ -4217,7 +4232,7 @@ fn search_artists(conn: &Connection, query: &str, limit: i64) -> Result<Vec<Arti
             if seen.contains(&artist.id) {
                 continue;
             }
-            let name_key = artist.name.to_lowercase();
+            let name_key = normalize_search_text(&artist.name);
             let mut best: Option<f64> = None;
             for (qv, qw) in &contexts {
                 if let Some(score) = fuzzy_score(qv, qw, &name_key) {
@@ -4523,6 +4538,18 @@ fn validate_listening_period_boundaries(boundaries: &[i64]) -> Result<(), String
     Ok(())
 }
 
+fn validate_listening_period_reference(
+    boundaries: &[i64],
+    reference_before: Option<i64>,
+) -> Result<(), String> {
+    if let Some(reference_before) = reference_before {
+        if boundaries.first().copied() != Some(reference_before) {
+            return Err("listening period reference must match its start boundary".to_string());
+        }
+    }
+    Ok(())
+}
+
 fn add_listening_seconds(total: &mut f64, value: f64) {
     if !value.is_finite() || value < 0.0 {
         return;
@@ -4547,6 +4574,7 @@ fn compare_listening_period_ranks(
 fn fetch_listening_period(
     conn: &Connection,
     boundaries: &[i64],
+    reference_before: Option<i64>,
 ) -> Result<ListeningPeriodStats, String> {
     let mut buckets: Vec<ListeningPeriodBucket> = boundaries
         .windows(2)
@@ -4662,9 +4690,22 @@ fn fetch_listening_period(
         None
     };
 
+    let previous_active_at = if let Some(reference) = reference_before {
+        conn.query_row(
+            "SELECT MAX(h.played_at) FROM listening_history h \
+             JOIN tracks t ON t.id = h.track_id WHERE h.played_at >= 0 AND h.played_at < ?1",
+            params![reference],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .map_err(db_err)?
+    } else {
+        None
+    };
+
     Ok(ListeningPeriodStats {
         from: boundaries[0],
         to: boundaries[boundaries.len() - 1],
+        previous_active_at,
         total_listened_sec,
         plays,
         completed_plays,
@@ -6033,7 +6074,7 @@ mod tests {
         insert_period_history(&db, beta, 399, Some(f64::NAN), true);
         insert_period_history(&db, alpha, 500, Some(999.0), true);
 
-        let stats = db.get_listening_period(&[100, 200, 300, 400, 500]).unwrap();
+        let stats = db.get_listening_period(&[100, 200, 300, 400, 500], None).unwrap();
         assert_eq!((stats.from, stats.to), (100, 500));
         assert_eq!(stats.plays, 7);
         assert_eq!(stats.completed_plays, 2);
@@ -6082,10 +6123,10 @@ mod tests {
         assert_eq!(top_artist.play_count, 3);
 
         // The upper edge was excluded above and is the included lower edge here.
-        let next_period = db.get_listening_period(&[500, 600]).unwrap();
+        let next_period = db.get_listening_period(&[500, 600], None).unwrap();
         assert_eq!(next_period.plays, 1);
         assert_eq!(next_period.total_listened_sec, 999.0);
-        let empty = db.get_listening_period(&[501, 600]).unwrap();
+        let empty = db.get_listening_period(&[501, 600], None).unwrap();
         assert_eq!(empty.plays, 0);
         assert_eq!(empty.completed_plays, 0);
         assert_eq!(empty.completion_pct, 0.0);
@@ -6097,6 +6138,21 @@ mod tests {
         assert!(empty.top_tracks.is_empty());
         assert!(empty.top_track.is_none());
         assert!(empty.top_artist.is_none());
+
+        let reference = db.get_listening_period(&[200, 300], Some(200)).unwrap();
+        assert_eq!(reference.previous_active_at, Some(199));
+        assert_eq!(reference.plays, 2);
+        assert_eq!(reference.total_listened_sec, 100.0);
+        let first_period = db.get_listening_period(&[100, 200], Some(100)).unwrap();
+        assert_eq!(first_period.previous_active_at, None);
+        let after_gap = db.get_listening_period(&[10_000, 10_100], Some(10_000)).unwrap();
+        assert_eq!(after_gap.plays, 0);
+        assert_eq!(after_gap.previous_active_at, Some(500));
+        assert!(db.get_listening_period(&[100, 200], Some(101)).is_err());
+        // The profile chart and drill-down sanitize the same history rows.
+        let daily = db.get_daily_minutes(now() / 86_400 + 2).unwrap();
+        let daily_seconds = daily.iter().map(|day| day.minutes * 60.0).sum::<f64>();
+        assert!((daily_seconds - 1129.0).abs() < 0.0001);
 
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
@@ -6118,7 +6174,7 @@ mod tests {
         insert_period_history(&db, second, 1_300, Some(60.0), false);
         insert_period_history(&db, third, 1_400, Some(60.0), false);
 
-        let stats = db.get_listening_period(&[1_000, 2_000]).unwrap();
+        let stats = db.get_listening_period(&[1_000, 2_000], None).unwrap();
         let top_track = stats.top_track.unwrap();
         assert_eq!(top_track.listened_sec, 120.0);
         assert_eq!(top_track.play_count, 2);
@@ -6676,6 +6732,46 @@ mod tests {
         assert!(db.list_albums("жжж").unwrap().is_empty());
         assert!(db.list_artists("жжж").unwrap().is_empty());
         assert!(db.search_all("жжж").unwrap().tracks.is_empty());
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn search_folds_yo_and_nfkc_for_both_queries_and_candidates() {
+        let (db, dir) = test_db("search_fold");
+        let media = fixture_file(&dir, "fold.mp3");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let input = track_input(
+            &media,
+            folder.id,
+            "Ёлка Test",
+            Some("Ёлочка"),
+            Some("Тёплый Ａｌｂｕｍ"),
+        );
+        db.upsert_scanned_tracks(&[input], &[]).unwrap();
+
+        for query in ["елка", "ёлка", "ЕЛКА", "Ｔｅｓｔ"] {
+            let hits = db.list_tracks(query, 10, 0).unwrap();
+            assert_eq!(hits.len(), 1, "query should match: {query}");
+            assert_eq!(hits[0].title, "Ёлка Test");
+        }
+        assert_eq!(db.list_albums("теплый").unwrap().len(), 1);
+        assert_eq!(db.list_albums("album").unwrap().len(), 1);
+        assert_eq!(db.list_artists("елоч").unwrap().len(), 1);
+
+        let track_id = db.list_tracks("елка", 1, 0).unwrap()[0].id;
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE tracks SET search_text = ?1 WHERE id = ?2",
+                params!["ёлка test ёлочка тёплый ａｌｂｕｍ", track_id],
+            )
+            .map_err(db_err)
+        })
+        .unwrap();
+        for query in ["елка", "album"] {
+            assert_eq!(db.list_tracks(query, 10, 0).unwrap().len(), 1);
+        }
+
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

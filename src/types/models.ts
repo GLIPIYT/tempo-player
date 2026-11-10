@@ -356,6 +356,8 @@ export interface ListeningPeriodTopArtist {
 export interface ListeningPeriodStats {
   from: number
   to: number
+  /** Most recent play before the optional reference boundary requested by the caller. */
+  previousActiveAt?: number | null
   totalListenedSec: number
   plays: number
   completedPlays: number

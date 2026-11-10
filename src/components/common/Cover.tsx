@@ -1,6 +1,6 @@
-import { useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { buildCoverSources } from './coverSources'
+import { buildCoverSources, coverSourceRetryDelay, nextCoverSourceRetry, type CoverSourceRetry } from './coverSources'
 import { firstAvailableArtwork } from './artworkFallback'
 
 interface CoverProps {
@@ -58,18 +58,37 @@ function CoverImage({ sources, label, size, loading, base }: {
   base: CSSProperties
 }) {
   const [failedSources, setFailedSources] = useState<string[]>([])
+  const [retry, setRetry] = useState<(CoverSourceRetry & { pending: boolean }) | null>(null)
   const source = firstAvailableArtwork(sources, failedSources)
+  const retryAttempt = source && retry?.source === source
+    ? retry.attempt - Number(retry.pending)
+    : 0
+
+  useEffect(() => {
+    if (!retry?.pending || retry.source !== source) return
+    const timeout = window.setTimeout(() => {
+      setRetry(current => current?.source === retry.source && current.attempt === retry.attempt
+        ? { ...current, pending: false }
+        : current)
+    }, coverSourceRetryDelay(retry.attempt))
+    return () => window.clearTimeout(timeout)
+  }, [retry, source])
 
   if (source) {
     return (
       <img
         className="cover"
+        key={`${source}:${retryAttempt}`}
         src={srcFor(source)}
         alt=""
         loading={loading}
         decoding="async"
         draggable={false}
-        onError={() => setFailedSources(failed => [...new Set([...failed, source])])}
+        onError={() => {
+          const nextRetry = nextCoverSourceRetry(source, retry)
+          if (nextRetry) setRetry({ ...nextRetry, pending: true })
+          else setFailedSources(failed => [...new Set([...failed, source])])
+        }}
         style={base}
       />
     )

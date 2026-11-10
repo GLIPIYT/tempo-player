@@ -8,6 +8,9 @@ import { normalizeCustomMixRule } from './types'
 /** A stable fingerprint of the criteria that determine a generated selection. */
 export function customMixRuleFingerprint(rule: CustomMixRule): string {
   const value = normalizeCustomMixRule(rule)
+  const usesSelectedArtistShares = value.artistMode === 'allow'
+    && value.artistIds.length > 0
+    && !(value.artistPercent[0] === 0 && value.artistPercent[1] === 100)
   return JSON.stringify({
     name: value.name,
     description: value.description,
@@ -18,6 +21,7 @@ export function customMixRuleFingerprint(rule: CustomMixRule): string {
     ...(value.artistPercent[0] === 0 && value.artistPercent[1] === 100
       ? {}
       : { artistPercent: value.artistPercent }),
+    ...(usesSelectedArtistShares ? { artistQuotaVersion: 2 } : {}),
     timeWindow: value.timeWindow,
     completionPercent: value.completionPercent,
     genreMode: value.genreMode,

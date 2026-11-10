@@ -18,6 +18,7 @@ import { trackToUnified } from '../../utils/unified'
 import { playlistDisplayName } from '../../utils/playlists'
 import { bumpLibraryVersion } from '../../utils/libraryVersion'
 import { addTrackToPlaylistAndCache } from '../../soundcloud/cacheJobs'
+import { trackMenuNavigationVisibility } from '../../utils/trackMenuNavigation'
 import { toast } from './Toast'
 import TrackMetadataEditor from './TrackMetadataEditor'
 
@@ -63,7 +64,7 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
 ) {
   const player = usePlayer()
   const likes = useLikes()
-  const { navigate } = useNav()
+  const { navigate, view } = useNav()
   const t = useT()
   const [open, setOpen] = useState(false)
   const [editingMetadata, setEditingMetadata] = useState(false)
@@ -280,14 +281,16 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
     }
   }
 
+  const navigation = trackMenuNavigationVisibility(view, track)
+
   // Same three rows in two of the three menu bodies; built once so they cannot
   // drift apart. Each is gated on the datum it needs: a track with no album row
   // has nowhere to go, and only a local file has a path worth revealing.
   const navRows =
-    track.artistId != null || track.albumId != null || track.source === 'local' ? (
+    navigation.artist || navigation.album || track.source === 'local' ? (
       <>
         <div className="menu-sep" />
-        {track.artistId != null ? (
+        {navigation.artist ? (
           <button className="menu-item" role="menuitem" onClick={goToArtist}>
             <User size={13} />
             {t('Go to artist')}
@@ -299,7 +302,7 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
             {t('Edit track')}
           </button>
         ) : null}
-        {track.albumId != null ? (
+        {navigation.album ? (
           <button className="menu-item" role="menuitem" onClick={goToAlbum}>
             <Disc3 size={13} />
             {t('Go to album')}

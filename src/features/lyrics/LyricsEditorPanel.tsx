@@ -5,6 +5,7 @@ import { subscribeNativeAnalysis } from '../../audio/nativeAnalysis'
 import { getEngine } from '../../player/engine'
 import { getNativePlayerController, isNativePlayback } from '../../player/nativeController'
 import { useT } from '../../i18n'
+import { normalizeSearchText } from '../../utils/searchText'
 import {
   fromPlainLyrics,
   cloneLyricsDocument,
@@ -198,7 +199,8 @@ export default function LyricsEditorPanel({
   const invalidLineIndexes = new Set(issues.flatMap((issue) => issue.lineIndex === undefined ? [] : [issue.lineIndex]))
   const selectedSource = sourceOptions.find((source) => source.id === selectedSourceId)
   const selectedSourceLabel = selectedSourceId === 'stitched' ? t('Stitched lyrics') : selectedSource?.label ?? t('Choose a source')
-  const filteredSources = sourceOptions.filter((source) => source.label.toLocaleLowerCase().includes(sourceQuery.trim().toLocaleLowerCase()))
+  const sourceSearch = normalizeSearchText(sourceQuery.trim())
+  const filteredSources = sourceOptions.filter((source) => normalizeSearchText(source.label).includes(sourceSearch))
   const currentPositionMs = Number.isFinite(currentTimeSec) ? Math.max(0, Math.round(currentTimeSec * 1000)) : null
   const trackDurationMs = Number.isFinite(durationMs) && (durationMs ?? 0) > 0 ? Math.round(durationMs!) : null
   const playbackSpeedMax = Math.max(1, initialPlaybackRate)

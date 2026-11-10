@@ -77,13 +77,14 @@ export default function LyricsProcessingPanel({
   const wordAnalysisWorking = wordEnabledInMode &&
     ['loading', 'analyzing', 'waiting'].includes(wordAnalysisState.phase)
   const wordWorking = wordModelDownloading || wordAnalysisWorking
+  const wordPaused = wordEnabledInMode && wordAnalysisState.phase === 'paused'
   const wordAnalysisUnavailable = wordEnabledInMode && wordAnalysisState.phase === 'unavailable'
   const wordError = wordEnabledInMode && (modelState.phase === 'error' || wordAnalysisState.phase === 'error')
   const wordErrorMessage = wordAnalysisState.phase === 'error'
     ? wordAnalysisState.error ?? modelState.error
     : modelState.error
   const wordReady = wordEnabledInMode && modelState.phase === 'ready'
-    && !wordWorking && !wordAnalysisUnavailable && !wordError
+    && !wordWorking && !wordPaused && !wordAnalysisUnavailable && !wordError
   const wordLabel = !wordEnabled
     ? t('Off')
     : !wordMode
@@ -98,15 +99,17 @@ export default function LyricsProcessingPanel({
               ? t('Analyzing word timings')
               : wordAnalysisState.phase === 'waiting'
                 ? t('Analysis queued')
-                : wordAnalysisState.phase === 'complete'
-                  ? t('Track analyzed')
-                  : wordAnalysisUnavailable
-                    ? t('Audio file required')
-                    : wordAnalysisState.phase === 'error'
-                      ? t('Word timing analysis failed')
-                      : modelState.phase === 'ready'
-                        ? t('Ready')
-                        : t('Preparing model download')
+                : wordPaused
+                  ? t('Paused — play to analyze')
+                  : wordAnalysisState.phase === 'complete'
+                    ? t('Track analyzed')
+                    : wordAnalysisUnavailable
+                      ? t('Audio file required')
+                      : wordAnalysisState.phase === 'error'
+                        ? t('Word timing analysis failed')
+                        : modelState.phase === 'ready'
+                          ? t('Ready')
+                          : t('Preparing model download')
   const wordNote = modelState.phase === 'ready'
     ? t('Model is available on this computer.')
     : t(
@@ -218,6 +221,8 @@ export default function LyricsProcessingPanel({
                 <AlertTriangle size={15} />
               ) : wordWorking ? (
                 <LoaderCircle size={15} className="spin" />
+              ) : wordPaused ? (
+                <Circle size={14} />
               ) : wordReady ? (
                 <CheckCircle2 size={15} />
               ) : (

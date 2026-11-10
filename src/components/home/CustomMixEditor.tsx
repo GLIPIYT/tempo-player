@@ -35,6 +35,7 @@ import type { Artist } from '../../types/models'
 import type { CustomMixRule } from '../../features/mixes/types'
 import { createCustomMixRule } from '../../features/mixes/types'
 import { useT } from '../../i18n'
+import { normalizeSearchText } from '../../utils/searchText'
 import { useSettings } from '../../state/settings'
 import Cover from '../common/Cover'
 import BrandIcon from '../common/BrandIcon'
@@ -314,7 +315,7 @@ function MultiSelect({
       values.includes(id) ? values.filter((v) => v !== id) : [...values, id],
     )
   const visible = options.filter((o) =>
-    o.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
+    normalizeSearchText(o.name).includes(normalizeSearchText(query)),
   )
   return (
     <div
@@ -828,7 +829,7 @@ export default function CustomMixEditor({
                 <><Range label={t('Share per selected artist')} value={rule.artistPercent ?? [0, 100]}
                   disabled={rule.artistMode === 'deny' || rule.artistIds.length === 0}
                   onChange={artistPercent => change({ artistPercent })} />
-                  <p className="mix-rule-share-hint">{t('Remaining places can use other artists. Incompatible shares are split equally.')}</p></>,
+                  <p className="mix-rule-share-hint">{t('Only selected artists are included. Incompatible shares are split equally.')}</p></>,
               )}
               {field(
                 'Track sources',

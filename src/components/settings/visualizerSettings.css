@@ -25,10 +25,15 @@
 @keyframes set-viz-from-left { from { opacity: 0; transform: translateX(-22px); } to { opacity: 1; transform: none; } }
 @keyframes set-viz-controls-in { from { opacity: .35; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes set-viz-mock-line { 0%, 65%, 100% { opacity: .17; transform: translateY(0); } 15%, 35% { opacity: .8; transform: translateY(-2px); } }
-@media (prefers-reduced-motion: reduce) { .set-viz-pages *, .set-viz-page-arrow { animation: none; transition: none; } }
 
 .set-viz-pages canvas.is-background { color: color-mix(in srgb, var(--bg) 62%, var(--text)); }
 
 .set-viz-page-controls.from-right { animation: set-viz-from-right 240ms ease-out both; }
 .set-viz-page-controls.from-left { animation: set-viz-from-left 240ms ease-out both; }
 .set-viz-pages .set-card-title { animation: set-viz-controls-in 180ms ease-out both; }
+.set-viz-toggles .set-row.is-dim { opacity: .38; filter: grayscale(1); transition: opacity 150ms, filter 150ms; }
+.set-viz-toggles .set-row.is-dim .switch { cursor: default; }
+
+@media (prefers-reduced-motion: reduce) {
+  .set-viz-pages *, .set-viz-page-arrow { animation: none !important; transition: none !important; }
+}

@@ -81,7 +81,7 @@ export default function YtCard({
       type="button"
       className="card sc-card"
       title={name ?? ''}
-      onClick={() => navigate({ name: 'yt-collection', kind, id })}
+      onClick={() => navigate({ name: 'yt-collection', kind, id, ...(kind === 'artist' && name ? { artistName: name } : {}) })}
       onContextMenu={onContextMenu}
     >
       <span className="sc-card-art">

@@ -1,4 +1,5 @@
 import { api } from '../api/client'
+import { normalizeProviderSearchQuery } from '../utils/searchText'
 import { getSettings } from '../state/settings'
 import type { UnifiedTrack, YtSearchHit } from '../types/models'
 import type { MusicProvider, SearchHit } from './provider'
@@ -45,7 +46,7 @@ export const youtubeProvider: MusicProvider = {
   },
   async search(query: string): Promise<SearchHit[]> {
     if (!query.trim()) return []
-    const hits = await api.ytdlpSearch(ytdlpPath(), query, 20)
+    const hits = await api.ytdlpSearch(ytdlpPath(), normalizeProviderSearchQuery(query), 20)
     return hits.map<SearchHit>((hit) => ({ kind: 'track', track: ytHitToUnified(hit) }))
   },
 }

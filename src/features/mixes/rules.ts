@@ -102,10 +102,7 @@ function passesHardFilters(
     const artistId = track.artistId
     if (rule.artistMode === 'allow') {
       const selectedArtist = artistId != null && rule.artistIds.includes(artistId)
-      // A restrictive per-artist range reserves those shares and lets other
-      // identified artists fill the remaining slots. The legacy full range
-      // keeps the original allow-list behavior.
-      if (artistId == null || (!selectedArtist && isFullRange(rule.artistPercent, FULL_PERCENT_RANGE))) return false
+      if (!selectedArtist) return false
     }
     if (rule.artistMode === 'deny' && artistId != null && rule.artistIds.includes(artistId)) return false
   }
@@ -314,7 +311,6 @@ function quotaWarning(
 }
 
 interface ArtistSelectionGroup {
-  artistId: number | null
   candidates: readonly CustomMixCandidate[]
   count: number
 }
@@ -375,7 +371,7 @@ function fillArtistCounts(
   }
 }
 
-/** Spread tracks evenly across selected artists when their combined minimum exceeds the mix. */
+/** Spread tracks across selected artists when their configured shares cannot cover the mix. */
 function allocateEvenly(
   artistIds: readonly number[],
   capacities: ReadonlyMap<number, number>,
@@ -429,40 +425,33 @@ function selectWithArtistShares(
   }
   const artistIds = [...new Set(rule.artistIds)]
   const capacities = new Map(artistIds.map((id) => [id, candidatesByArtist.get(id)?.length ?? 0] as const))
-  const otherCandidates = eligible.filter((candidate) => !artistIds.includes(candidate.track.artistId ?? -1))
   const minimumPercentTotal = rule.artistPercent[0] * artistIds.length
   const minimumCount = Math.ceil(size * rule.artistPercent[0] / 100 - 1e-9)
   const maximumCount = Math.floor(size * rule.artistPercent[1] / 100 + 1e-9)
   const aggregateImpossible = minimumPercentTotal > 100
     || minimumCount * artistIds.length > size
+    || maximumCount * artistIds.length < size
     || maximumCount < minimumCount
   let allocation: Map<number, number>
-  let otherCount = 0
   if (aggregateImpossible) {
     allocation = allocateEvenly(artistIds, capacities, size, random)
-    const selectedCount = [...allocation.values()].reduce((sum, count) => sum + count, 0)
-    otherCount = Math.min(size - selectedCount, otherCandidates.length)
   } else {
     allocation = new Map<number, number>(artistIds.map((id) => [id, Math.min(minimumCount, capacities.get(id) ?? 0)]))
-    const initialSelectedCount = [...allocation.values()].reduce((sum, count) => sum + count, 0)
-    otherCount = Math.min(size - initialSelectedCount, otherCandidates.length)
     const maxCounts = new Map(artistIds.map((id) => [id, maximumCount] as const))
-    const selectedCountAfterOther = initialSelectedCount + otherCount
     fillArtistCounts(
       artistIds,
       allocation,
       capacities,
       maxCounts,
-      size - selectedCountAfterOther + initialSelectedCount,
+      size,
       random,
     )
   }
   const groups = artistIds.flatMap((artistId): ArtistSelectionGroup[] => {
     const count = allocation.get(artistId) ?? 0
     const candidates = candidatesByArtist.get(artistId) ?? []
-    return count > 0 ? [{ artistId, candidates, count }] : []
+    return count > 0 ? [{ candidates, count }] : []
   })
-  if (otherCount > 0) groups.push({ artistId: null, candidates: otherCandidates, count: otherCount })
 
   const candidatesByArtistAndBucket = groups.map((group) => ({
     group,

@@ -15,6 +15,7 @@ import { openContextMenu, type ContextMenuItem } from '../components/common/Cont
 import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
 import CacheBadge from '../soundcloud/CacheBadge'
+import { normalizeSearchText } from '../utils/searchText'
 
 export default function ArtistsPage() {
   const { navigate } = useNav()
@@ -26,8 +27,8 @@ export default function ArtistsPage() {
   const { data, loading, error } = useAsync(() => api.listArtists(''), [version])
   const analytics = useAsync(() => api.getAnalytics('all'), [version])
   const [query, setQuery] = useState('')
-  const search = query.trim().toLocaleLowerCase()
-  const visibleArtists = (data ?? []).filter((artist) => artist.name.toLocaleLowerCase().includes(search))
+  const search = normalizeSearchText(query.trim())
+  const visibleArtists = (data ?? []).filter((artist) => normalizeSearchText(artist.name).includes(search))
   const byId = new Map((data ?? []).map((artist) => [artist.id, artist]))
   const ranked = (analytics.data?.topArtists ?? [])
     .map((item) => byId.get(item.artist.id))

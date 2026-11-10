@@ -35,6 +35,22 @@ describe('custom mix snapshot cadence', () => {
     expect(customMixRuleFingerprint(changed)).not.toBe(customMixRuleFingerprint(rule))
   })
 
+  it('invalidates restrictive allow-list snapshots generated with permissive shares', () => {
+    const rule = createCustomMixRule('Strict artist shares')
+    rule.refreshIntervalMinutes = 30
+    rule.artistIds = [1, 2, 3]
+    rule.artistPercent = [25, 25]
+    const currentFingerprint = JSON.parse(customMixRuleFingerprint(rule)) as Record<string, unknown>
+    expect(currentFingerprint.artistQuotaVersion).toBe(2)
+
+    const previousFingerprint = JSON.stringify(Object.fromEntries(
+      Object.entries(currentFingerprint).filter(([key]) => key !== 'artistQuotaVersion'),
+    ))
+    const stale = { ...snapshot(rule), ruleFingerprint: previousFingerprint }
+
+    expect(shouldRegenerateCustomMixSnapshot(rule, stale, 'scheduled', 1_001)).toBe(true)
+  })
+
   it('reuses an unexpired snapshot with the exact pre-artist-share fingerprint', () => {
     const rule = createCustomMixRule('Legacy cached')
     rule.refreshIntervalMinutes = 30

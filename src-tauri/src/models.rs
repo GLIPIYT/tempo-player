@@ -350,6 +350,8 @@ pub struct ListeningPeriodTopArtist {
 pub struct ListeningPeriodStats {
     pub from: i64,
     pub to: i64,
+    #[serde(default)]
+    pub previous_active_at: Option<i64>,
     pub total_listened_sec: f64,
     pub plays: i64,
     pub completed_plays: i64,

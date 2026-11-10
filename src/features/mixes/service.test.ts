@@ -23,7 +23,8 @@ vi.mock('../recommendations/profile', async (importOriginal) => {
 })
 vi.mock('../recommendations/service', () => ({ recommendationLanguagePreference: () => null }))
 
-import { augmentOnlineGenreCandidates, generateCustomMixSelection, getReusableCustomMixSnapshot } from './service'
+import { augmentOnlineGenreCandidates, deleteCustomMixRule, generateCustomMixSelection, getCustomMixMemoryState,
+  getDisplayableCustomMixSnapshot, getReusableCustomMixSnapshot, listCustomMixRules } from './service'
 import { customMixRuleFingerprint } from './snapshot'
 
 function localCandidate(
@@ -256,10 +257,39 @@ describe('generateCustomMixSelection', () => {
 
     rule.description = 'Edited'
     await expect(getReusableCustomMixSnapshot(rule, 1_001)).resolves.toBeNull()
-    expect(mocks.invoke).toHaveBeenCalledTimes(2)
+    expect(mocks.invoke).toHaveBeenCalledTimes(1)
 
     rule.refreshIntervalMinutes = 0
     await expect(getReusableCustomMixSnapshot(rule, 1_001)).resolves.toBeNull()
-    expect(mocks.invoke).toHaveBeenCalledTimes(2)
+    expect(mocks.invoke).toHaveBeenCalledTimes(1)
+  })
+
+  it('hydrates a matching interval-zero snapshot immediately and drops it after an edit or delete', async () => {
+    const rule = createCustomMixRule('Every open')
+    rule.id = 13
+    const cachedTrack = localCandidate(96, 'Ambient').track
+    const snapshot = {
+      ruleFingerprint: customMixRuleFingerprint(rule), generatedAt: 1_000,
+      tracks: [cachedTrack], warnings: ['previous selection'],
+    }
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'list_custom_mix_rules') return [rule]
+      if (command === 'get_custom_mix_snapshot') return snapshot
+      if (command === 'delete_custom_mix_rule') return undefined
+      throw new Error(`Unexpected command ${command}`)
+    })
+
+    await listCustomMixRules()
+    await expect(getDisplayableCustomMixSnapshot(rule)).resolves.toEqual({
+      tracks: [cachedTrack], warnings: ['previous selection'], generatedAt: 1_000, fromCache: true,
+    })
+    expect(getCustomMixMemoryState().selections).toMatchObject([{ ruleId: 13, selection: { generatedAt: 1_000 } }])
+
+    rule.description = 'Edited'
+    await listCustomMixRules()
+    expect(getCustomMixMemoryState().selections).toEqual([])
+
+    await deleteCustomMixRule(13)
+    expect(getCustomMixMemoryState()).toEqual({ rules: [], selections: [] })
   })
 })

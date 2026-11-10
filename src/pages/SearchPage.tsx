@@ -34,6 +34,7 @@ import { scTrackToUnified, scTracksToUnified } from '../utils/unified'
 import { ytHitToUnified, ytdlpPath } from '../providers/youtubeProvider'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { canPlaySoundCloudTrack } from '../soundcloud/playability'
+import { normalizeProviderSearchQuery } from '../utils/searchText'
 
 /** Emitted once per track as its metadata resolves. */
 const YT_ENRICH_EVENT = 'ytdlp://enriched'
@@ -379,6 +380,7 @@ export default function SearchPage() {
     tab === 'albums' ? 'albums' : tab === 'artists' ? 'artists' : tab === 'playlists' ? 'playlists' : null
   const [source, setSource] = useState<SearchSource>('all')
   const trimmed = query.trim()
+  const providerQuery = normalizeProviderSearchQuery(trimmed)
   const lyricsSearchEnabled = settings.lyrics.cacheOnline && settings.lyrics.searchCached
     && source === 'all' && (tab === 'all' || tab === 'tracks')
   useEffect(() => {
@@ -471,15 +473,15 @@ export default function SearchPage() {
         setScErrors((previous) => ({ ...previous, [kind]: sanitizeScSearchError(cause) }))
         status(kind, 'error')
       }
-      void api.scSearchTracks(trimmed, 50, 0).then((tracks) => {
+      void api.scSearchTracks(providerQuery, 50, 0).then((tracks) => {
         if (!cancelled) setScTracks(tracks)
         status('tracks', 'done')
       }).catch((cause: unknown) => fail('tracks', cause))
-      void api.scSearchPlaylists(trimmed, 24, 0).then((playlists) => {
+      void api.scSearchPlaylists(providerQuery, 24, 0).then((playlists) => {
         if (!cancelled) setScPlaylists(playlists)
         status('playlists', 'done')
       }).catch((cause: unknown) => fail('playlists', cause))
-      void api.scSearchArtists(trimmed, 24, 0).then((artists) => {
+      void api.scSearchArtists(providerQuery, 24, 0).then((artists) => {
         if (!cancelled) setScArtists(artists)
         status('artists', 'done')
       }).catch((cause: unknown) => fail('artists', cause))
@@ -488,7 +490,7 @@ export default function SearchPage() {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [trimmed, source])
+  }, [providerQuery, trimmed, source])
 
   useEffect(() => {
     const previous = ytJob.current
@@ -507,7 +509,7 @@ export default function SearchPage() {
     const timer = window.setTimeout(() => {
       // The backend tries the public music search before the yt-dlp fallback.
       void scheduleYtProviderRequest(
-        () => api.ytdlpSearch(ytdlpPath(), trimmed, 20),
+        () => api.ytdlpSearch(ytdlpPath(), providerQuery, 20),
         () => cancelled,
       )
         .then((hits) => {
@@ -540,7 +542,7 @@ export default function SearchPage() {
       ytJob.current = ''
       if (active) void api.ytdlpEnrichCancel(active).catch(() => undefined)
     }
-  }, [trimmed, source, ytTrackRequested])
+  }, [providerQuery, trimmed, source, ytTrackRequested])
 
   // Collection search normally includes titles and covers. Bare fallback hits
   // are resolved separately without delaying the already complete cards. In
@@ -564,7 +566,7 @@ export default function SearchPage() {
     const timer = window.setTimeout(() => {
       for (const section of ytCollectionSections) {
         void scheduleYtProviderRequest(
-          () => api.ytdlpSearchCollections(ytdlpPath(), trimmed, 12, section),
+          () => api.ytdlpSearchCollections(ytdlpPath(), providerQuery, 12, section),
           () => cancelled,
         )
           .then((hits) => {
@@ -598,7 +600,7 @@ export default function SearchPage() {
         }
       }
     }
-  }, [trimmed, source, tab, ytCollectionSections])
+  }, [providerQuery, trimmed, source, tab, ytCollectionSections])
 
   // Results arrive one at a time rather than as a batch, so each row fills in
   // as its own track resolves instead of the whole list waiting for the last.

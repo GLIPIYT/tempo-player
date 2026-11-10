@@ -1,6 +1,7 @@
 import type { CustomMixGeneratedSelection, CustomMixRule } from './types'
 
 const MAX_PARALLEL_SNAPSHOT_READS = 4
+const DEFAULT_SNAPSHOT_PRIORITY_MS = 500
 
 /** Compare captured request versions, treating an unseen rule as version zero. */
 export function isMixRequestVersionCurrent(
@@ -16,6 +17,8 @@ export interface FastCustomMixLoadOptions<TLibrary> {
   emptyCandidates: TLibrary
   isCurrent: (rule: CustomMixRule) => boolean
   onSnapshot: (rule: CustomMixRule, selection: CustomMixGeneratedSelection) => void
+  /** Maximum time to prioritize persisted selections before starting the heavier candidate scan. */
+  snapshotPriorityMs?: number
 }
 
 export interface FastCustomMixLoad<TLibrary> {
@@ -28,7 +31,7 @@ export function beginFastCustomMixLoad<TLibrary>(
   rules: readonly CustomMixRule[],
   options: FastCustomMixLoadOptions<TLibrary>,
 ): FastCustomMixLoad<TLibrary> {
-  const eligible = rules.filter((rule) => rule.id != null && rule.refreshIntervalMinutes > 0)
+  const eligible = rules.filter((rule) => rule.id != null)
   let next = 0
   const worker = async (): Promise<void> => {
     while (next < eligible.length) {
@@ -48,11 +51,19 @@ export function beginFastCustomMixLoad<TLibrary>(
     () => worker(),
   )).then(() => undefined)
 
-  let candidates: Promise<TLibrary>
-  try {
-    candidates = rules.length > 0 ? Promise.resolve(options.loadCandidates()) : Promise.resolve(options.emptyCandidates)
-  } catch (cause) {
-    candidates = Promise.reject(cause)
-  }
+  const candidates = (async (): Promise<TLibrary> => {
+    const priorityMs = Math.max(0, options.snapshotPriorityMs ?? DEFAULT_SNAPSHOT_PRIORITY_MS)
+    if (priorityMs > 0) {
+      let deadline: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        snapshots.then(() => true, () => false),
+        new Promise<boolean>((resolve) => { deadline = setTimeout(() => resolve(false), priorityMs) }),
+      ])
+      if (deadline !== undefined) clearTimeout(deadline)
+    } else {
+      await snapshots.catch(() => undefined)
+    }
+    return rules.length > 0 ? options.loadCandidates() : options.emptyCandidates
+  })()
   return { candidates, snapshots }
 }

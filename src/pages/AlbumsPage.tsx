@@ -13,6 +13,7 @@ import { openContextMenu, type ContextMenuItem } from '../components/common/Cont
 import CollectionAlbumGrid from '../components/common/CollectionAlbumGrid'
 import { CollectionCatalogHeading, CollectionCatalogToolbar } from '../components/common/CollectionCatalog'
 import EmptyState from '../components/common/EmptyState'
+import { normalizeSearchText } from '../utils/searchText'
 
 type AlbumSort = 'title' | 'artist' | 'year'
 
@@ -27,9 +28,9 @@ export default function AlbumsPage() {
   const [favoritesOnly, setFavoritesOnly] = useState(false)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<AlbumSort>('title')
-  const search = query.trim().toLocaleLowerCase()
+  const search = normalizeSearchText(query.trim())
   const visibleAlbums = (data ?? [])
-    .filter((album) => (!favoritesOnly || favoriteIds.has(album.id)) && `${album.title} ${album.artistName ?? ''}`.toLocaleLowerCase().includes(search))
+    .filter((album) => (!favoritesOnly || favoriteIds.has(album.id)) && normalizeSearchText(`${album.title} ${album.artistName ?? ''}`).includes(search))
     .sort((a, b) => {
       if (sort === 'year') return (b.year ?? -1) - (a.year ?? -1) || a.title.localeCompare(b.title)
       if (sort === 'artist') return (a.artistName ?? '').localeCompare(b.artistName ?? '') || a.title.localeCompare(b.title)

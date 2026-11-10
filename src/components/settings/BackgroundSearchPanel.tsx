@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Check, Image as ImageIcon, Loader2, Search, SlidersHorizontal } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n'
+import { normalizeSearchText } from '../../utils/searchText'
 import type {
   BackgroundImageCategory,
   BackgroundImageOrientation,
@@ -198,7 +199,7 @@ export default function BackgroundSearchPanel({ search, onSelect }: Props) {
     const currentRequest = ++requestId.current
     setError(null)
     try {
-      const found = await search(provider, term, {
+      const found = await search(provider, normalizeSearchText(term), {
         ...RESOLUTIONS[resolution], orientation, limit: PAGE_SIZE,
         category: status.supportsCategories ? category : 'all',
         color: status.supportsColor ? color : null,

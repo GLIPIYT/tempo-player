@@ -6,10 +6,15 @@ export interface MetricComparison {
   current: number
   previous: number
   delta: number
-  /** Null when the previous value is zero, so a percentage is not fabricated. */
+  /** A positive value over a zero baseline has no percentage; equal zeros stay unchanged. */
   percentChange: number | null
-  /** True only when a positive current value has no previous-period baseline. */
-  isNew: boolean
+}
+
+export interface ListeningComparisonPeriod {
+  kind: 'month' | 'day' | 'hour' | 'fiveMinutes'
+  from: number
+  to: number
+  boundaries: number[]
 }
 
 export function localDateKey(date: Date): string {
@@ -70,14 +75,40 @@ export function previousListeningSelection(selection: ListeningSelection): Liste
   return { kind: 'day', date: localDateKey(date) }
 }
 
+/** Calendar interval containing a known activity timestamp, at the requested granularity. */
+export function listeningComparisonPeriod(
+  timestamp: number,
+  kind: ListeningComparisonPeriod['kind'],
+): ListeningComparisonPeriod {
+  if (!Number.isSafeInteger(timestamp) || timestamp < 0) throw new Error('Invalid listening timestamp')
+  const date = new Date(timestamp * 1000)
+  const dateKey = localDateKey(date)
+
+  if (kind === 'month' || kind === 'day') {
+    const period = listeningPeriod({ kind, date: dateKey })
+    return { kind, ...period }
+  }
+
+  const dayBoundaries = listeningPeriod({ kind: 'day', date: dateKey }).boundaries
+  const hourFrom = dayBoundaries.slice(0, -1).filter(boundary => boundary <= timestamp).at(-1)
+  if (hourFrom === undefined) throw new Error('Invalid listening timestamp')
+
+  if (kind === 'hour') {
+    const period = listeningPeriod({ kind, date: localDateKey(new Date(hourFrom * 1000)), hourFrom })
+    return { kind, ...period }
+  }
+
+  const from = hourFrom + Math.floor((timestamp - hourFrom) / 300) * 300
+  return { kind, from, to: from + 300, boundaries: [from, from + 300] }
+}
+
 export function compareMetric(current: number, previous: number): MetricComparison {
   const delta = current - previous
   return {
     current,
     previous,
     delta,
-    percentChange: previous === 0 ? null : delta / Math.abs(previous) * 100,
-    isNew: previous === 0 && current > 0,
+    percentChange: current === 0 && previous === 0 ? 0 : previous <= 0 ? null : delta / previous * 100,
   }
 }
 

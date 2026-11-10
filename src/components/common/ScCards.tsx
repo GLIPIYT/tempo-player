@@ -133,7 +133,7 @@ export function ScArtistRow({ artist }: { artist: ScArtist }) {
     <button
       type="button"
       className="arow"
-      onClick={() => navigate({ name: 'sc-artist', id: artist.id })}
+      onClick={() => navigate({ name: 'sc-artist', id: artist.id, artistName: artist.username })}
       onContextMenu={onContextMenu}
     >
       <span className="arow-art">

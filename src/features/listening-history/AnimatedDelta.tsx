@@ -3,14 +3,22 @@ import { Minus, TrendingDown, TrendingUp } from 'lucide-react'
 import { useT } from '../../i18n'
 import { compareMetric, interpolateAnimatedValue } from './period'
 
-export default function AnimatedDelta({ current, previous }: { current: number; previous: number | null }) {
+export default function AnimatedDelta({ current, previous, referenceLabel, formatValue }: {
+  current: number | null
+  previous: number | null
+  referenceLabel: string
+  formatValue: (value: number) => string
+}) {
   const t = useT()
-  const comparison = previous === null ? null : compareMetric(current, previous)
-  const target = comparison?.delta === 0 ? 0 : comparison?.percentChange ?? null
+  const comparison = current === null || previous === null ? null : compareMetric(current, previous)
+  const target = comparison?.percentChange ?? null
   const displayed = useRef(0)
   const pill = useRef<HTMLSpanElement>(null)
   const text = useRef<HTMLSpanElement>(null)
-  const label = comparison?.isNew ? t('New') : '—'
+  const label = '—'
+  const title = previous === null
+    ? referenceLabel
+    : `${t('Compared with')} ${referenceLabel} · ${t('Previous value')}: ${formatValue(previous)} · ${t('Current value')}: ${current === null ? '—' : formatValue(current)}`
   useLayoutEffect(() => {
     const node = pill.current, valueNode = text.current
     if (!node || !valueNode) return
@@ -32,7 +40,7 @@ export default function AnimatedDelta({ current, previous }: { current: number; 
     frame = requestAnimationFrame(draw)
     return () => { active = false; cancelAnimationFrame(frame) }
   }, [target, label])
-  return <span ref={pill} className="history-delta" data-direction="0" title={t('Compared with the previous period')}>
+  return <span ref={pill} className="history-delta" data-direction="0" aria-label={title} title={title}>
     <span className="history-delta-icons" aria-hidden="true"><TrendingUp className="is-up" size={11} /><TrendingDown className="is-down" size={11} /><Minus className="is-flat" size={11} /></span>
     <span ref={text}>{target === null ? label : '0%'}</span>
   </span>

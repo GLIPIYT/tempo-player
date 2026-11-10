@@ -4,11 +4,22 @@ import type { CustomMixCandidate, CustomMixGenerationReason, CustomMixRule } fro
 import { customMixService } from './service'
 import { customMixRuleFingerprint } from './snapshot'
 import { beginFastCustomMixLoad, isMixRequestVersionCurrent } from './hydration'
+import type { CustomMixMemoryState } from './service'
 
 const OVERDUE_RETRY_MS = 60_000
 const MAX_PARALLEL_GENERATIONS = 2
 let activeGenerations = 0
 const generationWaiters: Array<() => void> = []
+
+function mixesFromMemory(memory: CustomMixMemoryState): HourMix[] {
+  const rules = new Map(memory.rules.flatMap((rule) => rule.id == null ? [] : [[rule.id, rule] as const]))
+  return memory.selections.flatMap(({ ruleId, fingerprint, selection }) => {
+    const rule = rules.get(ruleId)
+    if (!rule || fingerprint !== customMixRuleFingerprint(rule)) return []
+    return [{ key: `custom:${ruleId}`, kind: 'custom', title: rule.name, description: rule.description,
+      tracks: selection.tracks, rule, warnings: selection.warnings, generatedAt: selection.generatedAt }]
+  })
+}
 
 async function withGenerationSlot<T>(job: () => Promise<T>): Promise<T> {
   if (activeGenerations >= MAX_PARALLEL_GENERATIONS) {
@@ -26,14 +37,17 @@ async function withGenerationSlot<T>(job: () => Promise<T>): Promise<T> {
 }
 
 export function useCustomMixes(libraryVersion: number, editorOpen = false) {
+  const memoryRef = useRef<CustomMixMemoryState | null>(null)
+  if (memoryRef.current === null) memoryRef.current = customMixService.getMemoryState()
+  const initialMemory = memoryRef.current
   const [revision, setRevision] = useState(0)
-  const [rules, setRules] = useState<CustomMixRule[]>([])
+  const [rules, setRules] = useState<CustomMixRule[]>(initialMemory.rules)
   const [candidates, setCandidates] = useState<CustomMixCandidate[]>([])
-  const [mixes, setMixes] = useState<HourMix[]>([])
+  const [mixes, setMixes] = useState<HourMix[]>(() => mixesFromMemory(initialMemory))
   const [error, setError] = useState('')
-  const rulesRef = useRef<CustomMixRule[]>([])
+  const rulesRef = useRef<CustomMixRule[]>(initialMemory.rules)
   const candidatesRef = useRef<CustomMixCandidate[]>([])
-  const generatedAtRef = useRef(new Map<number, number>())
+  const generatedAtRef = useRef(new Map(initialMemory.selections.map(({ ruleId, selection }) => [ruleId, selection.generatedAt])))
   const mixRequestVersionRef = useRef(new Map<number, number>())
   const firstLoadRef = useRef(true)
   const mountedRef = useRef(false)
@@ -143,7 +157,7 @@ export function useCustomMixes(libraryVersion: number, editorOpen = false) {
         let candidatesReady = false
         let generationsComplete = false
         const load = beginFastCustomMixLoad(saved, {
-          readSnapshot: (rule) => customMixService.getReusableSnapshot(rule),
+          readSnapshot: (rule) => customMixService.getDisplayableSnapshot(rule),
           loadCandidates: () => customMixService.getCandidates(),
           emptyCandidates: candidatesRef.current,
           isCurrent: isCurrentRule,

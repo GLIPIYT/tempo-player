@@ -29,6 +29,7 @@ export const SyncedView = memo(function SyncedView({
   playbackRate,
   onSeek,
   getPosition,
+  layoutReflowKey = '',
 }: {
   timing: ResolvedLyricsTiming
   lyricsRate: number
@@ -43,6 +44,7 @@ export const SyncedView = memo(function SyncedView({
   playbackRate: number
   onSeek: (timeSec: number) => void
   getPosition: () => number
+  layoutReflowKey?: string
 }) {
   const t = useT()
   const segments = timing.segments
@@ -55,6 +57,8 @@ export const SyncedView = memo(function SyncedView({
   }>({ elements: [], starts: [], states: [], timings: undefined, segmentIndex: -1 })
   const positionedRef = useRef(false)
   const previousTyRef = useRef(0)
+  const layoutReflowRef = useRef(false)
+  const lastLayoutKey = useRef(layoutReflowKey)
   const collapsingNotesRef = useRef(new Set<number>())
   const underlineRef = useRef<HTMLSpanElement | null>(null)
   const textRef = useRef<HTMLSpanElement | null>(null)
@@ -162,11 +166,13 @@ export const SyncedView = memo(function SyncedView({
       index => itemEls.current[index]?.offsetTop ?? 0)
     setPaintRange(previous => previous.start === range.start && previous.end === range.end ? previous : range)
     const target = `translate3d(0, ${ty.toFixed(2)}px, 0)`
-    if (instant || !positionedRef.current || Math.abs(ty - previousTyRef.current) > stage.clientHeight) {
+    if (instant || layoutReflowRef.current || !positionedRef.current || Math.abs(ty - previousTyRef.current) > stage.clientHeight) {
       c.style.transition = 'none'
       c.style.transform = target
-      void c.offsetHeight
-      c.style.transition = ''
+      if (!layoutReflowRef.current) {
+        void c.offsetHeight
+        c.style.transition = ''
+      }
     } else if (Math.abs(ty - previousTyRef.current) > 0.25) {
       c.style.transform = target
     } else {
@@ -182,6 +188,30 @@ export const SyncedView = memo(function SyncedView({
     },
     [applyTransform],
   )
+
+  const reflowMeasure = useRef({ measureAll, measureProgressGeometry })
+  reflowMeasure.current = { measureAll, measureProgressGeometry }
+  useLayoutEffect(() => {
+    if (lastLayoutKey.current === layoutReflowKey) return
+    lastLayoutKey.current = layoutReflowKey
+    layoutReflowRef.current = true
+    const container = containerRef.current
+    const measure = () => {
+      reflowMeasure.current.measureAll(true)
+      reflowMeasure.current.measureProgressGeometry()
+    }
+    measure()
+    const timer = window.setTimeout(() => {
+      measure()
+      layoutReflowRef.current = false
+      if (container) container.style.transition = ''
+    }, 420)
+    return () => {
+      clearTimeout(timer)
+      layoutReflowRef.current = false
+      if (container) container.style.transition = ''
+    }
+  }, [layoutReflowKey])
 
   useLayoutEffect(() => {
     // Measure after the new active row commits. Timing refinements and rapid
@@ -230,6 +260,12 @@ export const SyncedView = memo(function SyncedView({
           previousWidth = entry.contentRect.width
           geometryChanged = true
         }
+      }
+      if (layoutReflowRef.current) {
+        measureAll(true)
+        if (geometryChanged) measureProgressGeometry()
+        geometryChanged = false
+        return
       }
       cancelAnimationFrame(raf)
       raf = requestAnimationFrame(() => {

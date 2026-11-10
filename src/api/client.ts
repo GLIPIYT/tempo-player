@@ -278,8 +278,8 @@ export const api = {
   clearCoversCache: () => invoke<void>('clear_covers_cache'),
   getHistory: (limit: number, offset: number) =>
     invoke<HistoryEntry[]>('get_history', { limit, offset }),
-  getListeningPeriod: (boundaries: number[]) =>
-    invoke<ListeningPeriodStats>('get_listening_period', { boundaries }),
+  getListeningPeriod: (boundaries: number[], referenceBefore?: number) =>
+    invoke<ListeningPeriodStats>('get_listening_period', referenceBefore === undefined ? { boundaries } : { boundaries, referenceBefore }),
 
   setTaskbarProgress: (position: number, duration: number, playing: boolean) =>
     invoke<void>('set_taskbar_progress', { position, duration, playing }),

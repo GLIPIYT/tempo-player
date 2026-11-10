@@ -19,6 +19,7 @@ import TrackList from '../components/common/TrackList'
 import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
 import { useT } from '../i18n'
+import { normalizeSearchText } from '../utils/searchText'
 
 export default function ArtistDetailPage({ artistId }: { artistId: number }) {
   const { navigate } = useNav()
@@ -62,7 +63,8 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
 
   const { artist, albums } = data
   const artistTracks: Track[] = tracks.data ?? []
-  const matchingTracks = artistTracks.filter(track => track.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+  const search = normalizeSearchText(query.trim())
+  const matchingTracks = artistTracks.filter(track => normalizeSearchText(track.title).includes(search))
   const shownTracks = tab === 'popular' ? [...matchingTracks].sort((a, b) => b.playCount - a.playCount).slice(0, 10) : matchingTracks
   const albumFavoriteIds = new Set((albumFavorites.data ?? []).map(album => album.id))
 

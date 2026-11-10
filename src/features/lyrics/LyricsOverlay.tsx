@@ -8,6 +8,7 @@ import { getNativePlayerController, isNativePlayback } from '../../player/native
 import { useT } from '../../i18n'
 import { useSettings } from '../../state/settings'
 import Cover from '../../components/common/Cover'
+import { normalizeSearchText } from '../../utils/searchText'
 import LyricsVisualizer from '../../components/player/LyricsVisualizer'
 import ArtistLinks from '../../components/common/ArtistLinks'
 import { fmtTime } from '../../utils/format'
@@ -312,13 +313,13 @@ function ProviderDropdown({
   const activeGroup = providerGroups.find((group) => group.key === activeProvider && group.indices.length > 1)
   const matchingVersionIndices = useMemo(() => {
     if (!activeGroup) return []
-    const query = versionQuery.trim().toLocaleLowerCase()
+    const query = normalizeSearchText(versionQuery.trim())
     if (!query) return activeGroup.indices
     return activeGroup.indices.filter((index) => {
       const candidate = candidates[index]
       if (!candidate) return false
       return [candidate.trackName, candidate.artistName, candidate.albumName, candidate.duration, candidate.id]
-        .some((value) => String(value ?? '').toLocaleLowerCase().includes(query))
+        .some((value) => normalizeSearchText(String(value ?? '')).includes(query))
     })
   }, [activeGroup, candidates, versionQuery])
 
@@ -1527,6 +1528,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
               {searching && viewCandidates.length > 0 && <LoadingMark />}
               {mode === 'synced' && activeLyrics?.result?.kind === 'synced' && (
                 <SyncedView
+                  layoutReflowKey={`${sideCollapsed}:${settings.lyrics.textSizePx}:${settings.lyrics.enlargeWhenCollapsed}`}
                   key={trackKey}
                   timing={activeLyrics.timing}
                   playbackRate={playbackRate}

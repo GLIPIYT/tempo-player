@@ -12,7 +12,7 @@ import { knownTextAlignmentKey, knownTextLineWindow, knownTextWords, matchCached
 import { createAsrWorker } from './workerClient'
 import type { AsrRequest, AsrResponse } from './workerProtocol'
 export interface AnalysisTrackInput { track: AnalysisTrack; sourceLines: readonly LyricsLine[]; durationSec: number; offsetMs: number; lyricKey: string; sourceLyricKey: string }
-export interface AnalysisSnapshot { lyricKey: string | null; phase: 'idle' | 'loading' | 'analyzing' | 'waiting' | 'complete' | 'unavailable' | 'error'; analysis: LyricTimingAnalysis; error: string | null }
+export interface AnalysisSnapshot { lyricKey: string | null; phase: 'idle' | 'loading' | 'analyzing' | 'waiting' | 'paused' | 'complete' | 'unavailable' | 'error'; analysis: LyricTimingAnalysis; error: string | null }
 export interface RunnerDependencies {
   native: AnalysisNativeClient
   decode: (identity: AudioIdentity, signal: AbortSignal) => Promise<AnalysisPcm | null>
@@ -229,8 +229,9 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
   }
   function schedule(): void {
     clearTimeout(timer)
-    if (!enabled || !playing || !input || !identity || busy || restoring !== null || snapshot.phase === 'error' || snapshot.phase === 'unavailable') return
+    if (!enabled || !input || !identity || busy || restoring !== null || snapshot.phase === 'error' || snapshot.phase === 'unavailable') return
     if (!nextWindow()) { publish('complete'); release(); return }
+    if (!playing) { publish('paused'); return }
     const delay = Math.max(0, readyAt - deps.now())
     publish(delay ? 'waiting' : 'idle')
     timer = setTimeout(() => { void run() }, delay)
@@ -255,10 +256,13 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
       }
       const window = nextWindow()
       if (!window) { publish('complete'); release(); return }
+      // A timer firing means this track is now doing real work. Do not leave
+      // the settings status at “queued” while model or worker initialization runs.
+      publish('analyzing')
       const bundle = worker ? null : await deps.native.ensureModel()
       signal.throwIfAborted()
       const audio = pcm
-      await withAnalysisLane(signal, () => charged(async () => {
+      await withAnalysisLane(signal, async () => {
         if (!worker) {
           if (!bundle) throw new Error('Local model unavailable')
           worker = deps.worker()
@@ -268,37 +272,39 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
         signal.throwIfAborted()
         publish('analyzing')
         const fragmentPcm = audio.pcm.slice(Math.floor(window.startSec * 16000), Math.floor(window.endSec * 16000))
-        if (window.kind === 'align') {
-          const response = await worker.request({ type: 'align-known-text', jobId: job, alignmentId: window.alignmentId,
-            trackStartSec: window.startSec, sourceEndSec: window.endSec, sampleRate: 16000,
-            pcm: fragmentPcm, language: window.language, text: window.text }, signal)
-          signal.throwIfAborted()
-          if (response.type !== 'alignment') throw new Error('Unexpected known-text alignment response')
-          if (job !== generation || input?.sourceLyricKey !== window.sourceLyricKey) return
-          const currentLine = input.sourceLines[window.lineIndex]
-          const currentWindow = knownTextLineWindow(input.sourceLines, window.lineIndex, input.durationSec)
-          if (!currentLine || currentLine.text !== window.text || currentWindow?.startSec !== window.startSec
-            || currentWindow.endSec !== window.endSec) return
-          attemptedAlignments.add(window.cacheKey)
-          if (response.words.length && Number.isFinite(response.confidence) && response.confidence >= 0.001) {
-            const expectedWords = knownTextWords(window.text)
-            if (response.words.length !== expectedWords.length || response.words.some((word, index) => word.text !== expectedWords[index].text)) return
-            const alignedSource: CachedAlignedSourceLine = { sourceLyricKey: window.sourceLyricKey,
-              lineIndex: window.lineIndex, sourceText: window.text, sourceStartSec: window.startSec,
-              sourceEndSec: window.endSec, confidence: response.confidence, words: response.words }
-            await checkpoint({ alignedSource }, job)
+        await charged(async () => {
+          if (window.kind === 'align') {
+            const response = await worker!.request({ type: 'align-known-text', jobId: job, alignmentId: window.alignmentId,
+              trackStartSec: window.startSec, sourceEndSec: window.endSec, sampleRate: 16000,
+              pcm: fragmentPcm, language: window.language, text: window.text }, signal)
+            signal.throwIfAborted()
+            if (response.type !== 'alignment') throw new Error('Unexpected known-text alignment response')
+            if (job !== generation || input?.sourceLyricKey !== window.sourceLyricKey) return
+            const currentLine = input.sourceLines[window.lineIndex]
+            const currentWindow = knownTextLineWindow(input.sourceLines, window.lineIndex, input.durationSec)
+            if (!currentLine || currentLine.text !== window.text || currentWindow?.startSec !== window.startSec
+              || currentWindow.endSec !== window.endSec) return
+            attemptedAlignments.add(window.cacheKey)
+            if (response.words.length && Number.isFinite(response.confidence) && response.confidence >= 0.001) {
+              const expectedWords = knownTextWords(window.text)
+              if (response.words.length !== expectedWords.length || response.words.some((word, index) => word.text !== expectedWords[index].text)) return
+              const alignedSource: CachedAlignedSourceLine = { sourceLyricKey: window.sourceLyricKey,
+                lineIndex: window.lineIndex, sourceText: window.text, sourceStartSec: window.startSec,
+                sourceEndSec: window.endSec, confidence: response.confidence, words: response.words }
+              await checkpoint({ alignedSource }, job)
+            }
+          } else {
+            const fragmentId = `${window.startSec}:${window.endSec}`
+            const response = await worker!.request({ type: 'transcribe', jobId: job, fragmentId,
+              trackStartSec: window.startSec, sampleRate: 16000, pcm: fragmentPcm, language: window.language }, signal)
+            signal.throwIfAborted()
+            if (response.type !== 'result') throw new Error('Unexpected recognition response')
+            const fragment: CompletedFragment = { startSec: window.startSec, endSec: window.endSec, status: 'completed', words: response.words }
+            await checkpoint({ completedFragment: fragment,
+              acceptedMatches: { sourceLyricKey: input!.sourceLyricKey, ends: combineEnds(matches(fragment)) } }, job)
           }
-        } else {
-          const fragmentId = `${window.startSec}:${window.endSec}`
-          const response = await worker.request({ type: 'transcribe', jobId: job, fragmentId,
-            trackStartSec: window.startSec, sampleRate: 16000, pcm: fragmentPcm, language: window.language }, signal)
-          signal.throwIfAborted()
-          if (response.type !== 'result') throw new Error('Unexpected recognition response')
-          const fragment: CompletedFragment = { startSec: window.startSec, endSec: window.endSec, status: 'completed', words: response.words }
-          await checkpoint({ completedFragment: fragment,
-            acceptedMatches: { sourceLyricKey: input!.sourceLyricKey, ends: combineEnds(matches(fragment)) } }, job)
-        }
-      }))
+        })
+      })
       touchIdle()
     } catch (error) {
       if (job === generation && !signal.aborted) { release(); publish('error', error instanceof Error ? error.message : String(error)) }
@@ -346,7 +352,11 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
     },
     setPosition(value: number, isPlaying: boolean): void {
       position = Number.isFinite(value) ? Math.max(0, value) : 0; playing = isPlaying
-      if (!playing) { clearTimeout(timer); touchIdle() } else schedule()
+      if (!playing) {
+        clearTimeout(timer)
+        touchIdle()
+      }
+      schedule()
     },
     retry(): void {
       if (snapshot.phase !== 'error') return

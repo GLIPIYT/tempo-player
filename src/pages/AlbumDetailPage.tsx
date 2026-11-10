@@ -16,6 +16,7 @@ import EmptyState from '../components/common/EmptyState'
 import TrackList from '../components/common/TrackList'
 import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
+import { normalizeSearchText } from '../utils/searchText'
 
 export default function AlbumDetailPage({ albumId }: { albumId: number }) {
   const { navigate } = useNav()
@@ -49,7 +50,8 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
 
   const { album, tracks } = data
   const unknownArtist = t('Unknown artist')
-  const shownTracks = tracks.filter(track => `${track.title} ${track.artistName ?? ''}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+  const search = normalizeSearchText(query.trim())
+  const shownTracks = tracks.filter(track => normalizeSearchText(`${track.title} ${track.artistName ?? ''}`).includes(search))
 
   return (
     <EditorialDetailLayout

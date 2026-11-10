@@ -22,7 +22,8 @@ function parseCanvasColor(value: string): { r: number; g: number; b: number } | 
   }
   const parts = color.match(/-?\d*\.?\d+/g)
   if (!parts || parts.length < 3) return null
-  return { r: Number(parts[0]), g: Number(parts[1]), b: Number(parts[2]) }
+  const scale = color.startsWith('color(') ? 255 : 1
+  return { r: Number(parts[0]) * scale, g: Number(parts[1]) * scale, b: Number(parts[2]) * scale }
 }
 
 /** A local sample: it stays animated even when no track is playing. */

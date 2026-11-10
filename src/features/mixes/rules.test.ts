@@ -161,36 +161,37 @@ describe('generateCustomMix', () => {
     expect(result.warnings).toEqual([])
   })
 
-  it('reserves each selected artist share and fills the remainder from other artists', () => {
+  it('evenly splits incompatible shares across selected artists and ignores outsiders', () => {
     const rule = baseRule()
     rule.artistIds = [1, 2, 3]
-    rule.artistPercent = [20, 25]
+    rule.artistPercent = [25, 25]
     rule.trackCount = 24
     const candidates = [
       ...Array.from({ length: 12 }, (_, index) => candidate(index + 1, { artistId: 1 })),
       ...Array.from({ length: 12 }, (_, index) => candidate(index + 13, { artistId: 2 })),
       ...Array.from({ length: 12 }, (_, index) => candidate(index + 25, { artistId: 3 })),
-      ...Array.from({ length: 12 }, (_, index) => candidate(index + 37, { artistId: 4 })),
+      ...Array.from({ length: 40 }, (_, index) => candidate(index + 37, { artistId: 4 })),
     ]
 
     const result = generateCustomMix(rule, candidates, { limit: 24, seed: 18 })
     const selectedCounts = [1, 2, 3].map((id) => result.tracks.filter((track) => track.artistId === id).length)
 
     expect(result.tracks).toHaveLength(24)
-    expect(selectedCounts.every((count) => count >= 5 && count <= 6)).toBe(true)
-    expect(result.tracks.filter((track) => track.artistId === 4)).toHaveLength(24 - selectedCounts.reduce((sum, count) => sum + count, 0))
-    expect(result.warnings).toEqual([])
+    expect(selectedCounts).toEqual([8, 8, 8])
+    expect(result.tracks.every((track) => rule.artistIds.includes(track.artistId!))).toBe(true)
+    expect(result.warnings).toContain('The selected artist shares cannot be met with the available tracks.')
   })
 
-  it('caps selected artists at their maximum and warns when the remainder has no candidates', () => {
+  it('returns only available whitelisted tracks when the requested count cannot be filled', () => {
     const rule = baseRule()
     rule.artistIds = [1, 2, 3]
     rule.artistPercent = [20, 25]
     rule.trackCount = 24
     const candidates = [
-      ...Array.from({ length: 12 }, (_, index) => candidate(index + 1, { artistId: 1 })),
-      ...Array.from({ length: 12 }, (_, index) => candidate(index + 13, { artistId: 2 })),
-      ...Array.from({ length: 12 }, (_, index) => candidate(index + 25, { artistId: 3 })),
+      ...Array.from({ length: 6 }, (_, index) => candidate(index + 1, { artistId: 1 })),
+      ...Array.from({ length: 6 }, (_, index) => candidate(index + 7, { artistId: 2 })),
+      ...Array.from({ length: 6 }, (_, index) => candidate(index + 13, { artistId: 3 })),
+      ...Array.from({ length: 40 }, (_, index) => candidate(index + 19, { artistId: 4 })),
     ]
 
     const result = generateCustomMix(rule, candidates, { limit: 24, seed: 18 })
@@ -199,7 +200,7 @@ describe('generateCustomMix', () => {
     expect(result.tracks).toHaveLength(18)
     expect(new Set(result.tracks.map((track) => `${track.artistId}:${track.id}`)).size).toBe(18)
     expect(result.warnings).toContain('The selected artist shares cannot be met with the available tracks.')
-    expect(result.warnings).toContain('Only 18 tracks fit the selected artist shares; 24 requested.')
+    expect(result.warnings).toContain('Only 18 tracks match these rules; 24 requested.')
   })
 
   it('splits selected artist slots evenly when the aggregate minimum is impossible', () => {

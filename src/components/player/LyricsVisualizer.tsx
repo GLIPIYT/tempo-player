@@ -3,6 +3,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { usePlayer } from '../../player'
 import { LYRICS_VISUALIZER_BARS_MAX, useSettings } from '../../state/settings'
 import Visualizer from './Visualizer'
+import { contrastBackgroundColor } from './backgroundContrast'
 
 type Rgb = { r: number; g: number; b: number }
 type Palette = { start: Rgb; end: Rgb }
@@ -44,53 +45,6 @@ function resolveThemeColor(name: string, fallback: Rgb): Rgb {
     return color
   } catch {
     return fallback
-  }
-}
-
-function srgbToLinear(value: number): number {
-  const normalized = value / 255
-  return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
-}
-
-function luminance(color: Rgb): number {
-  return 0.2126 * srgbToLinear(color.r) + 0.7152 * srgbToLinear(color.g) + 0.0722 * srgbToLinear(color.b)
-}
-
-function rgbToHsl(color: Rgb): { h: number; s: number; l: number } {
-  const r = color.r / 255
-  const g = color.g / 255
-  const b = color.b / 255
-  const max = Math.max(r, g, b)
-  const min = Math.min(r, g, b)
-  const delta = max - min
-  let h = 0
-  const l = (max + min) / 2
-  const s = delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1))
-  if (delta !== 0) {
-    if (max === r) h = ((g - b) / delta) % 6
-    else if (max === g) h = (b - r) / delta + 2
-    else h = (r - g) / delta + 4
-    h *= 60
-    if (h < 0) h += 360
-  }
-  return { h, s, l }
-}
-
-function hslToRgb(h: number, s: number, l: number): Rgb {
-  const chroma = (1 - Math.abs(2 * l - 1)) * s
-  const section = h / 60
-  const x = chroma * (1 - Math.abs((section % 2) - 1))
-  const [r, g, b] = section < 1 ? [chroma, x, 0]
-    : section < 2 ? [x, chroma, 0]
-      : section < 3 ? [0, chroma, x]
-        : section < 4 ? [0, x, chroma]
-          : section < 5 ? [x, 0, chroma]
-            : [chroma, 0, x]
-  const m = l - chroma / 2
-  return {
-    r: Math.round((r + m) * 255),
-    g: Math.round((g + m) * 255),
-    b: Math.round((b + m) * 255),
   }
 }
 
@@ -160,17 +114,6 @@ function lyricsBackdropColor(artwork: Rgb | null, themeBackground: Rgb): Rgb {
   return blend(scale(artwork, 0.4), themeBackground, 0.88)
 }
 
-function adaptToBackground(background: Rgb, artwork: Rgb | null, hueOffset = 0): Rgb {
-  const { h, s, l } = rgbToHsl(background)
-  const artworkHsl = rgbToHsl(artwork ?? FALLBACK_ACCENT)
-  const hue = ((s > 0.12 ? h : artworkHsl.h) + hueOffset + 360) % 360
-  const saturation = Math.max(0.22, Math.min(0.48, s > 0.12 ? s : artworkHsl.s * 0.45))
-  // Keep the adaptive shift bounded so artwork-derived shades remain distinct
-  // without turning into white/black strokes over the backdrop.
-  const targetLightness = Math.max(0.08, Math.min(0.9, l + (luminance(background) < 0.43 ? 0.24 : -0.24)))
-  return hslToRgb(hue, saturation, targetLightness)
-}
-
 export default function LyricsVisualizer({ coverPath }: { coverPath: string | null }) {
   const player = usePlayer()
   const { settings } = useSettings()
@@ -196,15 +139,15 @@ export default function LyricsVisualizer({ coverPath }: { coverPath: string | nu
     const themeBackground = resolveThemeColor('--bg', FALLBACK_BACKGROUND)
     const initialBackground = lyricsBackdropColor(null, themeBackground)
     setColors({
-      start: adaptToBackground(initialBackground, null),
-      end: adaptToBackground(initialBackground, null, 26),
+      start: contrastBackgroundColor(initialBackground),
+      end: contrastBackgroundColor(initialBackground),
     })
     void sampleArtwork(coverPath).then((artwork) => {
       if (!current) return
       const background = lyricsBackdropColor(artwork, themeBackground)
       setColors({
-        start: adaptToBackground(background, artwork),
-        end: adaptToBackground(background, artwork, 26),
+        start: contrastBackgroundColor(background),
+        end: contrastBackgroundColor(background),
       })
     })
     return () => { current = false }

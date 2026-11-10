@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpDown, Check, ChevronDown, Clock3, Disc3, Ellipsis, Folder, Heart, House, ListMusic, ListPlus, Maximize2, MicVocal, Minus, Music2, Pause, Pencil, Play, Plus, Repeat2, Search, Settings2, Shuffle, SkipBack, SkipForward, Star, Upload, Users, Volume2, X } from 'lucide-react'
 import BrandIcon from '../../components/common/BrandIcon'
+import { normalizeSearchText } from '../../utils/searchText'
 import sample from '../../../docs/design/library-redesign/sample-data.json'
 import '../../styles/global.css'
 import './libraryPreview.css'
@@ -142,7 +143,8 @@ function LibraryPreview() {
     setMenu({ ...item, x: Math.max(12, Math.min(innerWidth - 236, event.clientX)), y: Math.max(12, Math.min(innerHeight - 175, event.clientY)) })
   }
   const artistLink = (name: string, tab = 'popular') => { setArtistName(name); setArtistTab(tab); go('artist', name) }
-  const filteredTracks = TRACKS.filter(track => `${track.title} ${track.artist}`.toLocaleLowerCase().includes(trackQuery.toLocaleLowerCase()))
+  const normalizedTrackQuery = normalizeSearchText(trackQuery)
+  const filteredTracks = TRACKS.filter(track => normalizeSearchText(`${track.title} ${track.artist}`).includes(normalizedTrackQuery))
   const emptyPlaylist = isPlaylist && selectedList.count === 0
 
   const trackList = (tracks: Track[], showAlbum = true) => <div className={`lp-tracks${showAlbum ? '' : ' no-album'}`}>
@@ -165,9 +167,9 @@ function LibraryPreview() {
 
   const collectionList = () => {
     const albums = page === 'albums'
-    const needle = query.toLocaleLowerCase()
-    const visibleLists = lists.filter(list => list.title.toLocaleLowerCase().includes(needle) && (filter !== 'favorites' || favorites.has(list.id))).sort((a, b) => sort === 'name' ? a.title.localeCompare(b.title) : sort === 'count' ? b.count - a.count : 0)
-    const visibleAlbums = sample.albums.filter(album => `${album.title} ${album.artist}`.toLocaleLowerCase().includes(needle) && (filter !== 'favorites' || favorites.has(`album:${album.id}`))).sort((a, b) => sort === 'name' ? a.title.localeCompare(b.title) : sort === 'count' ? a.artist.localeCompare(b.artist) : 0)
+    const needle = normalizeSearchText(query)
+    const visibleLists = lists.filter(list => normalizeSearchText(list.title).includes(needle) && (filter !== 'favorites' || favorites.has(list.id))).sort((a, b) => sort === 'name' ? a.title.localeCompare(b.title) : sort === 'count' ? b.count - a.count : 0)
+    const visibleAlbums = sample.albums.filter(album => normalizeSearchText(`${album.title} ${album.artist}`).includes(needle) && (filter !== 'favorites' || favorites.has(`album:${album.id}`))).sort((a, b) => sort === 'name' ? a.title.localeCompare(b.title) : sort === 'count' ? a.artist.localeCompare(b.artist) : 0)
     return <>
       <header className="lp-page-heading"><div><span className="lp-overline">Ваша медиатека</span><h1>{albums ? 'Альбомы' : 'Плейлисты'}<span>{albums ? sample.albums.length : lists.length}</span></h1></div>{!albums && <div className="lp-heading-actions"><button className="lp-button lp-primary" onClick={() => { setNewName(''); setModal('create') }}><Plus size={16} />Новый плейлист</button><button className="lp-icon" aria-label="Импортировать плейлист" onClick={() => setModal('import')}><Upload size={18} /></button></div>}</header>
       <div className="lp-catalog-tools"><div className="lp-filter"><button aria-pressed={filter === 'all'} className={filter === 'all' ? 'is-active' : ''} onClick={() => setFilter('all')}>Все {albums ? 'альбомы' : 'плейлисты'}</button><button aria-pressed={filter === 'favorites'} className={filter === 'favorites' ? 'is-active' : ''} onClick={() => setFilter('favorites')}><Star size={13} />Избранное</button></div><label className="lp-search"><Search size={15} /><input aria-label={albums ? 'Поиск альбомов' : 'Поиск плейлистов'} placeholder="Найти в коллекции" value={query} onChange={e => setQuery(e.target.value)} />{query && <button aria-label="Очистить поиск" onClick={() => setQuery('')}><X size={13} /></button>}</label><label className="lp-sort"><ArrowUpDown size={14} /><select aria-label="Сортировка" value={sort} onChange={e => setSort(e.target.value)}><option value="recent">Недавние</option><option value="name">По названию</option><option value="count">{albums ? 'По исполнителю' : 'По числу песен'}</option></select><ChevronDown size={12} /></label></div>

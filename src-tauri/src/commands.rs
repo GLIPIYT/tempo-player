@@ -1313,9 +1313,10 @@ pub fn get_history(state: State<'_, AppState>, limit: i64, offset: i64) -> Resul
 pub async fn get_listening_period(
     state: State<'_, AppState>,
     boundaries: Vec<i64>,
+    reference_before: Option<i64>,
 ) -> Result<ListeningPeriodStats, String> {
     let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || db.get_listening_period(&boundaries))
+    tauri::async_runtime::spawn_blocking(move || db.get_listening_period(&boundaries, reference_before))
         .await
         .map_err(|error| error.to_string())?
 }

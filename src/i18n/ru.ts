@@ -1,9 +1,11 @@
 export const ru: Record<string, string> = {
+  'Only selected artists are included. Incompatible shares are split equally.': 'Только выбранные исполнители. Несовместимые доли распределяются поровну.',
   'The selected artist shares cannot be met with the available tracks.': 'Не хватает подходящих песен для заданных долей исполнителей.',
   'Tracks fitting artist shares: {count} of {total}.': 'Под заданные доли исполнителей подходит песен: {count} из {total}.',
 
   'Use word-by-word mode to run analysis': 'Для анализа включите заполнение по словам',
   'Analyzing word timings': 'Уточнение таймингов слов',
+  'Paused — play to analyze': 'На паузе — включите воспроизведение для анализа',
   'Word timing analysis failed': 'Не удалось уточнить тайминги слов',
   'Retry analysis': 'Повторить анализ',
 
@@ -15,6 +17,12 @@ export const ru: Record<string, string> = {
   'Share per selected artist': 'Доля каждого исполнителя',
   'Remaining places can use other artists. Incompatible shares are split equally.': 'Остальные места — для других исполнителей. Несовместимые доли распределяются поровну.',
   'Compared with the previous period': 'По сравнению с предыдущим периодом',
+  'Compared with': 'По сравнению с периодом',
+  'No previous period': 'Нет предыдущего периода с прослушиваниями',
+  'Loading comparison': 'Загрузка сравнения',
+  'Could not load comparison': 'Не удалось загрузить сравнение',
+  'Previous value': 'предыдущее значение',
+  'Current value': 'текущее значение',
   'By five minutes': 'По пять минут',
   'By listening start time': 'По началу прослушивания',
   'Back to day': 'К статистике дня',

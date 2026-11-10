@@ -21,6 +21,7 @@ import EmptyState from '../components/common/EmptyState'
 import Modal from '../components/common/Modal'
 import { toast } from '../components/common/Toast'
 import CacheBadge from '../soundcloud/CacheBadge'
+import { normalizeSearchText } from '../utils/searchText'
 
 type PlaylistSort = 'name' | 'updated' | 'tracks'
 
@@ -39,9 +40,9 @@ export default function PlaylistsPage() {
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<PlaylistSort>('updated')
   const [favoritesOnly, setFavoritesOnly] = useState(false)
-  const search = query.trim().toLocaleLowerCase()
+  const search = normalizeSearchText(query.trim())
   const visiblePlaylists = (data ?? [])
-    .filter((playlist) => (!favoritesOnly || playlist.pinned) && playlistDisplayName(playlist, playlist.name, t).toLocaleLowerCase().includes(search))
+    .filter((playlist) => (!favoritesOnly || playlist.pinned) && normalizeSearchText(playlistDisplayName(playlist, playlist.name, t)).includes(search))
     .sort((a, b) => {
       if (sort === 'updated') return b.updatedAt - a.updatedAt || a.id - b.id
       if (sort === 'tracks') return (b.trackCount ?? 0) - (a.trackCount ?? 0) || a.name.localeCompare(b.name)
