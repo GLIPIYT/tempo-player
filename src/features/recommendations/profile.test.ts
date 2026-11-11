@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { ScTrack } from '../../types/models'
 import type { FeedCandidate } from './storage'
-import type { LanguageEvidence, RecommendationSeed, RecommendationTrack } from './types'
-import { acousticAffinity, rankCandidates, type TasteProfile } from './profile'
+import type { LanguageEvidence, RecommendationSeed, RecommendationTrack, RecordingGroup } from './types'
+import { acousticAffinity, buildTasteProfile, rankCandidates, type TasteProfile } from './profile'
 
 const recommendationTrack = (key: string): RecommendationTrack => ({
   trackKey: key, source: 'soundcloud', sourceId: key.split(':')[1], dbId: null,
@@ -44,6 +44,40 @@ const candidate = (id: string, seedTrackKey: string, addedAt: number): FeedCandi
     groupKey: `soundcloud:${id}`, seedTrackKey, cursor: null, alternates: [], addedAt,
   }
 }
+
+describe('taste profile feature lookup', () => {
+  it('preserves exact matches, resolved groups and feature order for aliases', () => {
+    const fallback = 'soundcloud:fallback'
+    const exact = 'soundcloud:exact'
+    const resolved = 'soundcloud:resolved'
+    const firstAlias = 'soundcloud:first-alias'
+    const secondAlias = 'soundcloud:second-alias'
+    const resolvedAlias = 'soundcloud:resolved-alias'
+    const group = (groupKey: string, trackKeys: string[]): RecordingGroup => ({
+      groupKey, trackKeys, trackCount: trackKeys.length, featureVersion: 1, createdAt: 0, trackKeysTruncated: false,
+    })
+    const feature = (trackKey: string, code: string, revision = 1) => ({
+      trackKey, revision, updatedAt: 1_000, data: { language: language(code) },
+    })
+    const result = buildTasteProfile({
+      generation: 1, likedTrackKeys: [], manuallySavedTrackKeys: [], sessions: [], impressions: [], storedState: null,
+      seedTracks: [fallback, exact, resolved].map(key => ({ ...seed(key), evidence: 'playlist' })),
+      recordingGroups: [
+        group('first-group', [fallback, firstAlias, secondAlias]),
+        group('stale-group', [fallback, resolved]),
+        group('exact-group', [exact, 'soundcloud:exact-alias']),
+      ],
+      canonicalGroups: { [resolved]: 'resolved-group', [resolvedAlias]: 'resolved-group' },
+      features: [
+        feature(firstAlias, 'ukr'), feature(secondAlias, 'deu'), feature(firstAlias, 'eng', 2),
+        feature('soundcloud:exact-alias', 'deu'), feature(exact, 'spa'), feature(resolvedAlias, 'rus'),
+      ],
+    }, 2_000)
+
+    expect(result.groups).toMatchObject({ [fallback]: 'first-group', [exact]: 'exact-group', [resolved]: 'resolved-group' })
+    expect(result.seedLanguages).toEqual({ [fallback]: 'eng', [exact]: 'spa', [resolved]: 'rus' })
+  })
+})
 
 describe('recommendation diversity', () => {
   it('interleaves candidates from multiple seed languages using the listener language mix', () => {

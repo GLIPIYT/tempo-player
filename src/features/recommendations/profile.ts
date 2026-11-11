@@ -36,8 +36,6 @@ interface TasteRecord {
   at: number
   discovery: boolean
 }
-const canonical = (context: RecommendationContext, key: string) => context.canonicalGroups?.[key]
-  ?? context.recordingGroups?.find(group => group.trackKeys.includes(key))?.groupKey ?? key
 const decay = (at: number, now: number) => Math.pow(0.5, Math.max(0, now - at) / (45 * DAY))
 const norm = normalizeRecordingText
 
@@ -71,8 +69,22 @@ export function mixBuckets<T>(pools: T[][], weights: number[], limit = Infinity)
 export function buildTasteProfile(context: TasteContext, now: number): TasteProfile {
   const features = new Map(context.features.map(feature => [feature.trackKey, feature]))
   const groups = { ...context.canonicalGroups }
+  const recordingGroupByTrack = new Map<string, string>()
+  for (const group of context.recordingGroups ?? []) {
+    for (const key of group.trackKeys) {
+      if (!recordingGroupByTrack.has(key)) recordingGroupByTrack.set(key, group.groupKey)
+    }
+  }
+  const canonical = (key: string) => context.canonicalGroups?.[key] ?? recordingGroupByTrack.get(key) ?? key
+  // Keep the first match in feature order and always prefer a direct track match.
+  const featureByGroup = new Map<string, RecommendationContext['features'][number]>()
+  for (const feature of features.values()) {
+    const group = canonical(feature.trackKey)
+    if (!featureByGroup.has(group)) featureByGroup.set(group, feature)
+  }
+  const featureFor = (key: string) => features.get(key) ?? featureByGroup.get(canonical(key))
   const catalogFor = (track: RecommendationTrack) => {
-    const feature = features.get(track.trackKey) ?? [...features.values()].find(value => canonical(context, value.trackKey) === canonical(context, track.trackKey))
+    const feature = featureFor(track.trackKey)
     return (feature?.data.catalog ?? feature?.data) as Record<string, unknown> | undefined
   }
   // Cohorts coalesce versions into a family for evidence only. Playback identity
@@ -81,17 +93,17 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
     const identity = catalogFor(track)?.identity as { artist?: string; title?: string } | undefined
     const artist = norm(identity?.artist ?? track.artists[0] ?? '')
     const title = norm(identity?.title ?? track.title).replace(/\s*[([][^()[\]]*(?:remix|live|slowed|sped[ -]?up|cover|instrumental|acoustic|edit)[^()[\]]*[)\]]/gu, '').trim()
-    return artist && title ? `${artist}|${title}` : canonical(context, track.trackKey)
+    return artist && title ? `${artist}|${title}` : canonical(track.trackKey)
   }
   const qualified = [...new Map(context.sessions.map(event => [event.id, event])).values()].filter(event => event.endReason !== 'error' && (event.durationSec ?? 0) >= 15
     && event.coveredSec / event.durationSec! >= 0.5 && event.elapsedSec >= Math.min(30, event.durationSec! * 0.8))
   const listeningDays = new Map<string, Set<number>>()
   for (const event of qualified) {
-    const group = canonical(context, event.trackKey), days = listeningDays.get(group) ?? new Set<number>()
+    const group = canonical(event.trackKey), days = listeningDays.get(group) ?? new Set<number>()
     days.add(Math.floor(event.startedAt / DAY)); listeningDays.set(group, days)
   }
   for (const day of context.tasteDays ?? []) if (day.weight >= 0.5) {
-    const group = canonical(context, day.trackKey), days = listeningDays.get(group) ?? new Set<number>()
+    const group = canonical(day.trackKey), days = listeningDays.get(group) ?? new Set<number>()
     days.add(Math.floor(day.at / DAY)); listeningDays.set(group, days)
   }
   const confirmedListeningGroups = new Set([...listeningDays].filter(([, days]) => days.size >= 2).map(([group]) => group))
@@ -114,7 +126,7 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
     const cohort = listeningArtistFamilies.get(artist) ?? new Set<string>()
     cohort.add(familyOf(event.track)); listeningArtistFamilies.set(artist, cohort)
   }
-  const limitedLike = (track: RecommendationTrack) => !confirmedListeningGroups.has(canonical(context, track.trackKey))
+  const limitedLike = (track: RecommendationTrack) => !confirmedListeningGroups.has(canonical(track.trackKey))
     && !track.artists.some(artist => (listeningArtistFamilies.get(norm(artist))?.size ?? 0) >= 2)
   const records = new Map<string, TasteRecord>()
   const sessionStart = context.sessionStartedAt ?? now - 6 * 60 * 60_000
@@ -124,7 +136,7 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
     const clip = (track.durationSec ?? 0) > 0 && track.durationSec! < 15
     const amount = clip ? 0.1 : limitedLike(track) ? 0.35 : 1
     const day = Math.floor(at / DAY), family = `${familyOf(track)}|${day}`
-    const artist = `${norm(track.artists[0] ?? canonical(context, track.trackKey))}|${day}`
+    const artist = `${norm(track.artists[0] ?? canonical(track.trackKey))}|${day}`
     const contribution = Math.max(0, Math.min(amount - (likeFamilies.get(family) ?? 0), 1 - (likeArtists.get(artist) ?? 0)))
     if (!contribution) return
     likeFamilies.set(family, (likeFamilies.get(family) ?? 0) + contribution)
@@ -136,7 +148,7 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
       listenCap = Math.min(listenCap, 0.1)
       confidence = Math.min(confidence, 0.1)
     }
-    const group = canonical(context, track.trackKey); groups[track.trackKey] = group
+    const group = canonical(track.trackKey); groups[track.trackKey] = group
     const dayKey = `${group}|${Math.floor(at / DAY)}`
     const item = days.get(dayKey) ?? { track, at, listen: 0, listenCap: 1, action: 0, sessionListen: 0, sessionAction: 0, confidence: 0, discovery: false }
     if (kind === 'listen') item.listenCap = Math.min(item.listenCap, listenCap)
@@ -150,8 +162,8 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
     item.at = Math.max(item.at, at); item.confidence = Math.max(item.confidence, confidence)
     item.discovery ||= discovery; days.set(dayKey, item)
   }
-  const currentLikes = new Set(context.likedTrackKeys.map(key => canonical(context, key)))
-  const detailedTasteDays = new Set((context.tasteDays ?? []).map(day => `${canonical(context, day.trackKey)}|${Math.floor(day.at / DAY)}`))
+  const currentLikes = new Set(context.likedTrackKeys.map(canonical))
+  const detailedTasteDays = new Set((context.tasteDays ?? []).map(day => `${canonical(day.trackKey)}|${Math.floor(day.at / DAY)}`))
   for (const seed of context.seedTracks) {
     if (seed.evidence === 'like' || seed.evidence === 'playlist') {
       // Current likes/manual membership survive history reset; imported membership is not provided as manual.
@@ -162,7 +174,7 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
     // window. The context always supplies tasteDays (often for other tracks),
     // so compare the same canonical track/day to avoid dropping or double-counting it.
     else if (seed.evidence === 'aggregate'
-      && !detailedTasteDays.has(`${canonical(context, seed.track.trackKey)}|${Math.floor(seed.at / DAY)}`)) {
+      && !detailedTasteDays.has(`${canonical(seed.track.trackKey)}|${Math.floor(seed.at / DAY)}`)) {
       addDay(seed.track, seed.at, Math.min(1, seed.weight), 0.5, 'listen', false)
     }
   }
@@ -178,7 +190,7 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
   for (const event of sessions.values()) {
     if (event.endReason === 'error') continue
     const duration = event.durationSec ?? 0, coverage = duration > 0 ? Math.min(1, event.coveredSec / duration) : 0
-    const group = canonical(context, event.trackKey)
+    const group = canonical(event.trackKey)
     if (event.finished && ['next', 'select'].includes(event.endReason ?? '')
       && event.elapsedSec < Math.min(30, duration > 0 ? duration * 0.2 : 30)) {
       skips.set(group, [...(skips.get(group) ?? []), event.startedAt])
@@ -190,13 +202,13 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
   }
   for (const action of context.explicitActions ?? []) {
     if (action.generation !== context.generation || action.intent !== 'manual' || action.action === 'unlike') continue
-    if (action.action === 'like' && !currentLikes.has(canonical(context, action.trackKey))) continue
+    if (action.action === 'like' && !currentLikes.has(canonical(action.trackKey))) continue
     const discovery = !!action.track.provenance?.recommendationId || ['home', 'radio'].includes(action.track.provenance?.origin ?? '')
     if (action.action === 'like') addLike(action.track, action.at, discovery)
     else addDay(action.track, action.at, action.action === 'cache' ? 0.25 : 2, 1, 'action', discovery)
   }
   for (const item of days.values()) {
-    const group = canonical(context, item.track.trackKey)
+    const group = canonical(item.track.trackKey)
     const record = records.get(group) ?? { track: item.track, long: 0, session: 0, longListen: 0, sessionListen: 0,
       longAction: 0, sessionAction: 0, confidence: 0, at: 0, discovery: false }
     const amount = Math.min(4, item.listen + item.action)
@@ -243,18 +255,18 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
   const seedLanguages: Record<string, string> = {}
   const add = (map: Record<string, number>, value: string, weight: number) => { if (norm(value)) map[norm(value)] = (map[norm(value)] ?? 0) + weight }
   for (const item of tasteTracks) {
-    const feature = features.get(item.track.trackKey) ?? [...features.values()].find(value => canonical(context, value.trackKey) === canonical(context, item.track.trackKey))
+    const feature = featureFor(item.track.trackKey)
     const catalog = (feature?.data.catalog ?? feature?.data) as Record<string, unknown> | undefined
     const traits = { ...item.track.traits, ...(catalog?.traits as RecommendationTrack['traits']) }
     const language = feature?.data.language as unknown as LanguageEvidence | undefined
     const weight = item.weight * item.confidence
     // Language is a slow-moving preference. Square-root and cap each track's
     // vote so a few freshly liked tracks cannot rewrite the listener's profile.
-    const signal = languageSignal(records.get(canonical(context, item.track.trackKey)))
+    const signal = languageSignal(records.get(canonical(item.track.trackKey)))
     const languageWeight = Math.min(0.08, Math.sqrt(Math.max(0, signal))) * item.confidence
     languageTotal += languageWeight
     for (const artist of item.track.artists) add(profile.artists, artist, weight)
-    const supported = confirmedListeningGroups.has(canonical(context, item.track.trackKey)) || item.track.artists.some(confirmedArtist)
+    const supported = confirmedListeningGroups.has(canonical(item.track.trackKey)) || item.track.artists.some(confirmedArtist)
     if (traits?.genre && (genreFamilies.get(norm(traits.genre))?.size ?? 0) >= 2) {
       const genreKey = norm(traits.genre)
       add(profile.genres, traits.genre, signal)
@@ -308,8 +320,8 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
   const pools = (['steady', 'recent', 'discovery'] as const).map(bucket => tasteTracks.filter(item => item.bucket === bucket)
     .map(item => ({ track: item.track, weight: item.weight, confidence: item.confidence, at: item.at, bucket,
       limitedEvidence: (item.track.durationSec != null && item.track.durationSec > 0 && item.track.durationSec < 15)
-        || (currentLikes.has(canonical(context, item.track.trackKey)) && limitedLike(item.track)),
-      evidence: (currentLikes.has(canonical(context, item.track.trackKey)) ? 'like' : 'listening') as RecommendationSeed['evidence'] })))
+        || (currentLikes.has(canonical(item.track.trackKey)) && limitedLike(item.track)),
+      evidence: (currentLikes.has(canonical(item.track.trackKey)) ? 'like' : 'listening') as RecommendationSeed['evidence'] })))
   profile.seeds = mixBuckets(pools, [0.6, 0.25, 0.15], 40)
   // Reserve actual secondary-language seeds before trimming to the source budget.
   for (const code of Object.keys(profile.languages)) {
@@ -317,7 +329,7 @@ export function buildTasteProfile(context: TasteContext, now: number): TasteProf
     if (seed && !profile.seeds.some(item => item.track.trackKey === seed.track.trackKey)) {
       if (profile.seeds.length >= 40) profile.seeds.pop()
       profile.seeds.push({ ...seed, evidence: 'listening', limitedEvidence: seed.track.durationSec != null && seed.track.durationSec > 0 && seed.track.durationSec < 15
-        || (currentLikes.has(canonical(context, seed.track.trackKey)) && limitedLike(seed.track)) })
+        || (currentLikes.has(canonical(seed.track.trackKey)) && limitedLike(seed.track)) })
     }
   }
   // Put minority-language queries near the front. The resolver uses an early
