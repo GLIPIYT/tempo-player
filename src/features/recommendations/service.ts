@@ -325,7 +325,8 @@ class RecommendationService {
   private async resolveKeys(trackKeys: string[], groupKeys: string[] = []) {
     const epoch = this.epoch
     const tracks = [...new Set(trackKeys)].filter(key => !this.aliases.has(key))
-    const groups = [...new Set(groupKeys)].filter(key => !this.aliases.has(key) && !tracks.includes(key))
+    const unresolvedTracks = new Set(tracks)
+    const groups = [...new Set(groupKeys)].filter(key => !this.aliases.has(key) && !unresolvedTracks.has(key))
     const inputs = [...tracks.map(key => ({ key, track: true })), ...groups.map(key => ({ key, track: false }))]
     for (let start = 0; start < inputs.length; start += 60) {
       const batch = inputs.slice(start, start + 60)
@@ -1528,6 +1529,11 @@ class RecommendationService {
       this.skipCooldowns.set(canonical, skipCooldown)
       this.skipCooldownOverflow.add(canonical)
       this.skipCooldownOverflowUntil = Math.max(this.skipCooldownOverflowUntil, skipCooldown)
+    }
+    if (roots.size === 1) {
+      // The single root already matches the canonical key. Remember the resolution without scanning the feed.
+      this.aliases.set(canonical, canonical)
+      return
     }
     for (const [key, group] of this.aliases) if (roots.has(key) || roots.has(group)) this.aliases.set(key, canonical)
     for (const root of roots) this.aliases.set(root, canonical)
