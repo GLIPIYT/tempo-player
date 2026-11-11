@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import LyricsOverlay from './LyricsOverlay'
-import { usePlayer } from '../../player'
+import { usePlayer, usePlayerField } from '../../player'
 import ArtworkView from '../../components/artwork-view/ArtworkView'
 import TrackDetails from '../../components/track-details/TrackDetails'
 import { useNav } from '../../state/nav'
@@ -16,24 +16,36 @@ interface LyricsApi {
 
 const LyricsContext = createContext<LyricsApi | null>(null)
 
+function CompactTrackDetails({ onClose, onOpenFull, onArtistNavigate }: {
+  onClose: () => void
+  onOpenFull: () => void
+  onArtistNavigate: () => void
+}) {
+  const { currentTrack, position, duration, seek } = usePlayer()
+  if (!currentTrack) return null
+  return <TrackDetails track={currentTrack} position={position} duration={duration} onClose={onClose}
+    onOpenFull={onOpenFull} onSeek={seek} onArtistNavigate={onArtistNavigate} />
+}
+
 export function LyricsContextProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
   const [surface, setSurface] = useState<'artwork' | 'compact' | null>(null)
-  const player = usePlayer()
+  const track = usePlayerField('currentTrack')
   const { view, navigate } = useNav()
   const openLyrics = useCallback(() => setOpen(true), [])
   const closeLyrics = useCallback(() => { setOpen(false); setSurface(value => value === 'compact' ? null : value) }, [])
   const openArtwork = useCallback(() => setSurface('artwork'), [])
+  const openCompactDetails = useCallback(() => setSurface('compact'), [])
   const openFullDetails = useCallback(() => {
-    if (!player.currentTrack) return
-    navigate({ name: 'track-details', track: player.currentTrack, previous: view.name === 'track-details' ? view.previous : view })
+    if (!track) return
+    navigate({ name: 'track-details', track, previous: view.name === 'track-details' ? view.previous : view })
     setSurface(null)
     setOpen(false)
-  }, [navigate, player.currentTrack, view])
+  }, [navigate, track, view])
   const openTrackDetails = useCallback((mode: 'full' | 'compact') => {
     if (mode === 'full') openFullDetails()
-    else setSurface('compact')
-  }, [openFullDetails])
+    else openCompactDetails()
+  }, [openCompactDetails, openFullDetails])
   const closeSurface = useCallback(() => setSurface(null), [])
 
   useEffect(() => {
@@ -55,13 +67,13 @@ export function LyricsContextProvider({ children }: { children: ReactNode }) {
       {children}
       {open && (
         <DevProfile id="lyrics">
-          <LyricsOverlay onClose={closeLyrics} onArtwork={openArtwork} onTrackDetails={() => openTrackDetails('compact')} />
+          <LyricsOverlay onClose={closeLyrics} onArtwork={openArtwork} onTrackDetails={openCompactDetails} />
         </DevProfile>
       )}
-      {surface === 'artwork' && player.currentTrack && <ArtworkView track={player.currentTrack} onClose={closeSurface} />}
-      {surface === 'compact' && player.currentTrack && (
-        <TrackDetails track={player.currentTrack} position={player.position} duration={player.duration} onClose={closeSurface} onOpenFull={openFullDetails}
-          onSeek={player.seek} onArtistNavigate={() => { closeSurface(); closeLyrics() }} />
+      {surface === 'artwork' && track && <ArtworkView track={track} onClose={closeSurface} />}
+      {surface === 'compact' && (
+        <CompactTrackDetails onClose={closeSurface} onOpenFull={openFullDetails}
+          onArtistNavigate={() => { closeSurface(); closeLyrics() }} />
       )}
     </LyricsContext.Provider>
   )

@@ -1,6 +1,5 @@
 import PageOutlet from './app/PageOutlet'
 import AppBackgroundEffects from './app/AppBackgroundEffects'
-import { DevProfile } from './dev-performance/DevProfile'
 import Sidebar from './components/layout/Sidebar'
 import TopBar from './components/layout/TopBar'
 import PlayerBar from './components/layout/PlayerBar'
@@ -44,7 +43,7 @@ function Shell() {
               <PageOutlet />
             </main>
           </div>
-          <DevProfile id="player"><PlayerBar /></DevProfile>
+          <PlayerBar />
         </div>
         <AppBackgroundEffects />
         <LyricsAnalysisBridge />

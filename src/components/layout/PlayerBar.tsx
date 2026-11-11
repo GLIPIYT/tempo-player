@@ -37,6 +37,7 @@ import WaveProgress from '../common/WaveProgress'
 import QueuePanel from './QueuePanel'
 import PlayerVisualizer from '../player/PlayerVisualizer'
 import { LyricsContextProvider, useLyrics } from '../../features/lyrics'
+import { DevProfile } from '../../dev-performance/DevProfile'
 import {
   EQUALIZER_BANDS,
   EQUALIZER_MAX_DB,
@@ -77,14 +78,15 @@ function PresetCurve({ bands }: { bands: readonly number[] }) {
 export default function PlayerBar() {
   return (
     <LyricsContextProvider>
-      <PlayerBarContent />
+      <DevProfile id="player"><PlayerBarContent /></DevProfile>
     </LyricsContextProvider>
   )
 }
 
 function PlayerBarContent() {
   const p = usePlayer()
-  const displayPosition = useDisplayPosition(p)
+  const lyrics = useLyrics()
+  const displayPosition = useDisplayPosition(p, !lyrics.open)
   const setEqualizer = p.setEqualizer
   const { settings, update } = useSettings()
   // In the modern layout the progress line runs along the bar's top edge, so
@@ -92,7 +94,6 @@ function PlayerBarContent() {
   const modern = settings.player.barStyle === 'modern'
   const likes = useLikes()
   const t = useT()
-  const lyrics = useLyrics()
   const [queueOpen, setQueueOpen] = useState(false)
   const closeQueue = useCallback(() => setQueueOpen(false), [])
   const [speedOpen, setSpeedOpen] = useState(false)

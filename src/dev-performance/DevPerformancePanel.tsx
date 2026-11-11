@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Activity, ChevronLeft, ChevronRight, Circle, Cpu, Download, Square, X } from 'lucide-react'
 import {
@@ -28,7 +28,7 @@ function milliseconds(value: number): string {
   return `${value > 0 && value < 10 ? value.toFixed(1) : Math.round(value)} ms`
 }
 
-function EventRow({ entry }: { entry: DevPerfEntry }) {
+const EventRow = memo(function EventRow({ entry }: { entry: DevPerfEntry }) {
   const { kind, label, atMs, durationMs, scripts, blockingMs, renderMs, styleAndLayoutMs } = entry
   const content = <>
     <time title="Time since window opened">{(atMs / 1000).toFixed(2)}s</time>
@@ -61,7 +61,7 @@ function EventRow({ entry }: { entry: DevPerfEntry }) {
       </details>
     ) : <div className="tempo-perf-event-row">{content}</div>}
   </li>
-}
+})
 
 function SavedFile({ label, path }: { label: string; path: string }) {
   return <div className="tempo-perf-file"><span>{label}</span><code title={path}>{path}</code></div>
@@ -85,7 +85,7 @@ function DevPerformancePanel() {
     let react = 0
     for (const entry of snapshot.entries) {
       if (entry.kind === 'react') react = Math.max(react, entry.durationMs)
-      else if (entry.kind === 'longtask' || entry.kind === 'long-frame') peak = Math.max(peak, entry.durationMs)
+      else if (entry.kind !== 'event-loop') peak = Math.max(peak, entry.durationMs)
     }
     return { peak, react }
   }, [snapshot.entries])
@@ -161,18 +161,17 @@ function DevPerformancePanel() {
       >
         <header className="tempo-perf-header">
           <span className="tempo-perf-heading-icon"><Activity size={17} /></span>
-          <div><h2 id="tempo-perf-title">Dev performance</h2>
-            <span className={`tempo-perf-state${active ? ' is-active' : ''}`}>
-              <span />{trace.recording ? 'Profiling' : snapshot.capturing ? 'Capturing' : 'Stopped'}
-            </span>
-          </div>
+          <h2 id="tempo-perf-title">Dev performance</h2>
+          <span className={`tempo-perf-state${active ? ' is-active' : ''}`}>
+            <span />{trace.recording ? 'Profiling' : snapshot.capturing ? 'Capturing' : 'Stopped'}
+          </span>
           <button type="button" className="tempo-perf-close" onClick={collapse} aria-label="Collapse panel"><X size={16} /></button>
         </header>
 
         <div className="tempo-perf-content">
           <div className="tempo-perf-metrics">
             <div><span>Longest task / frame</span><strong className={totals.peak >= 150 ? 'is-spike' : ''}>{totals.peak ? milliseconds(totals.peak) : '—'}</strong></div>
-            <div><span>Slowest React render</span><strong>{totals.react ? milliseconds(totals.react) : '—'}</strong></div>
+            <div><span>Slowest React render</span><strong className={totals.react >= 16 ? 'is-spike' : ''}>{totals.react ? milliseconds(totals.react) : '—'}</strong></div>
           </div>
 
           <div className="tempo-perf-actions">

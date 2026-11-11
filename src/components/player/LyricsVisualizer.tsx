@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { usePlayer } from '../../player'
 import { LYRICS_VISUALIZER_BARS_MAX, useSettings } from '../../state/settings'
 import Visualizer from './Visualizer'
 import { contrastBackgroundColor } from './backgroundContrast'
@@ -114,11 +113,9 @@ function lyricsBackdropColor(artwork: Rgb | null, themeBackground: Rgb): Rgb {
   return blend(scale(artwork, 0.58), themeBackground, 0.66)
 }
 
-export default function LyricsVisualizer({ coverPath }: { coverPath: string | null }) {
-  const player = usePlayer()
+export default function LyricsVisualizer({ coverPath, hasCurrentTrack }: { coverPath: string | null; hasCurrentTrack: boolean }) {
   const { settings } = useSettings()
   const visualizer = settings.lyricsVisualizer
-  const hasCurrentTrack = player.currentTrack !== null
   const [colors, setColors] = useState<Palette>({ start: FALLBACK_ACCENT, end: FALLBACK_ACCENT })
 
   useEffect(() => {

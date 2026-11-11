@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type PointerEvent as React
 import { Check, ChevronDown, Clock3, GripVertical, MicVocal, MoreHorizontal, Pause, Play, Plus, Save, Search, SkipBack, SkipForward, Trash2 } from 'lucide-react'
 import { subscribeSpectrum } from '../../audio/spectrum'
 import { subscribeNativeAnalysis } from '../../audio/nativeAnalysis'
+import { usePlayerField } from '../../player'
 import { getEngine } from '../../player/engine'
 import { getNativePlayerController, isNativePlayback } from '../../player/nativeController'
 import { useT } from '../../i18n'
@@ -37,7 +38,6 @@ export interface LyricsEditorPanelProps {
   initialSourceId?: string | null
   sourceOptions: LyricsEditorSourceOption[]
   durationMs?: number | null
-  currentTimeSec: number
   isPlaying: boolean
   playbackRate: number
   onSeek: (timeSec: number) => void
@@ -135,7 +135,6 @@ export default function LyricsEditorPanel({
   initialSourceId,
   sourceOptions,
   durationMs,
-  currentTimeSec,
   isPlaying,
   playbackRate,
   onSeek,
@@ -148,6 +147,7 @@ export default function LyricsEditorPanel({
   publishing = false,
 }: LyricsEditorPanelProps) {
   const t = useT()
+  const currentTimeSec = usePlayerField('position')
   const id = useId()
   const publishMenuRef = useRef<HTMLDetailsElement>(null)
   const sourcePickerRef = useRef<HTMLDivElement>(null)

@@ -1,8 +1,9 @@
-import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { ChevronRight, MicVocal, Pause, Pencil, Pin, Play, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 import type { CSSProperties } from 'react'
-import { usePlayer } from '../../player'
+import { usePlayerActions, usePlayerField } from '../../player'
+import { playerContext } from '../../player/usePlayer'
 import { playerController } from '../../player/controller'
 import { getNativePlayerController, isNativePlayback } from '../../player/nativeController'
 import { useT } from '../../i18n'
@@ -188,25 +189,49 @@ const Backdrop = memo(function Backdrop({ coverPath }: { coverPath: string | nul
   )
 })
 
-function SideTimeline() {
-  const p = usePlayer()
+function SideTimeline({ trackDuration }: { trackDuration: number }) {
+  const contextualPosition = useContext(playerContext)?.position
+  const duration = usePlayerField('duration')
+  const { seek } = usePlayerActions()
   const t = useT()
-  const dur = p.duration > 0 ? p.duration : (p.currentTrack?.durationSec ?? 0)
-  const pct = dur > 0 ? clamp((p.position / dur) * 100, 0, 100) : 0
+  const dur = duration > 0 ? duration : trackDuration
+  const timeRef = useRef<HTMLSpanElement>(null)
+  const rangeRef = useRef<HTMLInputElement>(null)
+
+  // Playback ticks only move the slider and clock, so update their DOM directly.
+  useLayoutEffect(() => {
+    const time = timeRef.current
+    const range = rangeRef.current
+    if (!time || !range) return
+    let previousPosition: number | undefined
+    const update = () => {
+      const position = contextualPosition ?? playerController.getSnapshot().position
+      if (position === previousPosition) return
+      previousPosition = position
+      const label = fmtTime(position)
+      if (time.textContent !== label) time.textContent = label
+      const value = clamp(position, 0, dur)
+      range.valueAsNumber = value
+      range.style.setProperty('--lyr-seek-progress', `${dur > 0 ? (value / dur) * 100 : 0}%`)
+    }
+    update()
+    if (contextualPosition === undefined) return playerController.subscribe(update)
+  }, [contextualPosition, dur])
+
   return (
     <div className="lyr-time-row">
-      <span className="lyr-time lyr-time-cur">{fmtTime(p.position)}</span>
+      <span className="lyr-time lyr-time-cur" ref={timeRef} />
       <input
+        ref={rangeRef}
         className="lyr-seek-range"
         type="range"
         min={0}
         max={dur}
         step={0.1}
-        value={clamp(p.position, 0, dur)}
-        onChange={(event) => p.seek(Number(event.target.value))}
+        defaultValue={0}
+        onChange={(event) => seek(event.currentTarget.valueAsNumber)}
         disabled={dur <= 0}
         aria-label={t('Seek')}
-        style={{ '--lyr-seek-progress': `${pct}%` } as CSSProperties}
       />
       <span className="lyr-time lyr-time-total">{fmtTime(dur)}</span>
     </div>
@@ -214,10 +239,11 @@ function SideTimeline() {
 }
 
 function LyricsVolumeRow() {
-  const p = usePlayer()
+  const volume = usePlayerField('volume')
+  const { setVolume } = usePlayerActions()
   const t = useT()
-  const pct = Math.round(clamp(p.volume, 0, 1) * 100)
-  const Icon = p.volume === 0 ? VolumeX : Volume2
+  const pct = Math.round(clamp(volume, 0, 1) * 100)
+  const Icon = volume === 0 ? VolumeX : Volume2
   return (
     <div className="lyr-volume-row">
       <Icon size={16} className="lyr-volume-icon" />
@@ -227,8 +253,8 @@ function LyricsVolumeRow() {
         min={0}
         max={1}
         step={0.01}
-        value={p.volume}
-        onChange={(e) => p.setVolume(parseFloat(e.target.value))}
+        value={volume}
+        onChange={(e) => setVolume(parseFloat(e.target.value))}
         style={{ '--fill': `${pct}%` } as CSSProperties}
         aria-label={t('Volume')}
       />
@@ -410,11 +436,11 @@ function LyricsEditMenu({
 }
 
 export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: LyricsOverlayProps) {
-  const p = usePlayer()
-  const playbackRate = p.playbackRate
-  const setPlaybackRate = p.setPlaybackRate
+  const { setPlaybackRate, previous, next, toggle, seek } = usePlayerActions()
+  const playbackRate = usePlayerField('playbackRate')
+  const isPlaying = usePlayerField('isPlaying')
   const t = useT()
-  const track = p.currentTrack
+  const track = usePlayerField('currentTrack')
   const trackKey = track ? `${track.source}|${track.sourceId}|${track.title}|${track.artists.join(',')}` : ''
   const manualTrackIdentity = manualLyricsTrackIdentity(track)
   const [sideWidth, setSideWidth] = useState(readLyricsPaneWidth)
@@ -502,7 +528,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
   useEffect(() => {
     let cancelled = false
     pinRequest.current++
-    const id = p.currentTrack?.dbId ?? null
+    const id = track?.dbId ?? null
     if (id == null) {
       setPinned(null)
       setEditedVersion(null)
@@ -554,7 +580,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
   }, [trackKey])
 
   useEffect(() => {
-    const tr = p.currentTrack
+    const tr = track
     dispatchManualSearch({
       type: 'trackChanged',
       trackIdentity: manualTrackIdentity,
@@ -571,7 +597,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
     const request = ++candidateRequest.current
     setCandidatesTrackKey('')
     setSearching(false)
-    const tr = p.currentTrack
+    const tr = track
     const key = tr ? `${tr.source}|${tr.sourceId}|${tr.title}|${tr.artists.join(',')}` : ''
     if (!tr) {
       setCandidates([])
@@ -671,7 +697,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
     return () => {
       cancelled = true
     }
-    // Keyed on the track's identity rather than on `p.currentTrack`, so a
+    // Keyed on the track's identity rather than on `track`, so a
     // player snapshot does not restart a lyrics fetch, and so a track that
     // gains a dbId after being cached does not either.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- trackKey is the deliberate key
@@ -830,7 +856,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
    */
   const persistPin = useCallback(
     async (candidate: LyricsCandidate, nextOffsetMs: number) => {
-      const tr = p.currentTrack
+      const tr = track
       if (!tr || tr.dbId == null) return
       const lrc = candidateLrc(candidate)
       if (!lrc.trim()) return
@@ -866,7 +892,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
         })
       } catch {}
     },
-    [p.currentTrack, searchedAs, trackKey, pinned, editedVersion],
+    [track, searchedAs, trackKey, pinned, editedVersion],
   )
 
   /**
@@ -881,7 +907,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
       if (idx >= 0 && idx < selectionCandidates.length) {
         setSelectedIndex(idx)
         if (candidates.length === 0) setCandidates(selectionCandidates)
-        const tr = p.currentTrack
+        const tr = track
         const key = tr ? `${tr.source}|${tr.sourceId}|${tr.title}|${tr.artists.join(',')}` : ''
         if (key) {
           setLyricsOverlayCache(key, { candidates: selectionCandidates, selectedIndex: idx })
@@ -891,12 +917,12 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
       // The offset is dropped, since it was tuned against the previous lines.
       void persistPin(candidate, (candidate as OverlayCandidate).savedOffsetMs ?? 0)
     },
-    [p.currentTrack, candidates, persistPin, pinnedExtra, rawViewCandidates, selectionCandidates],
+    [track, candidates, persistPin, pinnedExtra, rawViewCandidates, selectionCandidates],
   )
 
   /** Back to automatic: drops the row and lets the normal chain resolve again. */
   const handleResetPin = useCallback(() => {
-    const tr = p.currentTrack
+    const tr = track
     if (!tr || tr.dbId == null) return
     const mutation = ++pinRequest.current
     const requestTrackKey = trackKey
@@ -909,7 +935,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
         lyricsService.ensure(tr, settings.lyrics.cacheOnline)
       })
       .catch(() => {})
-  }, [p.currentTrack, settings.lyrics.cacheOnline, trackKey])
+  }, [track, settings.lyrics.cacheOnline, trackKey])
 
   /**
    * Nudging automatic lyrics has to pin them first - `offset_ms` lives on the
@@ -917,7 +943,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
    */
   const handleNudgeOffset = useCallback(
     (deltaMs: number) => {
-      const tr = p.currentTrack
+      const tr = track
       if (!tr || tr.dbId == null) return
       const next = clamp((pinned?.offsetMs ?? 0) + deltaMs, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS)
       if (pinned) {
@@ -931,7 +957,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
       const candidate = sourceSelected
       if (candidate) void persistPin(candidate, next)
     },
-    [p.currentTrack, pinned, sourceSelected, persistPin],
+    [track, pinned, sourceSelected, persistPin],
   )
 
   const handleManualSearch = useCallback(
@@ -945,7 +971,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
       dispatchManualSearch({ type: 'visibilityChanged', visible: true })
       setUnavailableHint(false)
       try {
-        const searchTrack = p.currentTrack ?? undefined
+        const searchTrack = track ?? undefined
         const currentEmbedded = candidates.find((candidate) => candidate.provider === 'embedded')
           ?? (activeServiceCandidate?.provider === 'embedded' ? activeServiceCandidate : null)
         const savedLocalLyricsRequest = currentEmbedded
@@ -963,7 +989,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
           setCandidates([])
           setSelectedIndex(0)
           setUnavailableHint(true)
-          const tr2 = p.currentTrack
+          const tr2 = track
           const key2 = tr2 ? `${tr2.source}|${tr2.sourceId}|${tr2.title}|${tr2.artists.join(',')}` : ''
           if (key2) setLyricsOverlayCache(key2, { candidates: [], selectedIndex: 0 })
         } else {
@@ -972,7 +998,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
           setCandidates(combined)
           setSelectedIndex(sel)
           setUnavailableHint(false)
-          const tr2 = p.currentTrack
+          const tr2 = track
           const key2 = tr2 ? `${tr2.source}|${tr2.sourceId}|${tr2.title}|${tr2.artists.join(',')}` : ''
           if (key2) setLyricsOverlayCache(key2, { candidates: combined, selectedIndex: sel })
         }
@@ -985,7 +1011,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
         if (currentTrackKey.current === searchTrackKey && request === candidateRequest.current) setSearching(false)
       }
     },
-    [activeServiceCandidate, candidates, p.currentTrack, trackKey],
+    [activeServiceCandidate, candidates, track, trackKey],
   )
 
   const selectedEditorSource = (sourceId: string | null): LyricsCandidate | null => {
@@ -1032,7 +1058,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
   }
 
   const saveEditedLyrics = async (document: LyricsEditorDocument, sourceId: string | null): Promise<void> => {
-    const tr = p.currentTrack
+    const tr = track
     if (!tr || tr.dbId == null) throw new Error('Track cannot store lyrics')
     const source = sourceMetadata(sourceId)
     const lrc = toPlaybackLrc(document)
@@ -1078,7 +1104,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
   }
 
   const publishEditedLyrics = async (document: LyricsEditorDocument, sourceId: string | null): Promise<void> => {
-    const tr = p.currentTrack
+    const tr = track
     if (!tr) throw new Error('No track is selected')
     const source = sourceMetadata(sourceId)
     const title = source.title || tr.title
@@ -1146,7 +1172,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
   return (
     <div className="lyr-overlay" role="dialog" aria-modal="true" aria-label={t('Lyrics')}>
       <Backdrop coverPath={track?.coverPath ?? null} />
-      <LyricsVisualizer coverPath={track?.coverPath ?? null} />
+      <LyricsVisualizer coverPath={track?.coverPath ?? null} hasCurrentTrack={track !== null} />
       <button type="button" className={`lyr-restore-player${sideCollapsed ? ' is-visible' : ''}`} tabIndex={sideCollapsed ? 0 : -1} aria-hidden={!sideCollapsed} aria-label={t('Show player')} onClick={() => setSideCollapsed(false)}><ChevronRight size={19} /></button>
       <button className="lyr-close" onClick={onClose} aria-label={t('Close')}>
         <X size={20} />
@@ -1163,15 +1189,15 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
           </div>
           <h2 className="lyr-title">{track ? <button type="button" className="lyr-title-button" onClick={onTrackDetails}>{track.title}</button> : t('Nothing playing')}</h2>
           <p className="lyr-artists">{track ? <ArtistLinks track={track} onNavigate={onClose} /> : t('Unknown artist')}</p>
-          <SideTimeline />
+          <SideTimeline trackDuration={track?.durationSec ?? 0} />
           <div className="lyr-controls">
-            <button className="lyr-skip" onClick={p.previous} aria-label={t('Previous')}>
+            <button className="lyr-skip" onClick={previous} aria-label={t('Previous')}>
               <SkipBack size={22} />
             </button>
-            <button className="lyr-play" onClick={p.toggle} aria-label={p.isPlaying ? t('Pause') : t('Play')}>
-              {p.isPlaying ? <Pause size={26} /> : <Play size={26} className="lyr-play-glyph" />}
+            <button className="lyr-play" onClick={toggle} aria-label={isPlaying ? t('Pause') : t('Play')}>
+              {isPlaying ? <Pause size={26} /> : <Play size={26} className="lyr-play-glyph" />}
             </button>
-            <button className="lyr-skip" onClick={p.next} aria-label={t('Next')}>
+            <button className="lyr-skip" onClick={next} aria-label={t('Next')}>
               <SkipForward size={22} />
             </button>
           </div>
@@ -1232,11 +1258,10 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
               initialSourceId={editorInitialSourceId}
               sourceOptions={editorSourceOptions}
               durationMs={durationMs}
-              currentTimeSec={p.position}
-              isPlaying={p.isPlaying}
-              playbackRate={p.playbackRate}
-              onSeek={p.seek}
-              onTogglePlayback={p.toggle}
+              isPlaying={isPlaying}
+              playbackRate={playbackRate}
+              onSeek={seek}
+              onTogglePlayback={toggle}
               onPlaybackRateChange={rate => setPlaybackRate(rate, false)}
               onSave={saveEditedLyrics}
               onPublish={publishEditedLyrics}
@@ -1283,7 +1308,7 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
                   key={trackKey}
                   timing={activeLyrics.timing}
                   playbackRate={playbackRate}
-                  onSeek={p.seek}
+                  onSeek={seek}
                   getPosition={getLyricMediaPosition}
                   lyricsRate={lyricsRate}
                   offsetMs={activeLyrics.offsetMs}
