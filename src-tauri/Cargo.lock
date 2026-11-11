@@ -5173,7 +5173,7 @@ dependencies = [
 
 [[package]]
 name = "tempo"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "base64 0.22.1",
  "biquad",

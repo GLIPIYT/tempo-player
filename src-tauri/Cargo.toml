@@ -1,6 +1,6 @@
 [package]
 name = "tempo"
-version = "1.5.0"
+version = "1.5.1"
 description = "Tempo - local-first desktop music player"
 edition = "2021"
 
