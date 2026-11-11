@@ -4,6 +4,7 @@ import type { AudioIdentity } from './contract'
 import type { AnalysisTrackInput } from './runner'
 import { vocalNativeClient, type VocalNativeClient } from './vocalNativeClient'
 import { createVocalWorker } from './vocalWorkerClient'
+import { acquireAnalysisPcm, type AnalysisPcmLease } from './sharedPcm'
 import { VOCAL_ALGORITHM_VERSION, VOCAL_MODEL_REVISION, VOCAL_HOP_SEC, VOCAL_CORE_SEC, VOCAL_CONTEXT_SEC,
   type VocalAnalysis, type VocalTimingEvidence, type VocalRequest, type VocalResponse } from './vocalContract'
 
@@ -32,6 +33,7 @@ export function createVocalAnalysisRunner(deps: VocalRunnerDependencies = defaul
   let readyAt = 0
   let input: AnalysisTrackInput | null = null, identity: AudioIdentity | null = null
   let cache: VocalAnalysis | null = null, pcm: AnalysisPcm | null = null
+  let pcmLease: AnalysisPcmLease | null = null
   let worker: ReturnType<VocalRunnerDependencies['worker']> | null = null
   let controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined, idleTimer: ReturnType<typeof setTimeout> | undefined
@@ -39,7 +41,13 @@ export function createVocalAnalysisRunner(deps: VocalRunnerDependencies = defaul
   let evidenceMemo: { cache: VocalAnalysis; offsetMs: number; value: VocalTimingEvidence } | null = null
   let snapshot: VocalSnapshot = { lyricKey: null, phase: 'idle', analysis: null, error: null }
   const listeners = new Set<() => void>()
-  const release = () => { worker?.dispose(); worker = null; pcm = null; clearTimeout(idleTimer) }
+  const release = () => {
+    worker?.dispose(); worker = null
+    const lease = pcmLease
+    pcmLease = null; pcm = null
+    lease?.release()
+    clearTimeout(idleTimer)
+  }
   const cancel = () => { generation++; controller.abort(); controller = new AbortController(); restoring = false; refreshPending = false; clearTimeout(timer); release() }
   const touchIdle = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => { if (!busy) release(); else touchIdle() }, 60000) }
   function publish(phase = snapshot.phase, error: string | null = null) {
@@ -112,10 +120,11 @@ export function createVocalAnalysisRunner(deps: VocalRunnerDependencies = defaul
     try {
       if (!pcm) {
         publish('analyzing')
-        const decoded = await charged(() => deps.decode(identity!, signal))
-        signal.throwIfAborted()
-        if (!decoded) { publish('unavailable'); return }
-        pcm = decoded
+        const lease = await charged(() => acquireAnalysisPcm(identity!, signal, deps.decode))
+        if (signal.aborted) { lease?.release(); signal.throwIfAborted() }
+        if (!lease) { publish('unavailable'); return }
+        pcmLease = lease
+        pcm = lease.pcm
         return // Pay decoding debt before allocating an inference session.
       }
       const core = nextWindow()

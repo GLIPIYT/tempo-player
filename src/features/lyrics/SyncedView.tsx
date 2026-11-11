@@ -10,6 +10,7 @@ import { wordFillState, wordIndexAtProgress, wordStartsFromWidths } from './word
 import type { LyricWordTiming } from './wordTiming'
 import { SyncedRow } from './SyncedRow'
 import { lyricPaintRange } from './paintRange'
+import { startVisibleFrameLoop } from './visibleFrameLoop'
 
 const ANCHOR_RATIO = 0.38
 const PAUSE_MS = 4000
@@ -286,13 +287,13 @@ export const SyncedView = memo(function SyncedView({
 
   useEffect(() => {
     if (segments.length === 0) return
-    let frame = 0
+    let previousPosition: number | undefined
     const update = () => {
-      frame = requestAnimationFrame(update)
-      if (!document.hidden) {
-        // Animate this small DOM surface at display cadence. Native clock
-        // interpolation does not require frame-rate updates of the React tree.
-        const pos = getPosition()
+      // Browser playback snapshots advance more slowly than display frames.
+      // Avoid repeating the same timing lookup and inline style writes between them.
+      const pos = getPosition()
+      if (!Object.is(pos, previousPosition)) {
+        previousPosition = pos
         const lyricsPosition = lyricTimeAtMediaPosition(pos, lyricsRate, offsetMs)
         const { segmentIndex: found, progress, underlineProgress } = lyricTimingAt(timing, lyricsPosition)
         if (found !== segIdxRef.current) {
@@ -333,8 +334,7 @@ export const SyncedView = memo(function SyncedView({
         }
       }
     }
-    update()
-    return () => cancelAnimationFrame(frame)
+    return startVisibleFrameLoop(update)
   }, [timing, segments, lyricsRate, offsetMs, fillEnabled, playbackRate, motionStyle, textFillMode, getPosition])
 
   const endPause = useCallback(() => {

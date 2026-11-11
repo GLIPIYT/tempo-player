@@ -10,6 +10,7 @@ import { lyricLanguage, matchLyricEnds, projectSourceEnds } from './matchWords'
 import { canMatchLyricWordTimings, hasReliableSourceWordTimings, matchLyricWordTimings, projectLyricWordTimings, type MatchedLyricWords } from './matchWordTimings'
 import { knownTextAlignmentKey, knownTextLineWindow, knownTextWords, matchCachedKnownText } from './knownTextAlignment'
 import { createAsrWorker } from './workerClient'
+import { acquireAnalysisPcm, type AnalysisPcmLease } from './sharedPcm'
 import type { AsrRequest, AsrResponse } from './workerProtocol'
 export interface AnalysisTrackInput { track: AnalysisTrack; sourceLines: readonly LyricsLine[]; durationSec: number; offsetMs: number; lyricKey: string; sourceLyricKey: string }
 export interface AnalysisSnapshot {
@@ -40,6 +41,7 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
   let identityRefreshPending = false
   let input: AnalysisTrackInput | null = null
   let identity: AudioIdentity | null = null, cache: AudioAnalysis | null = null, pcm: AnalysisPcm | null = null
+  let pcmLease: AnalysisPcmLease | null = null
   let wordTimingsEnabled = false
   const attemptedAlignments = new Set<string>()
   let wordMatchMemo: { fragments: readonly CompletedFragment[]; alignedSources: readonly CachedAlignedSourceLine[];
@@ -115,7 +117,13 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
       unavailableReason: phase === 'unavailable' ? unavailableReason ?? snapshot.unavailableReason : null }
     for (const listener of listeners) listener()
   }
-  function release(): void { worker?.dispose(); worker = null; pcm = null; clearTimeout(idleTimer) }
+  function release(): void {
+    worker?.dispose(); worker = null
+    const lease = pcmLease
+    pcmLease = null; pcm = null
+    lease?.release()
+    clearTimeout(idleTimer)
+  }
   function cancel(): void {
     generation++; controller.abort(); controller = new AbortController()
     restoring = null
@@ -252,12 +260,14 @@ export function createLyricsAnalysisRunner(deps: RunnerDependencies = defaults) 
       if (!pcm) {
         publish('analyzing')
         // decodeForAnalysis owns the lane itself. Keep cancelled decode in it until it settles.
-        const decoded = await charged(() => deps.decode(identity!, signal))
-        signal.throwIfAborted()
-        if (!decoded) { publish('unavailable', null, 'unreadable-file'); return }
-        pcm = decoded
+        const lease = await charged(() => acquireAnalysisPcm(identity!, signal, deps.decode))
+        if (signal.aborted) { lease?.release(); signal.throwIfAborted() }
+        if (!lease) { publish('unavailable', null, 'unreadable-file'); return }
+        const audio = lease.pcm
+        pcmLease = lease
+        pcm = audio
         if (cache?.bpm == null) {
-          const bpm = await withAnalysisLane(signal, () => charged(async () => (deps.estimateBpm ?? estimateBpm)(decoded.pcm, decoded.sampleRate)))
+          const bpm = await withAnalysisLane(signal, () => charged(async () => (deps.estimateBpm ?? estimateBpm)(audio.pcm, audio.sampleRate)))
           if (bpm.value != null) await checkpoint({ bpm: { bpm: bpm.value, confidence: bpm.confidence } }, job)
         }
         return // Pay preprocessing debt before model initialization or inference.

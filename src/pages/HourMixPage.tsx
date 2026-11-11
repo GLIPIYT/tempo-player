@@ -9,7 +9,7 @@ import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import TrackList from '../components/common/TrackList'
 import { toast } from '../components/common/Toast'
 import { useT } from '../i18n'
-import { usePlayer } from '../player'
+import { usePlayerActions, usePlayerField } from '../player'
 import { useNav } from '../state/nav'
 import { tracksToUnified } from '../utils/unified'
 import type { HourMix } from '../utils/hourMixes'
@@ -28,7 +28,8 @@ import { normalizeSearchText } from '../utils/searchText'
 export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
   const t = useT()
   const count = useFormatCount()
-  const player = usePlayer()
+  const player = usePlayerActions()
+  const shuffle = usePlayerField('shuffle')
   const { navigate } = useNav()
   const [query, setQuery] = useState('')
   const [exportBusy, setExportBusy] = useState(false)
@@ -216,7 +217,7 @@ export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
               <Play size={14} fill="currentColor" />
               {t('Play mix')}
             </button>
-            <button type="button" className={`collection-icon-action${player.shuffle ? ' is-active' : ''}`} disabled={!mix.tracks.length} title={t('Shuffle')} aria-label={t('Shuffle')} onClick={() => { if (!player.shuffle) player.toggleShuffle(); player.playTracks(tracksToUnified(mix.tracks), 0) }}><Shuffle size={19} /></button>
+            <button type="button" className={`collection-icon-action${shuffle ? ' is-active' : ''}`} disabled={!mix.tracks.length} title={t('Shuffle')} aria-label={t('Shuffle')} onClick={() => { if (!shuffle) player.toggleShuffle(); player.playTracks(tracksToUnified(mix.tracks), 0) }}><Shuffle size={19} /></button>
             {mix.rule ? (
               <>
                 <button className="collection-icon-action" title={t('Edit rule')} aria-label={t('Edit rule')} onClick={() => setEditing(true)}>

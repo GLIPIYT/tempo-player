@@ -381,6 +381,19 @@ export interface TopTrackItem {
   playCount: number
 }
 
+/** Bounded library data used to render the Home shelves. */
+export interface HomePageData {
+  total: number
+  mixLibrary: Track[]
+  topTracks: TopTrackItem[]
+  played: Track[]
+  dormantTracks: Track[]
+  likedTracks: Track[]
+  likesPlaylist: Playlist | null
+  featuredPlaylists: Playlist[]
+  hasPlaylistHistory: boolean
+}
+
 export interface TopArtistItem {
   artist: Artist
   playCount: number

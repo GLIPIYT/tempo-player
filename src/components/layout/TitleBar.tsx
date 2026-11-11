@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Copy, Maximize, Minimize, Minus, Square, X } from 'lucide-react'
 import { useT } from '../../i18n'
-import { usePlayer } from '../../player'
+import { usePlayerField } from '../../player'
 import { useSettings } from '../../state/settings'
 import { resolveBrandIcon } from '../../theme/brandIcon'
 import { createFullscreenTransition } from './fullscreenTransition'
@@ -36,15 +36,15 @@ export default function TitleBar() {
   const transitionRef = useRef<((enter: boolean) => Promise<void>) | null>(null)
   const syncWindowStateRef = useRef<() => void>(() => {})
   const t = useT()
-  const player = usePlayer()
+  const currentTrack = usePlayerField('currentTrack')
   const { settings } = useSettings()
   const appIcon = resolveBrandIcon(settings.brandIconStyle, settings.theme)
   const win = getCurrentWindow()
   if (!transitionRef.current) {
     transitionRef.current = createFullscreenTransition(win, /Windows/i.test(navigator.userAgent))
   }
-  const now = player.currentTrack
-    ? `${player.currentTrack.artists.join(', ')} — ${player.currentTrack.title}`
+  const now = currentTrack
+    ? `${currentTrack.artists.join(', ')} — ${currentTrack.title}`
     : null
 
   useEffect(() => {

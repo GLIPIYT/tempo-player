@@ -120,13 +120,13 @@ export function takePendingUpdate(): string | null {
   }
 }
 
-export function downloadUpdate(url: string, version: string): Promise<string> {
-  return invoke<string>('updater_download', { url, version })
+export function downloadUpdate(version: string): Promise<string> {
+  return invoke<string>('updater_download', { version })
 }
 
 /** Starts the installer and quits - it cannot replace a running executable. */
-export function installUpdate(path: string): Promise<void> {
-  return invoke<void>('updater_install', { path })
+export function installUpdate(token: string): Promise<void> {
+  return invoke<void>('updater_install', { token })
 }
 
 /** Keeps the next-launch notice only when the installer command starts successfully. */
@@ -143,8 +143,8 @@ export async function installUpdateWithPendingMarker(
   }
 }
 
-export function discardUpdate(path: string): Promise<void> {
-  return invoke<void>('updater_discard', { path })
+export function discardUpdate(token: string): Promise<void> {
+  return invoke<void>('updater_discard', { token })
 }
 
 export function onDownloadProgress(handler: (progress: DownloadProgress) => void): Promise<UnlistenFn> {

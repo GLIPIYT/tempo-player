@@ -65,6 +65,12 @@ pub async fn get_custom_mix_candidates(state: State<'_, AppState>) -> Result<Vec
 }
 
 #[tauri::command]
+pub async fn get_home_page_data(state: State<'_, AppState>) -> Result<crate::models::HomePageData, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.get_home_page_data()).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn get_custom_mix_snapshot(state: State<'_, AppState>, rule_id: i64) -> Result<Option<crate::custom_mixes::CustomMixSnapshot>, String> {
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || db.get_custom_mix_snapshot(rule_id)).await.map_err(|e| e.to_string())?

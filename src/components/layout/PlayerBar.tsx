@@ -94,6 +94,7 @@ function PlayerBarContent() {
   const t = useT()
   const lyrics = useLyrics()
   const [queueOpen, setQueueOpen] = useState(false)
+  const closeQueue = useCallback(() => setQueueOpen(false), [])
   const [speedOpen, setSpeedOpen] = useState(false)
   const [presetMenuOpen, setPresetMenuOpen] = useState(false)
   const [presetName, setPresetName] = useState('')
@@ -691,7 +692,7 @@ function PlayerBarContent() {
           </button>
         </div>
       </footer>
-      <QueuePanel open={queueOpen} onClose={() => setQueueOpen(false)} />
+      <QueuePanel open={queueOpen} onClose={closeQueue} />
     </>
   )
 }

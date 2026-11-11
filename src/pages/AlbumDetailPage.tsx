@@ -6,7 +6,7 @@ import { api } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
-import { usePlayer } from '../player'
+import { usePlayerActions, usePlayerField } from '../player'
 import { tracksToUnified } from '../utils/unified'
 import { CollectionTrackHeading } from '../components/common/CollectionCatalog'
 import Cover from '../components/common/Cover'
@@ -22,7 +22,8 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
   const { navigate } = useNav()
   const t = useT()
   const count = useFormatCount()
-  const player = usePlayer()
+  const player = usePlayerActions()
+  const shuffle = usePlayerField('shuffle')
   const [query, setQuery] = useState('')
   useEffect(() => setQuery(''), [albumId])
   const version = useLibraryVersion()
@@ -80,7 +81,7 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
             <CollectionFavoriteButton active={fav.data ?? false} onClick={() => {
               void api.toggleFavoriteAlbum(albumId).then(() => { fav.reload(); bumpLibraryVersion() }).catch(() => {})
             }} />
-            <button type="button" className={`collection-icon-action${player.shuffle ? ' is-active' : ''}`} aria-label={t('Shuffle')} title={t('Shuffle')} onClick={() => { if (!player.shuffle) player.toggleShuffle(); player.playTracks(tracksToUnified(tracks), 0) }}><Shuffle size={19} /></button>
+            <button type="button" className={`collection-icon-action${shuffle ? ' is-active' : ''}`} aria-label={t('Shuffle')} title={t('Shuffle')} onClick={() => { if (!shuffle) player.toggleShuffle(); player.playTracks(tracksToUnified(tracks), 0) }}><Shuffle size={19} /></button>
           </>
         ) : undefined
       }

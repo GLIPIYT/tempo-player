@@ -8,7 +8,7 @@ import BrandIcon from '../components/common/BrandIcon'
 import { toast } from '../components/common/Toast'
 import CacheBadge, { CacheProgress } from '../soundcloud/CacheBadge'
 import { useNav } from '../state/nav'
-import { usePlayer } from '../player'
+import { usePlayerActions } from '../player'
 import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
 import { scTrackToUnified } from '../utils/unified'
@@ -26,7 +26,7 @@ import { canPlaySoundCloudTrack } from '../soundcloud/playability'
 export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
   const t = useT()
   const { navigate } = useNav()
-  const player = usePlayer()
+  const player = usePlayerActions()
   const [data, setData] = useState<ScPlaylistDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)

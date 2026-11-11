@@ -9,7 +9,7 @@ import type { Playlist, PlaylistTrack, Track } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
-import { usePlayer } from '../player'
+import { usePlayerActions, usePlayerField } from '../player'
 import { fmtTime } from '../utils/format'
 import { trackToUnified } from '../utils/unified'
 import { playlistDisplayName } from '../utils/playlists'
@@ -37,7 +37,9 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const { navigate } = useNav()
   const t = useT()
   const count = useFormatCount()
-  const player = usePlayer()
+  const player = usePlayerActions()
+  const shuffleEnabled = usePlayerField('shuffle')
+  const currentTrack = usePlayerField('currentTrack')
   const version = useLibraryVersion()
   const detail = useAsync(() => api.getPlaylist(playlistId), [playlistId, version])
   const lists = useAsync(() => api.listPlaylists(), [version])
@@ -241,7 +243,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const artwork = <CollectionArtwork paths={artworkPaths} label={displayName} likes={isLikes} eager />
   const playAll = (shuffle = false) => {
     if (!tracks.length) return
-    if (shuffle && !player.shuffle) player.toggleShuffle()
+    if (shuffle && !shuffleEnabled) player.toggleShuffle()
     player.playTracks(tracks.map(trackToUnified), 0)
     void api.recordPlaylistStart(playlistId).then(bumpLibraryVersion).catch(cause => toast.show(String(cause), 'error'))
   }
@@ -309,7 +311,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
         {tracks.length > 0 && <button className="btn btn-primary" onClick={() => playAll()}><Play size={15} fill="currentColor" />{t('Play all')}</button>}
         {playlist && <>
           <CollectionFavoriteButton active={playlist.pinned ?? false} onClick={() => void togglePin()} />
-          <button type="button" className={`collection-icon-action${player.shuffle ? ' is-active' : ''}`} title={t('Shuffle')} aria-label={t('Shuffle')} disabled={!tracks.length} onClick={() => playAll(true)}><Shuffle size={19} /></button>
+          <button type="button" className={`collection-icon-action${shuffleEnabled ? ' is-active' : ''}`} title={t('Shuffle')} aria-label={t('Shuffle')} disabled={!tracks.length} onClick={() => playAll(true)}><Shuffle size={19} /></button>
           <button type="button" className="collection-icon-action" aria-label={t('More')} title={t('More')} onClick={collectionMenu}><Ellipsis size={22} /></button>
         </>}
       </>}
@@ -337,7 +339,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
           {shownItems.map((p) => {
             const i = items.indexOf(p)
             const t = p.track
-            const playing = player.currentTrack?.source === t.source && player.currentTrack.sourceId === (t.source === 'local' ? String(t.id) : t.externalId)
+            const playing = currentTrack?.source === t.source && currentTrack.sourceId === (t.source === 'local' ? String(t.id) : t.externalId)
             const dragging = dragFromPos === p.position
             const before = dropEdge !== null && dropEdge.pos === p.position && !dropEdge.after && !dragging
             const after = dropEdge !== null && dropEdge.pos === p.position && dropEdge.after && !dragging

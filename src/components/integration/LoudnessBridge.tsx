@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { usePlayer } from '../../player'
+import { usePlayerField } from '../../player'
 import { useSettings } from '../../state/settings'
 import { analyzeTracks } from '../../audio/loudnessRunner'
 
@@ -18,7 +18,9 @@ const LOOKAHEAD = 3
  */
 export default function LoudnessBridge(): null {
   const { settings } = useSettings()
-  const { currentTrack, queue, queueIndex } = usePlayer()
+  const currentTrack = usePlayerField('currentTrack')
+  const queue = usePlayerField('queue')
+  const queueIndex = usePlayerField('queueIndex')
   const enabled = settings.audio.normalize
 
   useEffect(() => {

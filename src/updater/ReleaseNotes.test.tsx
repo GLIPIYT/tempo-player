@@ -11,6 +11,15 @@ function render(markdown: string): string {
 }
 
 describe('ReleaseNotes Markdown images', () => {
+  it('uses a bundled preview for the official poster and keeps its full-resolution link', () => {
+    const original = 'https://raw.githubusercontent.com/GLIPIYT/tempo-player/v1.5.0/docs/design/changelog-1.5.0/tempo-1.5.0-changelog.webp'
+    const markup = render(`![Tempo 1.5.0](<${original}>)`)
+
+    expect(markup).toContain(`href="${original}"`)
+    expect(markup).toContain('src="/src/updater/assets/v1.5.0-changelog-preview.webp"')
+    expect(markup).not.toContain(`src="${original}"`)
+  })
+
   it('renders standalone and inline HTTP(S) images with alt text, lazy loading, decoding, and optional title', () => {
     const markup = render('![Poster banner](https://example.com/banner.png "Release banner")\nInline: ![Icon](http://example.com/icon.png)')
 

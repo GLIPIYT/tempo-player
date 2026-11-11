@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { DevProfile } from '../dev-performance/DevProfile'
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Download, Filter, PackageCheck } from 'lucide-react'
 import Modal from '../components/common/Modal'
 import { toast } from '../components/common/Toast'
@@ -32,6 +33,41 @@ type Phase = 'offer' | 'downloading' | 'installing' | 'failed'
 
 const CONFETTI_COLORS = ['#ff6b6b', '#ffd166', '#06d6a0', '#48bfe3', '#c77dff']
 
+const ConfettiBurst = memo(function ConfettiBurst({ active }: { active: boolean }) {
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    if (!active || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+    const start = window.setTimeout(() => setVisible(true), 30)
+    const stop = window.setTimeout(() => setVisible(false), 4730)
+    return () => {
+      window.clearTimeout(start)
+      window.clearTimeout(stop)
+    }
+  }, [active])
+
+  if (!visible) return null
+  return (
+    <div className="update-confetti is-active" aria-hidden="true">
+      {Array.from({ length: 80 }, (_, index) => (
+        <i
+          key={index}
+          style={{
+            '--confetti-x': `${(index * 37 + 11) % 100}%`,
+            '--confetti-delay': `${(index % 13) * 65}ms`,
+            '--confetti-duration': `${2400 + index % 7 * 180}ms`,
+            '--confetti-drift': `${(index * 23 % 150) - 75}px`,
+            '--confetti-turn': `${index % 2 ? -840 : 720}deg`,
+            width: `${5 + index % 5}px`, height: `${8 + index % 7}px`,
+            '--confetti-color': CONFETTI_COLORS[index % CONFETTI_COLORS.length],
+          } as CSSProperties}
+        />
+      ))}
+    </div>
+  )
+})
+
 function emptyRelease(version: string): ReleaseInfo {
   return {
     version,
@@ -46,44 +82,46 @@ function emptyRelease(version: string): ReleaseInfo {
 }
 
 /** Version menu and changelog shared by manual and automatic update offers. */
-export default function UpdateDialog({ releases, initialVersion, currentVersion, installedVersion, onDismiss }: Props) {
+function UpdateDialogContent({ releases, initialVersion, currentVersion, installedVersion, onDismiss }: Props) {
   const t = useT()
   const [selectedVersion, setSelectedVersion] = useState(initialVersion)
   const [typeFilter, setTypeFilter] = useState<ReleaseTypeFilter>('all')
   const [phase, setPhase] = useState<Phase>('offer')
   const [progress, setProgress] = useState<{ downloaded: number; total: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const downloadedPath = useRef<string | null>(null)
-  const [confettiRun, setConfettiRun] = useState(0)
+  const downloadedToken = useRef<string | null>(null)
   const mounted = useRef(false)
   const progressUnlisten = useRef<(() => void) | null>(null)
   const installerLaunchAttempted = useRef(false)
   const operationRunning = useRef(false)
 
-  const installableReleases = [...new Map(releases
+  const installableReleases = useMemo(() => [...new Map(releases
     .filter(release => release.assetUrl !== null)
     .map(release => [release.version, release])).values()]
-    .sort((a, b) => compareVersions(b.version, a.version))
-  const latestRelease = [...releases].sort((a, b) => compareVersions(b.version, a.version))[0]
+    .sort((a, b) => compareVersions(b.version, a.version)), [releases])
+  const latestRelease = useMemo(() => [...releases].sort((a, b) => compareVersions(b.version, a.version))[0], [releases])
   const latestVersion = latestRelease?.version ?? null
-  const versionChoices = [...installableReleases]
-  if (latestRelease && latestRelease.assetUrl === null && !versionChoices.some(release => release.version === latestRelease.version)) {
-    versionChoices.push(latestRelease)
-  }
-  const installedVersions = [...new Set([currentVersion, installedVersion].filter((version): version is string => Boolean(version)))]
-  for (const version of installedVersions) {
-    if (!versionChoices.some(release => release.version === version)) {
-      versionChoices.push(releases.find(release => release.version === version) ?? emptyRelease(version))
+  const installedVersions = useMemo(() => new Set([currentVersion, installedVersion]
+    .filter((version): version is string => Boolean(version))), [currentVersion, installedVersion])
+  const versionChoices = useMemo(() => {
+    const choices = [...installableReleases]
+    if (latestRelease && latestRelease.assetUrl === null && !choices.some(release => release.version === latestRelease.version)) {
+      choices.push(latestRelease)
     }
-  }
-  versionChoices.sort((a, b) => compareVersions(b.version, a.version))
-  const filteredChoices = filterReleasesByType(versionChoices, releases, typeFilter)
+    for (const version of installedVersions) {
+      if (!choices.some(release => release.version === version)) {
+        choices.push(releases.find(release => release.version === version) ?? emptyRelease(version))
+      }
+    }
+    return choices.sort((a, b) => compareVersions(b.version, a.version))
+  }, [installableReleases, latestRelease, installedVersions, releases])
+  const filteredChoices = useMemo(() => filterReleasesByType(versionChoices, releases, typeFilter), [versionChoices, releases, typeFilter])
   const hasVisibleSelection = filteredChoices.some(item => item.version === selectedVersion)
-  const release = versionChoices.find(item => item.version === selectedVersion)
+  const release = useMemo(() => versionChoices.find(item => item.version === selectedVersion)
     ?? releases.find(item => item.version === selectedVersion)
-    ?? emptyRelease(selectedVersion)
+    ?? emptyRelease(selectedVersion), [versionChoices, releases, selectedVersion])
   const isInstalled = installedVersion === release.version
-  const selectedType = releaseType(release, releases)
+  const selectedType = useMemo(() => releaseType(release, releases), [release, releases])
   const isCurrent = currentVersion === release.version || isInstalled
   const busy = phase === 'downloading' || phase === 'installing'
   const percent = progress && progress.total > 0
@@ -102,38 +140,24 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
   }, [selectedVersion])
 
   useEffect(() => {
-    if (!installedVersion) return
-    const timer = window.setTimeout(() => {
-      setConfettiRun(run => run + 1)
-    }, 30)
-    return () => window.clearTimeout(timer)
-  }, [installedVersion])
-
-  useEffect(() => {
-    if (!confettiRun) return
-    const timer = window.setTimeout(() => setConfettiRun(0), 4700)
-    return () => window.clearTimeout(timer)
-  }, [confettiRun])
-
-  useEffect(() => {
     mounted.current = true
     return () => {
       mounted.current = false
       progressUnlisten.current?.()
       progressUnlisten.current = null
-      const path = downloadedPath.current
-      downloadedPath.current = null
-      if (path && !installerLaunchAttempted.current) {
-        void discardUpdate(path).catch(() => {})
+      const token = downloadedToken.current
+      downloadedToken.current = null
+      if (token && !installerLaunchAttempted.current) {
+        void discardUpdate(token).catch(() => {})
       }
     }
   }, [])
 
   const discardDownloadedInstaller = () => {
-    const path = downloadedPath.current
-    downloadedPath.current = null
-    if (path && !installerLaunchAttempted.current) {
-      void discardUpdate(path).catch(() => {})
+    const token = downloadedToken.current
+    downloadedToken.current = null
+    if (token && !installerLaunchAttempted.current) {
+      void discardUpdate(token).catch(() => {})
     }
   }
 
@@ -147,7 +171,7 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
     if (busy) return
     const nextChoices = filterReleasesByType(versionChoices, releases, filter)
     if (nextChoices.length && !nextChoices.some(item => item.version === selectedVersion)) {
-      selectVersion((nextChoices.find(item => item.assetUrl || installedVersions.includes(item.version)) ?? nextChoices[0]).version)
+      selectVersion((nextChoices.find(item => item.assetUrl || installedVersions.has(item.version)) ?? nextChoices[0]).version)
     }
     setTypeFilter(filter)
   }
@@ -157,9 +181,9 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
     operationRunning.current = true
     setError(null)
     let stop: (() => void) | null = null
-    let path = downloadedPath.current
+    let token = downloadedToken.current
     try {
-      if (!path) {
+      if (!token) {
         setProgress({ downloaded: 0, total: release.assetSize ?? 0 })
         // Lock closing and version selection before async listener setup begins.
         setPhase('downloading')
@@ -169,20 +193,20 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
         })
         progressUnlisten.current = stop
         if (!mounted.current) return
-        path = await downloadUpdate(release.assetUrl, release.version)
-        downloadedPath.current = path
+        token = await downloadUpdate(release.version)
+        downloadedToken.current = token
         if (!mounted.current) {
-          downloadedPath.current = null
-          await discardUpdate(path).catch(() => {})
+          downloadedToken.current = null
+          await discardUpdate(token).catch(() => {})
           return
         }
       }
 
-      if (!path) throw new Error(t('This release has no Windows installer attached.'))
-      const installerPath = path
+      if (!token) throw new Error(t('This release has no Windows installer attached.'))
+      const installerToken = token
       setPhase('installing')
       installerLaunchAttempted.current = true
-      await installUpdateWithPendingMarker(release.version, () => installUpdate(installerPath))
+      await installUpdateWithPendingMarker(release.version, () => installUpdate(installerToken))
     } catch (cause) {
       if (mounted.current) {
         installerLaunchAttempted.current = false
@@ -215,24 +239,7 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
 
   return (
     <Modal open className="update-modal" title={hasVisibleSelection ? `${title} — ${release.version}` : title} onClose={dismiss} closeDisabled={busy}>
-      {confettiRun > 0 ? (
-        <div key={confettiRun} className="update-confetti is-active" aria-hidden="true">
-          {Array.from({ length: 80 }, (_, index) => (
-            <i
-              key={index}
-              style={{
-                '--confetti-x': `${(index * 37 + 11) % 100}%`,
-                '--confetti-delay': `${(index % 13) * 65}ms`,
-                '--confetti-duration': `${2400 + index % 7 * 180}ms`,
-                '--confetti-drift': `${(index * 23 % 150) - 75}px`,
-                '--confetti-turn': `${index % 2 ? -840 : 720}deg`,
-                width: `${5 + index % 5}px`, height: `${8 + index % 7}px`,
-                '--confetti-color': CONFETTI_COLORS[index % CONFETTI_COLORS.length],
-              } as CSSProperties}
-            />
-          ))}
-        </div>
-      ) : null}
+      <ConfettiBurst key={installedVersion ?? 'no-installed-update'} active={Boolean(installedVersion)} />
       <div className="update-dialog-layout">
         <aside className="update-version-picker" aria-label={t('Available versions')}>
           <div className="update-version-picker-heading">{t('Available versions')}</div>
@@ -345,4 +352,8 @@ export default function UpdateDialog({ releases, initialVersion, currentVersion,
       </div>
     </Modal>
   )
+}
+
+export default function UpdateDialog(props: Props) {
+  return <DevProfile id="updates"><UpdateDialogContent {...props} /></DevProfile>
 }

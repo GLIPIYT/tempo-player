@@ -28,6 +28,17 @@ function mixesFromMemory(memory: CustomMixMemoryState): HourMix[] {
   })
 }
 
+function genresFromCandidates(candidates: readonly CustomMixCandidate[]): string[] {
+  const genres = new Set<string>()
+  for (const { track } of candidates) {
+    for (const genre of track.genre?.split(/[;,|]/u) ?? []) {
+      const value = genre.trim()
+      if (value) genres.add(value)
+    }
+  }
+  return [...genres]
+}
+
 async function withGenerationSlot<T>(job: () => Promise<T>): Promise<T> {
   if (activeGenerations >= MAX_PARALLEL_GENERATIONS) {
     await new Promise<void>((resolve) => generationWaiters.push(resolve))
@@ -58,7 +69,7 @@ export function useCustomMixes(
   const initialMemory = memoryRef.current
   const [revision, setRevision] = useState(0)
   const [rules, setRules] = useState<CustomMixRule[]>(initialMemory.rules)
-  const [candidates, setCandidates] = useState<CustomMixCandidate[]>([])
+  const [genres, setGenres] = useState<string[]>([])
   const [mixes, setMixes] = useState<HourMix[]>(() => mixesFromMemory(initialMemory))
   const [error, setError] = useState('')
   const rulesRef = useRef<CustomMixRule[]>(initialMemory.rules)
@@ -141,8 +152,12 @@ export function useCustomMixes(
         .then(async (library) => {
           if (!mountedRef.current) return
           candidatesRef.current = library
-          setCandidates(library)
-          await Promise.all(dueRules.map((rule) => generateMix(rule, library, 'scheduled')))
+          setGenres(genresFromCandidates(library))
+          try {
+            await Promise.all(dueRules.map((rule) => generateMix(rule, library, 'scheduled')))
+          } finally {
+            if (candidatesRef.current === library) candidatesRef.current = []
+          }
         })
         .catch((cause) => { if (mountedRef.current) setError(String(cause)) })
         .finally(() => scheduleTimerRef.current())
@@ -228,20 +243,24 @@ export function useCustomMixes(
         if (cancelled) return
         firstLoadRef.current = false
         candidatesRef.current = library
-        setCandidates(library)
+        setGenres(genresFromCandidates(library))
         candidatesReady = true
-        const generationRules = saved.filter((rule) => rule.id != null && rulesNeedingGeneration.has(rule.id))
-        let next = 0
-        const worker = async () => {
-          while (!cancelled && next < generationRules.length) {
-            const rule = generationRules[next++]
-            await generateMix(rule, library, reason, () => !cancelled)
+        try {
+          const generationRules = saved.filter((rule) => rule.id != null && rulesNeedingGeneration.has(rule.id))
+          let next = 0
+          const worker = async () => {
+            while (!cancelled && next < generationRules.length) {
+              const rule = generationRules[next++]
+              await generateMix(rule, library, reason, () => !cancelled)
+            }
           }
+          await Promise.all([worker(), worker()])
+          if (cancelled) return
+          generationsComplete = true
+          scheduleTimerRef.current()
+        } finally {
+          if (candidatesRef.current === library) candidatesRef.current = []
         }
-        await Promise.all([worker(), worker()])
-        if (cancelled) return
-        generationsComplete = true
-        scheduleTimerRef.current()
       })
       .catch((cause) => {
         if (!cancelled) setError(String(cause))
@@ -259,8 +278,7 @@ export function useCustomMixes(
     let cancelled = false
     void customMixService.getCandidates().then((library) => {
       if (cancelled) return
-      candidatesRef.current = library
-      setCandidates(library)
+      setGenres(genresFromCandidates(library))
     }).catch((cause) => {
       if (!cancelled) setError(String(cause))
     })
@@ -288,8 +306,15 @@ export function useCustomMixes(
     setRevision((value) => value + 1)
   }, [])
 
-  const generate = useCallback((rule: CustomMixRule, reason: CustomMixGenerationReason) =>
-    generateMix(rule, candidatesRef.current, reason), [generateMix])
+  const generate = useCallback(async (rule: CustomMixRule, reason: CustomMixGenerationReason) => {
+    const cached = candidatesRef.current
+    const library = cached.length > 0 ? cached : await customMixService.getCandidates()
+    try {
+      return await generateMix(rule, library, reason)
+    } finally {
+      if (cached.length === 0 && candidatesRef.current === library) candidatesRef.current = []
+    }
+  }, [generateMix])
 
-  return { rules, candidates, mixes, error, save, remove, generate }
+  return { rules, genres, mixes, error, save, remove, generate }
 }

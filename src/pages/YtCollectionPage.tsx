@@ -3,7 +3,7 @@ import { api } from '../api/client'
 import { getSettings } from '../state/settings'
 import { useNav } from '../state/nav'
 import { useT } from '../i18n'
-import { usePlayer } from '../player'
+import { usePlayerActions } from '../player'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import BrandIcon from '../components/common/BrandIcon'
 import ScArtwork from '../components/common/ScArtwork'
@@ -37,7 +37,7 @@ type Kind = 'album' | 'artist' | 'playlist'
 export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string }) {
   const t = useT()
   const { navigate } = useNav()
-  const player = usePlayer()
+  const player = usePlayerActions()
   const [detail, setDetail] = useState<YtCollectionDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState<SaveJob | null>(getSaveJob)

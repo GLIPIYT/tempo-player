@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use crate::database::Db;
+use crate::database::{fetch_tracks, Db, PLAYLIST_VISIBLE_PRED, TRACK_FROM};
 use crate::models::Track;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -150,8 +150,36 @@ pub struct CustomMixCandidate {
 #[derive(Default)]
 struct HistoryAggregate {
     minutes: Vec<u16>,
+    minute_set: Option<HashSet<u16>>,
     completion_sum: f64,
     completion_count: usize,
+}
+
+impl HistoryAggregate {
+    fn add_minute(&mut self, minute: u16) {
+        if let Some(minutes) = &mut self.minute_set {
+            minutes.insert(minute);
+            return;
+        }
+        if self.minutes.contains(&minute) {
+            return;
+        }
+        if self.minutes.len() < 8 {
+            self.minutes.push(minute);
+            return;
+        }
+
+        let mut minutes: HashSet<_> = self.minutes.drain(..).collect();
+        minutes.insert(minute);
+        self.minute_set = Some(minutes);
+    }
+
+    fn into_minutes(mut self) -> Vec<u16> {
+        let mut minutes = self.minute_set.take()
+            .map_or(self.minutes, |minutes| minutes.into_iter().collect());
+        minutes.sort_unstable();
+        minutes
+    }
 }
 
 const CUSTOM_MIX_SCHEMA: &str = r#"
@@ -306,19 +334,23 @@ impl Db {
 
     /// Return visible library tracks together with per-track history facts for rule evaluation.
     pub fn get_custom_mix_candidates(&self) -> Result<Vec<CustomMixCandidate>, String> {
-        let (track_ids, mut history, liked_ids) = self.with_conn(|conn| {
-            let mut track_stmt = conn.prepare(
-                "SELECT t.id FROM tracks t \
-                 WHERE t.folder_id IS NOT NULL OR (t.source <> 'local' AND t.cached_at IS NOT NULL) \
-                 ORDER BY t.id",
-            ).map_err(db_error)?;
-            let track_rows = track_stmt.query_map([], |row| row.get::<_, i64>(0)).map_err(db_error)?;
-            let mut ids = Vec::new();
-            for row in track_rows { ids.push(row.map_err(db_error)?); }
+        let (tracks, mut history, liked_ids) = self.with_conn(|conn| {
+            let tracks = fetch_tracks(
+                conn,
+                TRACK_FROM,
+                PLAYLIST_VISIBLE_PRED,
+                None,
+                "t.id",
+                -1,
+                0,
+            )?;
 
             let mut liked_stmt = conn.prepare(
                 "SELECT pt.track_id FROM playlist_tracks pt \
-                 JOIN playlists p ON p.id = pt.playlist_id WHERE p.is_likes = 1",
+                 JOIN playlists p ON p.id = pt.playlist_id \
+                 JOIN tracks t ON t.id = pt.track_id \
+                 WHERE p.is_likes = 1 \
+                   AND (t.folder_id IS NOT NULL OR (t.source <> 'local' AND t.cached_at IS NOT NULL))",
             ).map_err(db_error)?;
             let liked_rows = liked_stmt.query_map([], |row| row.get::<_, i64>(0)).map_err(db_error)?;
             let mut liked_ids = HashSet::new();
@@ -331,8 +363,7 @@ impl Db {
                  CAST(strftime('%M', h.played_at, 'unixepoch', 'localtime') AS INTEGER), \
                  COALESCE(h.covered_sec, h.listened_sec), t.duration_sec \
                  FROM listening_history h JOIN tracks t ON t.id = h.track_id \
-                 WHERE t.folder_id IS NOT NULL OR (t.source <> 'local' AND t.cached_at IS NOT NULL) \
-                 ORDER BY h.track_id, h.id",
+                 WHERE t.folder_id IS NOT NULL OR (t.source <> 'local' AND t.cached_at IS NOT NULL)",
             ).map_err(db_error)?;
             let rows = stmt.query_map([], |row| Ok((
                 row.get::<_, i64>(0)?,
@@ -344,7 +375,7 @@ impl Db {
                 let (track_id, minute, listened_sec, duration_sec) = row.map_err(db_error)?;
                 let aggregate = aggregates.entry(track_id).or_default();
                 if let Some(minute) = minute.filter(|minute| (0..1440).contains(minute)) {
-                    aggregate.minutes.push(minute as u16);
+                    aggregate.add_minute(minute as u16);
                 }
                 if let (Some(listened), Some(duration)) = (listened_sec, duration_sec) {
                     if listened.is_finite() && duration.is_finite() && duration > 0.0 {
@@ -354,20 +385,20 @@ impl Db {
                     }
                 }
             }
-            Ok((ids, aggregates, liked_ids))
+            Ok((tracks, aggregates, liked_ids))
         })?;
 
-        let tracks = self.get_tracks_by_ids(&track_ids)?;
         let mut candidates = Vec::with_capacity(tracks.len());
         for track in tracks {
             let aggregate = history.remove(&track.id).unwrap_or_default();
             let average_completion_percent = (aggregate.completion_count > 0)
                 .then_some(aggregate.completion_sum / aggregate.completion_count as f64);
+            let history_minutes = aggregate.into_minutes();
             let liked = liked_ids.contains(&track.id);
             candidates.push(CustomMixCandidate {
                 track,
                 average_completion_percent,
-                history_minutes: aggregate.minutes,
+                history_minutes,
                 liked,
                 metadata_trusted: true,
             });
@@ -417,6 +448,16 @@ mod tests {
             forgotten_percent: [0, 100],
             forgotten_days: [1, 365],
         }
+    }
+
+    #[test]
+    fn history_aggregate_keeps_distinct_minutes_for_mix_rules() {
+        let mut history = HistoryAggregate::default();
+        for minute in [480, 481, 482, 483, 484, 485, 486, 487, 488, 488, 480, 1439, 0] {
+            history.add_minute(minute);
+        }
+
+        assert_eq!(history.into_minutes(), vec![0, 480, 481, 482, 483, 484, 485, 486, 487, 488, 1439]);
     }
 
     #[test]

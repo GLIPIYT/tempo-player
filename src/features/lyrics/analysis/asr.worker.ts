@@ -1,6 +1,7 @@
 import { env, pipeline, Tensor, type AutomaticSpeechRecognitionPipeline } from '@huggingface/transformers'
 import { LYRIC_MODEL_ID, LYRIC_MODEL_REVISION } from './contract'
 import { artifactMap, absoluteWords, type AsrRequest, type AsrResponse } from './workerProtocol'
+import { disposeTensors } from './disposeTensors'
 import { attentionTokenBoundaries, knownTextWordsFromBoundaries, mapDecodedTokensToWords,
   MAX_KNOWN_TEXT_TOKENS, MAX_KNOWN_TEXT_WINDOW_SEC, MAX_KNOWN_TEXT_WORDS } from './knownTextAlignment'
 
@@ -9,7 +10,7 @@ let currentJob = -1
 let busy = false
 const reply = (response: AsrResponse): void => self.postMessage(response)
 
-interface RuntimeTensor { dims: number[]; data: Float32Array }
+interface RuntimeTensor { dims: number[]; data: Float32Array; dispose?: () => void }
 interface WhisperTokenizerRuntime {
   (text: string, options: { add_special_tokens: boolean }): { input_ids: { tolist(): (number | bigint)[][] } }
   decode(ids: number[], options: { skip_special_tokens: boolean; clean_up_tokenization_spaces: boolean }): string
@@ -28,7 +29,7 @@ interface WhisperModelRuntime {
 }
 interface WhisperPipelineRuntime {
   tokenizer: WhisperTokenizerRuntime
-  processor: (pcm: Float32Array) => Promise<{ input_features: RuntimeTensor }>
+  processor: (pcm: Float32Array) => Promise<Record<string, unknown> & { input_features: RuntimeTensor }>
   model: WhisperModelRuntime
 }
 
@@ -96,36 +97,44 @@ async function alignKnownText(request: Extract<AsrRequest, { type: 'align-known-
 
   const decoderTokens = [...decoderPrefix, ...targetIds]
   const features = await runtime.processor(request.pcm)
-  const decoderInputIds = new Tensor('int64', BigInt64Array.from(decoderTokens.map(BigInt)), [1, decoderTokens.length])
-  const output = await runtime.model({ ...features, decoder_input_ids: decoderInputIds })
-  const crossAttentions = runtime.model.getAttentions(output).cross_attentions
-  if (!crossAttentions || crossAttentions.length === 0) throw new Error('Whisper decoder did not return cross-attention outputs')
+  let decoderInputIds: Tensor | undefined
+  let output: Record<string, RuntimeTensor> | undefined
+  try {
+    decoderInputIds = new Tensor('int64', BigInt64Array.from(decoderTokens.map(BigInt)), [1, decoderTokens.length])
+    output = await runtime.model({ ...features, decoder_input_ids: decoderInputIds })
+    const crossAttentions = runtime.model.getAttentions(output).cross_attentions
+    if (!crossAttentions || crossAttentions.length === 0) throw new Error('Whisper decoder did not return cross-attention outputs')
 
-  const frameCount = Math.floor(request.pcm.length / 320)
-  const tokenRows = targetIds.length + 1 // no-timestamps query plus one query per forced text token
-  const rowStart = decoderPrefix.length - 1
-  const headRows: Float32Array[] = []
-  for (const [layer, head] of generation.alignment_heads) {
-    const attention = crossAttentions[layer]
-    if (!attention || attention.dims.length !== 4 || attention.dims[0] !== 1
-      || head < 0 || head >= attention.dims[1] || rowStart + tokenRows > attention.dims[2]
-      || frameCount > attention.dims[3]) throw new Error('Whisper cross-attention shape is incompatible with the alignment configuration')
-    const sequenceLength = attention.dims[2]
-    const encoderFrames = attention.dims[3]
-    const selected = new Float32Array(tokenRows * frameCount)
-    for (let row = 0; row < tokenRows; row += 1) {
-      const sourceStart = (head * sequenceLength + rowStart + row) * encoderFrames
-      selected.set(attention.data.subarray(sourceStart, sourceStart + frameCount), row * frameCount)
+    const frameCount = Math.floor(request.pcm.length / 320)
+    const tokenRows = targetIds.length + 1 // no-timestamps query plus one query per forced text token
+    const rowStart = decoderPrefix.length - 1
+    const headRows: Float32Array[] = []
+    for (const [layer, head] of generation.alignment_heads) {
+      const attention = crossAttentions[layer]
+      if (!attention || attention.dims.length !== 4 || attention.dims[0] !== 1
+        || head < 0 || head >= attention.dims[1] || rowStart + tokenRows > attention.dims[2]
+        || frameCount > attention.dims[3]) throw new Error('Whisper cross-attention shape is incompatible with the alignment configuration')
+      const sequenceLength = attention.dims[2]
+      const encoderFrames = attention.dims[3]
+      const selected = new Float32Array(tokenRows * frameCount)
+      for (let row = 0; row < tokenRows; row += 1) {
+        const sourceStart = (head * sequenceLength + rowStart + row) * encoderFrames
+        selected.set(attention.data.subarray(sourceStart, sourceStart + frameCount), row * frameCount)
+      }
+      headRows.push(selected)
     }
-    headRows.push(selected)
-  }
 
-  const boundaries = attentionTokenBoundaries(headRows, tokenRows, frameCount)
-  const probabilities = tokenLikelihoods(output.logits, decoderPrefix.length, targetIds)
-  if (!boundaries || !probabilities) return { words: [], confidence: 0 }
-  const aligned = knownTextWordsFromBoundaries(request.text, tokenGroups, boundaries, probabilities,
-    request.trackStartSec, request.sourceEndSec)
-  return aligned ? aligned : { words: [], confidence: 0 }
+    const boundaries = attentionTokenBoundaries(headRows, tokenRows, frameCount)
+    const probabilities = tokenLikelihoods(output.logits, decoderPrefix.length, targetIds)
+    if (!boundaries || !probabilities) return { words: [], confidence: 0 }
+    const aligned = knownTextWordsFromBoundaries(request.text, tokenGroups, boundaries, probabilities,
+      request.trackStartSec, request.sourceEndSec)
+    return aligned ? aligned : { words: [], confidence: 0 }
+  } finally {
+    // Each aligned lyric line creates logits, cross-attention, and feature tensors.
+    // Copy the compact timing result first, then return those large WASM allocations.
+    disposeTensors([...Object.values(features), decoderInputIds, ...Object.values(output ?? {})])
+  }
 }
 
 self.onmessage = async (event: MessageEvent<AsrRequest>) => {

@@ -379,6 +379,21 @@ pub struct TopTrackItem {
     pub play_count: i64,
 }
 
+/// Bounded, read-only data needed to render the Home shelves.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HomePageData {
+    pub total: i64,
+    pub mix_library: Vec<Track>,
+    pub top_tracks: Vec<TopTrackItem>,
+    pub played: Vec<Track>,
+    pub dormant_tracks: Vec<Track>,
+    pub liked_tracks: Vec<Track>,
+    pub likes_playlist: Option<Playlist>,
+    pub featured_playlists: Vec<Playlist>,
+    pub has_playlist_history: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TopArtistItem {

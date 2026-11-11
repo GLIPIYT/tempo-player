@@ -1,21 +1,10 @@
-/*
- * Update checking against this project's GitHub releases.
- *
- * Deliberately not `tauri-plugin-updater`: that plugin only ever offers the
- * newest release, and the settings screen has to be able to install any version
- * above the running one. It would also require a signing keypair, which the
- * release pipeline does not have.
- *
- * The trade-off is that nothing here checks a signature - TLS and GitHub itself
- * are the whole guarantee. That is worth knowing when reading this file.
- */
-
-use std::io::Write;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, State};
+
+mod installer;
+pub use installer::InstallerState;
 
 const RELEASES_API: &str = "https://api.github.com/repos/GLIPIYT/tempo-player/releases";
 const LATEST_RELEASE_URL: &str = "https://github.com/GLIPIYT/tempo-player/releases/latest";
@@ -23,10 +12,6 @@ const USER_AGENT: &str = "Tempo-desktop-updater";
 
 /// Emitted while the installer downloads: `{ version, downloaded, total }`.
 pub const PROGRESS_EVENT: &str = "updater://progress";
-
-/// Only report progress every so often - a chunk-level event would flood the
-/// IPC channel for no visible gain.
-const PROGRESS_STEP_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +41,8 @@ struct GhAsset {
     name: String,
     browser_download_url: String,
     size: u64,
+    #[serde(default)]
+    digest: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,20 +57,22 @@ struct GhRelease {
     #[serde(default)]
     draft: bool,
     #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
     assets: Vec<GhAsset>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DownloadProgress {
-    version: String,
-    downloaded: u64,
-    total: u64,
 }
 
 fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
+        .connect_timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() < 5 && trusted_github_host(attempt.url()) {
+                attempt.follow()
+            } else {
+                attempt.error("untrusted GitHub redirect or too many redirects")
+            }
+        }))
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("http client error: {e}"))
@@ -113,18 +102,30 @@ pub async fn updater_releases() -> Result<Vec<ReleaseInfo>, String> {
 
     Ok(releases
         .into_iter()
-        .filter(|r| !r.draft)
+        .filter(|r| {
+            !r.draft
+                && !r.prerelease
+                && stable_version(r.tag_name.strip_prefix('v').unwrap_or(&r.tag_name)).is_some()
+        })
         .map(|r| {
-            let installer = r.assets.iter().find(|a| a.name.ends_with("-setup.exe"));
+            let (asset_name, asset_url, asset_size) = verified_installer_asset(&r)
+                .map(|(asset, _)| {
+                    (
+                        Some(asset.name.clone()),
+                        Some(asset.browser_download_url.clone()),
+                        Some(asset.size),
+                    )
+                })
+                .unwrap_or_default();
             ReleaseInfo {
                 version: r.tag_name.trim_start_matches('v').to_string(),
                 tag: r.tag_name,
                 name: r.name.unwrap_or_default(),
                 notes: r.body.unwrap_or_default(),
                 published_at: r.published_at.unwrap_or_default(),
-                asset_name: installer.map(|a| a.name.clone()),
-                asset_url: installer.map(|a| a.browser_download_url.clone()),
-                asset_size: installer.map(|a| a.size),
+                asset_name,
+                asset_url,
+                asset_size,
             }
         })
         .collect())
@@ -178,108 +179,117 @@ fn latest_release_version(url: &reqwest::Url) -> Option<String> {
     }
 
     let version = tag.strip_prefix('v').unwrap_or(tag);
-    let parts = version.split('.').collect::<Vec<_>>();
-    if parts.len() != 3 || parts.iter().any(|part| part.parse::<u64>().is_err()) {
-        return None;
-    }
-
+    stable_version(version)?;
     Some(version.to_string())
 }
 
-/// Downloads one installer into the temp directory and returns its path.
-///
-/// Streamed rather than buffered so the dialog can show progress - a 5 MB
-/// download with no feedback looks like a hang.
+fn stable_version(version: &str) -> Option<[u64; 3]> {
+    let mut parts = version.split('.');
+    let mut result = [0; 3];
+    for item in &mut result {
+        let part = parts.next()?;
+        if !part.bytes().all(|byte| byte.is_ascii_digit())
+            || (part.len() > 1 && part.starts_with('0'))
+        {
+            return None;
+        }
+        *item = part.parse().ok()?;
+    }
+    parts.next().is_none().then_some(result)
+}
+
+fn trusted_github_host(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url.port_or_known_default() == Some(443)
+        && url.username().is_empty()
+        && url.password().is_none()
+        && matches!(
+            url.host_str(),
+            Some(
+                "api.github.com"
+                    | "github.com"
+                    | "release-assets.githubusercontent.com"
+                    | "objects.githubusercontent.com"
+            )
+        )
+}
+
+fn sha256_digest(value: &str) -> Option<[u8; 32]> {
+    let hex = value.strip_prefix("sha256:")?;
+    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut digest = [0; 32];
+    for (index, byte) in digest.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[2 * index..2 * index + 2], 16).ok()?;
+    }
+    Some(digest)
+}
+
+fn verified_installer_asset(release: &GhRelease) -> Option<(&GhAsset, [u8; 32])> {
+    if release.draft || release.prerelease {
+        return None;
+    }
+    let version = release.tag_name.strip_prefix('v')?;
+    stable_version(version)?;
+    let name = format!("Tempo_{version}_x64-setup.exe");
+    let url = format!(
+        "https://github.com/GLIPIYT/tempo-player/releases/download/{}/{name}",
+        release.tag_name
+    );
+    let asset = release.assets.iter().find(|asset| {
+        asset.name == name
+            && asset.browser_download_url == url
+            && (1..=256 * 1024 * 1024).contains(&asset.size)
+    })?;
+    Some((asset, sha256_digest(asset.digest.as_deref()?)?))
+}
+
+/// The renderer selects a version. The native updater resolves and verifies its installer.
 #[tauri::command]
 pub async fn updater_download(
     app: AppHandle,
-    url: String,
+    state: State<'_, InstallerState>,
     version: String,
 ) -> Result<String, String> {
-    let mut response = client()?
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("download failed: {e}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!("download failed: {}", response.status()));
-    }
-
-    let total = response.content_length().unwrap_or(0);
-    let dir = std::env::temp_dir().join("tempo-update");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-    let path = dir.join(format!("Tempo_{version}_x64-setup.exe"));
-
-    let mut file =
-        std::fs::File::create(&path).map_err(|e| format!("could not write {}: {e}", path.display()))?;
-    let mut downloaded: u64 = 0;
-    let mut reported: u64 = 0;
-
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|e| format!("download interrupted: {e}"))?
-    {
-        file.write_all(&chunk)
-            .map_err(|e| format!("could not write the installer: {e}"))?;
-        downloaded += chunk.len() as u64;
-        if downloaded - reported >= PROGRESS_STEP_BYTES {
-            reported = downloaded;
-            let _ = app.emit(
-                PROGRESS_EVENT,
-                DownloadProgress { version: version.clone(), downloaded, total },
-            );
-        }
-    }
-
-    let _ = app.emit(
-        PROGRESS_EVENT,
-        DownloadProgress { version: version.clone(), downloaded, total: total.max(downloaded) },
-    );
-    Ok(path.to_string_lossy().to_string())
+    state.download(&app, &version).await
 }
 
-/// Starts the installer and gets out of its way.
-///
-/// A running executable cannot be replaced, so the app has to exit before the
-/// installer can do its job.
-///
-/// The flags are read off the NSIS script Tauri generates, not guessed:
-/// `/S` is NSIS's silent switch, and `/R` is what makes the installer start the
-/// app again when it is done - without it a silent install finishes and leaves
-/// nothing running, and the app simply vanishes. The installer is built
-/// `currentUser`, so none of this needs elevation or shows a UAC prompt, and in
-/// silent mode it kills a still-running instance itself.
 #[tauri::command]
-pub fn updater_install(app: AppHandle, path: String) -> Result<(), String> {
-    let installer = PathBuf::from(&path);
-    if !installer.exists() {
-        return Err(format!("the installer is gone: {path}"));
-    }
-    let mut command = std::process::Command::new(&installer);
-    crate::child::quiet(&mut command);
-    command
-        .args(["/S", "/R"])
-        .spawn()
-        .map_err(|e| format!("could not start the installer: {e}"))?;
+pub async fn updater_install(
+    app: AppHandle,
+    state: State<'_, InstallerState>,
+    token: String,
+) -> Result<(), String> {
+    state.install(&token).await?;
     app.exit(0);
     Ok(())
 }
 
-/// Removes a downloaded installer, for when the user changes their mind.
 #[tauri::command]
-pub fn updater_discard(path: String) -> Result<(), String> {
-    let installer = PathBuf::from(&path);
-    if installer.exists() {
-        std::fs::remove_file(&installer).map_err(|e| format!("could not delete the installer: {e}"))?;
-    }
-    Ok(())
+pub fn updater_discard(state: State<'_, InstallerState>, token: String) -> Result<(), String> {
+    state.discard(&token)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::latest_release_version;
+    use super::{latest_release_version, verified_installer_asset, GhRelease};
+
+    #[test]
+    fn only_offers_the_expected_asset_with_a_digest() {
+        let mut release: GhRelease = serde_json::from_value(serde_json::json!({
+            "tag_name": "v1.5.0",
+            "assets": [{
+                "name": "Tempo_1.5.0_x64-setup.exe",
+                "browser_download_url": "https://github.com/GLIPIYT/tempo-player/releases/download/v1.5.0/Tempo_1.5.0_x64-setup.exe",
+                "size": 10,
+                "digest": format!("sha256:{}", "a5".repeat(32))
+            }]
+        })).unwrap();
+        assert_eq!(verified_installer_asset(&release).unwrap().1, [0xa5; 32]);
+        release.assets[0].digest = None;
+        assert!(verified_installer_asset(&release).is_none());
+    }
 
     #[test]
     fn parses_latest_tag_redirect_without_release_details() {
@@ -307,7 +317,11 @@ mod tests {
             "https://github.com/GLIPIYT/tempo-player/releases/tag/v1.3.2-rc1",
         ] {
             let url = reqwest::Url::parse(value).expect("test URL should parse");
-            assert_eq!(latest_release_version(&url), None, "unexpected tag from {value}");
+            assert_eq!(
+                latest_release_version(&url),
+                None,
+                "unexpected tag from {value}"
+            );
         }
     }
 }

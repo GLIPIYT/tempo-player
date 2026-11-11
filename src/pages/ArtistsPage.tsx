@@ -8,7 +8,7 @@ import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { resolveLang, useT } from '../i18n'
 import { formatCount } from '../i18n/count'
 import { useSettings } from '../state/settings'
-import { usePlayer } from '../player'
+import { usePlayerActions } from '../player'
 import { tracksToUnified } from '../utils/unified'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
@@ -22,7 +22,7 @@ export default function ArtistsPage() {
   const t = useT()
   const { settings } = useSettings()
   const lang = resolveLang(settings.lang)
-  const player = usePlayer()
+  const player = usePlayerActions()
   const version = useLibraryVersion()
   const { data, loading, error } = useAsync(() => api.listArtists(''), [version])
   const analytics = useAsync(() => api.getAnalytics('all'), [version])

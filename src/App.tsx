@@ -1,23 +1,11 @@
-import { useEffect } from 'react'
+import PageOutlet from './app/PageOutlet'
+import AppBackgroundEffects from './app/AppBackgroundEffects'
+import { DevProfile } from './dev-performance/DevProfile'
 import Sidebar from './components/layout/Sidebar'
 import TopBar from './components/layout/TopBar'
 import PlayerBar from './components/layout/PlayerBar'
 import TitleBar from './components/layout/TitleBar'
-import HomePage from './pages/HomePage'
-import LibraryPage from './pages/LibraryPage'
-import AlbumsPage from './pages/AlbumsPage'
-import ArtistsPage from './pages/ArtistsPage'
-import PlaylistsPage from './pages/PlaylistsPage'
-import ProfilePage from './pages/ProfilePage'
 import ListeningHistoryHost from './features/listening-history/ListeningHistoryHost'
-import SettingsPage from './pages/SettingsPage'
-import SearchPage from './pages/SearchPage'
-import AlbumDetailPage from './pages/AlbumDetailPage'
-import ArtistDetailPage from './pages/ArtistDetailPage'
-import PlaylistDetailPage from './pages/PlaylistDetailPage'
-import HourMixPage from './pages/HourMixPage'
-import TrackDetailPage from './pages/TrackDetailPage'
-import LocalArtistPage from './pages/LocalArtistPage'
 import Onboarding from './components/onboarding/Onboarding'
 import PresenceBridge from './components/integration/PresenceBridge'
 import LyricsAnalysisBridge from './components/integration/LyricsAnalysisBridge'
@@ -26,16 +14,11 @@ import SystemBridge from './components/integration/SystemBridge'
 import LoudnessBridge from './components/integration/LoudnessBridge'
 import ContextMenuHost from './components/common/ContextMenu'
 import TrackDragLayer from './dnd/trackDrag'
-import { NavProvider, useNav } from './state/nav'
-import { usePlayer } from './player'
-import PlayerProvider from './player/PlayerProvider'
+import { NavProvider } from './state/nav'
 import { SettingsProvider } from './state/settings'
 import { I18nProvider } from './i18n'
 import { ThemeApply } from './theme/engine'
 import UpdateWatcher from './updater/UpdateWatcher'
-import ScPlaylistPage from './pages/ScPlaylistPage'
-import ScArtistPage from './pages/ScArtistPage'
-import YtCollectionPage from './pages/YtCollectionPage'
 import CacheToasts from './soundcloud/CacheToasts'
 import CacheChoiceDialog from './soundcloud/CacheChoiceDialog'
 import YtdlpBootstrapper from './providers/YtdlpBootstrapper'
@@ -44,184 +27,11 @@ import SavePickDialog from './youtube/SavePickDialog'
 import CacheArtistDialog from './soundcloud/CacheArtistDialog'
 import BackgroundLayer from './components/layout/BackgroundLayer'
 import { ToastHost } from './components/common/Toast'
-import { onScanProgress, onLibraryChanged } from './api/events'
-import { api } from './api/client'
-import { bumpLibraryVersion } from './utils/libraryVersion'
-import { likesStore } from './utils/likesStore'
-import { getCurrentWebview } from '@tauri-apps/api/webview'
 import './styles/app.css'
 import './styles/collections.css'
 import './styles/home.css'
 
-function CurrentPage() {
-  const { view, navigate } = useNav()
-  switch (view.name) {
-    case 'home':
-      return <HomePage />
-    case 'library':
-      return <LibraryPage />
-    case 'albums':
-      return <AlbumsPage />
-    case 'artists':
-      return <ArtistsPage />
-    case 'playlists':
-      return <PlaylistsPage />
-    case 'profile':
-      return <ProfilePage />
-    case 'settings':
-      return <SettingsPage />
-    case 'search':
-      return <SearchPage />
-    case 'album':
-      return <AlbumDetailPage key={view.id} albumId={view.id} />
-    case 'artist':
-      return <ArtistDetailPage key={view.id} artistId={view.id} />
-    case 'local-artist':
-      return <LocalArtistPage key={view.artistName} name={view.artistName} imagePath={view.imagePath} />
-    case 'playlist':
-      return <PlaylistDetailPage key={view.id} playlistId={view.id} />
-    case 'hour-mix':
-      return <HourMixPage key={view.mix.key} mix={view.mix} />
-    case 'sc-playlist':
-      return <ScPlaylistPage key={view.id} playlistId={view.id} />
-    case 'sc-artist':
-      return <ScArtistPage key={view.id} artistId={view.id} fallback={view.fallback} />
-    case 'yt-collection':
-      return <YtCollectionPage key={`${view.kind}:${view.id}`} kind={view.kind} id={view.id} />
-    case 'track-details':
-      return <TrackDetailPage key={`${view.track.source}:${view.track.sourceId}`} track={view.track} onBack={() => navigate(view.previous)} />
-  }
-}
-
-function Shortcuts() {
-  const player = usePlayer()
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const target = e.target
-      if (target instanceof Element && (
-        (target instanceof HTMLElement && target.isContentEditable) || target.closest(
-          'input, textarea, select, button, a, [role="button"], [role="link"], [role="slider"], [role="switch"], [role="textbox"], [contenteditable="true"], [contenteditable=""]',
-        )
-      )) return
-
-      const noModifiers = !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey
-      if (e.code === 'Space' && noModifiers) {
-        if (e.repeat) return
-        e.preventDefault()
-        player.toggle()
-      } else if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.code === 'ArrowRight') {
-        e.preventDefault()
-        player.seek(player.position + 1)
-      } else if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.code === 'ArrowLeft') {
-        e.preventDefault()
-        player.seek(player.position - 1)
-      } else if (noModifiers && e.code === 'ArrowRight') {
-        if (e.repeat) return
-        e.preventDefault()
-        player.next()
-      } else if (noModifiers && e.code === 'ArrowLeft') {
-        if (e.repeat) return
-        e.preventDefault()
-        player.previous()
-      } else if (e.code === 'ArrowUp') {
-        e.preventDefault()
-        player.setVolume(Math.min(1, player.volume + 0.05))
-      } else if (e.code === 'ArrowDown') {
-        e.preventDefault()
-        player.setVolume(Math.max(0, player.volume - 0.05))
-      } else if (e.code === 'KeyM') {
-        player.setVolume(player.volume > 0 ? 0 : 0.8)
-      } else if (e.code === 'KeyS') {
-        player.toggleShuffle()
-      } else if (e.code === 'KeyR') {
-        player.setRepeat(player.repeat === 'off' ? 'all' : player.repeat === 'all' ? 'one' : 'off')
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [player])
-  return null
-}
-
-function ScanWatcher() {
-  useEffect(() => {
-    let unlisten: (() => void) | undefined
-    let cancelled = false
-    void onScanProgress((p) => {
-      if (p.phase === 'completed') bumpLibraryVersion()
-    }).then((fn) => {
-      if (cancelled) fn()
-      else unlisten = fn
-    })
-    return () => {
-      cancelled = true
-      unlisten?.()
-    }
-  }, [])
-  return null
-}
-
-function LibraryChangeWatcher() {
-  useEffect(() => {
-    let unlisten: (() => void) | undefined
-    let cancelled = false
-    void onLibraryChanged(() => {
-      bumpLibraryVersion()
-      likesStore.reload()
-    }).then((fn) => {
-      if (cancelled) fn()
-      else unlisten = fn
-    })
-    return () => {
-      cancelled = true
-      unlisten?.()
-    }
-  }, [])
-  return null
-}
-
-function FolderDropWatcher() {
-  useEffect(() => {
-    let unlisten: (() => void) | undefined
-    let cancelled = false
-    void getCurrentWebview()
-      .onDragDropEvent((event) => {
-        if (event.payload.type !== 'drop') return
-        const paths = event.payload.paths
-        if (paths.length === 0) return
-        void api
-          .addLibraryFolder(paths[0])
-          .then(() => api.rescanLibrary())
-          .then(() => bumpLibraryVersion())
-          .catch(() => {})
-      })
-      .then((fn) => {
-        if (cancelled) fn()
-        else unlisten = fn
-      })
-    return () => {
-      cancelled = true
-      unlisten?.()
-    }
-  }, [])
-  return null
-}
-
-function TaskbarProgress() {
-  const player = usePlayer()
-  const position = Math.round(player.position)
-  const duration = Math.round(player.duration)
-  useEffect(() => {
-    if (!player.currentTrack) return
-    void api.setTaskbarProgress(position, duration, player.isPlaying).catch(() => {})
-  }, [player.currentTrack, player.isPlaying, position, duration])
-  return null
-}
-
 function Shell() {
-  useEffect(() => {
-    likesStore.ensureLoaded()
-  }, [])
   return (
     <>
       <div className="app-root">
@@ -231,16 +41,12 @@ function Shell() {
           <div className="app-main">
             <TopBar />
             <main className="app-content">
-              <CurrentPage />
+              <PageOutlet />
             </main>
           </div>
-          <PlayerBar />
+          <DevProfile id="player"><PlayerBar /></DevProfile>
         </div>
-        <Shortcuts />
-        <ScanWatcher />
-        <LibraryChangeWatcher />
-        <FolderDropWatcher />
-        <TaskbarProgress />
+        <AppBackgroundEffects />
         <LyricsAnalysisBridge />
         <PresenceBridge />
         <MiniPlayerBridge />
@@ -273,11 +79,9 @@ export default function App() {
       <I18nProvider>
         <ThemeApply />
         <BackgroundLayer />
-        <PlayerProvider>
-          <NavProvider>
-            <Shell />
-          </NavProvider>
-        </PlayerProvider>
+        <NavProvider>
+          <Shell />
+        </NavProvider>
       </I18nProvider>
     </SettingsProvider>
   )

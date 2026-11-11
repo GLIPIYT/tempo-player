@@ -4,6 +4,7 @@ import { usePlayer } from '../../player'
 import ArtworkView from '../../components/artwork-view/ArtworkView'
 import TrackDetails from '../../components/track-details/TrackDetails'
 import { useNav } from '../../state/nav'
+import { DevProfile } from '../../dev-performance/DevProfile'
 
 interface LyricsApi {
   open: boolean
@@ -52,7 +53,11 @@ export function LyricsContextProvider({ children }: { children: ReactNode }) {
   return (
     <LyricsContext.Provider value={value}>
       {children}
-      {open && <LyricsOverlay onClose={closeLyrics} onArtwork={openArtwork} onTrackDetails={() => openTrackDetails('compact')} />}
+      {open && (
+        <DevProfile id="lyrics">
+          <LyricsOverlay onClose={closeLyrics} onArtwork={openArtwork} onTrackDetails={() => openTrackDetails('compact')} />
+        </DevProfile>
+      )}
       {surface === 'artwork' && player.currentTrack && <ArtworkView track={player.currentTrack} onClose={closeSurface} />}
       {surface === 'compact' && player.currentTrack && (
         <TrackDetails track={player.currentTrack} position={player.position} duration={player.duration} onClose={closeSurface} onOpenFull={openFullDetails}

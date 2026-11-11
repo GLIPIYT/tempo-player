@@ -10,7 +10,7 @@ import { resolveLang, useT } from '../i18n'
 import { formatCount } from '../i18n/count'
 import { useSettings } from '../state/settings'
 import { playlistDisplayName } from '../utils/playlists'
-import { usePlayer } from '../player'
+import { usePlayerActions } from '../player'
 import { trackToUnified } from '../utils/unified'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
@@ -31,7 +31,7 @@ export default function PlaylistsPage() {
   const t = useT()
   const { settings } = useSettings()
   const lang = resolveLang(settings.lang)
-  const player = usePlayer()
+  const player = usePlayerActions()
   const version = useLibraryVersion()
   const { data, loading, error, reload } = useAsync(() => api.listPlaylists(), [version])
   const previews = useAsync(() => api.listPlaylistCoverPreviews(), [version])

@@ -28,7 +28,7 @@ WALLHAVEN_API_KEY=your_key
 
 The real `.env` is ignored by Git. Rust's build script reads the value; a build environment variable takes precedence over the file. Do not use a `VITE_` variable: those values become part of frontend assets. Changing `.env` triggers a rebuild.
 
-GitHub's release workflow accepts the optional repository Actions secret `WALLHAVEN_API_KEY`. That secret must be configured separately for a GitHub-built release to include authenticated Wallhaven access. Adding the workflow reference does not create or transmit a repository secret.
+The public release workflow builds without a Wallhaven key. Set `WALLHAVEN_API_KEY` in your local runtime environment to use authenticated Wallhaven access.
 
 A key included in a desktop executable can be recovered from that executable. `.env` keeps it out of source control; it does not make a shared client credential secret. A server would be required to keep a shared key away from clients.
 

@@ -35,7 +35,7 @@ import { useLibraryVersion } from '../../hooks/useLibraryVersion'
 import { useAsync } from '../../hooks/useAsync'
 import { bumpLibraryVersion } from '../../utils/libraryVersion'
 import { tracksToUnified, trackToUnified } from '../../utils/unified'
-import { usePlayer } from '../../player'
+import { usePlayerActions } from '../../player'
 import {
   beginFavoriteReorder,
   consumeDragClick,
@@ -154,7 +154,7 @@ export default function Sidebar() {
   const { view, navigate } = useNav()
   const { settings } = useSettings()
   const t = useT()
-  const player = usePlayer()
+  const player = usePlayerActions()
   const version = useLibraryVersion()
   const favArtists = useAsync(() => api.listFavoriteArtists(), [version])
   const favAlbums = useAsync(() => api.listFavoriteAlbums(), [version])

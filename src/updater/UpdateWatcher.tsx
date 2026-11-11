@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react'
-import UpdateDialog from './UpdateDialog'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import {
   appVersion,
+  latestRelease,
   listReleases,
   skippedVersions,
   takePendingUpdate,
   type ReleaseInfo,
 } from './service'
 import { compareVersions, newerThan } from './version'
+
+const UpdateDialog = lazy(() => import('./UpdateDialog'))
 
 interface UpdateDialogState {
   releases: ReleaseInfo[]
@@ -33,6 +35,11 @@ export default function UpdateWatcher() {
 
       const pending = takePendingUpdate()
       const updateLanded = Boolean(pending && compareVersions(current, pending) >= 0)
+      if (!updateLanded) {
+        const latest = await latestRelease().catch(() => undefined)
+        if (cancelled || latest === null || (latest && compareVersions(latest.version, current) <= 0)) return
+      }
+
       let releases: ReleaseInfo[] = []
       try {
         releases = await listReleases()
@@ -59,7 +66,7 @@ export default function UpdateWatcher() {
   }, [])
 
   if (!dialog) return null
-  return (
+  return <Suspense fallback={null}>
     <UpdateDialog
       releases={dialog.releases}
       initialVersion={dialog.initialVersion}
@@ -67,5 +74,5 @@ export default function UpdateWatcher() {
       installedVersion={dialog.installedVersion}
       onDismiss={() => setDialog(null)}
     />
-  )
+  </Suspense>
 }

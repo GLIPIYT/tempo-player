@@ -6,8 +6,8 @@ import {
 import { Eye, EyeOff, FolderPlus, Play, RefreshCw, UserRound, Pencil, Trash2 } from 'lucide-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '../api/client'
-import type { Playlist, PlaylistPlayStat, ScTrack, TopTrackItem, Track } from '../types/models'
-import { useHomeData } from '../features/home/homeData'
+import type { Playlist, ScTrack, TopTrackItem, Track } from '../types/models'
+import { useHomePageData } from '../features/home/useHomePageData'
 import { useFolders } from '../hooks/useFolders'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { useScanProgress } from '../hooks/useScanProgress'
@@ -31,9 +31,7 @@ import EmptyState from '../components/common/EmptyState'
 import ScanLine from '../components/common/ScanLine'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import TrackContextMenu, { type TrackContextRequest } from '../components/common/TrackContextMenu'
-import { buildHourMixes } from '../utils/hourMixes'
 import { requestTrackCache } from '../soundcloud/cacheJobs'
-import { useSoundCloudRecommendations } from '../hooks/useSoundCloudRecommendations'
 import { recommendationService } from '../features/recommendations/service'
 import {
   anySectionHidden,
@@ -50,19 +48,9 @@ function greetingForHour(h: number): string {
   return 'Good night'
 }
 
-function dedupeRecent(entries: { track: Track }[], limit: number): Track[] {
-  const seen = new Set<number>()
-  const out: Track[] = []
-  for (const e of entries) {
-    if (seen.has(e.track.id)) continue
-    seen.add(e.track.id)
-    out.push(e.track)
-    if (out.length >= limit) break
-  }
-  return out
-}
-
 const NO_TRACKS: Track[] = []
+const NO_TOP_TRACKS: TopTrackItem[] = []
+const NO_PLAYLISTS: Playlist[] = []
 
 export default function HomePage() {
   const [deletingRule, setDeletingRule] = useState<CustomMixRule | null>(null)
@@ -74,63 +62,23 @@ export default function HomePage() {
   const version = useLibraryVersion()
   const [editingRule, setEditingRule] = useState<CustomMixRule | 'new' | null>(null)
   const mixPresentation = useMixPresentation()
-  const total = useHomeData('home.total', () => api.countTracks(), version)
-  const recent = useHomeData('home.recent', () => api.listTracks('', 10, 0), version)
-  const mixLibrary = useHomeData('home.mix-library', () => api.listTracks('', 300, 0, 'added'), version)
-  const now = new Date()
-  const hourKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}:${now.getHours()}`
-  const hourPicks = useHomeData(`home.hour-picks:${hourKey}`, () => api.getHourPicks(30), version)
-  const top = useHomeData('home.top', () => api.getTopTracks(40), version)
-  const recommendations = useSoundCloudRecommendations(top.data)
-  const played = useHomeData('home.played', async () => {
-    const since = Math.floor(Date.now() / 1000) - 30 * 86400
-    return dedupeRecent((await api.getHistory(100, 0)).filter((entry) => entry.playedAt >= since), 16)
-  }, version)
-  const dormant = useHomeData('home.dormant', () => api.getDormantTracks(Math.floor(Date.now() / 1000) - 30 * 86400, 24), version)
-  const playlistData = useHomeData('home.playlists', async () => {
-    const [playlists, stats] = await Promise.all([api.listPlaylists(), api.listPlaylistPlayStats()])
-    const likes = playlists.find((playlist) => playlist.isLikes)
-    const likedTracks = likes ? (await api.getPlaylist(likes.id)).map((row) => row.track).reverse().slice(0, 24) : []
-    return { playlists, stats, likes, likedTracks }
-  }, version)
-  const foregroundReady = [total, recent, mixLibrary, hourPicks, top, played, dormant, playlistData].every(request => !request.loading)
-  const custom = useCustomMixes(version, editingRule !== null, foregroundReady)
   const unknownArtist = t('Unknown artist')
-  // Keep the fallback identity stable while the first result is loading.
-  const hourPicksList = useMemo(() => hourPicks.data ?? [], [hourPicks.data])
+  const home = useHomePageData(version, unknownArtist)
+  const { recommendations } = home
+  const custom = useCustomMixes(version, editingRule !== null, home.foregroundReady)
   const greeting = useMemo(() => greetingForHour(new Date().getHours()), [])
   const nickname = settings.profile.nickname
-  const likedTracks = playlistData.data?.likedTracks ?? NO_TRACKS
-  const hourMixes = useMemo(() => buildHourMixes(
-    hourPicksList,
-    unknownArtist,
-    t('Music for this hour'),
-    {
-      tracks: [
-        ...(mixLibrary.data ?? NO_TRACKS),
-        ...(top.data ?? []).map((item) => item.track),
-        ...(played.data ?? NO_TRACKS),
-        ...(dormant.data ?? NO_TRACKS),
-        ...likedTracks,
-        ...hourPicksList,
-      ],
-      likedTrackIds: new Set(likedTracks.map((track) => track.id)),
-      titles: {
-        onRepeat: t('On repeat'),
-        newToYou: t('New to you'),
-        forgottenFavorites: t('Forgotten favorites'),
-        noSkips: t('No skips'),
-      },
-    },
-  ), [hourPicksList, unknownArtist, t, mixLibrary.data, top.data, played.data, dormant.data, likedTracks])
+  const hourPicksList = home.hourPicksList
+  const hourMixes = home.hourMixes
   // Reuse one track menu for cards across the home shelves.
   const [ctx, setCtx] = useState<TrackContextRequest | null>(null)
   useHiddenSections()
 
-  const error = recent.error ?? foldersApi.error
-  const topTracks: TopTrackItem[] = top.data ?? []
-  const recentPlays = played.data ?? []
-  const recentAdded = recent.data ?? []
+  const error = home.error ?? foldersApi.error
+  const topTracks: TopTrackItem[] = home.data?.topTracks ?? NO_TOP_TRACKS
+  const recentPlays = home.data?.played ?? NO_TRACKS
+  const recentAdded = home.recentAdded
+  const likedTracks = home.data?.likedTracks ?? NO_TRACKS
 
   const playSection = (tracks: Track[], index: number) => {
     playerController.playTracks(tracks.map((tr) => trackToUnified(tr)), index)
@@ -194,16 +142,8 @@ export default function HomePage() {
   const allMixes = applyMixOrder([...hourMixes, ...custom.mixes], mixPresentation.order)
   const visibleMixes = allMixes.filter((mix) => !hidden(`home.mix:${mix.key}`)
     && !isMixGenerationHidden(mix, mixPresentation.hiddenGenerations))
-  const playlistStats = new Map((playlistData.data?.stats ?? []).map((stat: PlaylistPlayStat) => [stat.playlistId, stat]))
-  const candidatePlaylists = (playlistData.data?.playlists ?? []).filter((playlist) => !playlist.isLikes && (playlist.trackCount ?? 0) > 0)
-  const hasPlaylistHistory = candidatePlaylists.some((playlist) => playlistStats.has(playlist.id))
-  const featuredPlaylists = candidatePlaylists
-    .sort((a, b) => hasPlaylistHistory
-      ? (playlistStats.get(b.id)?.playCount ?? 0) - (playlistStats.get(a.id)?.playCount ?? 0)
-        || (playlistStats.get(b.id)?.lastPlayedAt ?? 0) - (playlistStats.get(a.id)?.lastPlayedAt ?? 0)
-        || b.updatedAt - a.updatedAt
-      : Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt - a.updatedAt)
-    .slice(0, 6)
+  const featuredPlaylists = home.data?.featuredPlaylists ?? NO_PLAYLISTS
+  const hasPlaylistHistory = home.data?.hasPlaylistHistory ?? false
 
   const playPlaylist = async (playlist: Playlist) => {
     try {
@@ -231,7 +171,7 @@ export default function HomePage() {
     <div className="page tempo-home">
       {deletingRule?.id != null ? <DeleteRuleDialog name={deletingRule.name} onDelete={() => custom.remove(deletingRule.id!)} onClose={() => setDeletingRule(null)} /> : null}
       {editingRule ? <CustomMixEditor initial={editingRule === 'new' ? undefined : editingRule}
-        genres={[...new Set(custom.candidates.flatMap(c => c.track.genre?.split(/[;,|]/u).map(g => g.trim()).filter(Boolean) ?? []))]}
+        genres={custom.genres}
         presets={allMixes.map(mix => ({ name: mix.title, rule: presetFromMix(mix), cover: mix.tracks.find(tr => tr.coverPath)?.coverPath }))}
         onSave={custom.save} onDelete={editingRule !== 'new' && editingRule.id != null ? () => custom.remove(editingRule.id!) : undefined} onClose={() => setEditingRule(null)} /> : null}
       {error ? <div className="error-line">{error}</div> : null}
@@ -299,7 +239,7 @@ export default function HomePage() {
           }
         />
       ) : null}
-      {total.data === 0 && custom.mixes.length === 0 ? (
+      {home.data?.total === 0 && custom.mixes.length === 0 ? (
         <EmptyState
           icon={<FolderPlus size={34} />}
           title={t('Your library is empty')}
@@ -323,9 +263,9 @@ export default function HomePage() {
             topTracks={topTracks}
             recentAdded={recentAdded}
             recentPlays={recentPlays}
-            dormantTracks={dormant.data ?? []}
-            likedTracks={playlistData.data?.likedTracks ?? []}
-            likesPlaylist={playlistData.data?.likes ?? null}
+            dormantTracks={home.data?.dormantTracks ?? NO_TRACKS}
+            likedTracks={likedTracks}
+            likesPlaylist={home.data?.likesPlaylist ?? null}
             featuredPlaylists={featuredPlaylists}
             recommendations={!hidden('home.recommendations') ? (
               <RecommendationsShelf

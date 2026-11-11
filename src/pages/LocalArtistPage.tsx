@@ -9,7 +9,7 @@ import EmptyState from '../components/common/EmptyState'
 import TrackList from '../components/common/TrackList'
 import { useAsync } from '../hooks/useAsync'
 import { useT } from '../i18n'
-import { usePlayer } from '../player'
+import { usePlayerActions } from '../player'
 import { useNav } from '../state/nav'
 import { tracksToUnified } from '../utils/unified'
 import { normalizeSearchText } from '../utils/searchText'
@@ -18,7 +18,7 @@ import { normalizeSearchText } from '../utils/searchText'
 export default function LocalArtistPage({ name, imagePath }: { name: string; imagePath: string | null }) {
   const t = useT()
   const count = useFormatCount()
-  const player = usePlayer()
+  const player = usePlayerActions()
   const [query, setQuery] = useState('')
   useEffect(() => setQuery(''), [name])
   const { navigate } = useNav()

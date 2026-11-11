@@ -28,7 +28,7 @@ import { openExternalUrl } from '../utils/externalLinks'
 import { ScArtistRow, ScPlaylistCard } from '../components/common/ScCards'
 import YtCard from '../components/common/YtCard'
 import { useNav } from '../state/nav'
-import { usePlayer } from '../player'
+import { usePlayerActions } from '../player'
 import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
 import { scTrackToUnified, scTracksToUnified } from '../utils/unified'
@@ -315,7 +315,7 @@ export default function SearchPage() {
   const query = useSearchQuery()
   const { navigate } = useNav()
   const version = useLibraryVersion()
-  const player = usePlayer()
+  const player = usePlayerActions()
   const [results, setResults] = useState<SearchResults | null>(null)
   const resultsForQuery = useRef<{ query: string; results: SearchResults | null }>({ query: '', results: null })
   const [loading, setLoading] = useState(false)

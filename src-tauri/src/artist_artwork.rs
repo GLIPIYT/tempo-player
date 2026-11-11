@@ -557,7 +557,7 @@ fn next_missing_artist(db: &Db) -> Result<Option<(i64, String)>, String> {
                AND lower(trim(a.name)) NOT IN ('unknown artist', 'неизвестный исполнитель')
                AND (l.artist_id IS NULL OR l.artist_name <> a.name OR l.next_attempt_at <= ?1)
              ORDER BY a.id LIMIT 1",
-            params![unix_millis() / 1_000],
+            params![(unix_millis() / 1_000) as i64],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
@@ -574,7 +574,7 @@ fn record_lookup(
     error: Option<&str>,
     retry_sec: u64,
 ) -> Result<(), String> {
-    let now = unix_millis() / 1_000;
+    let now = (unix_millis() / 1_000) as i64;
     let bounded_error = error.map(|value| value.chars().take(500).collect::<String>());
     db.with_conn(|conn| {
         conn.execute(
@@ -593,7 +593,7 @@ fn record_lookup(
                 candidate.map(|value| &value.artist_id),
                 candidate.map(|value| &value.thumbnail_url),
                 bounded_error,
-                now + retry_sec,
+                now.saturating_add(i64::try_from(retry_sec).unwrap_or(i64::MAX)),
                 now
             ],
         )
@@ -627,7 +627,7 @@ fn migrate_old_lookups_once(db: &Db) -> Result<(), String> {
     if db.get_app_setting(PROVIDER_MIGRATION_KEY)?.as_deref() == Some("done") {
         return Ok(());
     }
-    let now = unix_millis() / 1_000;
+    let now = (unix_millis() / 1_000) as i64;
     db.with_conn(|conn| {
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(|error| error.to_string())?;

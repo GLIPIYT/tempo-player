@@ -8,7 +8,7 @@ import type { ArtistImageCandidate, Track } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
-import { usePlayer } from '../player'
+import { usePlayerActions, usePlayerField } from '../player'
 import { tracksToUnified, trackToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
@@ -25,7 +25,8 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
   const { navigate } = useNav()
   const t = useT()
   const count = useFormatCount()
-  const player = usePlayer()
+  const player = usePlayerActions()
+  const shuffle = usePlayerField('shuffle')
   const version = useLibraryVersion()
   const [tab, setTab] = useState('popular')
   const [query, setQuery] = useState('')
@@ -180,7 +181,7 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
             <CollectionFavoriteButton active={fav.data ?? false} onClick={() => {
               void api.toggleFavoriteArtist(artistId).then(() => { fav.reload(); bumpLibraryVersion() }).catch(() => {})
             }} />
-            <button type="button" className={`collection-icon-action${player.shuffle ? ' is-active' : ''}`} disabled={!artistTracks.length} title={t('Shuffle')} aria-label={t('Shuffle')} onClick={() => { if (!player.shuffle) player.toggleShuffle(); playAll() }}><Shuffle size={19} /></button>
+            <button type="button" className={`collection-icon-action${shuffle ? ' is-active' : ''}`} disabled={!artistTracks.length} title={t('Shuffle')} aria-label={t('Shuffle')} onClick={() => { if (!shuffle) player.toggleShuffle(); playAll() }}><Shuffle size={19} /></button>
             <button type="button" className="collection-icon-action" title={t('Change image')} aria-label={t('Change image')} disabled={imageBusy || imageSearchBusy} onClick={openImagePicker}><ImagePlus size={19} /></button>
           </>
         ) : undefined

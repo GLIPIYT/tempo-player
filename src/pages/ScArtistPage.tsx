@@ -9,7 +9,7 @@ import { ScPlaylistCard } from '../components/common/ScCards'
 import { toast } from '../components/common/Toast'
 import CacheBadge, { CacheProgress } from '../soundcloud/CacheBadge'
 import { useNav, type ScArtistFallback } from '../state/nav'
-import { usePlayer } from '../player'
+import { usePlayerActions } from '../player'
 import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
 import { scTrackToUnified } from '../utils/unified'
@@ -32,7 +32,7 @@ const TRACK_LIMIT = 50
 export default function ScArtistPage({ artistId, fallback }: { artistId: string; fallback?: ScArtistFallback }) {
   const t = useT()
   const { navigate } = useNav()
-  const player = usePlayer()
+  const player = usePlayerActions()
   const [artist, setArtist] = useState<ScArtist | null>(null)
   const [tracks, setTracks] = useState<ScTrack[]>([])
   const [releases, setReleases] = useState<ScPlaylist[]>([])

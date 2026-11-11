@@ -1,5 +1,6 @@
 import { InferenceSession, Tensor, env } from 'onnxruntime-web/wasm'
 import { extractFireRedFeatures } from './fbank'
+import { disposeTensors } from './disposeTensors'
 import { VOCAL_MODEL_REVISION, VOCAL_ALGORITHM_VERSION, VOCAL_HOP_SEC, VOCAL_CORE_SEC,
   type VocalRequest, type VocalResponse, type VocalChunk } from './vocalContract'
 
@@ -62,10 +63,11 @@ self.onmessage = async ({ data: request }: MessageEvent<VocalRequest>) => {
         const input = new Tensor('float32', features.data, [1, features.frames, 80])
         try {
           const output = await session.run({ feat: input })
-          const values = output.probs
-          if (!(values?.data instanceof Float32Array) || values.data.length !== features.frames * 3) throw new Error('Invalid vocal model output')
-          probabilities = new Float32Array(values.data)
-          for (const tensor of Object.values(output)) tensor.dispose()
+          try {
+            const values = output.probs
+            if (!(values?.data instanceof Float32Array) || values.data.length !== features.frames * 3) throw new Error('Invalid vocal model output')
+            probabilities = new Float32Array(values.data)
+          } finally { disposeTensors(Object.values(output)) }
         } finally { input.dispose() }
       }
       const count = Math.ceil((endSec - startSec) / VOCAL_HOP_SEC)

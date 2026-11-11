@@ -1,2 +1,2 @@
 export type { PlayerApi } from './types'
-export { usePlayer } from './usePlayer'
+export { usePlayer, usePlayerActions, usePlayerField } from './usePlayer'

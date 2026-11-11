@@ -1,4 +1,6 @@
 mod child;
+#[cfg(debug_assertions)]
+mod dev_perf;
 mod commands;
 mod cached_lyrics_search;
 mod custom_mixes;
@@ -41,6 +43,7 @@ use tauri::{Emitter, Manager};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(updater::InstallerState::default())
         .register_uri_scheme_protocol("tempo-sc-playback", |_, request| soundcloud_browser::host_response(&request))
         .register_uri_scheme_protocol("tempo-sc-recording", |_, request| soundcloud_recording::host_response(&request))
         .plugin(
@@ -110,7 +113,6 @@ pub fn run() {
                 library_identity::set_change_notifier(Arc::new(move || {
                     let _ = change_app.emit(soundcloud_store::LIBRARY_CHANGED_EVENT, String::new());
                 }));
-                library_identity::start_background_indexer(state.db.clone(), vec![state.sc_cache_dir.clone(), state.yt_cache_dir.clone()])?;
                 let audio_analysis = Arc::new(lyric_analysis::AudioAnalysisStore::new(
                     state.db.clone(), state.sc_cache_dir.clone(), state.yt_cache_dir.clone(),
                 ));
@@ -132,6 +134,13 @@ pub fn run() {
                 let state = handle.state::<commands::AppState>();
                 soundcloud_store::startup_maintenance(&state.db, &state.sc_cache_dir, &state.covers_dir);
                 commands::startup_rescan(handle.clone());
+                // Scan and fingerprint in sequence so startup does not compete with two library walks.
+                if let Err(error) = library_identity::start_background_indexer(
+                    state.db.clone(),
+                    vec![state.sc_cache_dir.clone(), state.yt_cache_dir.clone()],
+                ) {
+                    eprintln!("Tempo could not start library fingerprinting: {error}");
+                }
             });
             artist_artwork::start_automatic_lookup(app.handle().clone());
             native_audio::init(app.handle()).map_err(std::io::Error::other)?;
@@ -140,6 +149,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(debug_assertions)]
+            dev_perf::dev_perf_append,
             cached_lyrics_search::search_cached_lyrics,
             commands::list_custom_mix_rules,
             commands::save_custom_mix_rule,
@@ -186,6 +197,7 @@ pub fn run() {
             commands::rescan_library,
             commands::list_tracks,
             commands::count_tracks,
+            commands::get_home_page_data,
             commands::search_all,
             commands::list_albums,
             commands::get_album,

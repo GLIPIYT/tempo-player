@@ -1,4 +1,4 @@
-import { createContext, useContext, useSyncExternalStore } from 'react'
+import { createContext, useCallback, useContext, useMemo, useSyncExternalStore } from 'react'
 import type { PlayerSnapshot } from './controller'
 import { playerController } from './controller'
 import type { PlayerApi } from './types'
@@ -63,13 +63,27 @@ export function composePlayerApi(state: PlayerSnapshot): PlayerApi {
 
 export const playerContext = createContext<PlayerApi | null>(null)
 
-export function usePlayerValue(): PlayerApi {
-  const snapshot = useSyncExternalStore(playerController.subscribe, playerController.getSnapshot)
-  return composePlayerApi(snapshot)
+const subscribeNothing = () => () => {}
+
+/** Commands stay stable and need no subscription to playback position. */
+export function usePlayerActions(): PlayerActions {
+  return useContext(playerContext) ?? actions
+}
+
+export function usePlayerField<K extends keyof PlayerSnapshot & keyof PlayerApi>(key: K) {
+  const contextual = useContext(playerContext)
+  const getField = useCallback(
+    () => contextual ? contextual[key] : playerController.getSnapshot()[key],
+    [contextual, key],
+  )
+  return useSyncExternalStore(contextual ? subscribeNothing : playerController.subscribe, getField)
 }
 
 export function usePlayer(): PlayerApi {
   const contextual = useContext(playerContext)
-  const direct = usePlayerValue()
-  return contextual ?? direct
+  const snapshot = useSyncExternalStore(
+    contextual ? subscribeNothing : playerController.subscribe,
+    playerController.getSnapshot,
+  )
+  return useMemo(() => contextual ?? composePlayerApi(snapshot), [contextual, snapshot])
 }

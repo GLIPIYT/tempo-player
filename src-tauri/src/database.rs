@@ -107,7 +107,7 @@ const TRACK_COLUMNS: &str =
 /// here cannot silently shift a caller onto the wrong field.
 const TRACK_COLUMN_COUNT: usize = 23;
 
-const TRACK_FROM: &str =
+pub(crate) const TRACK_FROM: &str =
     "tracks t LEFT JOIN artists a ON a.id = t.artist_id LEFT JOIN albums al ON al.id = t.album_id \
      LEFT JOIN track_loudness tl ON tl.track_id = t.id";
 
@@ -148,7 +148,7 @@ const PLAYLIST_COLUMNS: &str =
       WHERE ptc.playlist_id = p.id AND tc.cover_path IS NOT NULL \
       ORDER BY ptc.added_at DESC, ptc.id DESC LIMIT 1))";
 
-const PLAYLIST_VISIBLE_PRED: &str =
+pub(crate) const PLAYLIST_VISIBLE_PRED: &str =
     "t.folder_id IS NOT NULL OR (t.source <> 'local' AND t.cached_at IS NOT NULL)";
 
 const FOLDER_COLUMNS: &str =
@@ -2575,6 +2575,132 @@ impl Db {
         self.with_conn(|conn| fetch_top_tracks(conn, None, limit))
     }
 
+    /// Read the bounded library data used by the Home shelves under one DB lock.
+    /// This avoids shipping whole history and liked playlists to the frontend.
+    pub fn get_home_page_data(&self) -> Result<crate::models::HomePageData, String> {
+        self.with_conn(|conn| {
+            let total = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM tracks t WHERE {}", PLAYLIST_VISIBLE_PRED),
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(db_err)?;
+            let mix_library = fetch_tracks(
+                conn,
+                TRACK_FROM,
+                PLAYLIST_VISIBLE_PRED,
+                None,
+                "t.added_at DESC, t.id DESC",
+                300,
+                0,
+            )?;
+            let top_tracks = fetch_top_tracks(conn, None, 40)?;
+            let cutoff = now().saturating_sub(30 * 86400);
+            let history = fetch_history_entries(
+                conn,
+                "h.played_at >= ?1",
+                vec![Value::Integer(cutoff)],
+                100,
+                0,
+            )?;
+            let mut seen = HashSet::with_capacity(16);
+            let played = history
+                .into_iter()
+                .filter_map(|entry| seen.insert(entry.track_id).then_some(entry.track))
+                .take(16)
+                .collect();
+
+            let dormant_sql = format!(
+                "SELECT {} FROM {} WHERE t.last_played_at IS NOT NULL \
+                 AND t.last_played_at <= ?1 \
+                 AND (t.folder_id IS NOT NULL OR (t.source <> 'local' AND t.cached_at IS NOT NULL)) \
+                 ORDER BY t.last_played_at ASC, t.id ASC LIMIT 24",
+                TRACK_COLUMNS, TRACK_FROM
+            );
+            let mut dormant_stmt = conn.prepare(&dormant_sql).map_err(db_err)?;
+            let dormant_tracks = dormant_stmt
+                .query_map(params![cutoff], |row| map_track_at(row, 0))
+                .map_err(db_err)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(db_err)?;
+
+            let likes_playlist_sql = format!(
+                "SELECT {} FROM playlists p WHERE p.is_likes = 1 \
+                 ORDER BY p.updated_at DESC, p.id DESC LIMIT 1",
+                PLAYLIST_COLUMNS
+            );
+            let likes_playlist = conn
+                .query_row(&likes_playlist_sql, [], map_playlist)
+                .optional()
+                .map_err(db_err)?;
+            let liked_tracks = if let Some(playlist) = &likes_playlist {
+                let liked_sql = format!(
+                    "SELECT {} FROM playlist_tracks pt \
+                     JOIN tracks t ON t.id = pt.track_id \
+                     LEFT JOIN artists a ON a.id = t.artist_id \
+                     LEFT JOIN albums al ON al.id = t.album_id \
+                     LEFT JOIN track_loudness tl ON tl.track_id = t.id \
+                     WHERE pt.playlist_id = ?1 \
+                     ORDER BY pt.position DESC, pt.id DESC LIMIT 24",
+                    TRACK_COLUMNS
+                );
+                let mut liked_stmt = conn.prepare(&liked_sql).map_err(db_err)?;
+                let liked_rows = liked_stmt
+                    .query_map(params![playlist.id], |row| map_track_at(row, 0))
+                    .map_err(db_err)?;
+                liked_rows
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(db_err)?
+            } else {
+                Vec::new()
+            };
+
+            let has_playlist_history: bool = conn
+                .query_row(
+                    "SELECT EXISTS( \
+                       SELECT 1 FROM playlists p \
+                       JOIN playlist_play_stats s ON s.playlist_id = p.id \
+                       WHERE p.is_likes = 0 \
+                         AND EXISTS (SELECT 1 FROM playlist_tracks pt WHERE pt.playlist_id = p.id) \
+                     )",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(db_err)?;
+            let featured_sql = format!(
+                "SELECT {} FROM playlists p \
+                 LEFT JOIN playlist_play_stats s ON s.playlist_id = p.id \
+                 WHERE p.is_likes = 0 \
+                   AND EXISTS (SELECT 1 FROM playlist_tracks pt WHERE pt.playlist_id = p.id) \
+                 ORDER BY \
+                   CASE WHEN ?1 THEN COALESCE(s.play_count, 0) END DESC, \
+                   CASE WHEN ?1 THEN COALESCE(s.last_played_at, 0) END DESC, \
+                   CASE WHEN NOT ?1 THEN p.pinned END DESC, \
+                   p.updated_at DESC, p.id DESC LIMIT 6",
+                PLAYLIST_COLUMNS
+            );
+            let mut featured_stmt = conn.prepare(&featured_sql).map_err(db_err)?;
+            let featured_playlists = featured_stmt
+                .query_map(params![has_playlist_history], map_playlist)
+                .map_err(db_err)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(db_err)?;
+
+            Ok(crate::models::HomePageData {
+                total,
+                mix_library,
+                top_tracks,
+                played,
+                dormant_tracks,
+                liked_tracks,
+                likes_playlist,
+                featured_playlists,
+                has_playlist_history,
+            })
+        })
+    }
+
     pub fn get_dormant_tracks(&self, before_secs: i64, limit: i64) -> Result<Vec<Track>, String> {
         self.with_conn(|conn| {
             let sql = format!(
@@ -4362,7 +4488,7 @@ fn map_playlist(row: &rusqlite::Row) -> rusqlite::Result<Playlist> {
     })
 }
 
-fn fetch_tracks(
+pub(crate) fn fetch_tracks(
     conn: &Connection,
     from_clause: &str,
     pred: &str,
@@ -7208,6 +7334,61 @@ mod tests {
         assert_eq!(stats[0].play_count, 2);
         db.delete_playlist(playlist.id).unwrap();
         assert!(db.list_playlist_play_stats().unwrap().is_empty());
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn home_page_data_keeps_shelf_order_and_bounds_liked_tracks() {
+        let (db, dir) = test_db("homepagedata");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let track_ids: Vec<_> = (0..30)
+            .map(|index| {
+                let path = fixture_file(&dir, &format!("track-{index}.mp3"));
+                seed_track(&db, folder.id, &path, &format!("Track {index}"), "Artist", None, 60.0)
+            })
+            .collect();
+        let likes = db.list_playlists().unwrap().into_iter().find(|playlist| playlist.is_likes == Some(true)).unwrap();
+        for track_id in track_ids.iter().take(27) {
+            db.like_track(*track_id).unwrap();
+        }
+
+        let first_playlist = db.create_playlist("First playlist").unwrap();
+        let second_playlist = db.create_playlist("Second playlist").unwrap();
+        db.playlist_add_track(first_playlist.id, track_ids[0]).unwrap();
+        db.playlist_add_track(second_playlist.id, track_ids[1]).unwrap();
+        db.record_playlist_start(first_playlist.id).unwrap();
+        db.record_playlist_start(second_playlist.id).unwrap();
+        db.record_playlist_start(second_playlist.id).unwrap();
+
+        let current = now();
+        db.with_conn(|conn| {
+            for (track_id, played_at) in [
+                (track_ids[0], current),
+                (track_ids[1], current - 10),
+                (track_ids[0], current - 20),
+                (track_ids[2], current - 31 * 86400),
+            ] {
+                conn.execute(
+                    "INSERT INTO listening_history(track_id, played_at, listened_sec, completed, skipped) \
+                     VALUES(?1, ?2, 60, 1, 0)",
+                    params![track_id, played_at],
+                ).map_err(db_err)?;
+            }
+            Ok(())
+        }).unwrap();
+
+        let home = db.get_home_page_data().unwrap();
+        assert_eq!(home.total, 30);
+        assert_eq!(home.mix_library.len(), 30);
+        assert_eq!(home.mix_library[0].id, *track_ids.last().unwrap());
+        assert_eq!(home.played.iter().map(|track| track.id).collect::<Vec<_>>(), vec![track_ids[0], track_ids[1]]);
+        assert_eq!(home.liked_tracks.len(), 24);
+        assert_eq!(home.liked_tracks[0].id, track_ids[26]);
+        assert_eq!(home.likes_playlist.unwrap().id, likes.id);
+        assert!(home.has_playlist_history);
+        assert_eq!(home.featured_playlists[0].id, second_playlist.id);
+
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

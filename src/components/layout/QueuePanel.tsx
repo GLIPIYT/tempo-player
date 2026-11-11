@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { Trash2, X } from 'lucide-react'
-import { usePlayer } from '../../player'
+import { usePlayerActions, usePlayerField } from '../../player'
 import { useT } from '../../i18n'
 import { fmtTime } from '../../utils/format'
 import Cover from '../common/Cover'
 
-export default function QueuePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const p = usePlayer()
+export default memo(function QueuePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const p = usePlayerActions()
+  const queue = usePlayerField('queue')
+  const queueIndex = usePlayerField('queueIndex')
   const t = useT()
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const [dragOver, setDragOver] = useState<number | null>(null)
@@ -25,7 +27,7 @@ export default function QueuePanel({ open, onClose }: { open: boolean; onClose: 
     setDragFrom(null)
     setDragOver(null)
     if (from === null || !Number.isInteger(from)) return
-    if (target < 0 || target >= p.queue.length) return
+    if (target < 0 || target >= queue.length) return
     if (from === target) return
     p.moveInQueue(from, target)
   }
@@ -35,8 +37,8 @@ export default function QueuePanel({ open, onClose }: { open: boolean; onClose: 
     setDragOver(null)
   }
 
-  const current = p.queueIndex >= 0 && p.queueIndex < p.queue.length ? p.queue[p.queueIndex] : null
-  const upcoming = p.queue.slice(p.queueIndex + 1)
+  const current = queueIndex >= 0 && queueIndex < queue.length ? queue[queueIndex] : null
+  const upcomingCount = Math.max(0, queue.length - queueIndex - 1)
   const removeAria = t('Remove')
   const fromQueue = t('from queue')
   const unknownArtist = t('Unknown artist')
@@ -45,9 +47,9 @@ export default function QueuePanel({ open, onClose }: { open: boolean; onClose: 
     <aside className={'qpanel' + (open ? ' is-open' : '')} aria-hidden={!open}>
       <div className="qpanel-head">
         <span className="qpanel-title">{t('Queue')}</span>
-        <span className="qpanel-count">{upcoming.length}</span>
+        <span className="qpanel-count">{upcomingCount}</span>
         <div className="qpanel-actions">
-          {p.queue.length > 0 ? (
+          {queue.length > 0 ? (
             <button className="icon-btn" onClick={() => p.clearQueue()} aria-label={t('Clear queue')}>
               <Trash2 size={15} />
             </button>
@@ -57,26 +59,26 @@ export default function QueuePanel({ open, onClose }: { open: boolean; onClose: 
           </button>
         </div>
       </div>
-      {p.queue.length === 0 ? (
+      {queue.length === 0 ? (
         <div className="qpanel-empty">{t('Queue is empty')}</div>
       ) : (
         <div
           className="qpanel-list"
           onDragOver={(e) => {
-            if (dragFrom === null || p.queue.length === 0) return
+            if (dragFrom === null || queue.length === 0) return
             e.preventDefault()
             e.dataTransfer.dropEffect = 'move'
-            setDragOver(p.queue.length - 1)
+            setDragOver(queue.length - 1)
           }}
           onDrop={(e) => {
             if (dragFrom === null) return
             e.preventDefault()
-            finishDrag(p.queue.length - 1)
+            finishDrag(queue.length - 1)
           }}
         >
           {current ? (
             <div className="qrow qrow-current">
-              <span className="qrow-num">{p.queueIndex + 1}</span>
+              <span className="qrow-num">{queueIndex + 1}</span>
               <Cover path={current.coverPath} label={current.title} size={34} />
               <div className="qrow-meta">
                 <span className="qrow-title">{current.title}</span>
@@ -85,8 +87,8 @@ export default function QueuePanel({ open, onClose }: { open: boolean; onClose: 
               <span className="qrow-tag">{t('Now')}</span>
             </div>
           ) : null}
-          {p.queue.map((track, idx) =>
-            idx <= p.queueIndex ? null : (
+          {queue.map((track, idx) =>
+            idx <= queueIndex ? null : (
               <div
                 key={`${track.sourceId}-${idx}`}
                 className={
@@ -116,7 +118,7 @@ export default function QueuePanel({ open, onClose }: { open: boolean; onClose: 
                   finishDrag(idx)
                 }}
                 onDragEnd={clearDrag}
-                onClick={() => p.playTracks(p.queue, idx)}
+                onClick={() => p.playTracks(queue, idx)}
               >
                 <span className="qrow-num">{idx + 1}</span>
                 <Cover path={track.coverPath} label={track.title} size={34} />
@@ -145,4 +147,4 @@ export default function QueuePanel({ open, onClose }: { open: boolean; onClose: 
       )}
     </aside>
   )
-}
+})

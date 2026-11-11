@@ -1,8 +1,11 @@
-import { useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { memo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { toast } from '../components/common/Toast'
 import { useT } from '../i18n'
 import { openExternalUrl } from '../utils/externalLinks'
 import { RELEASE_TYPE_MARKER } from './releaseType'
+import releasePosterPreview from './assets/v1.5.0-changelog-preview.webp'
+
+const RELEASE_POSTER_URL = 'https://raw.githubusercontent.com/GLIPIYT/tempo-player/v1.5.0/docs/design/changelog-1.5.0/tempo-1.5.0-changelog.webp'
 
 interface MarkdownImageTarget {
   src: string
@@ -37,14 +40,18 @@ function openLink(href: string, t: (key: string) => string) {
 function MarkdownImage({ src, alt, title }: MarkdownImageTarget & { alt: string }) {
   const [failed, setFailed] = useState(false)
   if (failed) return <span className="update-markdown-image-fallback">{alt}</span>
+  // Keep the 1.5.0 poster sharp enough for the dialog while avoiding a 13 MP
+  // decode. Its wrapping link still points at the full-resolution original.
+  const displaySrc = src === RELEASE_POSTER_URL ? releasePosterPreview : src
   return (
     <img
       className="update-markdown-image"
-      src={src}
+      src={displaySrc}
       alt={alt}
       title={title}
       loading="lazy"
       decoding="async"
+      fetchPriority="low"
       onError={() => setFailed(true)}
     />
   )
@@ -117,7 +124,7 @@ function isListStart(line: string): boolean {
 }
 
 /** Renders the common release-note Markdown safely, without accepting raw HTML. */
-export default function ReleaseNotes({ markdown }: { markdown: string }) {
+function ReleaseNotes({ markdown }: { markdown: string }) {
   const t = useT()
   const lines = markdown.replace(RELEASE_TYPE_MARKER, '').replace(/\r/g, '').split('\n')
   const blocks: ReactNode[] = []
@@ -165,3 +172,8 @@ export default function ReleaseNotes({ markdown }: { markdown: string }) {
 
   return <div className="update-markdown">{blocks}</div>
 }
+
+// Download progress and installed-update effects rerender the dialog while its
+// selected release notes stay unchanged. Keep the Markdown tree stable across
+// those updates, especially when the notes include a tall banner image.
+export default memo(ReleaseNotes)

@@ -6,7 +6,7 @@ interface HomeDataEntry {
   data: unknown
 }
 
-const MAX_HOME_CACHE_ENTRIES = 64
+const MAX_HOME_CACHE_ENTRIES = 32
 
 export interface HomeDataCache {
   peek<T>(key: string): HomeDataEntry & { data: T } | undefined

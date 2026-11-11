@@ -6,7 +6,7 @@ import type { Album } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { useT } from '../i18n'
-import { usePlayer } from '../player'
+import { usePlayerActions } from '../player'
 import { tracksToUnified } from '../utils/unified'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
@@ -20,7 +20,7 @@ type AlbumSort = 'title' | 'artist' | 'year'
 export default function AlbumsPage() {
   const { navigate } = useNav()
   const t = useT()
-  const player = usePlayer()
+  const player = usePlayerActions()
   const version = useLibraryVersion()
   const { data, loading, error } = useAsync(() => api.listAlbums(''), [version])
   const favorites = useAsync(() => api.listFavoriteAlbums(), [version])

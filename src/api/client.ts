@@ -14,6 +14,7 @@ import type {
   CoversCacheInfo,
   DailyMinutes,
   FavoriteOrderEntry,
+  HomePageData,
   HiddenTrack,
   HistoryEntry,
   LibraryFolder,
@@ -90,6 +91,7 @@ export const api = {
   listTracks: (query: string, limit: number, offset: number, sort = 'added') =>
     invoke<Track[]>('list_tracks', { query, limit, offset, sort }),
   countTracks: () => invoke<number>('count_tracks'),
+  getHomePageData: () => invoke<HomePageData>('get_home_page_data'),
   searchAll: (query: string) => invoke<SearchResults>('search_all', { query }),
 
   listAlbums: (query: string) => invoke<Album[]>('list_albums', { query }),
