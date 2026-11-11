@@ -2,13 +2,25 @@ import type { ProfilerOnRenderCallback } from 'react'
 import type { View } from '../state/nav'
 
 export type DevProfileId = 'player' | 'lyrics' | 'updates' | `page:${View['name']}`
-export type DevPerfKind = 'react' | 'longtask' | 'frame-gap' | 'event-loop'
+export type DevPerfKind = 'react' | 'longtask' | 'long-frame' | 'frame-gap' | 'event-loop'
+
+export interface DevPerfScriptAttribution {
+  source: string
+  functionName: string
+  durationMs: number
+  forcedStyleAndLayoutMs: number
+  sourceCharPosition: number
+}
 
 export interface DevPerfEntry {
   kind: DevPerfKind
   label: string
   durationMs: number
   atMs: number
+  scripts?: DevPerfScriptAttribution[]
+  blockingMs?: number
+  renderMs?: number
+  styleAndLayoutMs?: number
 }
 
 export interface DevPerfSnapshot {
@@ -24,6 +36,9 @@ const FRAME_GAP_THRESHOLD_MS = 150
 const EVENT_LOOP_INTERVAL_MS = 500
 const EVENT_LOOP_THRESHOLD_MS = 250
 const MAX_DURATION_MS = 60_000
+const MAX_FRAME_SCRIPTS = 5
+const MAX_SCRIPT_SOURCE_LENGTH = 256
+const MAX_FUNCTION_NAME_LENGTH = 96
 export const DEV_PERF_AUTO_START_KEY = 'tempo.devPerformance.autoStart.v1'
 const AUTO_WRITE_KEY = 'tempo.devPerformance.writeDuringCapture.v1'
 
@@ -48,6 +63,7 @@ let nextSequence = 0
 let droppedLogEntries = 0
 let snapshotTimer = 0
 let longTaskObserver: PerformanceObserver | null = null
+let longFrameObserver: PerformanceObserver | null = null
 let frameRequest: number | null = null
 let eventLoopTimer: number | null = null
 let visibilityHandler: (() => void) | null = null
@@ -96,7 +112,15 @@ function safeDuration(value: number): number {
   return Number.isFinite(value) ? Math.min(MAX_DURATION_MS, Math.max(0, value)) : 0
 }
 
-function recordEvent(kind: DevPerfKind, label: string, durationMs: number, atMs: number): void {
+type DevPerfDetails = Pick<DevPerfEntry, 'scripts' | 'blockingMs' | 'renderMs' | 'styleAndLayoutMs'>
+
+function recordEvent(
+  kind: DevPerfKind,
+  label: string,
+  durationMs: number,
+  atMs: number,
+  details?: DevPerfDetails,
+): void {
   if (!isCapturing) return
 
   const entry: DevPerfEntry = {
@@ -104,6 +128,7 @@ function recordEvent(kind: DevPerfKind, label: string, durationMs: number, atMs:
     label: label.slice(0, 96),
     durationMs: safeDuration(durationMs),
     atMs: Number.isFinite(atMs) ? Math.max(0, atMs) : performance.now(),
+    ...details,
   }
   recentEntries.push(entry)
   if (recentEntries.length > MAX_VISIBLE_ENTRIES) recentEntries.shift()
@@ -119,6 +144,107 @@ function recordEvent(kind: DevPerfKind, label: string, durationMs: number, atMs:
 export const recordReactCommit: ProfilerOnRenderCallback = (id, _phase, actualDuration, _baseDuration, _startTime, commitTime) => {
   if (!REACT_LABELS.has(id)) return
   recordEvent('react', id, actualDuration, commitTime)
+}
+
+interface LongFrameScriptLike {
+  sourceURL?: unknown
+  sourceFunctionName?: unknown
+  duration?: unknown
+  forcedStyleAndLayoutDuration?: unknown
+  forcedStyleDuration?: unknown
+  forcedLayoutDuration?: unknown
+  sourceCharPosition?: unknown
+}
+
+interface LongFrameEntryLike extends PerformanceEntry {
+  blockingDuration?: unknown
+  renderStart?: unknown
+  styleAndLayoutStart?: unknown
+  styleDuration?: unknown
+  layoutDuration?: unknown
+  scripts?: unknown
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function sanitizeScriptSource(value: unknown): string | null {
+  if (typeof value !== 'string' || !value || typeof window.location?.href !== 'string') return null
+
+  try {
+    const url = new URL(value, window.location.href)
+    if (url.protocol === 'file:' || url.origin !== window.location.origin) return null
+
+    const path = url.pathname
+    const isLocalModulePath = path.startsWith('/src/')
+      || path.startsWith('/node_modules/.vite/deps/')
+      || path.startsWith('/@vite/client')
+      || path.startsWith('/@react-refresh')
+    return isLocalModulePath ? path.slice(0, MAX_SCRIPT_SOURCE_LENGTH) : null
+  } catch {
+    return null
+  }
+}
+
+function sanitizeFrameScripts(value: unknown): DevPerfScriptAttribution[] {
+  if (!Array.isArray(value)) return []
+
+  const scripts = value.flatMap((candidate): DevPerfScriptAttribution[] => {
+    if (!candidate || typeof candidate !== 'object') return []
+    const script = candidate as LongFrameScriptLike
+    const source = sanitizeScriptSource(script.sourceURL)
+    if (!source || !isFiniteNumber(script.duration)) return []
+
+    const rawFunctionName = typeof script.sourceFunctionName === 'string' ? script.sourceFunctionName : ''
+    const functionName = rawFunctionName.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, MAX_FUNCTION_NAME_LENGTH)
+    const sourceCharPosition = isFiniteNumber(script.sourceCharPosition)
+      && Number.isSafeInteger(script.sourceCharPosition)
+      && script.sourceCharPosition >= 0
+      ? script.sourceCharPosition
+      : -1
+    const forcedStyleAndLayoutDuration = isFiniteNumber(script.forcedStyleAndLayoutDuration)
+      ? script.forcedStyleAndLayoutDuration
+      : (isFiniteNumber(script.forcedStyleDuration) ? script.forcedStyleDuration : 0)
+        + (isFiniteNumber(script.forcedLayoutDuration) ? script.forcedLayoutDuration : 0)
+
+    return [{
+      source,
+      functionName,
+      durationMs: safeDuration(script.duration),
+      forcedStyleAndLayoutMs: safeDuration(forcedStyleAndLayoutDuration),
+      sourceCharPosition,
+    }]
+  })
+
+  return scripts
+    .sort((left, right) => right.durationMs - left.durationMs)
+    .slice(0, MAX_FRAME_SCRIPTS)
+}
+
+function getLongFrameDetails(entry: LongFrameEntryLike): DevPerfDetails {
+  const details: DevPerfDetails = {}
+  const endTime = entry.startTime + entry.duration
+
+  if (isFiniteNumber(entry.blockingDuration)) details.blockingMs = safeDuration(entry.blockingDuration)
+
+  if (isFiniteNumber(entry.renderStart)) {
+    details.renderMs = safeDuration(entry.renderStart > 0 ? endTime - entry.renderStart : 0)
+  }
+
+  const hasSplitStyleAndLayout = isFiniteNumber(entry.styleDuration) || isFiniteNumber(entry.layoutDuration)
+  if (hasSplitStyleAndLayout) {
+    details.styleAndLayoutMs = safeDuration(
+      (isFiniteNumber(entry.styleDuration) ? entry.styleDuration : 0)
+      + (isFiniteNumber(entry.layoutDuration) ? entry.layoutDuration : 0),
+    )
+  } else if (isFiniteNumber(entry.styleAndLayoutStart)) {
+    details.styleAndLayoutMs = safeDuration(entry.styleAndLayoutStart > 0 ? endTime - entry.styleAndLayoutStart : 0)
+  }
+
+  const scripts = sanitizeFrameScripts(entry.scripts)
+  if (scripts.length > 0) details.scripts = scripts
+  return details
 }
 
 function scheduleFrameWatchdog(): void {
@@ -152,6 +278,26 @@ function onVisibilityChange(): void {
   }
 }
 
+function observeLongAnimationFrames(): void {
+  if (typeof PerformanceObserver === 'undefined') return
+  if (!Array.isArray(PerformanceObserver.supportedEntryTypes)
+    || !PerformanceObserver.supportedEntryTypes.includes('long-animation-frame')) return
+
+  try {
+    longFrameObserver = new PerformanceObserver(list => {
+      if (document.visibilityState !== 'visible') return
+      for (const entry of list.getEntries()) {
+        const longFrame = entry as LongFrameEntryLike
+        recordEvent('long-frame', 'long animation frame', longFrame.duration, longFrame.startTime, getLongFrameDetails(longFrame))
+      }
+    })
+    longFrameObserver.observe({ type: 'long-animation-frame' })
+  } catch {
+    longFrameObserver?.disconnect()
+    longFrameObserver = null
+  }
+}
+
 export function startDevPerfCapture(): void {
   if (isCapturing) return
   recentEntries = []
@@ -172,6 +318,7 @@ export function startDevPerfCapture(): void {
     longTaskObserver?.disconnect()
     longTaskObserver = null
   }
+  observeLongAnimationFrames()
 
   visibilityHandler = onVisibilityChange
   document.addEventListener('visibilitychange', visibilityHandler)
@@ -192,6 +339,8 @@ export function stopDevPerfCapture(): void {
   isCapturing = false
   longTaskObserver?.disconnect()
   longTaskObserver = null
+  longFrameObserver?.disconnect()
+  longFrameObserver = null
   if (frameRequest !== null) window.cancelAnimationFrame(frameRequest)
   frameRequest = null
   if (eventLoopTimer !== null) window.clearInterval(eventLoopTimer)

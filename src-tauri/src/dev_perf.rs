@@ -1,3 +1,16 @@
+#[cfg(windows)]
+mod cpu_trace;
+#[cfg(windows)]
+#[tauri::command]
+pub async fn dev_perf_start_trace(window: tauri::WebviewWindow) -> Result<(), String> {
+    cpu_trace::start_trace(window).await
+}
+#[cfg(windows)]
+#[tauri::command]
+pub async fn dev_perf_stop_trace(window: tauri::WebviewWindow) -> Result<String, String> {
+    cpu_trace::stop_trace_command(window).await
+}
+
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -16,8 +29,68 @@ static LOG_WRITE: Mutex<()> = Mutex::new(());
 enum EventKind {
     React,
     Longtask,
+    LongFrame,
     FrameGap,
     EventLoop,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FrameDetails {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    scripts: Vec<ScriptTiming>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    blocking_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    render_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    style_and_layout_ms: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScriptTiming {
+    source: String,
+    function_name: String,
+    duration_ms: f64,
+    forced_style_and_layout_ms: f64,
+    source_char_position: i64,
+}
+
+fn valid_duration(duration: f64) -> bool {
+    (0.0..=600_000.0).contains(&duration)
+}
+
+fn valid_script(script: &ScriptTiming) -> bool {
+    let source = &script.source;
+    (source.starts_with("/src/")
+        || source.starts_with("/node_modules/.vite/deps/")
+        || source == "/@vite/client"
+        || source.starts_with("/@vite/client/")
+        || source == "/@react-refresh"
+        || source.starts_with("/@react-refresh/"))
+        && source.len() <= 256
+        && !source.split('/').any(|part| part == ".." || part == ".")
+        && source.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'_' | b'-' | b'.' | b'@')
+        })
+        && script.function_name.chars().count() <= 96
+        && !script.function_name.chars().any(char::is_control)
+        && valid_duration(script.duration_ms)
+        && valid_duration(script.forced_style_and_layout_ms)
+        && (-1..=i64::from(i32::MAX)).contains(&script.source_char_position)
+}
+
+impl FrameDetails {
+    fn normalize(&mut self) {
+        self.scripts.retain(valid_script);
+        self.scripts.truncate(5);
+        self.blocking_ms = self.blocking_ms.filter(|value| valid_duration(*value));
+        self.render_ms = self.render_ms.filter(|value| valid_duration(*value));
+        self.style_and_layout_ms = self
+            .style_and_layout_ms
+            .filter(|value| valid_duration(*value));
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -27,22 +100,29 @@ pub struct PerfEntry {
     label: String,
     duration_ms: f64,
     at_ms: f64,
+    #[serde(flatten)]
+    frame: FrameDetails,
 }
 
 impl PerfEntry {
     fn normalize(&mut self) -> Result<(), String> {
         if self.label.len() > 96
-            || !self.duration_ms.is_finite()
             || !self.at_ms.is_finite()
-            || !(0.0..=600_000.0).contains(&self.duration_ms)
+            || !valid_duration(self.duration_ms)
             || self.at_ms < 0.0
         {
             return Err("invalid performance sample".into());
+        }
+        if matches!(self.kind, EventKind::LongFrame) {
+            self.frame.normalize();
+        } else {
+            self.frame = FrameDetails::default();
         }
         self.label = match self.kind {
             EventKind::React if known_react_area(&self.label) => return Ok(()),
             EventKind::React => return Err("unknown React profiling area".into()),
             EventKind::Longtask => "main-thread",
+            EventKind::LongFrame => "long-animation-frame",
             EventKind::FrameGap => "animation-frame",
             EventKind::EventLoop => "watchdog",
         }
@@ -165,6 +245,7 @@ mod tests {
             label: "arbitrary attribution".into(),
             duration_ms: 148.0,
             at_ms: 17_421.0,
+            frame: FrameDetails::default(),
         };
         entry.normalize().unwrap();
         let path = append_entries(dir.path(), &[entry]).unwrap();
@@ -172,5 +253,39 @@ mod tests {
         let row: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(row["label"], "main-thread");
         assert_eq!(row["durationMs"], 148.0);
+    }
+
+    #[test]
+    fn long_frame_log_preserves_local_attribution_and_drops_other_urls() {
+        let directory = tempfile::tempdir().unwrap();
+        let make_script = |source: &str| {
+            serde_json::json!({
+                "source": source,
+                "functionName": "buildRecommendations",
+                "durationMs": 212.0,
+                "forcedStyleAndLayoutMs": 33.0,
+                "sourceCharPosition": 172
+            })
+        };
+        let mut entry: PerfEntry = serde_json::from_value(serde_json::json!({
+            "kind": "long-frame",
+            "label": "Long frame",
+            "durationMs": 260.0,
+            "atMs": 17_421.0,
+            "blockingMs": 210.0,
+            "scripts": [
+                make_script("https://example.com/app.js?secret=value"),
+                make_script("/src/home/runtime.ts"),
+            ]
+        }))
+        .unwrap();
+        entry.normalize().unwrap();
+        let path = append_entries(directory.path(), &[entry]).unwrap();
+        let text = fs::read_to_string(path).unwrap();
+        let row: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(row["label"], "long-animation-frame");
+        assert_eq!(row["blockingMs"], 210.0);
+        assert_eq!(row["scripts"].as_array().unwrap().len(), 1);
+        assert_eq!(row["scripts"][0]["source"], "/src/home/runtime.ts");
     }
 }

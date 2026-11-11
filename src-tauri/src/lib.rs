@@ -151,6 +151,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             #[cfg(debug_assertions)]
             dev_perf::dev_perf_append,
+            #[cfg(all(debug_assertions, windows))]
+            dev_perf::dev_perf_start_trace,
+            #[cfg(all(debug_assertions, windows))]
+            dev_perf::dev_perf_stop_trace,
             cached_lyrics_search::search_cached_lyrics,
             commands::list_custom_mix_rules,
             commands::save_custom_mix_rule,
