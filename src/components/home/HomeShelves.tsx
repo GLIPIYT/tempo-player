@@ -1,5 +1,5 @@
 import { useMemo, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
-import { ArrowUpRight, ChevronLeft, ChevronRight, Clock3, ListMusic, Play } from 'lucide-react'
+import { ArrowUpRight, ChevronLeft, ChevronRight, Clock3, Headphones, Heart, History, ListMusic, Play, type LucideIcon } from 'lucide-react'
 import type { Playlist, TopTrackItem, Track } from '../../types/models'
 import { useT } from '../../i18n'
 import { beginTrackDrag, consumeDragClick } from '../../dnd/trackDrag'
@@ -7,6 +7,7 @@ import { isSectionHidden } from '../../utils/hiddenSections'
 import { playlistDisplayName } from '../../utils/playlists'
 import { fmtTime } from '../../utils/format'
 import Cover from '../common/Cover'
+import HomeSectionTitle from './HomeSectionTitle'
 import { HOME_RAIL_GAP, onHomeRailKeyDown, scrollHomeRail, useRecommendationRail } from './useRecommendationRail'
 
 type Section = { title: string; id: string; tracks?: Track[] }
@@ -37,6 +38,7 @@ function startDrag(event: PointerEvent<HTMLButtonElement>, track: Track, scrollR
 interface TrackRailProps {
   cardSize: number
   title: string
+  icon: LucideIcon
   id: string
   tracks: Track[]
   unknownArtist: string
@@ -47,7 +49,7 @@ interface TrackRailProps {
   onSectionMenu: HomeShelvesProps['onSectionMenu']
 }
 
-function TrackRail({ cardSize, title, id, tracks, unknownArtist, caption, onOpen, onPlay, onTrackMenu, onSectionMenu }: TrackRailProps) {
+function TrackRail({ cardSize, title, icon, id, tracks, unknownArtist, caption, onOpen, onPlay, onTrackMenu, onSectionMenu }: TrackRailProps) {
   const t = useT()
   const visible = tracks.length > 0 && !isSectionHidden(id)
   const step = cardSize + HOME_RAIL_GAP
@@ -57,7 +59,7 @@ function TrackRail({ cardSize, title, id, tracks, unknownArtist, caption, onOpen
   return (
     <section className="home-section home-rail-section" aria-label={title}>
       <div className="home-section-head" onContextMenu={(event) => onSectionMenu(event, { title, id, tracks })}>
-        <span className="home-section-title">{title}</span>
+        <HomeSectionTitle icon={icon}>{title}</HomeSectionTitle>
         <div className="home-section-tools">
           {onOpen ? <button type="button" className="home-section-open" onClick={onOpen}>{t('Open Likes')} <ArrowUpRight size={14} /></button> : null}
           <div className="home-rail-controls">
@@ -110,14 +112,14 @@ export default function HomeShelves({ cardSize, topTracks, recentAdded, recentPl
       <div className="home-content-grid">
         {(recommendations || likesVisible) && <div className="home-content-main">
           {recommendations}
-          <TrackRail title={t('Likes')} id="home.likes" tracks={likedTracks}
+          <TrackRail title={t('Likes')} icon={Heart} id="home.likes" tracks={likedTracks}
             onOpen={likesPlaylist ? () => onOpenPlaylist(likesPlaylist) : undefined} {...trackActions} />
         </div>}
         {(addedVisible || playlistVisible) && <div className="home-content-side">
           {addedVisible ? (
             <section className="home-section home-recent-section" aria-label={t('Recently added')}>
               <div className="home-section-head" onContextMenu={(event) => onSectionMenu(event, { title: t('Recently added'), id: 'home.recent', tracks: recentAdded })}>
-                <span className="home-section-title">{t('Recently added')}</span><Clock3 size={15} />
+                <HomeSectionTitle icon={Clock3}>{t('Recently added')}</HomeSectionTitle>
               </div>
               <div className="home-new-list">
                 {recentAdded.map((track, index) => (
@@ -134,7 +136,7 @@ export default function HomeShelves({ cardSize, topTracks, recentAdded, recentPl
           {playlistVisible ? (
             <section className="home-section home-playlist-section" aria-label={playlistTitle}>
               <div className="home-section-head" onContextMenu={(event) => onSectionMenu(event, { title: playlistTitle, id: 'home.playlists' })}>
-                <span className="home-section-title">{playlistTitle}</span><ListMusic size={15} />
+                <HomeSectionTitle icon={ListMusic}>{playlistTitle}</HomeSectionTitle>
               </div>
               <div className="home-playlist-list">
                 {featuredPlaylists.map((playlist) => (
@@ -152,8 +154,8 @@ export default function HomeShelves({ cardSize, topTracks, recentAdded, recentPl
         </div>}
       </div>
       <div className="home-library-shelves">
-        <TrackRail title={t('Listened recently')} id="home.played" tracks={recentPlays} {...trackActions} />
-        <TrackRail title={t('Most played')} id="home.top" tracks={topList}
+        <TrackRail title={t('Listened recently')} icon={History} id="home.played" tracks={recentPlays} {...trackActions} />
+        <TrackRail title={t('Most played')} icon={Headphones} id="home.top" tracks={topList}
           caption={(track) => `${track.artistName ?? unknownArtist} · ${playCounts.get(track.id) ?? 0} ${t('plays')}`} {...trackActions} />
       </div>
     </>

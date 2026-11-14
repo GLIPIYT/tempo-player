@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
-import { ChevronLeft, ChevronRight, Download, LoaderCircle, Play, RefreshCw } from 'lucide-react'
+import { AudioLines, ChevronLeft, ChevronRight, Download, LoaderCircle, Play, RefreshCw, Sparkles } from 'lucide-react'
 import type { ScTrack } from '../../types/models'
 import { useT } from '../../i18n'
 import { beginTrackDrag, consumeDragClick } from '../../dnd/trackDrag'
@@ -7,6 +7,7 @@ import { useSoundCloudGenreRecommendations } from '../../hooks/useSoundCloudGenr
 import { getTrackCacheProgress, subscribeTrackCacheProgress } from '../../soundcloud/cacheJobs'
 import { useSettings } from '../../state/settings'
 import ScArtwork from '../common/ScArtwork'
+import HomeSectionTitle from './HomeSectionTitle'
 import { HOME_RAIL_GAP, onHomeRailKeyDown, scrollHomeRail, useRecommendationRail } from './useRecommendationRail'
 
 interface RecommendationsShelfProps {
@@ -347,7 +348,7 @@ export default function RecommendationsShelf({
       <div className="home-section home-recommendations-panel">
         <div className="home-section-head" onContextMenu={onSectionMenu}>
           <div className="home-recommendations-title">
-            <span className="home-section-title">{t('Recommended for you')}</span>
+            <HomeSectionTitle icon={Sparkles}>{t('Recommended for you')}</HomeSectionTitle>
             <small>{t('Based on what you listen to')}</small>
           </div>
           <div className="home-section-tools">
@@ -402,7 +403,7 @@ export default function RecommendationsShelf({
         <div className="home-favorite-genre">
           <div className="home-section-head">
             <div className="home-recommendations-title">
-              <span className="home-section-title">{favoriteGenre.label}</span>
+              <HomeSectionTitle icon={AudioLines}>{favoriteGenre.label}</HomeSectionTitle>
               <small>{t('Your most-listened genre')}</small>
             </div>
             <div className="home-section-tools">

@@ -314,12 +314,15 @@ html.theme-gradient .home-mix-art::after {
 .tempo-home .home-section { margin-bottom: 14px; }
 .tempo-home .home-section-head { align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .tempo-home .home-section-title {
+  min-width: 0;
   font-family: Bahnschrift, 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
   font-size: 17px;
   font-weight: 700;
   letter-spacing: -.025em;
   color: #fff;
 }
+.tempo-home .home-section-title svg { flex: none; color: var(--accent-strong); }
+.tempo-home .home-section-title span { overflow-wrap: anywhere; }
 .hour-mix-page .editorial-detail-title { color: #fff; }
 
 .home-content-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
@@ -393,8 +396,8 @@ html.theme-gradient .home-mix-art::after {
 .home-rail-track:hover strong { color: var(--accent-strong); }
 .home-recommendations { margin-top: 0; }
 .home-recommendations-scroll-controls { margin-left: auto; }
-.home-recommendations-title { display: grid; gap: 3px; }
-.home-recommendations-title small { color: var(--text-muted); font-size: 10px; }
+.home-recommendations-title { display: grid; min-width: 0; gap: 3px; }
+.home-recommendations-title small { padding-inline-start: 23px; color: var(--text-muted); font-size: 10px; }
 .home-recommendations-play { gap: 6px; }
 .home-recommendations-panel,
 .home-favorite-genre,
