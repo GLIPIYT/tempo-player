@@ -7,7 +7,7 @@
   const EQ_BANDS = 10;
   const NUM_BINS = 64;
   const SPECTRUM_INTERVAL_MS = 40;
-  const LOUDNESS_TARGET = -16;
+  const LOUDNESS_TARGET = -14;
   const LOUDNESS_CEILING = -1.5;
   const LOUDNESS_GATE = -70;
   const LOUDNESS_BUCKETS = 111;
@@ -169,23 +169,35 @@
       blocks: new Float64Array(4),
       peak: 0,
       ticks: 0,
-      gain: 1,
+      volume: graph.element.volume,
+      settleUntil: 0,
       timer: null,
     };
   }
 
   function measureLoudness(graph, meter) {
-    if (!active?.playing || !active.settings.normalize || graph.element.paused
-      || graph.element.readyState < 3 || graph.element.seeking
+    const element = graph.element;
+    if (!active?.playing || !active.settings.normalize || element.paused
+      || element.readyState < 3 || element.seeking || element.muted
       || graph.context.state !== 'running') return;
+    // Chromium applies the element volume before MediaElementAudioSourceNode.
+    // Wait for the analyser window to refresh if that volume changed.
+    const volume = element.volume;
+    if (meter.volume !== volume) {
+      meter.volume = volume;
+      return;
+    }
+    if (!(volume > 0) || graph.context.currentTime < meter.settleUntil) return;
     let energy = 0;
+    let peak = 0;
     for (let channel = 0; channel < 2; channel += 1) {
       meter.analysers[channel].getFloatTimeDomainData(meter.data);
       for (const value of meter.data) energy += value * value;
       meter.analysers[channel + 2].getFloatTimeDomainData(meter.data);
-      for (const value of meter.data) meter.peak = Math.max(meter.peak, Math.abs(value));
+      for (const value of meter.data) peak = Math.max(peak, Math.abs(value));
     }
-    meter.blocks[meter.ticks % meter.blocks.length] = energy / meter.data.length;
+    meter.peak = Math.max(meter.peak, peak / volume);
+    meter.blocks[meter.ticks % meter.blocks.length] = energy / (meter.data.length * volume * volume);
     meter.ticks += 1;
     if (meter.ticks < meter.blocks.length) return;
     const block = meter.blocks.reduce((sum, value) => sum + value, 0) / meter.blocks.length;
@@ -208,9 +220,12 @@
     if (!count || !(sum > 0)) return;
     const integrated = -0.691 + 10 * Math.log10(sum / count);
     const peakGain = LOUDNESS_CEILING - 20 * Math.log10(meter.peak);
-    const gainDb = Math.min(clamp(LOUDNESS_TARGET - integrated, -30, meter.ticks >= 40 ? 12 : 0), peakGain);
-    meter.gain = Math.pow(10, gainDb / 20);
-    graph.nodes.trackGain.gain.setTargetAtTime(meter.gain, graph.context.currentTime, 0.075);
+    const gainDb = Math.min(clamp(LOUDNESS_TARGET - integrated, -30, 0), peakGain);
+    const gain = Math.pow(10, gainDb / 20);
+    // A quiet passage or new graph must not release the same track's cut.
+    if (gain >= active.loudnessGain) return;
+    active.loudnessGain = gain;
+    graph.nodes.trackGain.gain.setTargetAtTime(gain, graph.context.currentTime, 0.075);
   }
 
   function stopLoudnessTimer(graph) {
@@ -244,7 +259,14 @@
     } else {
       stopLoudnessTimer(graph);
     }
-    graph.nodes.trackGain.gain.setTargetAtTime(meter?.gain ?? 1, graph.context.currentTime, 0.075);
+    graph.nodes.trackGain.gain.setTargetAtTime(enabled ? active.loudnessGain : 1, graph.context.currentTime, 0.075);
+  }
+
+  function settleLoudnessMeter(graph) {
+    const meter = graph.meter;
+    if (!meter) return;
+    meter.volume = graph.element.volume;
+    meter.settleUntil = graph.context.currentTime + meter.data.length / graph.context.sampleRate;
   }
 
   function applyMediaSettings(graph) {
@@ -283,6 +305,7 @@
       graph.element.removeEventListener('play', graph.mediaListeners.play);
       graph.element.removeEventListener('pause', graph.mediaListeners.pause);
       graph.element.removeEventListener('ended', graph.mediaListeners.pause);
+      graph.element.removeEventListener('volumechange', graph.mediaListeners.volumeChange);
     }
     try { graph.source.disconnect(); } catch (_) {}
     if (graph.nodes) {
@@ -308,12 +331,15 @@
         clearSpectrumTimer();
         stopLoudnessTimer(graph);
       },
+      volumeChange: () => settleLoudnessMeter(graph),
     };
     element.addEventListener('play', graph.mediaListeners.play);
     element.addEventListener('pause', graph.mediaListeners.pause);
     element.addEventListener('ended', graph.mediaListeners.pause);
+    element.addEventListener('volumechange', graph.mediaListeners.volumeChange);
     try {
       const trackGain = context.createGain();
+      if (active?.settings.normalize) trackGain.gain.value = active.loudnessGain;
       const equalizer = [];
       const nyquist = Math.max(1, context.sampleRate * 0.5);
       for (let index = 0; index < EQ_BANDS; index += 1) {
@@ -447,6 +473,7 @@
         nonce: message.nonce,
         settings: initialSettings,
         playing: false,
+        loudnessGain: 1,
       };
     } else if (!active || message.nonce !== active.nonce
       || message.generation !== active.generation

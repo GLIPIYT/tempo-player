@@ -9,15 +9,14 @@ use std::time::SystemTime;
 use ebur128::{EbuR128, Mode};
 use rodio::{Decoder, Source};
 
-const TARGET_LUFS: f64 = -16.0;
+const TARGET_LUFS: f64 = -14.0;
 const PEAK_CEILING_DB: f64 = -1.5;
 const MAX_BOOST_DB: f64 = 12.0;
 const MIN_GAIN_DB: f64 = -30.0;
 const FILE_CACHE_SIZE: usize = 128;
-// Estimate from consecutive 400 ms gated blocks. Wait longer to boost quiet
-// intros than to attenuate a track that is already playing too loudly.
+// Estimate from consecutive 400 ms gated blocks. Only a full file scan may
+// boost audio. A streamed intro cannot predict how loud the rest will get.
 const LIVE_INITIAL_MS: usize = 400;
-const LIVE_BOOST_MS: u64 = 4_000;
 const LIVE_UPDATE_MS: usize = 1_000;
 const FILE_CHUNK_FRAMES: usize = 4_096;
 static FILE_SCANNING: AtomicBool = AtomicBool::new(false);
@@ -150,14 +149,20 @@ impl TrackLoudness {
 
     pub fn seed_live_gain(&self, gain: Option<f32>) {
         if let Some(gain) = gain {
-            // The decoder may already have measured the new buffer.
-            let _ = self.live_gain.compare_exchange(
-                f32::NAN.to_bits(),
-                gain.to_bits(),
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            );
+            self.lower_live_gain(gain);
         }
+    }
+
+    fn lower_live_gain(&self, gain: f32) {
+        // Keep the stronger cut if a replacement decoder has already measured
+        // its buffer or if a quiet passage skews the integrated estimate.
+        let _ = self
+            .live_gain
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |bits| {
+                let previous = f32::from_bits(bits);
+                let next = previous.min(gain).min(1.0);
+                (next.to_bits() != bits).then_some(next.to_bits())
+            });
     }
 
     fn has_file_gain(&self) -> bool {
@@ -221,7 +226,6 @@ pub(super) struct LiveLoudness {
     channels: u32,
     rate: u32,
     chunk: Vec<f32>,
-    analyzed_frames: u64,
     until_update: usize,
 }
 
@@ -233,7 +237,6 @@ impl LiveLoudness {
             channels,
             rate,
             chunk: Vec::with_capacity((rate as usize / 100).max(1) * channels as usize),
-            analyzed_frames: 0,
             until_update: rate as usize * LIVE_INITIAL_MS / 1000,
         }
     }
@@ -266,7 +269,6 @@ impl LiveLoudness {
         if result.is_err() {
             return;
         }
-        self.analyzed_frames += frames as u64;
         self.until_update = self.until_update.saturating_sub(frames);
         if self.until_update != 0 {
             return;
@@ -278,15 +280,8 @@ impl LiveLoudness {
         let peak = (0..channels)
             .filter_map(|channel| meter.sample_peak(channel).ok())
             .fold(0.0, f64::max);
-        let boost = if self.analyzed_frames * 1000 >= u64::from(rate) * LIVE_BOOST_MS {
-            MAX_BOOST_DB
-        } else {
-            0.0
-        };
-        if let Some(gain) = gain_for_measurement(lufs, peak, boost) {
-            self.target
-                .live_gain
-                .store(gain.to_bits(), Ordering::Relaxed);
+        if let Some(gain) = gain_for_measurement(lufs, peak, 0.0) {
+            self.target.lower_live_gain(gain);
         }
     }
 }
@@ -369,28 +364,49 @@ mod tests {
     }
 
     #[test]
-    fn streamed_track_cuts_loud_audio_before_boosting_quiet_audio() {
+    fn streams_cut_loud_audio_without_a_delayed_boost() {
         let quiet = TrackLoudness::new(true);
         let loud = TrackLoudness::new(true);
         let mut quiet_meter = LiveLoudness::new(quiet.clone(), 2, RATE);
         let mut loud_meter = LiveLoudness::new(loud.clone(), 2, RATE);
-        for frame in 0..RATE * 6 {
+        for frame in 0..RATE * 10 {
             let quiet_sample = tone_sample(frame, 0.06);
             let loud_sample = tone_sample(frame, 0.9);
             quiet_meter.observe(&[quiet_sample, quiet_sample]);
             loud_meter.observe(&[loud_sample, loud_sample]);
-            if frame == RATE {
-                assert_eq!(quiet.linear_gain(), 1.0);
+            if frame >= RATE {
                 assert!(loud.linear_gain() < 0.5);
             }
+            assert_eq!(quiet.linear_gain(), 1.0);
         }
-        let difference_db =
-            20.0 * (quiet.linear_gain() * 0.06 / (loud.linear_gain() * 0.9)).log10();
-        assert!(difference_db.abs() < 0.1, "{difference_db:.3} dB");
-        quiet.configure(false);
-        assert_eq!(quiet.linear_gain(), 1.0);
-        quiet.configure(true);
-        assert!(quiet.linear_gain() > 1.0);
+        let gain = loud.linear_gain();
+        loud.configure(false);
+        assert_eq!(loud.linear_gain(), 1.0);
+        loud.configure(true);
+        assert_eq!(loud.linear_gain(), gain);
+    }
+
+    #[test]
+    fn stream_never_releases_attenuation_when_audio_quiets_or_decoder_restarts() {
+        let track = TrackLoudness::new(true);
+        let mut meter = LiveLoudness::new(track.clone(), 2, RATE);
+        for frame in 0..RATE {
+            let sample = tone_sample(frame, 0.8);
+            meter.observe(&[sample, sample]);
+        }
+        let initial_gain = track.linear_gain();
+        assert!(initial_gain < 0.5);
+        for frame in 0..RATE * 10 {
+            let sample = tone_sample(frame, 0.2);
+            meter.observe(&[sample, sample]);
+            assert!(track.linear_gain() <= initial_gain);
+        }
+        let replacement = TrackLoudness::new(true);
+        replacement.lower_live_gain(0.8);
+        replacement.seed_live_gain(track.live_gain());
+        assert_eq!(replacement.linear_gain(), track.linear_gain());
+        replacement.lower_live_gain(0.8);
+        assert_eq!(replacement.linear_gain(), track.linear_gain());
     }
 
     #[test]
