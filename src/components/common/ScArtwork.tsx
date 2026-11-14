@@ -25,6 +25,7 @@ interface ScArtworkProps {
   resolution?: ArtworkResolution
   /** Let offscreen artwork wait until it approaches the viewport. */
   loading?: 'eager' | 'lazy'
+  fetchPriority?: 'high' | 'low' | 'auto'
 }
 
 function ScArtwork({
@@ -35,17 +36,18 @@ function ScArtwork({
   compact = false,
   resolution = 'full',
   loading,
+  fetchPriority,
 }: ScArtworkProps) {
   const sources = buildArtworkSources(url, fallbackUrls, compact, resolution)
   const sourcesKey = sources.join('\u0000')
   // A new candidate list must get a new loading state, even if the primary URL
   // stays the same. Resetting it in an effect can hide an already loaded image.
-  return <ArtworkImage key={sourcesKey} sources={sources} title={title} pending={pending} loading={loading} />
+  return <ArtworkImage key={sourcesKey} sources={sources} title={title} pending={pending} loading={loading} fetchPriority={fetchPriority} />
 }
 
 export default memo(ScArtwork)
 
-function ArtworkImage({ sources, title, pending, loading }: { sources: string[]; title: string; pending: boolean; loading?: 'eager' | 'lazy' }) {
+function ArtworkImage({ sources, title, pending, loading, fetchPriority }: { sources: string[]; title: string; pending: boolean; loading?: 'eager' | 'lazy'; fetchPriority?: 'high' | 'low' | 'auto' }) {
   const [failedSources, setFailedSources] = useState<string[]>([])
   const [loadedSource, setLoadedSource] = useState<string | null>(null)
   const source = firstAvailableArtwork(sources, failedSources)
@@ -73,6 +75,7 @@ function ArtworkImage({ sources, title, pending, loading }: { sources: string[];
         alt=""
         draggable={false}
         loading={loading}
+        fetchPriority={fetchPriority}
         decoding="async"
         ref={attachImage}
         onLoad={() => setLoadedSource(source)}

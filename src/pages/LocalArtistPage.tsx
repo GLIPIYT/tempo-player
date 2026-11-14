@@ -31,8 +31,8 @@ export default function LocalArtistPage({ name, imagePath }: { name: string; ima
   const shownTracks = tracks.filter(track => normalizeSearchText(track.title).includes(search))
 
   return (
-    <EditorialDetailLayout variant="panorama" artworkPath={imagePath} artworkLabel={name} kindIcon={<MicVocal size={13} />} className="local-artist-page" onBack={() => navigate({ name: 'artists' })} backLabel={t('Artists')}
-      round art={<Cover path={imagePath} label={name} size={232} />} kind={t('Artist')} title={name}
+    <EditorialDetailLayout variant="panorama" artworkPath={imagePath} artworkLabel={name} artworkSize={232} kindIcon={<MicVocal size={13} />} className="local-artist-page" onBack={() => navigate({ name: 'artists' })} backLabel={t('Artists')}
+      round art={<Cover path={imagePath} label={name} size={232} loading="eager" fetchPriority="high" />} kind={t('Artist')} title={name}
       meta={<span>{count(tracks.length, 'track')}</span>}
       actions={tracks.length > 0 && <button className="btn btn-primary" onClick={() => player.playTracks(tracksToUnified(tracks), 0)}><Play size={14} />{t('Play all')}</button>}>
       <CollectionTrackHeading count={shownTracks.length} query={query} onQuery={setQuery} />

@@ -14,6 +14,7 @@ interface FavoriteGenre {
 const PAGE_SIZE = 50
 const FILL_TARGET = 24
 const PAGE_BUDGET = 6
+const INITIAL_PAGE_BUDGET = 2
 
 export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, fallbackCandidates: readonly ScTrack[] = []) {
   const genreKey = genre?.key ?? null
@@ -49,8 +50,8 @@ export function useSoundCloudGenreRecommendations(genre: FavoriteGenre | null, f
         seenCursors: seenCursorsRef.current,
         startCursor,
         fillTarget: FILL_TARGET,
-        pageBudget: PAGE_BUDGET,
-        minimumPages: startCursor === null ? 3 : 1,
+        pageBudget: startCursor === null ? INITIAL_PAGE_BUDGET : PAGE_BUDGET,
+        minimumPages: startCursor === null ? INITIAL_PAGE_BUDGET : 1,
         fetchPage: (cursor) => api.scRecommendationGenreSearch(genreLabel, cursor, PAGE_SIZE),
         isCurrent: () => generation === generationRef.current,
         onAppend: async (merged, appended) => {

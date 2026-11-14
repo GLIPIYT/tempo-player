@@ -21,6 +21,7 @@ export default function EditorialDetailLayout({
   variant,
   artworkPath,
   artworkLabel,
+  artworkSize = 300,
   artworkPreview,
   kindIcon,
   byline,
@@ -40,6 +41,8 @@ export default function EditorialDetailLayout({
   variant?: 'air' | 'panorama'
   artworkPath?: string | null
   artworkLabel?: string
+  /** Match the primary cover's requested image size where possible. */
+  artworkSize?: number
   artworkPreview?: ReactNode
   kindIcon?: ReactNode
   byline?: ReactNode
@@ -63,8 +66,8 @@ export default function EditorialDetailLayout({
   const artwork = <>{art}{variant && artworkLabel && <span className="collection-art-zoom" aria-hidden="true"><Maximize2 size={18} /></span>}</>
   const content = <>
       <header className="editorial-detail-hero">
-        {variant && artworkPath && <div className="collection-detail-glow" aria-hidden="true"><Cover path={artworkPath} label="" size={500} loading="eager" /></div>}
         {variant && artworkLabel ? <button type="button" className={`editorial-detail-art collection-art-open${round ? ' is-round' : ''}`} aria-label={`${t('View artwork')}: ${artworkLabel}`} onClick={() => setViewingArtwork(true)}>{artwork}</button> : <div className={round ? 'editorial-detail-art is-round' : 'editorial-detail-art'}>{art}</div>}
+        {variant && artworkPath && <div className="collection-detail-glow" aria-hidden="true"><Cover path={artworkPath} label="" size={artworkSize} loading="lazy" fetchPriority="low" thumbnailOnly /></div>}
         <div className="editorial-detail-copy">
           <div className="section-label editorial-detail-kind">{kindIcon}{kind}{variant && <span className="collection-local-badge"><Folder size={11} />{t('In library')}</span>}</div>
           <h1 className="editorial-detail-title">{title}</h1>

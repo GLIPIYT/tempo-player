@@ -60,10 +60,11 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
       variant="panorama"
       artworkPath={album.coverPath}
       artworkLabel={album.title}
+      artworkSize={232}
       kindIcon={<Disc3 size={13} />}
       onBack={() => navigate({ name: 'albums' })}
       backLabel={t('Albums')}
-      art={<Cover path={album.coverPath} label={album.title} size={232} />}
+      art={<Cover path={album.coverPath} label={album.title} size={232} loading="eager" fetchPriority="high" />}
       kind={t('Album')}
       title={album.title}
       byline={album.artistId != null ? <button type="button" onClick={() => navigate({ name: 'artist', id: album.artistId! })}><Users size={15} />{album.artistName ?? unknownArtist}<ArrowRight size={13} /></button> : <span>{album.artistName ?? unknownArtist}</span>}

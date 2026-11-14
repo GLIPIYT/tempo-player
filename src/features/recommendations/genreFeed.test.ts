@@ -93,7 +93,7 @@ describe('genre recommendation refill', () => {
     expect(lastCursor).toBeNull()
   })
 
-  it('fetches at least three initial pages and shuffles one combined batch without moving its later prefix', async () => {
+  it('shuffles the two-page initial batch and continues from its cursor', async () => {
     const firstPage = Array.from({ length: 24 }, (_, index) => track(`first-${index}`))
     const pages = new Map([
       [null, { tracks: firstPage, nextCursor: 'cursor-1' }],
@@ -108,7 +108,7 @@ describe('genre recommendation refill', () => {
       const seenCursors = new Set<string>()
       const result = await refillGenreRecommendations({
         genreKey: 'ambient', profile: profile(), tracks: [], loadedTrackIds, seenCursors,
-        startCursor: null, fillTarget: 24, pageBudget: 6, minimumPages: 3, random,
+        startCursor: null, fillTarget: 30, pageBudget: 2, minimumPages: 2, random,
         fetchPage: async cursor => {
           requested.push(cursor)
           const page = pages.get(cursor)
@@ -122,12 +122,12 @@ describe('genre recommendation refill', () => {
 
     const firstRun = await loadInitial(() => 0)
     const secondRun = await loadInitial(() => 0.999999)
-    expect(firstRun.requested).toEqual([null, 'cursor-1', 'cursor-2'])
-    expect(firstRun.pages).toBe(3)
-    expect(firstRun.tracks).toHaveLength(28)
-    expect(firstRun.appendedCounts).toEqual([28])
+    expect(firstRun.requested).toEqual([null, 'cursor-1'])
+    expect(firstRun.pages).toBe(2)
+    expect(firstRun.tracks).toHaveLength(26)
+    expect(firstRun.appendedCounts).toEqual([26])
     expect(firstRun.tracks.map(item => item.id)).not.toEqual([
-      ...firstPage.map(item => item.id), 'second-1', 'second-2', 'third-1', 'third-2',
+      ...firstPage.map(item => item.id), 'second-1', 'second-2',
     ])
     expect(secondRun.tracks.map(item => item.id)).not.toEqual(firstRun.tracks.map(item => item.id))
 
@@ -136,12 +136,25 @@ describe('genre recommendation refill', () => {
       loadedTrackIds: firstRun.loadedTrackIds, seenCursors: firstRun.seenCursors,
       startCursor: firstRun.cursor, fillTarget: 2, pageBudget: 6, minimumPages: 1, random: () => 0.999999,
       fetchPage: async cursor => {
-        expect(cursor).toBe('cursor-3')
+        expect(cursor).toBe('cursor-2')
         return pages.get(cursor)!
       },
     })
     expect(more.tracks.slice(0, firstRun.tracks.length)).toEqual(firstRun.tracks)
-    expect(more.tracks.slice(firstRun.tracks.length).map(item => item.id)).toEqual(['later-1', 'later-2'])
+    expect(more.tracks.slice(firstRun.tracks.length).map(item => item.id)).toEqual(['third-1', 'third-2'])
+    expect(more.cursor).toBe('cursor-3')
+
+    const later = await refillGenreRecommendations({
+      genreKey: 'ambient', profile: profile(), tracks: more.tracks,
+      loadedTrackIds: firstRun.loadedTrackIds, seenCursors: firstRun.seenCursors,
+      startCursor: more.cursor, fillTarget: 2, pageBudget: 6, minimumPages: 1, random: () => 0.999999,
+      fetchPage: async cursor => {
+        expect(cursor).toBe('cursor-3')
+        return pages.get(cursor)!
+      },
+    })
+    expect(later.tracks.slice(0, more.tracks.length)).toEqual(more.tracks)
+    expect(later.tracks.slice(more.tracks.length).map(item => item.id)).toEqual(['later-1', 'later-2'])
   })
 
   it('shows main-feed matches only after the genre request fails', () => {

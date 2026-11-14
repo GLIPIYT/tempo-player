@@ -155,7 +155,7 @@ export default function ScArtistPage({ artistId, fallback }: { artistId: string;
       round
       art={
         <CacheBadge kind="artist" scId={artist.id}>
-          <ScArtwork url={artist.avatarUrl} title={artist.username} />
+          <ScArtwork url={artist.avatarUrl} title={artist.username} loading="eager" fetchPriority="high" />
         </CacheBadge>
       }
       kind={

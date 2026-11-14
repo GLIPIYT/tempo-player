@@ -183,11 +183,12 @@ export default function HourMixPage({ mix: initialMix }: { mix: HourMix }) {
         variant="panorama"
         artworkPath={mix.tracks.find(track => track.coverPath)?.coverPath}
         artworkLabel={mix.title}
+        artworkSize={300}
         artworkPreview={<CollectionArtwork paths={mix.tracks.map(track => track.coverPath)} label={mix.title} eager preferOriginal />}
         kindIcon={mix.kind === 'hour' ? <Clock3 size={13} /> : <ListMusic size={13} />}
         onBack={() => navigate({ name: 'home' })}
         backLabel={t('Home')}
-        art={<CollectionArtwork paths={mix.tracks.map(track => track.coverPath)} label={mix.title} eager />}
+        art={<CollectionArtwork paths={mix.tracks.map(track => track.coverPath)} label={mix.title} eager fetchPriority="high" />}
         kind={t(
           mix.kind === 'custom'
             ? 'Custom mix'

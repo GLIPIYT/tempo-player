@@ -151,11 +151,12 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
       variant="panorama"
       artworkPath={artist.imagePath}
       artworkLabel={artist.name}
+      artworkSize={300}
       kindIcon={<MicVocal size={13} />}
       onBack={() => navigate({ name: 'artists' })}
       backLabel={t('Artists')}
       round
-      art={<CacheBadge kind="artist" scId={null} localId={artistId}><Cover path={artist.imagePath} label={artist.name} size={300} rounded loading="eager" /></CacheBadge>}
+      art={<CacheBadge kind="artist" scId={null} localId={artistId}><Cover path={artist.imagePath} label={artist.name} size={300} rounded loading="eager" fetchPriority="high" /></CacheBadge>}
       kind={t('Artist')}
       title={artist.name}
       meta={

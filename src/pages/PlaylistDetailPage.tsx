@@ -120,7 +120,9 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
     if (refreshed && !detail.loading) setOrderOverride(null)
   }, [detail.data, detail.loading])
 
-  if (detail.loading && detail.data === null && orderOverride === null) {
+  const playlist = (lists.data ?? []).find((pl) => pl.id === playlistId)
+  const waitingForTracks = detail.loading && detail.data === null && orderOverride === null
+  if (waitingForTracks && !playlist) {
     return (
       <div className="page">
         <div className="muted">{t('Loading…')}</div>
@@ -134,7 +136,6 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const tracks: Track[] = items.map((p) => p.track)
   const search = normalizeSearchText(query.trim())
   const shownItems = items.filter(item => normalizeSearchText(`${item.track.title} ${item.track.artistName ?? ''}`).includes(search))
-  const playlist = (lists.data ?? []).find((pl) => pl.id === playlistId)
 
   const reloadAll = () => {
     detail.reload()
@@ -240,7 +241,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   }
 
   const artworkPaths = playlist?.coverPath ? [playlist.coverPath] : tracks.map(track => track.coverPath)
-  const artwork = <CollectionArtwork paths={artworkPaths} label={displayName} likes={isLikes} eager />
+  const artwork = <CollectionArtwork paths={artworkPaths} label={displayName} likes={isLikes} eager fetchPriority="high" />
   const playAll = (shuffle = false) => {
     if (!tracks.length) return
     if (shuffle && !shuffleEnabled) player.toggleShuffle()
@@ -262,6 +263,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
       variant="panorama"
       artworkPath={artworkPaths.find(Boolean)}
       artworkLabel={displayName}
+      artworkSize={300}
       artworkPreview={<CollectionArtwork paths={artworkPaths} label={displayName} likes={isLikes} eager preferOriginal />}
       kindIcon={<ListMusic size={13} />}
       onBack={() => navigate({ name: 'playlists' })}
@@ -319,8 +321,8 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
 
       {playlistError ? <div className="error-line">{playlistError}</div> : null}
 
-      <CollectionTrackHeading count={shownItems.length} query={query} onQuery={setQuery} />
-      {items.length === 0 ? (
+      {!waitingForTracks && <CollectionTrackHeading count={shownItems.length} query={query} onQuery={setQuery} />}
+      {waitingForTracks ? <p className="muted" role="status">{t('Loading…')}</p> : items.length === 0 ? (
         <EmptyState
           icon={<ListMusic size={34} />}
           title={t('This playlist is empty')}

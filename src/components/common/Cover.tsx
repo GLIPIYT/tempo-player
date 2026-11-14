@@ -5,12 +5,17 @@ import { buildCoverSources, coverSourceRetryDelay, nextCoverSourceRetry, type Co
 import { firstAvailableArtwork } from './artworkFallback'
 import { forgetArtworkThumbnail, localArtworkSize, requestArtworkThumbnail, whenArtworkNear } from './artworkThumbnails'
 
+export type CoverFetchPriority = 'high' | 'low' | 'auto'
+
 interface CoverProps {
   path?: string | null
   label: string
   size?: number
   rounded?: boolean
   loading?: 'eager' | 'lazy'
+  fetchPriority?: CoverFetchPriority
+  /** Keep decorative copies on a generated thumbnail, even on high-DPI displays. */
+  thumbnailOnly?: boolean
   /** Try the provider's original image first when the URL can be safely upgraded. */
   preferOriginal?: boolean
 }
@@ -31,15 +36,15 @@ function hueFor(label: string): number {
   return h
 }
 
-export default function Cover({ path, label, size = 48, rounded = false, loading = 'lazy', preferOriginal = false }: CoverProps) {
+export default function Cover({ path, label, size = 48, rounded = false, loading = 'lazy', fetchPriority = 'auto', thumbnailOnly = false, preferOriginal = false }: CoverProps) {
   const displayPixels = size * (globalThis.devicePixelRatio || 1) * (getSettings().font.uiScalePct / 100)
   const sources = buildCoverSources(path, preferOriginal, displayPixels)
   const radius = rounded ? '9999px' : 'var(--radius-sm)'
   const base: CSSProperties = { width: size, height: size, borderRadius: radius }
-  const thumbnailSize = localArtworkSize(path, displayPixels, preferOriginal)
+  const thumbnailSize = localArtworkSize(path, displayPixels, preferOriginal, thumbnailOnly)
   if (path && thumbnailSize) {
     return <LocalArtwork key={`${thumbnailSize}:${path}`} path={path} thumbnailSize={thumbnailSize}
-      label={label} size={size} loading={loading} base={base} />
+      label={label} size={size} loading={loading} fetchPriority={fetchPriority} base={base} />
   }
 
   if (sources.length > 0) {
@@ -50,6 +55,7 @@ export default function Cover({ path, label, size = 48, rounded = false, loading
         label={label}
         size={size}
         loading={loading}
+        fetchPriority={fetchPriority}
         base={base}
       />
     )
@@ -58,34 +64,35 @@ export default function Cover({ path, label, size = 48, rounded = false, loading
   return <CoverFallback label={label} size={size} base={base} />
 }
 
-function LocalArtwork({ path, thumbnailSize, label, size, loading, base }: {
-  path: string; thumbnailSize: number; label: string; size: number; loading: 'eager' | 'lazy'; base: CSSProperties
+function LocalArtwork({ path, thumbnailSize, label, size, loading, fetchPriority, base }: {
+  path: string; thumbnailSize: number; label: string; size: number; loading: 'eager' | 'lazy'; fetchPriority: CoverFetchPriority; base: CSSProperties
 }) {
   const placeholder = useRef<HTMLDivElement>(null)
   const [source, setSource] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
     const load = () => {
-      void requestArtworkThumbnail(path, thumbnailSize).then(thumbnail => {
+      void requestArtworkThumbnail(path, thumbnailSize, fetchPriority).then(thumbnail => {
         if (!cancelled) setSource(thumbnail ?? path)
       })
     }
     const stop = loading === 'lazy' && placeholder.current ? whenArtworkNear(placeholder.current, load) : undefined
     if (!stop) load()
     return () => { cancelled = true; stop?.() }
-  }, [loading, path, thumbnailSize])
+  }, [fetchPriority, loading, path, thumbnailSize])
 
   if (!source) return <CoverFallback label={label} size={size} base={base} elementRef={placeholder} />
   const sources = source === path ? [path] : [source, path]
-  return <CoverImage sources={sources} label={label} size={size} loading={loading} base={base}
+  return <CoverImage sources={sources} label={label} size={size} loading={loading} fetchPriority={fetchPriority} base={base}
     onSourceFailed={failed => forgetArtworkThumbnail(path, thumbnailSize, failed)} />
 }
 
-function CoverImage({ sources, label, size, loading, base, onSourceFailed }: {
+function CoverImage({ sources, label, size, loading, fetchPriority, base, onSourceFailed }: {
   sources: string[]
   label: string
   size: number
   loading: 'eager' | 'lazy'
+  fetchPriority: CoverFetchPriority
   base: CSSProperties
   onSourceFailed?: (source: string) => void
 }) {
@@ -114,6 +121,7 @@ function CoverImage({ sources, label, size, loading, base, onSourceFailed }: {
         src={srcFor(source)}
         alt=""
         loading={loading}
+        fetchPriority={fetchPriority}
         decoding="async"
         draggable={false}
         onError={() => {

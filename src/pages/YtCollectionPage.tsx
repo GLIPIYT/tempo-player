@@ -185,6 +185,8 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
           url={detail.thumbnailUrl}
           fallbackUrls={detail.thumbnailUrls}
           title={name}
+          loading="eager"
+          fetchPriority="high"
         />
       }
       kind={

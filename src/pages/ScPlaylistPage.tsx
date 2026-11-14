@@ -133,7 +133,7 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
       backLabel={t('Back to search')}
       art={
         <CacheBadge kind="playlist" scId={playlist.id}>
-          <ScArtwork url={playlist.artworkUrl} title={playlist.title} />
+          <ScArtwork url={playlist.artworkUrl} title={playlist.title} loading="eager" fetchPriority="high" />
         </CacheBadge>
       }
       kind={
