@@ -38,8 +38,9 @@ export default function HomeMixFeature({
   const pickerButtonRef = useRef<HTMLButtonElement>(null)
   const firstChoiceRef = useRef<HTMLButtonElement>(null)
   const pointerInput = useRef(false)
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [slide, setSlide] = useState<{ selected: string | null; previous: string | null }>({ selected: null, previous: null })
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerMounted, setPickerMounted] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [visible, setVisible] = useState(!document.hidden)
@@ -47,8 +48,9 @@ export default function HomeMixFeature({
   const [manualUntil, setManualUntil] = useState(0)
   const reorder = useMixReorder(mixes.map(mix => mix.key), onReorder, reducedMotion)
 
-  const activeIndex = Math.max(0, mixes.findIndex((mix) => mix.key === selectedKey))
+  const activeIndex = Math.max(0, mixes.findIndex((mix) => mix.key === slide.selected))
   const activeMix = mixes[activeIndex]
+  const nextMix = mixes[(activeIndex + 1) % mixes.length]
   const mixKeys = mixes.map((mix) => mix.key).join('\u0001')
 
   useEffect(() => {
@@ -74,14 +76,26 @@ export default function HomeMixFeature({
     if (keys.length < 2 || hovered || focused || pickerOpen || !visible || reducedMotion) return
     const delay = Math.max(3000, manualUntil - Date.now())
     const timer = window.setTimeout(() => {
-      setSelectedKey((current) => {
-        const index = Math.max(0, keys.indexOf(current ?? keys[0]))
-        return keys[(index + 1) % keys.length]
+      setSlide((current) => {
+        const index = Math.max(0, keys.indexOf(current.selected ?? keys[0]))
+        return { selected: keys[(index + 1) % keys.length], previous: keys[index] }
       })
       setManualUntil(0)
     }, delay)
     return () => window.clearTimeout(timer)
-  }, [mixKeys, selectedKey, hovered, focused, pickerOpen, visible, reducedMotion, manualUntil])
+  }, [mixKeys, slide.selected, hovered, focused, pickerOpen, visible, reducedMotion, manualUntil])
+
+  useEffect(() => {
+    if (!slide.previous) return
+    const timer = window.setTimeout(() => setSlide(current => ({ ...current, previous: null })), reducedMotion ? 0 : 620)
+    return () => window.clearTimeout(timer)
+  }, [slide.previous, slide.selected, reducedMotion])
+
+  useEffect(() => {
+    if (pickerOpen || !pickerMounted) return
+    const timer = window.setTimeout(() => setPickerMounted(false), reducedMotion ? 0 : 300)
+    return () => window.clearTimeout(timer)
+  }, [pickerOpen, pickerMounted, reducedMotion])
 
   useEffect(() => {
     if (!pickerOpen) return
@@ -97,7 +111,8 @@ export default function HomeMixFeature({
 
   const chooseMix = (index: number) => {
     if (pickerOpen) pickerButtonRef.current?.focus()
-    setSelectedKey(mixes[(index + mixes.length) % mixes.length].key)
+    const selected = mixes[(index + mixes.length) % mixes.length].key
+    if (selected !== activeMix.key) setSlide({ selected, previous: activeMix.key })
     setManualUntil(Date.now() + 9000)
     setPickerOpen(false)
   }
@@ -127,6 +142,7 @@ export default function HomeMixFeature({
       <div className={`home-mix-stage${pickerOpen ? ' is-picker-open' : ''}`} onContextMenu={onSectionMenu}>
         {mixes.map((mix, index) => {
           const current = index === activeIndex
+          if (!current && mix !== nextMix && mix.key !== slide.previous) return null
           const art = mixCover(mix)
           const covers = mix.tracks.slice(0, 3)
           return (
@@ -161,7 +177,7 @@ export default function HomeMixFeature({
                 <span className="home-mix-meta">{formatCount(mix.tracks.length, 'track', t, lang)}{mix.kind !== 'custom' ? ` · ${t('From your library')}` : ''}</span>
               </div>
               <div className="home-mix-art" aria-hidden="true">
-                <div className="home-mix-art-back"><Cover path={art} label={mix.title} size={360} loading="eager" /></div>
+                <div className="home-mix-art-back"><Cover path={art} label={mix.title} size={128} loading="eager" /></div>
                 {covers.map((track, coverIndex) => (
                   <span key={`${track.id}:${coverIndex}`} className={`home-mix-art-card is-card-${coverIndex}`}>
                     <Cover path={track.coverPath} label={track.title} size={228} loading="eager" />
@@ -172,6 +188,7 @@ export default function HomeMixFeature({
           )
         })}
         <div className="home-mix-picker" id="home-mix-picker" aria-hidden={!pickerOpen}>
+          {pickerMounted && <>
             <div className="home-mix-picker-heading"><strong>{t('All mixes')}</strong><span>{t('Choose a mix')}</span></div>
             <div ref={reorder.railRef} {...reorder.railHandlers} className={`home-mix-picker-rail${mixes.length < 4 ? ' is-short' : ''}${reorder.draggingKey ? ' is-reordering' : ''}`}>
               <span ref={reorder.slotRef} className="home-mix-drop-slot" aria-hidden="true" />
@@ -207,6 +224,7 @@ export default function HomeMixFeature({
                 <span className="home-mix-choice-copy"><strong>{t('Your rule')}</strong><span className="home-mix-choice-description">{t('Create your own personal mix')}</span></span>
               </button>
             </div>
+          </>}
         </div>
         <div className="home-mix-controls">
           <button
@@ -216,7 +234,8 @@ export default function HomeMixFeature({
             aria-expanded={pickerOpen}
             aria-controls="home-mix-picker"
             onClick={() => {
-              setPickerOpen((open) => !open)
+              if (!pickerOpen) setPickerMounted(true)
+              setPickerOpen(!pickerOpen)
             }}
           >
             <span className="home-mix-stack" aria-hidden="true">

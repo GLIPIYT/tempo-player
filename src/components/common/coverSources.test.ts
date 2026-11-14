@@ -45,6 +45,16 @@ describe('buildCoverSources', () => {
     ])
   })
 
+  it('uses smaller SoundCloud renditions for rows and cards while keeping the original available', () => {
+    const cover = 'https://i1.sndcdn.com/artworks-abc-t500x500.jpg'
+    const small = 'https://i1.sndcdn.com/artworks-abc-large.jpg'
+    expect(buildCoverSources(cover, false, 48)).toEqual([small, cover])
+    expect(buildCoverSources(cover, false, 236)).toEqual([
+      'https://i1.sndcdn.com/artworks-abc-t300x300.jpg', cover, small,
+    ])
+    expect(buildCoverSources(cover, true, 48)).toEqual([cover, small])
+  })
+
   it('returns no candidates when a cover path is missing', () => {
     expect(buildCoverSources(null, true)).toEqual([])
   })

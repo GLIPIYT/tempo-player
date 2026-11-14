@@ -1373,6 +1373,7 @@ pub fn clear_covers_cache(state: State<'_, AppState>) -> Result<(), String> {
             }
         }
     }
+    crate::artwork_thumbnail::reset_cache_usage(dir);
     state.db.reset_cover_refs()?;
     Ok(())
 }

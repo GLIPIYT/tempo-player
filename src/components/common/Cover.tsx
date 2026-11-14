@@ -1,7 +1,9 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type Ref } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { getSettings } from '../../state/settings'
 import { buildCoverSources, coverSourceRetryDelay, nextCoverSourceRetry, type CoverSourceRetry } from './coverSources'
 import { firstAvailableArtwork } from './artworkFallback'
+import { forgetArtworkThumbnail, localArtworkSize, requestArtworkThumbnail, whenArtworkNear } from './artworkThumbnails'
 
 interface CoverProps {
   path?: string | null
@@ -30,9 +32,15 @@ function hueFor(label: string): number {
 }
 
 export default function Cover({ path, label, size = 48, rounded = false, loading = 'lazy', preferOriginal = false }: CoverProps) {
-  const sources = buildCoverSources(path, preferOriginal)
+  const displayPixels = size * (globalThis.devicePixelRatio || 1) * (getSettings().font.uiScalePct / 100)
+  const sources = buildCoverSources(path, preferOriginal, displayPixels)
   const radius = rounded ? '9999px' : 'var(--radius-sm)'
   const base: CSSProperties = { width: size, height: size, borderRadius: radius }
+  const thumbnailSize = localArtworkSize(path, displayPixels, preferOriginal)
+  if (path && thumbnailSize) {
+    return <LocalArtwork key={`${thumbnailSize}:${path}`} path={path} thumbnailSize={thumbnailSize}
+      label={label} size={size} loading={loading} base={base} />
+  }
 
   if (sources.length > 0) {
     return (
@@ -50,12 +58,36 @@ export default function Cover({ path, label, size = 48, rounded = false, loading
   return <CoverFallback label={label} size={size} base={base} />
 }
 
-function CoverImage({ sources, label, size, loading, base }: {
+function LocalArtwork({ path, thumbnailSize, label, size, loading, base }: {
+  path: string; thumbnailSize: number; label: string; size: number; loading: 'eager' | 'lazy'; base: CSSProperties
+}) {
+  const placeholder = useRef<HTMLDivElement>(null)
+  const [source, setSource] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    const load = () => {
+      void requestArtworkThumbnail(path, thumbnailSize).then(thumbnail => {
+        if (!cancelled) setSource(thumbnail ?? path)
+      })
+    }
+    const stop = loading === 'lazy' && placeholder.current ? whenArtworkNear(placeholder.current, load) : undefined
+    if (!stop) load()
+    return () => { cancelled = true; stop?.() }
+  }, [loading, path, thumbnailSize])
+
+  if (!source) return <CoverFallback label={label} size={size} base={base} elementRef={placeholder} />
+  const sources = source === path ? [path] : [source, path]
+  return <CoverImage sources={sources} label={label} size={size} loading={loading} base={base}
+    onSourceFailed={failed => forgetArtworkThumbnail(path, thumbnailSize, failed)} />
+}
+
+function CoverImage({ sources, label, size, loading, base, onSourceFailed }: {
   sources: string[]
   label: string
   size: number
   loading: 'eager' | 'lazy'
   base: CSSProperties
+  onSourceFailed?: (source: string) => void
 }) {
   const [failedSources, setFailedSources] = useState<string[]>([])
   const [retry, setRetry] = useState<(CoverSourceRetry & { pending: boolean }) | null>(null)
@@ -87,7 +119,10 @@ function CoverImage({ sources, label, size, loading, base }: {
         onError={() => {
           const nextRetry = nextCoverSourceRetry(source, retry)
           if (nextRetry) setRetry({ ...nextRetry, pending: true })
-          else setFailedSources(failed => [...new Set([...failed, source])])
+          else {
+            onSourceFailed?.(source)
+            setFailedSources(failed => [...new Set([...failed, source])])
+          }
         }}
         style={base}
       />
@@ -97,10 +132,11 @@ function CoverImage({ sources, label, size, loading, base }: {
   return <CoverFallback label={label} size={size} base={base} />
 }
 
-function CoverFallback({ label, size, base }: { label: string; size: number; base: CSSProperties }) {
+function CoverFallback({ label, size, base, elementRef }: { label: string; size: number; base: CSSProperties; elementRef?: Ref<HTMLDivElement> }) {
   const h = hueFor(label)
   return (
     <div
+      ref={elementRef}
       className="cover cover-fallback"
       style={{
         ...base,

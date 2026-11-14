@@ -1,15 +1,15 @@
 import { buildArtworkSources } from './artworkFallback'
 
 /** Build image candidates for a cover without changing its normal card size. */
-export function buildCoverSources(path: string | null | undefined, preferOriginal = false): string[] {
+export function buildCoverSources(path: string | null | undefined, preferOriginal = false, displayPixels?: number): string[] {
   if (!path) return []
 
   const original = preferOriginal ? originalYoutubeArtworkUrl(path) : null
   if (original && original !== path) return [original, path]
 
-  // SoundCloud's t500 rendition can fail transiently while its alternate `large`
-  // sibling is still available. Keep the exact saved URL first for existing UI.
-  const soundCloud = buildArtworkSources(path)
+  const compact = !preferOriginal && displayPixels !== undefined && displayPixels <= 100
+  const card = !preferOriginal && displayPixels !== undefined && displayPixels <= 300
+  const soundCloud = buildArtworkSources(path, [], compact, card ? 'card' : 'full')
   return soundCloud.length > 1 ? soundCloud : [path]
 }
 

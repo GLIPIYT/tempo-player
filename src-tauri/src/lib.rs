@@ -2,6 +2,7 @@ mod child;
 #[cfg(debug_assertions)]
 mod dev_perf;
 mod commands;
+mod artwork_thumbnail;
 mod cached_lyrics_search;
 mod custom_mixes;
 mod library_identity;
@@ -193,6 +194,7 @@ pub fn run() {
             commands::get_track_metadata_original,
             commands::get_track_metadata_editor_state,
             commands::get_library_cover,
+            artwork_thumbnail::get_artwork_thumbnail,
             commands::update_local_track_metadata,
             commands::restore_track_metadata,
             commands::add_library_folder,

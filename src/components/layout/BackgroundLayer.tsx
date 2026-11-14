@@ -125,6 +125,11 @@ export default function BackgroundLayer() {
     }
 
     const image = new Image()
+    const releaseSample = () => {
+      image.onload = null
+      image.onerror = null
+      image.removeAttribute('src')
+    }
     image.onload = () => {
       if (disposed) return
       try {
@@ -148,10 +153,13 @@ export default function BackgroundLayer() {
         root.dataset.brightWallpaper = visibleLuminance >= 0.43 ? 'true' : 'false'
       } catch {
         root.dataset.brightWallpaper = 'false'
+      } finally {
+        releaseSample()
       }
       scan()
     }
     image.onerror = () => {
+      releaseSample()
       root.dataset.brightWallpaper = 'false'
       scan()
     }
@@ -180,8 +188,7 @@ export default function BackgroundLayer() {
     return () => {
       disposed = true
       observer?.disconnect()
-      image.onload = null
-      image.onerror = null
+      releaseSample()
       if (refreshFrame) window.cancelAnimationFrame(refreshFrame)
       root.dataset.brightWallpaper = 'false'
       document.querySelectorAll('.adaptive-text-outline, .adaptive-text-outline-soft').forEach((element) => {
