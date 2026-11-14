@@ -167,7 +167,9 @@ export default function HomeMixFeature({
                     <Clock3 size={14} />
                     {mix.kind === 'custom' ? t('Custom mix') : mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}
                   </span>
-                  <h2>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</h2>
+                  <h2 title={mix.kind === 'hour' ? t('Music for this hour') : mix.title}>
+                    {mix.kind === 'hour' ? t('Music for this hour') : mix.title}
+                  </h2>
                   {mix.description ? <p>{mix.kind === 'custom' ? mix.description : t(mix.description)}</p> : null}
                   <div className="home-mix-actions">
                     <button ref={current ? heroPlayRef : undefined} type="button" className="home-mix-play" disabled={!mix.tracks.length} tabIndex={current ? 0 : -1} onClick={() => onPlay(mix.tracks, 0)}>

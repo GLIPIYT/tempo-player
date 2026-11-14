@@ -206,7 +206,7 @@ html.theme-gradient .home-mix-navigation > button:hover {
 html.theme-gradient .home-mix-navigation > button svg,
 html.theme-gradient .home-section-open svg,
 html.theme-gradient .editorial-detail-kind svg,
-html.theme-gradient .home-playlist-play svg {
+html.theme-gradient .home-side-play svg {
   color: var(--t-gradient-second);
 }
 
@@ -216,11 +216,11 @@ html.theme-gradient .album-wall-play svg {
   color: #fff;
 }
 
-html.theme-gradient .home-playlist-play {
+html.theme-gradient .home-side-play {
   background: var(--tempo-gradient-soft);
 }
 
-html.theme-gradient .home-playlist-play:hover,
+html.theme-gradient .home-side-play:hover,
 html.theme-gradient .album-wall-play {
   background: var(--tempo-gradient);
 }

@@ -120,7 +120,7 @@ export default function HomeShelves({ cardSize, topTracks, recentAdded, recentPl
                     <Cover path={track.coverPath} label={track.title} size={SIDEBAR_COVER_SIZE} />
                     <span><strong>{track.title}</strong><small>{track.artistName ?? unknownArtist}</small></span>
                     <small className="home-new-track-duration">{fmtTime(track.durationSec)}</small>
-                    <Play size={13} className="home-new-track-play" />
+                    <span className="home-side-play" aria-hidden="true"><Play size={15} fill="currentColor" /></span>
                   </button>
                 ))}
               </div>
@@ -138,7 +138,7 @@ export default function HomeShelves({ cardSize, topTracks, recentAdded, recentPl
                       <Cover path={playlist.coverPath} label={playlist.name} size={SIDEBAR_COVER_SIZE} />
                       <span><strong>{playlistDisplayName(playlist, playlist.name, t)}</strong><small>{playlist.trackCount} {t('tracks')}</small></span>
                     </button>
-                    <button type="button" className="home-playlist-play" aria-label={`${t('Play all')}: ${playlist.name}`} onClick={() => onPlayPlaylist(playlist)}><Play size={16} fill="currentColor" /></button>
+                    <button type="button" className="home-side-play" aria-label={`${t('Play all')}: ${playlist.name}`} onClick={() => onPlayPlaylist(playlist)}><Play size={15} fill="currentColor" /></button>
                   </div>
                 ))}
               </div>

@@ -2597,19 +2597,22 @@ impl Db {
             )?;
             let top_tracks = fetch_top_tracks(conn, None, 40)?;
             let cutoff = now().saturating_sub(30 * 86400);
-            let history = fetch_history_entries(
-                conn,
-                "h.played_at >= ?1",
-                vec![Value::Integer(cutoff)],
-                100,
-                0,
-            )?;
-            let mut seen = HashSet::with_capacity(16);
-            let played = history
-                .into_iter()
-                .filter_map(|entry| seen.insert(entry.track_id).then_some(entry.track))
-                .take(16)
-                .collect();
+            let recent_sql = format!(
+                "WITH recent AS (
+                    SELECT track_id, MAX(played_at) AS last_played
+                    FROM listening_history WHERE played_at >= ?1
+                    GROUP BY track_id ORDER BY last_played DESC, track_id DESC LIMIT 32
+                 )
+                 SELECT {} FROM {} JOIN recent r ON r.track_id = t.id
+                 ORDER BY r.last_played DESC, t.id DESC",
+                TRACK_COLUMNS, TRACK_FROM
+            );
+            let mut recent_stmt = conn.prepare(&recent_sql).map_err(db_err)?;
+            let played = recent_stmt
+                .query_map(params![cutoff], |row| map_track_at(row, 0))
+                .map_err(db_err)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(db_err)?;
 
             let dormant_sql = format!(
                 "SELECT {} FROM {} WHERE t.last_played_at IS NOT NULL \
@@ -7342,7 +7345,7 @@ mod tests {
     fn home_page_data_keeps_shelf_order_and_bounds_liked_tracks() {
         let (db, dir) = test_db("homepagedata");
         let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
-        let track_ids: Vec<_> = (0..30)
+        let track_ids: Vec<_> = (0..36)
             .map(|index| {
                 let path = fixture_file(&dir, &format!("track-{index}.mp3"));
                 seed_track(&db, folder.id, &path, &format!("Track {index}"), "Artist", None, 60.0)
@@ -7363,26 +7366,25 @@ mod tests {
 
         let current = now();
         db.with_conn(|conn| {
-            for (track_id, played_at) in [
-                (track_ids[0], current),
-                (track_ids[1], current - 10),
-                (track_ids[0], current - 20),
-                (track_ids[2], current - 31 * 86400),
-            ] {
-                conn.execute(
-                    "INSERT INTO listening_history(track_id, played_at, listened_sec, completed, skipped) \
-                     VALUES(?1, ?2, 60, 1, 0)",
-                    params![track_id, played_at],
-                ).map_err(db_err)?;
+            let mut insert = conn.prepare(
+                "INSERT INTO listening_history(track_id, played_at, listened_sec, completed, skipped) \
+                 VALUES(?1, ?2, 60, 1, 0)"
+            ).map_err(db_err)?;
+            insert.execute(params![track_ids[35], current - 31 * 86400]).map_err(db_err)?;
+            for (index, track_id) in track_ids.iter().take(35).enumerate() {
+                insert.execute(params![track_id, current - 200 - index as i64]).map_err(db_err)?;
+            }
+            for seconds_ago in 0..110 {
+                insert.execute(params![track_ids[0], current - seconds_ago]).map_err(db_err)?;
             }
             Ok(())
         }).unwrap();
 
         let home = db.get_home_page_data().unwrap();
-        assert_eq!(home.total, 30);
-        assert_eq!(home.mix_library.len(), 30);
+        assert_eq!(home.total, 36);
+        assert_eq!(home.mix_library.len(), 36);
         assert_eq!(home.mix_library[0].id, *track_ids.last().unwrap());
-        assert_eq!(home.played.iter().map(|track| track.id).collect::<Vec<_>>(), vec![track_ids[0], track_ids[1]]);
+        assert_eq!(home.played.iter().map(|track| track.id).collect::<Vec<_>>(), track_ids[..32]);
         assert_eq!(home.liked_tracks.len(), 24);
         assert_eq!(home.liked_tracks[0].id, track_ids[26]);
         assert_eq!(home.likes_playlist.unwrap().id, likes.id);

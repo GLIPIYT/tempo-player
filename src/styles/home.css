@@ -353,6 +353,7 @@ html.theme-gradient .home-mix-art::after {
 .home-rail-controls button:disabled { opacity: .35; cursor: default; }
 .home-section-open { display: flex; align-items: center; gap: 3px; color: var(--accent-strong); font-size: 11px; }
 .home-track-rail {
+  --home-rail-thumb: color-mix(in srgb, var(--text-muted) 36%, transparent);
   max-width: 100%;
   padding-bottom: 6px;
   overflow-x: auto;
@@ -360,30 +361,25 @@ html.theme-gradient .home-mix-art::after {
   overflow-anchor: none;
   user-select: none;
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--accent) 70%, transparent) transparent;
+  scrollbar-color: var(--home-rail-thumb) transparent;
 }
-.home-track-rail::-webkit-scrollbar { height: 5px; }
-.home-track-rail::-webkit-scrollbar-thumb { border-radius: 5px; background: color-mix(in srgb, var(--accent) 70%, transparent); }
-html.theme-gradient .home-track-rail {
-  scrollbar-width: thin;
-  scrollbar-color: var(--t-gradient-first) color-mix(in srgb, var(--t-gradient-second) 18%, transparent);
+.home-track-rail:hover,
+.home-track-rail:focus-within {
+  --home-rail-thumb: color-mix(in srgb, var(--accent-strong) 55%, transparent);
 }
 @supports selector(::-webkit-scrollbar-thumb) {
-  html.theme-gradient .home-track-rail {
+  .home-track-rail {
     scrollbar-width: auto;
     scrollbar-color: auto;
   }
 
-  html.theme-gradient .home-track-rail::-webkit-scrollbar-button {
-    display: none;
-    width: 0;
-    height: 0;
+  .home-track-rail::-webkit-scrollbar { height: 4px; }
+  .home-track-rail::-webkit-scrollbar-button { display: none; }
+  .home-track-rail::-webkit-scrollbar-thumb {
+    border: 0;
+    border-radius: 4px;
+    background: var(--home-rail-thumb);
   }
-}
-html.theme-gradient .home-track-rail::-webkit-scrollbar-thumb {
-  border: 0;
-  border-radius: 5px;
-  background: var(--tempo-gradient);
 }
 .home-rail-row { position: relative; display: flex; align-items: start; gap: var(--home-rail-gap); min-height: calc(var(--home-rail-card-size) + 38px); }
 .home-rail-track { flex: 0 0 var(--home-rail-card-size); min-width: 0; padding: 0; text-align: left; }
@@ -459,16 +455,17 @@ html.theme-gradient .home-track-rail::-webkit-scrollbar-thumb {
 .home-recommendation-skeleton { flex: 0 0 var(--home-rail-card-size); align-self: start; aspect-ratio: 1; border-radius: 8px; background: linear-gradient(100deg, var(--surface) 24%, var(--surface-hover) 38%, var(--surface) 62%); background-size: 300% 100%; animation: home-recommendation-shimmer 1.4s ease-in-out infinite; }
 @keyframes home-recommendation-shimmer { to { background-position-x: -150%; } }
 .home-playlist-list, .home-new-list { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 3px; }
-.home-playlist-card { display: flex; align-items: center; min-width: 0; border: 1px solid transparent; border-radius: 8px; }
+.home-playlist-card { display: flex; align-items: center; gap: 10px; min-width: 0; padding-inline: 7px; border: 1px solid transparent; border-radius: 8px; }
 .home-playlist-card:hover { border-color: var(--accent); background: var(--surface-hover); }
-.home-playlist-open { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 3px 5px; text-align: left; }
+.home-playlist-open { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; padding: 3px 0; text-align: left; }
 .home-playlist-open .cover { flex: none; }
 .home-playlist-open span { min-width: 0; }
 .home-playlist-open strong, .home-playlist-open small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-playlist-open strong { font-size: 13px; }
-.home-playlist-open small { margin-top: 3px; color: var(--text-muted); font-size: 11px; }
-.home-playlist-play { display: grid; flex: none; width: 28px; height: 28px; margin-right: 4px; place-items: center; border-radius: 50%; color: var(--accent-strong); }
-.home-playlist-play:hover { background: var(--accent); color: var(--bg); }
+.home-playlist-open small { color: var(--text-muted); font-size: 11px; }
+.home-side-play { display: grid; flex: none; width: 28px; height: 28px; place-items: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent-strong); }
+.home-side-play:hover,
+.home-side-play:focus-visible { background: var(--accent); color: var(--bg); }
 
 .home-new-track {
   display: flex;
@@ -482,28 +479,44 @@ html.theme-gradient .home-track-rail::-webkit-scrollbar-thumb {
 }
 .home-new-track:hover { border-color: var(--accent); background: var(--surface-hover); }
 .home-new-track .cover { flex: none; }
-.home-new-track > span { min-width: 0; flex: 1; }
+.home-new-track > span:not(.home-side-play) { min-width: 0; flex: 1; }
 .home-new-track strong,
 .home-new-track small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-new-track strong { font-size: 13px; }
 .home-new-track small { color: var(--text-muted); font-size: 11px; }
 .home-new-track .home-new-track-duration { flex: none; font-variant-numeric: tabular-nums; }
-.home-new-track-play { flex: none; color: var(--accent-strong); }
 
 @container (min-width: 701px) {
   .home-content-grid.has-two-columns:has(.home-favorite-genre) {
     grid-template-columns: minmax(0, 1fr) clamp(255px, 26cqw, 480px);
+    align-items: start;
   }
+
   .home-content-grid.has-two-columns:has(.home-favorite-genre) .home-content-side {
-    /* The recommendations set the row height. Scroll long lists inside their panels. */
-    contain: size;
     grid-template-columns: minmax(0, 1fr);
-    grid-auto-rows: minmax(0, 1fr);
   }
-  .home-content-grid.has-two-columns:has(.home-favorite-genre) :is(.home-new-list, .home-playlist-list) {
-    min-height: 0;
-    overflow-y: auto;
-    scrollbar-width: none;
+
+  .home-content-grid:has(.home-favorite-genre):has(.home-recent-section + .home-playlist-section) {
+    align-items: stretch;
+
+    .home-content-main { display: contents; }
+    .home-recommendations, .home-content-side {
+      display: grid;
+      grid-row: 1 / span 2;
+      grid-template-rows: subgrid;
+      grid-template-columns: minmax(0, 1fr);
+      row-gap: normal;
+    }
+    .home-recommendations { grid-column: 1; }
+    .home-content-side { grid-column: 2; }
+    .home-recommendations-panel { margin-bottom: 0; }
+    :is(.home-recommendations-panel, .home-favorite-genre) {
+      display: flex;
+      flex-direction: column;
+    }
+    :is(.home-recommendations-panel, .home-favorite-genre) > .home-track-rail {
+      margin-block: auto;
+    }
   }
 }
 
