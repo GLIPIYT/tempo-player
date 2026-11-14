@@ -35,4 +35,13 @@ describe('buildArtworkSources', () => {
     expect(buildArtworkSources('https://images.test/cover.jpg', [], false, 'card'))
       .toEqual(['https://images.test/cover.jpg'])
   })
+
+  it('prefers a 200px thumbnail for smaller recommendation cards', () => {
+    expect(buildArtworkSources('https://i1.sndcdn.com/avatars-test-t500x500.png', [], false, 'small-card')).toEqual([
+      'https://i1.sndcdn.com/avatars-test-t200x200.png',
+      'https://i1.sndcdn.com/avatars-test-t300x300.png',
+      'https://i1.sndcdn.com/avatars-test-t500x500.png',
+      'https://i1.sndcdn.com/avatars-test-large.png',
+    ])
+  })
 })

@@ -595,12 +595,20 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
 .home-recommendations-title { display: grid; gap: 3px; }
 .home-recommendations-title small { color: var(--text-muted); font-size: 10px; }
 .home-recommendations-play { gap: 6px; }
-.home-recommendation-rail { padding-bottom: 7px; }
+.home-recommendation-rail { padding-bottom: 7px; overflow-anchor: none; scroll-snap-type: none; }
+.home-recommendation-row {
+  position: relative;
+  display: flex;
+  flex: none;
+  gap: var(--recommendation-card-gap);
+  min-height: 158px;
+}
+.home-recommendation-end { position: absolute; inset: 0 0 0 auto; width: 1px; }
 .home-favorite-genre { margin-top: 18px; }
 .home-favorite-genre > .home-section-head { margin-bottom: 10px; }
-.home-recommendation-card { position: relative; flex: 0 0 118px; min-width: 0; }
+.home-recommendation-card { position: relative; flex: 0 0 var(--recommendation-card-size); min-width: 0; }
 .home-recommendation-card .home-rail-track { width: 100%; }
-.home-recommendation-cover { display: grid; width: 118px; height: 118px; place-items: center; overflow: hidden; border-radius: 9px; background: var(--surface); color: var(--text-muted); font-size: 34px; }
+.home-recommendation-cover { display: grid; width: var(--recommendation-card-size); height: var(--recommendation-card-size); place-items: center; overflow: hidden; border-radius: 9px; background: var(--surface); color: var(--text-muted); font-size: 34px; }
 .home-recommendation-cover .sc-art-box { width: 100%; height: 100%; border-radius: inherit; }
 .home-recommendation-cover .sc-art { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
 .home-recommendation-cover .sc-art-fallback { font-size: 34px; }

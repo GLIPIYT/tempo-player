@@ -10,6 +10,9 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    // Tauri watches its own sources. Build outputs and local profiling data do
+    // not need a second watcher or HMR reloads.
+    watch: { ignored: ['**/src-tauri/target/**', '**/.task-plans/**', '**/graphify-out/**'] },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_'],
   build: {

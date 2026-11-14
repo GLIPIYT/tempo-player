@@ -1,11 +1,13 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
 import { ChevronLeft, ChevronRight, Download, LoaderCircle, Play, RefreshCw } from 'lucide-react'
 import type { ScTrack } from '../../types/models'
 import { useT } from '../../i18n'
 import { beginTrackDrag, consumeDragClick } from '../../dnd/trackDrag'
 import { useSoundCloudGenreRecommendations } from '../../hooks/useSoundCloudGenreRecommendations'
 import { getTrackCacheProgress, subscribeTrackCacheProgress } from '../../soundcloud/cacheJobs'
+import { useSettings } from '../../state/settings'
 import ScArtwork from '../common/ScArtwork'
+import { RECOMMENDATION_CARD_SIZE, RECOMMENDATION_CARD_STEP, useRecommendationRail } from './useRecommendationRail'
 
 interface RecommendationsShelfProps {
   tracks: ScTrack[]
@@ -94,6 +96,25 @@ const RecommendationCacheControl = memo(function RecommendationCacheControl({ tr
   )
 })
 
+const railLayout = {
+  '--recommendation-card-size': `${RECOMMENDATION_CARD_SIZE}px`,
+  '--recommendation-card-gap': `${RECOMMENDATION_CARD_STEP - RECOMMENDATION_CARD_SIZE}px`,
+} as CSSProperties
+
+function scrollRailWithKeyboard(event: KeyboardEvent<HTMLDivElement>) {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  const rail = event.currentTarget
+  rail.focus({ preventScroll: true })
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    rail.scrollBy({ left: event.key === 'ArrowLeft' ? -460 : 460, behavior: 'smooth' })
+  } else {
+    rail.scrollTo({ left: event.key === 'Home' ? 0 : rail.scrollWidth })
+  }
+  event.preventDefault()
+  event.stopPropagation()
+}
+
 export default function RecommendationsShelf({
   tracks,
   favoriteGenre,
@@ -118,6 +139,9 @@ export default function RecommendationsShelf({
   onSectionMenu,
 }: RecommendationsShelfProps) {
   const t = useT()
+  const { settings } = useSettings()
+  const artworkPixels = RECOMMENDATION_CARD_SIZE * (Math.max(50, Math.min(200, settings.font.uiScalePct)) / 100) * (window.devicePixelRatio || 1)
+  const resolution = artworkPixels <= 200 ? 'small-card' : artworkPixels <= 300 ? 'card' : 'full'
   const {
     tracks: favoriteGenreTracks,
     cachedTrackIds: genreCachedIds,
@@ -129,9 +153,11 @@ export default function RecommendationsShelf({
   } = useSoundCloudGenreRecommendations(favoriteGenre, tracks)
   const genreCachedTrackIds = useMemo(() => new Set([...cachedTrackIds, ...genreCachedIds]), [cachedTrackIds, genreCachedIds])
   const sectionRef = useRef<HTMLElement>(null)
-  const railRef = useRef<HTMLDivElement>(null)
+  const mainRail = useRecommendationRail(tracks.length)
+  const genreRail = useRecommendationRail(favoriteGenreTracks.length)
+  const { ref: railRef, measure: measureMainRail } = mainRail
+  const { ref: genreRailRef } = genreRail
   const endRef = useRef<HTMLSpanElement>(null)
-  const genreRailRef = useRef<HTMLDivElement>(null)
   const genreEndRef = useRef<HTMLSpanElement>(null)
   const trimAnchor = useRef<{ id: string; left: number } | null>(null)
   const trimFrame = useRef<number | null>(null)
@@ -166,13 +192,13 @@ export default function RecommendationsShelf({
 
   useEffect(() => {
     const rail = railRef.current, end = endRef.current
-    if (!rail || !end || !hasMore || loading || error || coolingDown) return
+    if (!rail || !end || !hasMore || loading || error || coolingDown || typeof IntersectionObserver === 'undefined') return
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) onLoadMore()
     }, { root: rail, rootMargin: '0px 300px', threshold: 0 })
     observer.observe(end)
     return () => observer.disconnect()
-  }, [tracks, hasMore, loading, error, coolingDown, onLoadMore])
+  }, [tracks, hasMore, loading, error, coolingDown, onLoadMore, railRef])
 
   useEffect(() => {
     const rail = genreRailRef.current, end = genreEndRef.current
@@ -183,11 +209,12 @@ export default function RecommendationsShelf({
     }, { root: rail, rootMargin: '0px 300px', threshold: 0 })
     observer.observe(end)
     return () => observer.disconnect()
-  }, [favoriteGenreTracks, genreHasMore, genreLoading, genreError, loadMoreGenre])
+  }, [favoriteGenreTracks, genreHasMore, genreLoading, genreError, loadMoreGenre, genreRailRef])
 
+  const hasTracks = tracks.length > 0
   useEffect(() => {
     const section = sectionRef.current, rail = railRef.current
-    if (!section || !rail || typeof IntersectionObserver === 'undefined') return
+    if (!hasTracks || !section || !rail || typeof IntersectionObserver === 'undefined') return
     const timers = new Map<string, ReturnType<typeof setTimeout>>()
     const visible = new Set<string>()
     const recorded = new Set<string>()
@@ -228,18 +255,39 @@ export default function RecommendationsShelf({
       sync()
     }, { threshold: 0 })
     sectionObserver.observe(section)
-    rail.querySelectorAll('[data-track-id]').forEach(card => cardsObserver.observe(card))
+    const observed = new Set<HTMLElement>()
+    const observeMounted = () => {
+      const mounted = new Set(rail.querySelectorAll<HTMLElement>('[data-track-id]'))
+      for (const card of observed) {
+        if (mounted.has(card)) continue
+        const id = card.dataset.trackId!
+        cardsObserver.unobserve(card)
+        observed.delete(card)
+        visible.delete(id)
+        stop(id)
+      }
+      for (const card of mounted) {
+        if (observed.has(card)) continue
+        observed.add(card)
+        cardsObserver.observe(card)
+      }
+      sync()
+    }
+    const rowObserver = new MutationObserver(observeMounted)
+    const row = rail.firstElementChild
+    if (row) rowObserver.observe(row, { childList: true })
+    observeMounted()
     const onVisibilityChange = () => sync(true)
     document.addEventListener('visibilitychange', onVisibilityChange)
     const cacheTimer = setInterval(() => sync(true), 60_000)
     return () => {
-      cardsObserver.disconnect(); sectionObserver.disconnect()
+      rowObserver.disconnect(); cardsObserver.disconnect(); sectionObserver.disconnect()
       document.removeEventListener('visibilitychange', onVisibilityChange)
       clearInterval(cacheTimer)
       for (const id of timers.keys()) stop(id)
       onVisibleIds([])
     }
-  }, [tracks, onImpression, onVisibleIds])
+  }, [hasTracks, railRef, onImpression, onVisibleIds])
 
   const trimPassed = useCallback(() => {
     if (trimFrame.current !== null) return
@@ -247,16 +295,14 @@ export default function RecommendationsShelf({
       trimFrame.current = null
       const rail = railRef.current
       if (!rail || tracks.length < 280 || trimAnchor.current) return
-      const cards = rail.querySelectorAll<HTMLElement>('[data-track-id]')
-      const edge = rail.getBoundingClientRect().left
-      let count = 0
-      while (count < 20 && count < cards.length && cards[count].getBoundingClientRect().right <= edge) count += 1
-      if (!count || count >= cards.length) return
-      const anchor = cards[count]
-      trimAnchor.current = { id: anchor.dataset.trackId!, left: anchor.getBoundingClientRect().left }
+      const fullyPassed = Math.floor((rail.scrollLeft - RECOMMENDATION_CARD_SIZE) / RECOMMENDATION_CARD_STEP) + 1
+      const count = Math.min(20, fullyPassed)
+      if (count <= 0) return
+      const anchor = tracks[count]
+      trimAnchor.current = { id: anchor.id, left: rail.scrollLeft - count * RECOMMENDATION_CARD_STEP }
       onTrimPassed(tracks.slice(0, count).map(track => `soundcloud:${track.id}`))
     })
-  }, [onTrimPassed, tracks])
+  }, [onTrimPassed, tracks, railRef])
 
   useEffect(() => () => {
     if (trimFrame.current !== null) window.cancelAnimationFrame(trimFrame.current)
@@ -266,17 +312,18 @@ export default function RecommendationsShelf({
     const rail = railRef.current
     const anchor = trimAnchor.current
     if (!rail || !anchor) return
-    const card = rail.querySelector<HTMLElement>('[data-track-id]')
-    if (card?.dataset.trackId === anchor.id) rail.scrollLeft += card.getBoundingClientRect().left - anchor.left
     trimAnchor.current = null
-  }, [tracks])
+    if (tracks[0]?.id !== anchor.id) return
+    rail.scrollLeft = anchor.left
+    measureMainRail()
+  }, [tracks, railRef, measureMainRail])
 
-  const renderCards = (items: ScTrack[], play: (index: number) => void, cachedIds = cachedTrackIds) => items.map((track, index) => (
+  const renderCards = (items: ScTrack[], start: number, end: number, play: (index: number) => void, cachedIds = cachedTrackIds) => items.slice(start, end).map((track, offset) => (
     <div className="home-recommendation-card" key={track.id} data-track-id={track.id}>
       <button
         type="button"
         className="home-rail-track"
-        onClick={() => { if (!consumeDragClick()) play(index) }}
+        onClick={() => { if (!consumeDragClick()) play(start + offset) }}
         onPointerDown={(event: PointerEvent<HTMLButtonElement>) => beginTrackDrag({
           e: event,
           title: track.title,
@@ -286,7 +333,7 @@ export default function RecommendationsShelf({
         })}
       >
         <span className="home-recommendation-cover">
-          <ScArtwork url={track.artworkUrl} title={track.title} resolution="card" loading="lazy" />
+          <ScArtwork url={track.artworkUrl} title={track.title} resolution={resolution} compact={artworkPixels <= 100} loading="lazy" />
         </span>
         <strong title={track.title}>{track.title}</strong>
         <small title={track.artist}>{track.artist}</small>
@@ -294,6 +341,22 @@ export default function RecommendationsShelf({
       <RecommendationCacheControl track={track} cached={cachedIds.has(track.id)} onCache={onCache} />
     </div>
   ))
+
+  const renderRail = (
+    rail: typeof mainRail, sentinel: typeof endRef, label: string, items: ScTrack[],
+    play: (index: number) => void, cachedIds?: ReadonlySet<string>, onScroll?: () => void,
+  ) => (
+    <div className="home-track-rail home-recommendation-rail" ref={rail.ref} onScroll={onScroll}
+      onKeyDown={scrollRailWithKeyboard} tabIndex={0} aria-label={label} style={railLayout}>
+      <div className="home-recommendation-row" style={{
+        width: items.length * RECOMMENDATION_CARD_STEP + 1,
+        paddingInlineStart: rail.start * RECOMMENDATION_CARD_STEP,
+      }}>
+        {renderCards(items, rail.start, rail.end, play, cachedIds)}
+        <span ref={sentinel} className="home-recommendation-end" aria-hidden="true" />
+      </div>
+    </div>
+  )
 
   return (
     <section className="home-section home-recommendations" ref={sectionRef}>
@@ -332,10 +395,7 @@ export default function RecommendationsShelf({
           {Array.from({ length: 5 }, (_, index) => <span className="home-recommendation-skeleton" key={index} />)}
         </div>
       ) : tracks.length > 0 ? (
-        <div className="home-track-rail home-recommendation-rail" ref={railRef} onScroll={trimPassed} tabIndex={0} aria-label={t('Recommended for you')}>
-          {renderCards(tracks, onPlay)}
-          <span ref={endRef} aria-hidden="true" style={{ flex: '0 0 1px', alignSelf: 'stretch' }} />
-        </div>
+        renderRail(mainRail, endRef, t('Recommended for you'), tracks, onPlay, cachedTrackIds, trimPassed)
       ) : error ? (
         <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}</div>
       ) : (
@@ -370,10 +430,8 @@ export default function RecommendationsShelf({
               {Array.from({ length: 5 }, (_, index) => <span className="home-recommendation-skeleton" key={index} />)}
             </div>
           ) : favoriteGenreTracks.length > 0 ? (
-            <div className="home-track-rail home-recommendation-rail" ref={genreRailRef} tabIndex={0} aria-label={`${favoriteGenre.label} · ${t('Recommended for you')}`}>
-              {renderCards(favoriteGenreTracks, (index) => onPlayFavoriteGenre(favoriteGenreTracks, index), genreCachedTrackIds)}
-              <span ref={genreEndRef} aria-hidden="true" style={{ flex: '0 0 1px', alignSelf: 'stretch' }} />
-            </div>
+            renderRail(genreRail, genreEndRef, `${favoriteGenre.label} · ${t('Recommended for you')}`, favoriteGenreTracks,
+              (index) => onPlayFavoriteGenre(favoriteGenreTracks, index), genreCachedTrackIds)
           ) : genreError ? (
             <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}: {genreError}</div>
           ) : (

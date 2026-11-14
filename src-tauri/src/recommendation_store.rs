@@ -1,7 +1,7 @@
 //! Bounded local feedback. All network/decoding work belongs outside Db::with_conn.
 use crate::commands::AppState;
 use crate::database::Db;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -237,6 +237,14 @@ pub struct FeatureSectionUpdate { pub track_key: String, pub section: String, pu
 fn err(e: rusqlite::Error) -> String {
     format!("recommendation database: {e}")
 }
+
+/// Recommendation mutations validate against rows they read before writing.
+/// Begin as IMMEDIATE so another connection cannot commit between that read and
+/// the write, invalidating this transaction's WAL snapshot.
+fn write_transaction(conn: &Connection) -> Result<Transaction<'_>, String> {
+    Transaction::new_unchecked(conn, TransactionBehavior::Immediate).map_err(err)
+}
+
 fn millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -476,7 +484,7 @@ pub fn record(db: &Db, event: ListeningEvent) -> Result<(), String> {
     }
     let event_hash = format!("{:x}", Sha256::digest(encoded.as_bytes()));
     db.with_conn(|conn| {
-        let tx = conn.unchecked_transaction().map_err(err)?;
+        let tx = write_transaction(conn)?;
         let generation: i64 = tx.query_row("SELECT generation FROM recommendation_meta WHERE id = 1", [], |r| r.get(0)).map_err(err)?;
         if generation != event.generation { return Err("Listening history was cleared".into()); }
         let old: Option<(i64, String)> = tx.query_row("SELECT revision,event_json FROM listening_sessions WHERE id = ?1", [&event.id], |r| Ok((r.get(0)?,r.get(1)?))).optional().map_err(err)?;
@@ -541,7 +549,7 @@ fn read_json<T: serde::de::DeserializeOwned>(
 
 pub fn context(db: &Db) -> Result<RecommendationContext, String> {
     db.with_conn(|conn| {
-        let tx = conn.unchecked_transaction().map_err(err)?;
+        let tx = write_transaction(conn)?;
         prune(&tx)?;
         let generation = tx.query_row("SELECT generation FROM recommendation_meta WHERE id=1", [], |r| r.get(0)).map_err(err)?;
         let sessions: Vec<ListeningEvent> = read_json(&tx,"SELECT event_json FROM listening_sessions ORDER BY started_at DESC LIMIT 1000",4*1024*1024)?;
@@ -603,10 +611,13 @@ pub fn record_listening_session(
     record(&state.db, event)
 }
 #[tauri::command]
-pub fn get_recommendation_context(
+pub async fn get_recommendation_context(
     state: State<'_, AppState>,
 ) -> Result<RecommendationContext, String> {
-    context(&state.db)
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || context(&db))
+        .await
+        .map_err(|error| error.to_string())?
 }
 #[tauri::command]
 pub fn record_recommendation_impressions(
@@ -629,7 +640,7 @@ pub fn record_recommendation_impressions(
         }
     }
     state.db.with_conn(|conn|{
-        let tx=conn.unchecked_transaction().map_err(err)?;
+        let tx=write_transaction(conn)?;
         let current:i64=tx.query_row("SELECT generation FROM recommendation_meta WHERE id=1",[],|r|r.get(0)).map_err(err)?;
         if current!=generation{return Err("Recommendation feedback was cleared".into());}
         for item in &impressions {
@@ -658,7 +669,7 @@ pub fn save_recommendation_features(
         encoded.push(json(&feature.data, 16 * 1024)?);
     }
     state.db.with_conn(|conn|{
-        let tx=conn.unchecked_transaction().map_err(err)?;
+        let tx=write_transaction(conn)?;
         for (feature,data) in features.iter().zip(encoded.iter()) {
             let previous:Option<i64>=tx.query_row("SELECT revision FROM recommendation_features WHERE track_key=?1",[&feature.track_key],|r|r.get(0)).optional().map_err(err)?;
             if previous.is_some_and(|r|r>feature.revision){return Err("Stale feature revision".into());}
@@ -672,8 +683,22 @@ pub fn save_recommendation_features(
     })
 }
 #[tauri::command]
-pub fn save_recommendation_state(
+pub async fn save_recommendation_state(
     state: State<'_, AppState>,
+    stored_state: StoredState,
+    generation: i64,
+    expected_revision: Option<i64>,
+) -> Result<(), String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        save_recommendation_state_blocking(&db, stored_state, generation, expected_revision)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn save_recommendation_state_blocking(
+    db: &Db,
     stored_state: StoredState,
     generation: i64,
     expected_revision: Option<i64>,
@@ -713,16 +738,49 @@ pub fn save_recommendation_state(
             }
         }
     }
-    state.db.with_conn(|conn|{
-        let tx=conn.unchecked_transaction().map_err(err)?;
-        let current:i64=tx.query_row("SELECT generation FROM recommendation_meta WHERE id=1",[],|r|r.get(0)).map_err(err)?;
-        if generation!=current{return Err("Recommendation feedback was cleared".into());}
-        let previous:Option<i64>=tx.query_row("SELECT revision FROM recommendation_state WHERE id=1",[],|r|r.get(0)).optional().map_err(err)?;
-        if expected_revision.is_some_and(|expected| expected != previous.unwrap_or(0)) {return Err("Feed revision conflict".into());}
-        if previous.is_some_and(|r|r>stored_state.revision){return Err("Stale feed revision".into());}
-        tx.execute("INSERT INTO recommendation_state(id,revision,data_json) VALUES(1,?1,?2) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,data_json=excluded.data_json WHERE excluded.revision>recommendation_state.revision",params![stored_state.revision,encoded]).map_err(err)?;
-        tx.commit().map_err(err)
+    db.with_conn(|conn| {
+        save_recommendation_state_conn(conn, &stored_state, generation, expected_revision, &encoded)
     })
+}
+
+fn save_recommendation_state_conn(
+    conn: &Connection,
+    stored_state: &StoredState,
+    generation: i64,
+    expected_revision: Option<i64>,
+    encoded: &str,
+) -> Result<(), String> {
+    let tx = write_transaction(conn)?;
+    let current: i64 = tx
+        .query_row(
+            "SELECT generation FROM recommendation_meta WHERE id=1",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    if generation != current {
+        return Err("Recommendation feedback was cleared".into());
+    }
+    let previous: Option<i64> = tx
+        .query_row(
+            "SELECT revision FROM recommendation_state WHERE id=1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+    if expected_revision.is_some_and(|expected| expected != previous.unwrap_or(0)) {
+        return Err("Feed revision conflict".into());
+    }
+    if previous.is_some_and(|revision| revision > stored_state.revision) {
+        return Err("Stale feed revision".into());
+    }
+    tx.execute(
+        "INSERT INTO recommendation_state(id,revision,data_json) VALUES(1,?1,?2) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,data_json=excluded.data_json WHERE excluded.revision>recommendation_state.revision",
+        params![stored_state.revision, encoded],
+    )
+    .map_err(err)?;
+    tx.commit().map_err(err)
 }
 
 /// Atomically merges one owned factual section against the current row, incrementing
@@ -736,7 +794,7 @@ pub fn merge_recommendation_feature_sections(state: State<'_, AppState>, updates
         json(&update.data, 15*1024)?;
     }
     state.db.with_conn(|conn| {
-        let tx=conn.unchecked_transaction().map_err(err)?;
+        let tx=write_transaction(conn)?;
         let mut result=Vec::new();
         for update in updates { result.push(merge_feature_section_conn(&tx, update)?); }
         prune(&tx)?; tx.commit().map_err(err)?; Ok(result)
@@ -785,7 +843,7 @@ pub fn record_recommendation_action(state: State<'_, AppState>, id: String, trac
     key(&track_key)?; text(&id,128)?; stamp(at)?;
     if id.is_empty() || intent!="manual" || !matches!(action.as_str(),"like"|"unlike"|"playlist-add"|"collection-save"|"cache") { return Err("Invalid explicit action".into()); }
     state.db.with_conn(|conn| {
-        let tx=conn.unchecked_transaction().map_err(err)?;
+        let tx=write_transaction(conn)?;
         let current:i64=tx.query_row("SELECT generation FROM recommendation_meta WHERE id=1",[],|r|r.get(0)).map_err(err)?;
         if current!=generation { return Err("Recommendation feedback was cleared".into()); }
         let (source,source_id)=track_key.split_once(':').ok_or("Invalid action track")?;
@@ -839,7 +897,7 @@ pub fn save_page(db: &Db, page: ProviderPage) -> Result<(), String> {
     stamp(page.fetched_at)?;
     let encoded = json(&page.data, 512 * 1024)?;
     db.with_conn(|conn|{
-        let tx=conn.unchecked_transaction().map_err(err)?;
+        let tx=write_transaction(conn)?;
         tx.execute("INSERT INTO recommendation_pages(page_key,fetched_at,data_json) VALUES(?1,?2,?3) ON CONFLICT(page_key) DO UPDATE SET fetched_at=excluded.fetched_at,data_json=excluded.data_json WHERE excluded.fetched_at>=recommendation_pages.fetched_at",params![page.key,page.fetched_at,encoded]).map_err(err)?;
         prune(&tx)?;tx.commit().map_err(err)
     })
@@ -953,6 +1011,91 @@ INSERT OR IGNORE INTO recommendation_identity_keep SELECT g.group_key FROM recom
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn saving_feed_state_waits_for_another_writer_before_reading_its_revision() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("recommendations.db");
+        let setup = Connection::open(&path).unwrap();
+        setup
+            .pragma_update(None, "journal_mode", "WAL")
+            .unwrap();
+        setup
+            .execute_batch(
+                "CREATE TABLE recommendation_meta (id INTEGER PRIMARY KEY, generation INTEGER NOT NULL);
+                 INSERT INTO recommendation_meta(id, generation) VALUES(1, 0);
+                 CREATE TABLE recommendation_state (id INTEGER PRIMARY KEY, revision INTEGER NOT NULL, data_json TEXT NOT NULL);
+                 INSERT INTO recommendation_state(id, revision, data_json) VALUES(1, 1, '{\"value\":\"initial\"}');",
+            )
+            .unwrap();
+        drop(setup);
+
+        // Hold a write transaction open after changing the stored revision. The
+        // save must wait for this writer before it reads the current row.
+        let writer = Connection::open(&path).unwrap();
+        let writer_tx =
+            Transaction::new_unchecked(&writer, TransactionBehavior::Immediate).unwrap();
+        writer_tx
+            .execute(
+                r#"UPDATE recommendation_state SET revision=2, data_json='{"value":"concurrent"}' WHERE id=1"#,
+                [],
+            )
+            .unwrap();
+
+        let (busy_tx, busy_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let worker_path = path.clone();
+        thread::spawn(move || {
+            let mut conn = Connection::open(worker_path).unwrap();
+            let mut notified = false;
+            conn.busy_handler(Some(move |_| {
+                if !notified {
+                    notified = true;
+                    let _ = busy_tx.send(());
+                }
+                thread::sleep(Duration::from_millis(2));
+                true
+            }))
+            .unwrap();
+
+            let stored_state = StoredState {
+                revision: 3,
+                data: serde_json::json!({"value": "saved"}),
+            };
+            let encoded = serde_json::to_string(&stored_state.data).unwrap();
+            let result = save_recommendation_state_conn(&conn, &stored_state, 0, None, &encoded);
+            let _ = result_tx.send(result);
+        });
+
+        busy_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("feed save should wait at transaction start for the competing writer");
+        assert!(matches!(result_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+
+        writer_tx.commit().unwrap();
+        result_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("feed save should finish once the competing writer commits")
+            .unwrap();
+
+        let verify = Connection::open(&path).unwrap();
+        let saved: (i64, String) = verify
+            .query_row(
+                "SELECT revision, data_json FROM recommendation_state WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(saved, (3, r#"{"value":"saved"}"#.to_string()));
+    }
+}
+
 /// Caller supplies only groups supported by strong identity/audio evidence.
 /// Original listening/like/playlist rows remain intact; membership propagates feedback.
 #[tauri::command]
@@ -965,7 +1108,7 @@ pub fn merge_recommendation_groups(
     for group in &group_keys {text(group,256)?;if group.is_empty(){return Err("Empty recording group".into());}}
     for track in &track_keys {key(track)?;}
     state.db.with_conn(|conn|{
-        let tx=conn.unchecked_transaction().map_err(err)?;
+        let tx=write_transaction(conn)?;
         let current:i64=tx.query_row("SELECT generation FROM recommendation_meta WHERE id=1",[],|r|r.get(0)).map_err(err)?;
         if current!=generation{return Err("Recommendation feedback was cleared".into());}
         let mut roots=std::collections::BTreeSet::new();

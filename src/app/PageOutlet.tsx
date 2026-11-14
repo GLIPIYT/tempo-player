@@ -2,8 +2,8 @@ import { lazy, Suspense } from 'react'
 import { useNav } from '../state/nav'
 import { useT } from '../i18n'
 import { DevProfile } from '../dev-performance/DevProfile'
+import HomePage from '../pages/HomePage'
 
-const HomePage = lazy(() => import('../pages/HomePage'))
 const LibraryPage = lazy(() => import('../pages/LibraryPage'))
 const AlbumsPage = lazy(() => import('../pages/AlbumsPage'))
 const ArtistsPage = lazy(() => import('../pages/ArtistsPage'))

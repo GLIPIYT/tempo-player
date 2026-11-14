@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useMemo,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -19,7 +21,6 @@ import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { toast } from '../components/common/Toast'
 import { scTracksToUnified, trackToUnified } from '../utils/unified'
 import HomeMixFeature from '../components/home/HomeMixFeature'
-import CustomMixEditor from '../components/home/CustomMixEditor'
 import DeleteRuleDialog from '../components/common/DeleteRuleDialog'
 import { useCustomMixes } from '../features/mixes/useCustomMixes'
 import { presetFromMix } from '../features/mixes/presets'
@@ -40,6 +41,8 @@ import {
   unhideAllSections,
   useHiddenSections,
 } from '../utils/hiddenSections'
+
+const CustomMixEditor = lazy(() => import('../components/home/CustomMixEditor'))
 
 function greetingForHour(h: number): string {
   if (h >= 5 && h < 12) return 'Good morning'
@@ -170,10 +173,10 @@ export default function HomePage() {
   return (
     <div className="page tempo-home">
       {deletingRule?.id != null ? <DeleteRuleDialog name={deletingRule.name} onDelete={() => custom.remove(deletingRule.id!)} onClose={() => setDeletingRule(null)} /> : null}
-      {editingRule ? <CustomMixEditor initial={editingRule === 'new' ? undefined : editingRule}
+      {editingRule ? <Suspense fallback={null}><CustomMixEditor initial={editingRule === 'new' ? undefined : editingRule}
         genres={custom.genres}
         presets={allMixes.map(mix => ({ name: mix.title, rule: presetFromMix(mix), cover: mix.tracks.find(tr => tr.coverPath)?.coverPath }))}
-        onSave={custom.save} onDelete={editingRule !== 'new' && editingRule.id != null ? () => custom.remove(editingRule.id!) : undefined} onClose={() => setEditingRule(null)} /> : null}
+        onSave={custom.save} onDelete={editingRule !== 'new' && editingRule.id != null ? () => custom.remove(editingRule.id!) : undefined} onClose={() => setEditingRule(null)} /></Suspense> : null}
       {error ? <div className="error-line">{error}</div> : null}
       {custom.error ? <div className="error-line">{custom.error}</div> : null}
       <div className="hero">
