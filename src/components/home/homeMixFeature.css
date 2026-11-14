@@ -71,13 +71,7 @@ html.theme-gradient .home-mix-feature--b .home-mix-stage--b {
 .home-mix-feature--b .home-mix-copy {
   z-index: 1;
   min-height: 0;
-  padding: 26px clamp(22px, 3vw, 43px) 24px;
-}
-
-/* Let a second line of text use the space reserved below the actions. */
-.home-mix-feature--b .home-mix-copy::after {
-  flex: 0 1 18px;
-  content: '';
+  padding: 32px clamp(22px, 3vw, 43px);
 }
 
 .home-mix-feature--b .home-mix-kicker {
@@ -393,8 +387,7 @@ html.theme-gradient .home-mix-feature--b .home-mix-dock {
   }
   .home-mix-feature--b .home-mix-stage--b { height: 320px; }
   .home-mix-feature--b .home-mix-slide { grid-template-columns: minmax(0, 1fr) minmax(174px, 35%); }
-  .home-mix-feature--b .home-mix-copy { padding: 24px 22px; }
-  .home-mix-feature--b .home-mix-copy::after { flex-basis: 10px; }
+  .home-mix-feature--b .home-mix-copy { padding: 28px 22px; }
   .home-mix-feature--b .home-mix-copy h2 { font-size: clamp(30px, 5.2vw, 48px); }
   .home-mix-feature--b .home-mix-art-card { width: min(76%, 204px); }
   .home-mix-feature--b .home-mix-layout.is-dock-expanded .home-mix-slide {
