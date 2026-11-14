@@ -704,6 +704,8 @@ export const ru: Record<string, string> = {
   'Play mix': 'Слушать подборку',
   'View tracks': 'Посмотреть треки',
   'All mixes': 'Все подборки',
+  'Expand mix list': 'Развернуть список подборок',
+  'Collapse mix list': 'Свернуть список подборок',
   'Choose a mix': 'Выберите подборку',
   'Previous mix': 'Предыдущая подборка',
   'Next mix': 'Следующая подборка',

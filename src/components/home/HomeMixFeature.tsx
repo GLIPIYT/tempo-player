@@ -7,6 +7,7 @@ import { useSettings } from '../../state/settings'
 import type { HourMix } from '../../utils/hourMixes'
 import Cover from '../common/Cover'
 import { useMixReorder } from './useMixReorder'
+import './homeMixFeature.css'
 
 interface HomeMixFeatureProps {
   mixes: HourMix[]
@@ -36,14 +37,21 @@ export default function HomeMixFeature({
   const lang = resolveLang(settings.lang)
   const sectionRef = useRef<HTMLElement>(null)
   const pickerButtonRef = useRef<HTMLButtonElement>(null)
+  const dockRef = useRef<HTMLDivElement>(null)
+  const heroPlayRef = useRef<HTMLButtonElement>(null)
   const firstChoiceRef = useRef<HTMLButtonElement>(null)
   const pointerInput = useRef(false)
   const [slide, setSlide] = useState<{ selected: string | null; previous: string | null }>({ selected: null, previous: null })
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pickerMounted, setPickerMounted] = useState(false)
+  const [dockOpen, setDockOpen] = useState(false)
+  const [dockFocused, setDockFocused] = useState(false)
+  const [dockHovered, setDockHovered] = useState(false)
+  const [dockHoverDismissed, setDockHoverDismissed] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [visible, setVisible] = useState(!document.hidden)
+  const [inViewport, setInViewport] = useState(true)
   const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const [manualUntil, setManualUntil] = useState(0)
   const reorder = useMixReorder(mixes.map(mix => mix.key), onReorder, reducedMotion)
@@ -52,6 +60,7 @@ export default function HomeMixFeature({
   const activeMix = mixes[activeIndex]
   const nextMix = mixes[(activeIndex + 1) % mixes.length]
   const mixKeys = mixes.map((mix) => mix.key).join('\u0001')
+  const dockExpanded = dockOpen || dockFocused || (dockHovered && !dockHoverDismissed)
 
   useEffect(() => {
     const onVisibility = () => setVisible(!document.hidden)
@@ -72,8 +81,16 @@ export default function HomeMixFeature({
   }, [])
 
   useEffect(() => {
+    const target = sectionRef.current
+    if (!target || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(([entry]) => setInViewport(entry?.isIntersecting ?? false), { threshold: 0.1 })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
     const keys = mixKeys ? mixKeys.split('\u0001') : []
-    if (keys.length < 2 || hovered || focused || pickerOpen || !visible || reducedMotion) return
+    if (keys.length < 2 || hovered || focused || pickerOpen || !visible || !inViewport || reducedMotion) return
     const delay = Math.max(3000, manualUntil - Date.now())
     const timer = window.setTimeout(() => {
       setSlide((current) => {
@@ -83,7 +100,7 @@ export default function HomeMixFeature({
       setManualUntil(0)
     }, delay)
     return () => window.clearTimeout(timer)
-  }, [mixKeys, slide.selected, hovered, focused, pickerOpen, visible, reducedMotion, manualUntil])
+  }, [mixKeys, slide.selected, hovered, focused, pickerOpen, visible, inViewport, reducedMotion, manualUntil])
 
   useEffect(() => {
     if (!slide.previous) return
@@ -107,7 +124,7 @@ export default function HomeMixFeature({
     return () => document.removeEventListener('pointerdown', onOutsidePointer)
   }, [pickerOpen])
 
-  if (!activeMix) return <section className="home-mix-feature"><button className="btn" onClick={onCreateRule}><Plus size={16} />{t('Your rule')}</button></section>
+  if (!activeMix) return <section ref={sectionRef} className="home-mix-feature home-mix-feature--b"><button className="btn" onClick={onCreateRule}><Plus size={16} />{t('Your rule')}</button></section>
 
   const chooseMix = (index: number) => {
     if (pickerOpen) pickerButtonRef.current?.focus()
@@ -118,150 +135,252 @@ export default function HomeMixFeature({
   }
 
   const onBlur = (event: FocusEvent<HTMLElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false)
+    const relatedTarget = event.relatedTarget as Node | null
+    if (!event.currentTarget.contains(relatedTarget)) setFocused(false)
+    if (!dockRef.current?.contains(relatedTarget)) setDockFocused(false)
+  }
+
+  const focusAfterDockClose = () => {
+    if (heroPlayRef.current && !heroPlayRef.current.disabled) heroPlayRef.current.focus()
+    else pickerButtonRef.current?.focus()
   }
 
   return (
     <section
       ref={sectionRef}
-      className="home-mix-feature"
+      className="home-mix-feature home-mix-feature--b"
       aria-label={t('All mixes')}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onFocusCapture={() => setFocused(!pointerInput.current)}
       onBlurCapture={onBlur}
-      onPointerDownCapture={() => setFocused(false)}
+      onPointerDownCapture={() => {
+        setFocused(false)
+        setDockFocused(false)
+      }}
       onKeyDown={(event) => {
         setFocused(true)
         if (event.key === 'Escape') {
-          if (pickerOpen) pickerButtonRef.current?.focus()
-          setPickerOpen(false)
+          if (pickerOpen) {
+            pickerButtonRef.current?.focus()
+            setPickerOpen(false)
+          } else if (dockExpanded) {
+            setDockOpen(false)
+            setDockFocused(false)
+            setDockHoverDismissed(true)
+            focusAfterDockClose()
+          }
         }
       }}
     >
-      <div className={`home-mix-stage${pickerOpen ? ' is-picker-open' : ''}`} onContextMenu={onSectionMenu}>
-        {mixes.map((mix, index) => {
-          const current = index === activeIndex
-          if (!current && mix !== nextMix && mix.key !== slide.previous) return null
-          const art = mixCover(mix)
-          const covers = mix.tracks.slice(0, 3)
-          return (
-            <article
-              key={mix.key}
-              className={`home-mix-slide${current ? ' is-active' : ''}`}
-              aria-hidden={!current || pickerOpen}
-              onContextMenu={(event) => onMixMenu(event, mix)}
-            >
-              <div className="home-mix-copy">
-                <span className="home-mix-kicker">
-                  <Clock3 size={14} />
-                  {mix.kind === 'custom' ? t('Custom mix') : mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}
-                </span>
-                <h2>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</h2>
-                {mix.description ? <p>{mix.kind === 'custom' ? mix.description : t(mix.description)}</p> : null}
-                <div className="home-mix-actions">
-                  <button type="button" className="home-mix-play" disabled={!mix.tracks.length} tabIndex={current && !pickerOpen ? 0 : -1} onClick={() => onPlay(mix.tracks, 0)}>
-                    <Play size={15} fill="currentColor" />
-                    {t('Play mix')}
-                  </button>
-                  <button
-                    type="button"
-                    className="home-mix-view"
-                    tabIndex={current && !pickerOpen ? 0 : -1}
-                    onClick={() => onOpen(mix)}
-                  >
-                    <ListMusic size={15} />
-                    {t('View tracks')}
-                  </button>
+      <div className={`home-mix-layout${pickerOpen ? ' is-picker-open' : ''}`}>
+        <div className={`home-mix-stage home-mix-stage--b${pickerOpen ? ' is-picker-open' : ''}`} onContextMenu={onSectionMenu}>
+          {mixes.map((mix, index) => {
+            const current = index === activeIndex
+            const leaving = !current && mix.key === slide.previous
+            if (!current && mix !== nextMix && !leaving) return null
+            const art = mixCover(mix)
+            const covers = mix.tracks.slice(0, 3)
+            return (
+              <article
+                key={mix.key}
+                className={`home-mix-slide${current ? ' is-active' : ''}${leaving ? ' is-leaving' : ''}`}
+                aria-hidden={!current || pickerOpen}
+                onContextMenu={(event) => onMixMenu(event, mix)}
+              >
+                <div className="home-mix-copy">
+                  <span className="home-mix-kicker">
+                    <Clock3 size={14} />
+                    {mix.kind === 'custom' ? t('Custom mix') : mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}
+                  </span>
+                  <h2>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</h2>
+                  {mix.description ? <p>{mix.kind === 'custom' ? mix.description : t(mix.description)}</p> : null}
+                  <div className="home-mix-actions">
+                    <button ref={current ? heroPlayRef : undefined} type="button" className="home-mix-play" disabled={!mix.tracks.length} tabIndex={current && !pickerOpen ? 0 : -1} onClick={() => onPlay(mix.tracks, 0)}>
+                      <Play size={15} fill="currentColor" />
+                      {t('Play mix')}
+                    </button>
+                    <button
+                      type="button"
+                      className="home-mix-view"
+                      tabIndex={current && !pickerOpen ? 0 : -1}
+                      onClick={() => onOpen(mix)}
+                    >
+                      <ListMusic size={15} />
+                      {t('View tracks')}
+                    </button>
+                  </div>
+                  <span className="home-mix-meta">{formatCount(mix.tracks.length, 'track', t, lang)}{mix.kind !== 'custom' ? ` · ${t('From your library')}` : ''}</span>
                 </div>
-                <span className="home-mix-meta">{formatCount(mix.tracks.length, 'track', t, lang)}{mix.kind !== 'custom' ? ` · ${t('From your library')}` : ''}</span>
-              </div>
-              <div className="home-mix-art" aria-hidden="true">
-                <div className="home-mix-art-back"><Cover path={art} label={mix.title} size={128} loading="eager" /></div>
-                {covers.map((track, coverIndex) => (
-                  <span key={`${track.id}:${coverIndex}`} className={`home-mix-art-card is-card-${coverIndex}`}>
-                    <Cover path={track.coverPath} label={track.title} size={228} loading="eager" />
-                  </span>
-                ))}
-              </div>
-            </article>
-          )
-        })}
-        <div className="home-mix-picker" id="home-mix-picker" aria-hidden={!pickerOpen}>
-          {pickerMounted && <>
-            <div className="home-mix-picker-heading"><strong>{t('All mixes')}</strong><span>{t('Choose a mix')}</span></div>
-            <div ref={reorder.railRef} {...reorder.railHandlers} className={`home-mix-picker-rail${mixes.length < 4 ? ' is-short' : ''}${reorder.draggingKey ? ' is-reordering' : ''}`}>
-              <span ref={reorder.slotRef} className="home-mix-drop-slot" aria-hidden="true" />
-              {mixes.map((mix, index) => (
-                <button
-                  key={mix.key}
-                  ref={index === 0 ? firstChoiceRef : undefined}
-                  type="button"
-                  className={`home-mix-choice${reorder.draggingKey === mix.key ? ' is-dragging' : ''}`}
-                  data-mix-key={mix.key}
-                  title={t('Drag to reorder. Alt + arrow keys also move the mix.')}
-                  onPointerDown={event => reorder.onPointerDown(event, mix.key)}
-                  onDragStart={event => event.preventDefault()}
-                  tabIndex={pickerOpen ? 0 : -1}
-                  aria-current={index === activeIndex ? 'true' : undefined}
-                  onClick={() => chooseMix(index)}
-                  onContextMenu={(event) => {
-                    if (reorder.draggingKey) { event.preventDefault(); event.stopPropagation(); return }
-                    onMixMenu(event, mix)
-                  }}
-                >
-                  <span className="home-mix-choice-art"><Cover path={mixCover(mix)} label={mix.title} size={146} /></span>
-                  <span className="home-mix-choice-copy">
-                    <small>{mix.kind === 'custom' ? t('Custom mix') : mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}</small>
-                    <strong>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</strong>
-                    <span className="home-mix-choice-description">{mix.kind === 'custom' ? mix.description : t(mix.description)}</span>
-                    <span className="home-mix-choice-meta">{formatCount(mix.tracks.length, 'track', t, lang)}</span>
-                  </span>
-                </button>
-              ))}
-              <button type="button" className="home-mix-choice home-mix-create" tabIndex={pickerOpen ? 0 : -1} onClick={onCreateRule}>
-                <span className="home-mix-choice-art"><Plus size={42} strokeWidth={1.2} /></span>
-                <span className="home-mix-choice-copy"><strong>{t('Your rule')}</strong><span className="home-mix-choice-description">{t('Create your own personal mix')}</span></span>
-              </button>
-            </div>
-          </>}
-        </div>
-        <div className="home-mix-controls">
-          <button
-            ref={pickerButtonRef}
-            type="button"
-            className="home-mix-picker-button"
-            aria-expanded={pickerOpen}
-            aria-controls="home-mix-picker"
-            onClick={() => {
-              if (!pickerOpen) setPickerMounted(true)
-              setPickerOpen(!pickerOpen)
-            }}
-          >
-            <span className="home-mix-stack" aria-hidden="true">
-              {mixes.slice(0, 3).map((mix) => <Cover key={mix.key} path={mixCover(mix)} label={mix.title} size={24} />)}
-            </span>
-            <span>{t('All mixes')}</span>
-            <span className="home-mix-count">{mixes.length}</span>
-            <ChevronDown size={14} className={pickerOpen ? 'is-open' : undefined} />
-          </button>
-          {mixes.length > 1 && !pickerOpen ? (
-            <div className="home-mix-navigation" aria-label={t('Choose a mix')}>
-              <button type="button" aria-label={t('Previous mix')} onClick={() => chooseMix(activeIndex - 1)}><ChevronLeft size={17} /></button>
-              <div className="home-mix-dots">
+                <div className="home-mix-art" aria-hidden="true">
+                  <div className="home-mix-art-back"><Cover path={art} label={mix.title} size={128} loading={current ? 'eager' : 'lazy'} thumbnailOnly /></div>
+                  {covers.map((track, coverIndex) => (
+                    <span key={`${track.id}:${coverIndex}`} className={`home-mix-art-card is-card-${coverIndex}`}>
+                      <Cover path={track.coverPath} label={track.title} size={228} loading={current ? 'eager' : 'lazy'} fetchPriority={current && coverIndex === 0 ? 'high' : 'auto'} />
+                    </span>
+                  ))}
+                </div>
+              </article>
+            )
+          })}
+          <div className="home-mix-picker" id="home-mix-picker" aria-hidden={!pickerOpen}>
+            {pickerMounted && <>
+              <div className="home-mix-picker-heading"><strong>{t('All mixes')}</strong><span>{t('Choose a mix')}</span></div>
+              <div ref={reorder.railRef} {...reorder.railHandlers} className={`home-mix-picker-rail${mixes.length < 4 ? ' is-short' : ''}${reorder.draggingKey ? ' is-reordering' : ''}`}>
+                <span ref={reorder.slotRef} className="home-mix-drop-slot" aria-hidden="true" />
                 {mixes.map((mix, index) => (
                   <button
                     key={mix.key}
+                    ref={index === 0 ? firstChoiceRef : undefined}
                     type="button"
-                    aria-label={`${t('Show mix')}: ${mix.title}`}
-                    aria-pressed={index === activeIndex}
+                    className={`home-mix-choice${reorder.draggingKey === mix.key ? ' is-dragging' : ''}`}
+                    data-mix-key={mix.key}
+                    title={t('Drag to reorder. Alt + arrow keys also move the mix.')}
+                    onPointerDown={event => reorder.onPointerDown(event, mix.key)}
+                    onDragStart={event => event.preventDefault()}
+                    tabIndex={pickerOpen ? 0 : -1}
+                    aria-current={index === activeIndex ? 'true' : undefined}
                     onClick={() => chooseMix(index)}
-                  />
+                    onContextMenu={(event) => {
+                      if (reorder.draggingKey) { event.preventDefault(); event.stopPropagation(); return }
+                      onMixMenu(event, mix)
+                    }}
+                  >
+                    <span className="home-mix-choice-art"><Cover path={mixCover(mix)} label={mix.title} size={146} /></span>
+                    <span className="home-mix-choice-copy">
+                      <small>{mix.kind === 'custom' ? t('Custom mix') : mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}</small>
+                      <strong>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</strong>
+                      <span className="home-mix-choice-description">{mix.kind === 'custom' ? mix.description : t(mix.description)}</span>
+                      <span className="home-mix-choice-meta">{formatCount(mix.tracks.length, 'track', t, lang)}</span>
+                    </span>
+                  </button>
                 ))}
+                <button type="button" className="home-mix-choice home-mix-create" tabIndex={pickerOpen ? 0 : -1} onClick={onCreateRule}>
+                  <span className="home-mix-choice-art"><Plus size={42} strokeWidth={1.2} /></span>
+                  <span className="home-mix-choice-copy"><strong>{t('Your rule')}</strong><span className="home-mix-choice-description">{t('Create your own personal mix')}</span></span>
+                </button>
               </div>
-              <button type="button" aria-label={t('Next mix')} onClick={() => chooseMix(activeIndex + 1)}><ChevronRight size={17} /></button>
+            </>}
+          </div>
+          <div className="home-mix-controls">
+            <button
+              ref={pickerButtonRef}
+              type="button"
+              className="home-mix-picker-button"
+              aria-expanded={pickerOpen}
+              aria-controls="home-mix-picker"
+              onClick={() => {
+                if (!pickerOpen) {
+                  setPickerMounted(true)
+                  setDockOpen(false)
+                  setDockFocused(false)
+                  setDockHoverDismissed(true)
+                }
+                setPickerOpen(!pickerOpen)
+              }}
+            >
+              <span className="home-mix-stack" aria-hidden="true">
+                {mixes.slice(0, 3).map((mix) => <Cover key={mix.key} path={mixCover(mix)} label={mix.title} size={24} />)}
+              </span>
+              <span>{t('All mixes')}</span>
+              <span className="home-mix-count">{mixes.length}</span>
+              <ChevronDown size={14} className={pickerOpen ? 'is-open' : undefined} />
+            </button>
+            {mixes.length > 1 && !pickerOpen ? (
+              <div className="home-mix-navigation" aria-label={t('Choose a mix')}>
+                <button type="button" aria-label={t('Previous mix')} onClick={() => chooseMix(activeIndex - 1)}><ChevronLeft size={17} /></button>
+                <div className="home-mix-dots">
+                  {mixes.map((mix, index) => (
+                    <button
+                      key={mix.key}
+                      type="button"
+                      aria-label={`${t('Show mix')}: ${mix.title}`}
+                      aria-pressed={index === activeIndex}
+                      onClick={() => chooseMix(index)}
+                    />
+                  ))}
+                </div>
+                <button type="button" aria-label={t('Next mix')} onClick={() => chooseMix(activeIndex + 1)}><ChevronRight size={17} /></button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div className="home-mix-dock-slot">
+          <div
+            ref={dockRef}
+            className={`home-mix-dock${dockExpanded ? ' is-expanded' : ''}`}
+            aria-hidden={pickerOpen}
+            onFocusCapture={() => {
+              if (!pointerInput.current) setDockFocused(true)
+            }}
+            onBlurCapture={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDockFocused(false)
+            }}
+            onPointerEnter={(event) => {
+              if (event.pointerType === 'mouse') {
+                setDockHovered(true)
+                setDockHoverDismissed(false)
+              }
+            }}
+            onPointerLeave={(event) => {
+              if (event.pointerType === 'mouse') {
+                setDockHovered(false)
+                setDockHoverDismissed(false)
+              }
+            }}
+          >
+            <button
+              type="button"
+              className="home-mix-dock-toggle"
+              aria-label={dockExpanded ? t('Collapse mix list') : t('Expand mix list')}
+              aria-expanded={dockExpanded}
+              aria-controls="home-mix-dock-list"
+              onClick={() => {
+                const willOpen = !dockExpanded
+                setDockOpen(willOpen)
+                if (!willOpen) {
+                  setDockHoverDismissed(true)
+                  if (dockRef.current?.contains(document.activeElement)) {
+                    setDockFocused(false)
+                    focusAfterDockClose()
+                  }
+                }
+              }}
+            >
+              {dockExpanded ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+            </button>
+            <div className="home-mix-dock-list" id="home-mix-dock-list" role="group" aria-label={t('Choose a mix')}>
+              {mixes.map((mix, index) => {
+                const title = mix.kind === 'hour' ? t('Music for this hour') : mix.title
+                const kind = mix.kind === 'custom' ? t('Custom mix') : mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')
+                const description = mix.kind === 'custom' ? mix.description : t(mix.description)
+                return (
+                  <button
+                    key={mix.key}
+                    type="button"
+                    className="home-mix-dock-choice"
+                    aria-label={`${title}, ${kind}, ${formatCount(mix.tracks.length, 'track', t, lang)}`}
+                    aria-pressed={index === activeIndex}
+                    title={title}
+                    onClick={() => chooseMix(index)}
+                    onContextMenu={(event) => onMixMenu(event, mix)}
+                  >
+                    <span className="home-mix-dock-art"><Cover path={mixCover(mix)} label={title} size={38} loading={index === activeIndex ? 'eager' : 'lazy'} fetchPriority={index === activeIndex ? 'auto' : 'low'} thumbnailOnly /></span>
+                    <span className="home-mix-dock-copy">
+                      <strong>{title}</strong>
+                      <small>{kind} · {formatCount(mix.tracks.length, 'track', t, lang)}</small>
+                      <span>{description}</span>
+                    </span>
+                    <ChevronRight size={15} className="home-mix-dock-arrow" aria-hidden="true" />
+                  </button>
+                )
+              })}
             </div>
-          ) : null}
+            <button type="button" className="home-mix-dock-create" onClick={onCreateRule}>
+              <Plus size={16} />
+              <span>{t('Your rule')}</span>
+            </button>
+          </div>
         </div>
       </div>
 

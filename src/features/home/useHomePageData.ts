@@ -19,7 +19,7 @@ export function useHomePageData(version: number, unknownArtist: string) {
   const topTracks = snapshot.data?.topTracks ?? NO_TOP_TRACKS
   const likedTracks = snapshot.data?.likedTracks ?? NO_TRACKS
   const hourPicksList = hourPicks.data ?? NO_TRACKS
-  const recentAdded = useMemo(() => snapshot.data?.mixLibrary.slice(0, 10) ?? NO_TRACKS, [snapshot.data])
+  const recentAdded = useMemo(() => snapshot.data?.mixLibrary.slice(0, 6) ?? NO_TRACKS, [snapshot.data])
 
   const hourMixes = useMemo(() => buildHourMixes(
     hourPicksList,

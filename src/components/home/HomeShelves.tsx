@@ -1,11 +1,13 @@
-import { useRef, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
-import { ArrowUpRight, ChevronLeft, ChevronRight, Play } from 'lucide-react'
+import { useMemo, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
+import { ArrowUpRight, ChevronLeft, ChevronRight, Clock3, ListMusic, Play } from 'lucide-react'
 import type { Playlist, TopTrackItem, Track } from '../../types/models'
 import { useT } from '../../i18n'
 import { beginTrackDrag, consumeDragClick } from '../../dnd/trackDrag'
 import { isSectionHidden } from '../../utils/hiddenSections'
 import { playlistDisplayName } from '../../utils/playlists'
+import { fmtTime } from '../../utils/format'
 import Cover from '../common/Cover'
+import { HOME_RAIL_CARD_SIZE, HOME_RAIL_GAP, HOME_RAIL_STEP, homeRailLayout, onHomeRailKeyDown, scrollHomeRail, useRecommendationRail } from './useRecommendationRail'
 
 type Section = { title: string; id: string; tracks?: Track[] }
 
@@ -13,7 +15,6 @@ interface HomeShelvesProps {
   topTracks: TopTrackItem[]
   recentAdded: Track[]
   recentPlays: Track[]
-  dormantTracks: Track[]
   likedTracks: Track[]
   likesPlaylist: Playlist | null
   featuredPlaylists: Playlist[]
@@ -27,8 +28,8 @@ interface HomeShelvesProps {
   onSectionMenu: (event: MouseEvent, section: Section) => void
 }
 
-function startDrag(event: PointerEvent<HTMLButtonElement>, track: Track) {
-  beginTrackDrag({ e: event, title: track.title, coverPath: track.coverPath, trackId: track.id, sourceTrack: track, allowButtons: true })
+function startDrag(event: PointerEvent<HTMLButtonElement>, track: Track, scrollRail?: HTMLDivElement | null) {
+  beginTrackDrag({ e: event, title: track.title, coverPath: track.coverPath, trackId: track.id, sourceTrack: track, allowButtons: true, scrollRail })
 }
 
 interface TrackRailProps {
@@ -45,91 +46,92 @@ interface TrackRailProps {
 
 function TrackRail({ title, id, tracks, unknownArtist, caption, onOpen, onPlay, onTrackMenu, onSectionMenu }: TrackRailProps) {
   const t = useT()
-  const railRef = useRef<HTMLDivElement>(null)
-  if (tracks.length === 0 || isSectionHidden(id)) return null
-  const scroll = (direction: number) => railRef.current?.scrollBy({ left: direction * 460, behavior: 'smooth' })
+  const visible = tracks.length > 0 && !isSectionHidden(id)
+  const { ref, start, end, canScrollLeft, canScrollRight } = useRecommendationRail(visible ? tracks.length : 0)
+  if (!visible) return null
 
   return (
-    <section className="home-section home-rail-section">
+    <section className="home-section home-rail-section" aria-label={title}>
       <div className="home-section-head" onContextMenu={(event) => onSectionMenu(event, { title, id, tracks })}>
         <span className="home-section-title">{title}</span>
         <div className="home-section-tools">
           {onOpen ? <button type="button" className="home-section-open" onClick={onOpen}>{t('Open Likes')} <ArrowUpRight size={14} /></button> : null}
-          {tracks.length > 4 ? (
-            <div className="home-rail-controls">
-              <button type="button" aria-label={t('Scroll left')} onClick={() => scroll(-1)}><ChevronLeft size={15} /></button>
-              <button type="button" aria-label={t('Scroll right')} onClick={() => scroll(1)}><ChevronRight size={15} /></button>
-            </div>
-          ) : null}
+          <div className="home-rail-controls">
+            <button type="button" aria-label={t('Play all')} title={t('Play all')} onClick={() => onPlay(tracks, 0)}><Play size={13} /></button>
+            {(canScrollLeft || canScrollRight) && <>
+              <button type="button" aria-label={t('Scroll left')} disabled={!canScrollLeft} onClick={() => scrollHomeRail(ref.current, -1)}><ChevronLeft size={15} /></button>
+              <button type="button" aria-label={t('Scroll right')} disabled={!canScrollRight} onClick={() => scrollHomeRail(ref.current, 1)}><ChevronRight size={15} /></button>
+            </>}
+          </div>
         </div>
       </div>
-      <div className="home-track-rail" ref={railRef} tabIndex={0} aria-label={title}>
-        {tracks.map((track, index) => (
-          <button
-            key={track.id}
-            type="button"
-            className="home-rail-track"
-            onClick={() => { if (!consumeDragClick()) onPlay(tracks, index) }}
-            onPointerDown={(event) => startDrag(event, track)}
-            onContextMenu={(event) => onTrackMenu(event, track, tracks, index)}
-          >
-            <Cover path={track.coverPath} label={track.title} size={118} />
-            <strong title={track.title}>{track.title}</strong>
-            <small title={caption?.(track) ?? track.artistName ?? unknownArtist}>{caption?.(track) ?? track.artistName ?? unknownArtist}</small>
-          </button>
-        ))}
+      <div className="home-track-rail" ref={ref} tabIndex={0} aria-label={title} onKeyDown={onHomeRailKeyDown} style={homeRailLayout}>
+        <div className="home-rail-row" style={{ width: tracks.length * HOME_RAIL_STEP - HOME_RAIL_GAP, paddingInlineStart: start * HOME_RAIL_STEP }}>
+          {tracks.slice(start, end).map((track, offset) => {
+            const index = start + offset
+            const subtitle = caption?.(track) ?? track.artistName ?? unknownArtist
+            return (
+              <button
+                key={track.id}
+                type="button"
+                className="home-rail-track"
+                onClick={() => { if (!consumeDragClick()) onPlay(tracks, index) }}
+                onPointerDown={(event) => startDrag(event, track, ref.current)}
+                onContextMenu={(event) => onTrackMenu(event, track, tracks, index)}
+              >
+                <Cover path={track.coverPath} label={track.title} size={HOME_RAIL_CARD_SIZE} />
+                <strong title={track.title}>{track.title}</strong>
+                <small title={subtitle}>{subtitle}</small>
+              </button>
+            )
+          })}
+        </div>
       </div>
     </section>
   )
 }
 
-export default function HomeShelves({ topTracks, recentAdded, recentPlays, dormantTracks, likedTracks, likesPlaylist, featuredPlaylists, recommendations, hasPlaylistHistory, unknownArtist, onPlay, onPlayPlaylist, onOpenPlaylist, onTrackMenu, onSectionMenu }: HomeShelvesProps) {
+export default function HomeShelves({ topTracks, recentAdded, recentPlays, likedTracks, likesPlaylist, featuredPlaylists, recommendations, hasPlaylistHistory, unknownArtist, onPlay, onPlayPlaylist, onOpenPlaylist, onTrackMenu, onSectionMenu }: HomeShelvesProps) {
   const t = useT()
-  const topList = topTracks.map((item) => item.track)
-  const playCounts = new Map(topTracks.map((item) => [item.track.id, item.playCount]))
-  const playedVisible = recentPlays.length > 0 && !isSectionHidden('home.played')
+  const topList = useMemo(() => topTracks.map((item) => item.track), [topTracks])
+  const playCounts = useMemo(() => new Map(topTracks.map((item) => [item.track.id, item.playCount])), [topTracks])
   const addedVisible = recentAdded.length > 0 && !isSectionHidden('home.recent')
   const playlistVisible = featuredPlaylists.length > 0 && !isSectionHidden('home.playlists')
   const playlistTitle = t(hasPlaylistHistory ? 'Frequently played playlists' : 'Your playlists')
+  const trackActions = { unknownArtist, onPlay, onTrackMenu, onSectionMenu }
 
   return (
     <>
-      {recommendations}
-      <div className="home-content-grid">
-        <div className="home-content-main">
-          {playedVisible ? (
-            <TrackRail title={t('Listened recently')} id="home.played" tracks={recentPlays} unknownArtist={unknownArtist} onPlay={onPlay} onTrackMenu={onTrackMenu} onSectionMenu={onSectionMenu} />
-          ) : null}
-          <TrackRail title={t('Most played')} id="home.top" tracks={topList} caption={(track) => `${track.artistName ?? unknownArtist} · ${playCounts.get(track.id) ?? 0} ${t('plays')}`} unknownArtist={unknownArtist} onPlay={onPlay} onTrackMenu={onTrackMenu} onSectionMenu={onSectionMenu} />
-          <TrackRail title={t('Long time no listen')} id="home.dormant" tracks={dormantTracks} unknownArtist={unknownArtist} onPlay={onPlay} onTrackMenu={onTrackMenu} onSectionMenu={onSectionMenu} />
-          <TrackRail title={t('Likes')} id="home.likes" tracks={likedTracks} unknownArtist={unknownArtist} onOpen={likesPlaylist ? () => onOpenPlaylist(likesPlaylist) : undefined} onPlay={onPlay} onTrackMenu={onTrackMenu} onSectionMenu={onSectionMenu} />
-        </div>
-        <div className="home-content-side">
+      <div className={`home-content-grid${recommendations && (addedVisible || playlistVisible) ? ' has-two-columns' : ''}`}>
+        {recommendations && <div className="home-content-main">{recommendations}</div>}
+        {(addedVisible || playlistVisible) && <div className="home-content-side">
           {addedVisible ? (
-            <section className="home-section home-recent-section">
+            <section className="home-section home-recent-section" aria-label={t('Recently added')}>
               <div className="home-section-head" onContextMenu={(event) => onSectionMenu(event, { title: t('Recently added'), id: 'home.recent', tracks: recentAdded })}>
-                <span className="home-section-title">{t('Recently added')}</span>
+                <span className="home-section-title">{t('Recently added')}</span><Clock3 size={15} />
               </div>
               <div className="home-new-list">
-                {recentAdded.slice(0, 10).map((track, index) => (
+                {recentAdded.map((track, index) => (
                   <button key={track.id} type="button" className="home-new-track" onClick={() => { if (!consumeDragClick()) onPlay(recentAdded, index) }} onPointerDown={(event) => startDrag(event, track)} onContextMenu={(event) => onTrackMenu(event, track, recentAdded, index)}>
-                    <Cover path={track.coverPath} label={track.title} size={40} />
+                    <Cover path={track.coverPath} label={track.title} size={33} />
                     <span><strong>{track.title}</strong><small>{track.artistName ?? unknownArtist}</small></span>
+                    <small className="home-new-track-duration">{fmtTime(track.durationSec)}</small>
+                    <Play size={13} className="home-new-track-play" />
                   </button>
                 ))}
               </div>
             </section>
           ) : null}
           {playlistVisible ? (
-            <section className="home-section home-playlist-section">
+            <section className="home-section home-playlist-section" aria-label={playlistTitle}>
               <div className="home-section-head" onContextMenu={(event) => onSectionMenu(event, { title: playlistTitle, id: 'home.playlists' })}>
-                <span className="home-section-title">{playlistTitle}</span>
+                <span className="home-section-title">{playlistTitle}</span><ListMusic size={15} />
               </div>
               <div className="home-playlist-list">
                 {featuredPlaylists.map((playlist) => (
                   <div key={playlist.id} className="home-playlist-card" onContextMenu={(event) => onSectionMenu(event, { title: playlistTitle, id: 'home.playlists' })}>
                     <button type="button" className="home-playlist-open" onClick={() => onOpenPlaylist(playlist)}>
-                      <Cover path={playlist.coverPath} label={playlist.name} size={45} />
+                      <Cover path={playlist.coverPath} label={playlist.name} size={33} />
                       <span><strong>{playlistDisplayName(playlist, playlist.name, t)}</strong><small>{playlist.trackCount} {t('tracks')}</small></span>
                     </button>
                     <button type="button" className="home-playlist-play" aria-label={`${t('Play all')}: ${playlist.name}`} onClick={() => onPlayPlaylist(playlist)}><Play size={16} fill="currentColor" /></button>
@@ -138,7 +140,14 @@ export default function HomeShelves({ topTracks, recentAdded, recentPlays, dorma
               </div>
             </section>
           ) : null}
-        </div>
+        </div>}
+      </div>
+      <div className="home-library-shelves">
+        <TrackRail title={t('Listened recently')} id="home.played" tracks={recentPlays} {...trackActions} />
+        <TrackRail title={t('Most played')} id="home.top" tracks={topList}
+          caption={(track) => `${track.artistName ?? unknownArtist} · ${playCounts.get(track.id) ?? 0} ${t('plays')}`} {...trackActions} />
+        <TrackRail title={t('Likes')} id="home.likes" tracks={likedTracks}
+          onOpen={likesPlaylist ? () => onOpenPlaylist(likesPlaylist) : undefined} {...trackActions} />
       </div>
     </>
   )

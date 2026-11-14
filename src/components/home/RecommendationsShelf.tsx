@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
 import { ChevronLeft, ChevronRight, Download, LoaderCircle, Play, RefreshCw } from 'lucide-react'
 import type { ScTrack } from '../../types/models'
 import { useT } from '../../i18n'
@@ -7,7 +7,7 @@ import { useSoundCloudGenreRecommendations } from '../../hooks/useSoundCloudGenr
 import { getTrackCacheProgress, subscribeTrackCacheProgress } from '../../soundcloud/cacheJobs'
 import { useSettings } from '../../state/settings'
 import ScArtwork from '../common/ScArtwork'
-import { RECOMMENDATION_CARD_SIZE, RECOMMENDATION_CARD_STEP, useRecommendationRail } from './useRecommendationRail'
+import { HOME_RAIL_CARD_SIZE, HOME_RAIL_STEP, homeRailLayout, onHomeRailKeyDown, scrollHomeRail, useRecommendationRail } from './useRecommendationRail'
 
 interface RecommendationsShelfProps {
   tracks: ScTrack[]
@@ -96,25 +96,6 @@ const RecommendationCacheControl = memo(function RecommendationCacheControl({ tr
   )
 })
 
-const railLayout = {
-  '--recommendation-card-size': `${RECOMMENDATION_CARD_SIZE}px`,
-  '--recommendation-card-gap': `${RECOMMENDATION_CARD_STEP - RECOMMENDATION_CARD_SIZE}px`,
-} as CSSProperties
-
-function scrollRailWithKeyboard(event: KeyboardEvent<HTMLDivElement>) {
-  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-  const rail = event.currentTarget
-  rail.focus({ preventScroll: true })
-  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-    rail.scrollBy({ left: event.key === 'ArrowLeft' ? -460 : 460, behavior: 'smooth' })
-  } else {
-    rail.scrollTo({ left: event.key === 'Home' ? 0 : rail.scrollWidth })
-  }
-  event.preventDefault()
-  event.stopPropagation()
-}
-
 export default function RecommendationsShelf({
   tracks,
   favoriteGenre,
@@ -140,7 +121,7 @@ export default function RecommendationsShelf({
 }: RecommendationsShelfProps) {
   const t = useT()
   const { settings } = useSettings()
-  const artworkPixels = RECOMMENDATION_CARD_SIZE * (Math.max(50, Math.min(200, settings.font.uiScalePct)) / 100) * (window.devicePixelRatio || 1)
+  const artworkPixels = HOME_RAIL_CARD_SIZE * (Math.max(50, Math.min(200, settings.font.uiScalePct)) / 100) * (window.devicePixelRatio || 1)
   const resolution = artworkPixels <= 200 ? 'small-card' : artworkPixels <= 300 ? 'card' : 'full'
   const {
     tracks: favoriteGenreTracks,
@@ -163,7 +144,6 @@ export default function RecommendationsShelf({
   const trimFrame = useRef<number | null>(null)
   const [expiredRetryAt, setExpiredRetryAt] = useState<number | null>(() => retryAt === null || retryAt <= Date.now() ? retryAt : null)
   const coolingDown = retryAt !== null && retryAt > Date.now() && expiredRetryAt !== retryAt
-  const scroll = (direction: number) => railRef.current?.scrollBy({ left: direction * 460, behavior: 'smooth' })
 
   useEffect(() => {
     const section = sectionRef.current
@@ -295,11 +275,11 @@ export default function RecommendationsShelf({
       trimFrame.current = null
       const rail = railRef.current
       if (!rail || tracks.length < 280 || trimAnchor.current) return
-      const fullyPassed = Math.floor((rail.scrollLeft - RECOMMENDATION_CARD_SIZE) / RECOMMENDATION_CARD_STEP) + 1
+      const fullyPassed = Math.floor((rail.scrollLeft - HOME_RAIL_CARD_SIZE) / HOME_RAIL_STEP) + 1
       const count = Math.min(20, fullyPassed)
       if (count <= 0) return
       const anchor = tracks[count]
-      trimAnchor.current = { id: anchor.id, left: rail.scrollLeft - count * RECOMMENDATION_CARD_STEP }
+      trimAnchor.current = { id: anchor.id, left: rail.scrollLeft - count * HOME_RAIL_STEP }
       onTrimPassed(tracks.slice(0, count).map(track => `soundcloud:${track.id}`))
     })
   }, [onTrimPassed, tracks, railRef])
@@ -318,17 +298,18 @@ export default function RecommendationsShelf({
     measureMainRail()
   }, [tracks, railRef, measureMainRail])
 
-  const renderCards = (items: ScTrack[], start: number, end: number, play: (index: number) => void, cachedIds = cachedTrackIds) => items.slice(start, end).map((track, offset) => (
+  const renderCards = (items: ScTrack[], rail: typeof mainRail, play: (index: number) => void, cachedIds = cachedTrackIds) => items.slice(rail.start, rail.end).map((track, offset) => (
     <div className="home-recommendation-card" key={track.id} data-track-id={track.id}>
       <button
         type="button"
         className="home-rail-track"
-        onClick={() => { if (!consumeDragClick()) play(start + offset) }}
+        onClick={() => { if (!consumeDragClick()) play(rail.start + offset) }}
         onPointerDown={(event: PointerEvent<HTMLButtonElement>) => beginTrackDrag({
           e: event,
           title: track.title,
           coverPath: track.artworkUrl,
           allowButtons: true,
+          scrollRail: rail.ref.current,
           onDrop: (playlistId) => onDropToPlaylist(playlistId, track),
         })}
       >
@@ -347,62 +328,73 @@ export default function RecommendationsShelf({
     play: (index: number) => void, cachedIds?: ReadonlySet<string>, onScroll?: () => void,
   ) => (
     <div className="home-track-rail home-recommendation-rail" ref={rail.ref} onScroll={onScroll}
-      onKeyDown={scrollRailWithKeyboard} tabIndex={0} aria-label={label} style={railLayout}>
-      <div className="home-recommendation-row" style={{
-        width: items.length * RECOMMENDATION_CARD_STEP + 1,
-        paddingInlineStart: rail.start * RECOMMENDATION_CARD_STEP,
+      onKeyDown={onHomeRailKeyDown} tabIndex={0} aria-label={label} style={homeRailLayout}>
+      <div className="home-rail-row" style={{
+        width: items.length * HOME_RAIL_STEP + 1,
+        paddingInlineStart: rail.start * HOME_RAIL_STEP,
       }}>
-        {renderCards(items, rail.start, rail.end, play, cachedIds)}
+        {renderCards(items, rail, play, cachedIds)}
         <span ref={sentinel} className="home-recommendation-end" aria-hidden="true" />
       </div>
     </div>
   )
 
   return (
-    <section className="home-section home-recommendations" ref={sectionRef}>
-      <div className="home-section-head" onContextMenu={onSectionMenu}>
-        <div className="home-recommendations-title">
-          <span className="home-section-title">{t('Recommended for you')}</span>
-          <small>{t('Based on what you listen to')}</small>
-        </div>
-        <div className="home-section-tools">
+    <section className="home-recommendations" ref={sectionRef} aria-label={t('Recommended for you')} style={homeRailLayout}>
+      <div className="home-section home-recommendations-panel">
+        <div className="home-section-head" onContextMenu={onSectionMenu}>
+          <div className="home-recommendations-title">
+            <span className="home-section-title">{t('Recommended for you')}</span>
+            <small>{t('Based on what you listen to')}</small>
+          </div>
+          <div className="home-section-tools">
             <button type="button" className="btn btn-ghost home-recommendations-play" onClick={() => onPlay(0)} disabled={tracks.length === 0}>
               <Play size={14} fill="currentColor" />
               {t('Play all')}
             </button>
-          {error || persistenceError ? (
-            <button type="button" className="btn btn-ghost" onClick={onRetry} disabled={coolingDown || loading}>
-              <RefreshCw size={14} />
-              {t(coolingDown ? 'Retry after cooldown' : 'Try again')}
-            </button>
-          ) : hasMore ? (
-            <button type="button" className="btn btn-ghost" onClick={onLoadMore} disabled={loading || coolingDown}>
-              <RefreshCw size={14} className={loading ? 'spin' : undefined} />
-              {t(coolingDown ? 'Retry after cooldown' : 'Load more')}
-            </button>
-          ) : null}
-          {tracks.length > 4 ? (
-            <div className="home-rail-controls home-recommendations-scroll-controls">
-              <button type="button" aria-label={t('Scroll left')} onClick={() => scroll(-1)}><ChevronLeft size={15} /></button>
-              <button type="button" aria-label={t('Scroll right')} onClick={() => scroll(1)}><ChevronRight size={15} /></button>
-            </div>
-          ) : null}
+            {error || persistenceError ? (
+              <button type="button" className="btn btn-ghost" onClick={onRetry} disabled={coolingDown || loading}>
+                <RefreshCw size={14} />
+                {t(coolingDown ? 'Retry after cooldown' : 'Try again')}
+              </button>
+            ) : hasMore ? (
+              <button type="button" className="btn btn-ghost" onClick={onLoadMore} disabled={loading || coolingDown}>
+                <RefreshCw size={14} className={loading ? 'spin' : undefined} />
+                {t(coolingDown ? 'Retry after cooldown' : 'Load more')}
+              </button>
+            ) : null}
+            {tracks.length > 0 && (mainRail.canScrollLeft || mainRail.canScrollRight) ? (
+              <div className="home-rail-controls home-recommendations-scroll-controls">
+                <button type="button" aria-label={t('Scroll left')} disabled={!mainRail.canScrollLeft} onClick={() => scrollHomeRail(railRef.current, -1)}><ChevronLeft size={15} /></button>
+                <button type="button" aria-label={t('Scroll right')} disabled={!mainRail.canScrollRight} onClick={() => scrollHomeRail(railRef.current, 1)}><ChevronRight size={15} /></button>
+              </div>
+            ) : null}
+          </div>
         </div>
-      </div>
 
-      {loading && tracks.length === 0 ? (
-        <div className="home-recommendation-skeletons" role="status" aria-label={t('Loading…')}>
-          {Array.from({ length: 5 }, (_, index) => <span className="home-recommendation-skeleton" key={index} />)}
-        </div>
-      ) : tracks.length > 0 ? (
-        renderRail(mainRail, endRef, t('Recommended for you'), tracks, onPlay, cachedTrackIds, trimPassed)
-      ) : error ? (
-        <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}</div>
-      ) : (
-        <div className="home-recommendation-empty" role="status">
-          {t(exhausted ? 'No more recommendations' : hasLoaded ? 'No recommendations yet' : 'SoundCloud recommendations will appear here.')}
-        </div>
-      )}
+        {loading && tracks.length === 0 ? (
+          <div className="home-recommendation-skeletons" role="status" aria-label={t('Loading…')}>
+            {Array.from({ length: 5 }, (_, index) => <span className="home-recommendation-skeleton" key={index} />)}
+          </div>
+        ) : tracks.length > 0 ? (
+          renderRail(mainRail, endRef, t('Recommended for you'), tracks, onPlay, cachedTrackIds, trimPassed)
+        ) : error ? (
+          <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}</div>
+        ) : (
+          <div className="home-recommendation-empty" role="status">
+            {t(exhausted ? 'No more recommendations' : hasLoaded ? 'No recommendations yet' : 'SoundCloud recommendations will appear here.')}
+          </div>
+        )}
+        {error || persistenceError ? (
+          <small className="home-recommendation-error" role="status">
+            {error ? <span>{tracks.length > 0 ? `${t('Could not load recommendations')}: ` : ''}{error}</span> : null}
+            {persistenceError ? <span>{t('Could not save recommendations')}: {persistenceError}</span> : null}
+          </small>
+        ) : null}
+        {tracks.length > 0 && (exhausted || coolingDown) ? (
+          <small className="muted" role="status">{t(coolingDown ? 'Retry after cooldown' : 'No more recommendations')}</small>
+        ) : null}
+      </div>
       {favoriteGenre ? (
         <div className="home-favorite-genre">
           <div className="home-section-head">
@@ -423,6 +415,10 @@ export default function RecommendationsShelf({
                   {t('Try again')}
                 </button>
               ) : null}
+              {(genreRail.canScrollLeft || genreRail.canScrollRight) && favoriteGenreTracks.length > 0 && <div className="home-rail-controls">
+                <button type="button" aria-label={t('Scroll left')} disabled={!genreRail.canScrollLeft} onClick={() => scrollHomeRail(genreRailRef.current, -1)}><ChevronLeft size={15} /></button>
+                <button type="button" aria-label={t('Scroll right')} disabled={!genreRail.canScrollRight} onClick={() => scrollHomeRail(genreRailRef.current, 1)}><ChevronRight size={15} /></button>
+              </div>}
             </div>
           </div>
           {genreLoading && favoriteGenreTracks.length === 0 ? (
@@ -445,15 +441,6 @@ export default function RecommendationsShelf({
             </div>
           )}
         </div>
-      ) : null}
-      {error || persistenceError ? (
-        <small className="home-recommendation-error" role="status">
-          {error ? <span>{tracks.length > 0 ? `${t('Could not load recommendations')}: ` : ''}{error}</span> : null}
-          {persistenceError ? <span>{t('Could not save recommendations')}: {persistenceError}</span> : null}
-        </small>
-      ) : null}
-      {tracks.length > 0 && (exhausted || coolingDown) ? (
-        <small className="muted" role="status">{t(coolingDown ? 'Retry after cooldown' : 'No more recommendations')}</small>
       ) : null}
     </section>
   )

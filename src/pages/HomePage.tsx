@@ -260,13 +260,10 @@ export default function HomePage() {
         />
       ) : (
         <>
-
-
           <HomeShelves
             topTracks={topTracks}
             recentAdded={recentAdded}
             recentPlays={recentPlays}
-            dormantTracks={home.data?.dormantTracks ?? NO_TRACKS}
             likedTracks={likedTracks}
             likesPlaylist={home.data?.likesPlaylist ?? null}
             featuredPlaylists={featuredPlaylists}

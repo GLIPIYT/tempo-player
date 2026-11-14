@@ -254,6 +254,8 @@ export function beginTrackDrag(opts: {
   onDrop?: (playlistId: number) => void
   /** allow starting the drag from inside a <button> (home page cards are buttons) */
   allowButtons?: boolean
+  /** A horizontal gesture over the originating Home rail scrolls it. */
+  scrollRail?: HTMLDivElement | null
   /** Optional in-place sort targets; playlist drops remain copy operations. */
   sort?: {
     group: string
@@ -265,6 +267,9 @@ export function beginTrackDrag(opts: {
   }
 }): void {
   const { e, title, coverPath, trackId, sourceTrack } = opts
+  if (e.button !== 0) return
+  const scrollRail = opts.scrollRail
+  if (scrollRail && e.pointerType === 'touch') return
   if (!opts.onDrop && (!Number.isInteger(trackId) || (trackId ?? 0) <= 0)) return
   const el = e.currentTarget
   if (!opts.allowButtons && (e.target as HTMLElement).closest('button')) return
@@ -305,14 +310,23 @@ export function beginTrackDrag(opts: {
     sortTarget: null,
   }
   const THRESHOLD = 5
+  const scrollScale = scrollRail ? scrollRail.getBoundingClientRect().width / scrollRail.offsetWidth || 1 : 1
+  let lastScrollX: number | null = null
   const onMove = (ev: PointerEvent) => {
     if (ev.pointerId !== s.pointerId) return
     const dx = ev.clientX - s.startX
     const dy = ev.clientY - s.startY
     if (!s.active) {
       if (Math.abs(dx) < THRESHOLD && Math.abs(dy) < THRESHOLD) return
+      if (scrollRail && (lastScrollX !== null || (scrollRail.scrollWidth > scrollRail.clientWidth && Math.abs(dx) > Math.abs(dy) * 2
+        && scrollRail.contains(document.elementFromPoint(ev.clientX, ev.clientY))))) {
+        scrollRail.scrollLeft += ((lastScrollX ?? s.startX) - ev.clientX) / scrollScale
+        lastScrollX = ev.clientX
+        return
+      }
       s.active = true
       s.activated = true
+      if (scrollRail) startWatch(s)
       s.onSortActivate?.()
     }
     s.tx = ev.clientX
@@ -338,9 +352,12 @@ export function beginTrackDrag(opts: {
     window.removeEventListener('pointerup', onUp)
     window.removeEventListener('pointercancel', onCancel)
     if (!s.active) {
-      session = null
-      notify()
-      notifyTargets()
+      if (lastScrollX !== null) lastDragEnd = Date.now()
+      if (session === s) {
+        session = null
+        notify()
+        notifyTargets()
+      }
       s.onSortFinish?.()
       return
     }
@@ -379,13 +396,14 @@ export function beginTrackDrag(opts: {
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
     window.removeEventListener('pointercancel', onCancel)
+    if (lastScrollX !== null) lastDragEnd = Date.now()
     if (s.active) {
       lastDragEnd = Date.now()
       s.active = false
       s.targetId = null
       s.tx = s.ox
       s.ty = s.oy
-    } else {
+    } else if (session === s) {
       session = null
       notify()
     }
@@ -396,7 +414,7 @@ export function beginTrackDrag(opts: {
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
   window.addEventListener('pointercancel', onCancel)
-  startWatch(s)
+  if (!scrollRail) startWatch(s)
 }
 
 export function beginFavoriteReorder(opts: {
