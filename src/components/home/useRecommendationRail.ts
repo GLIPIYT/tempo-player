@@ -4,7 +4,7 @@ export const RECOMMENDATION_CARD_SIZE = 118
 export const RECOMMENDATION_CARD_STEP = RECOMMENDATION_CARD_SIZE + 12
 const OVERSCAN = 2
 
-export function useRecommendationRail(count: number) {
+export function useRecommendationRail(count: number, step = RECOMMENDATION_CARD_STEP) {
   const ref = useRef<HTMLDivElement>(null)
   const [range, setRange] = useState({ start: 0, end: 0 })
   const [nearViewport, setNearViewport] = useState(false)
@@ -12,10 +12,10 @@ export function useRecommendationRail(count: number) {
   const measure = useCallback(() => {
     const rail = ref.current
     if (!rail) return
-    const start = Math.min(count, Math.max(0, Math.floor(rail.scrollLeft / RECOMMENDATION_CARD_STEP) - OVERSCAN))
-    const end = Math.min(count, Math.max(start, Math.ceil((rail.scrollLeft + rail.clientWidth) / RECOMMENDATION_CARD_STEP) + OVERSCAN))
+    const start = Math.min(count, Math.max(0, Math.floor(rail.scrollLeft / step) - OVERSCAN))
+    const end = Math.min(count, Math.max(start, Math.ceil((rail.scrollLeft + rail.clientWidth) / step) + OVERSCAN))
     setRange(current => current.start === start && current.end === end ? current : { start, end })
-  }, [count])
+  }, [count, step])
 
   useLayoutEffect(() => {
     const rail = ref.current

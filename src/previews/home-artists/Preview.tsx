@@ -2,17 +2,21 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { createRoot } from 'react-dom/client'
 import {
   Activity, ArrowDownToLine, ArrowDownUp, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight,
-  Clock3, Disc3, Headphones, Heart, House, ListMusic, MicVocal, Music2, Pause, Play,
+  Clock3, Disc3, Headphones, Heart, House, ListMusic, MicVocal, Music2, Pause, Play, Plus,
   Repeat2, Search, Shuffle, SkipBack, SkipForward, Volume2, X,
 } from 'lucide-react'
 import { normalizeSearchText } from '../../utils/searchText'
-import { artists, favoriteArtists, genreTracks, mixes, recent, recommendations, tracks, type Artist, type Mix, type Track } from './fixtures'
+import { useRecommendationRail } from '../../components/home/useRecommendationRail'
+import {
+  artists, favoriteArtists, genreTracks, initialLikes, mixes, mostPlayed, playlists,
+  recent, recentlyAdded, recommendations, tracks, type Artist, type Mix, type Track,
+} from './fixtures'
 import '../../styles/global.css'
 import './preview.css'
 
 type Page = 'home' | 'artists'
 type Variant = 'a' | 'b' | 'c'
-type Modal = { kind: 'mix'; mix: Mix } | { kind: 'artist'; artist: Artist } | { kind: 'all-mixes' }
+type Modal = { kind: 'mix'; mix: Mix } | { kind: 'artist'; artist: Artist } | { kind: 'all-mixes' } | { kind: 'new-rule' }
 type PlayTracks = (tracks: Track[], index?: number) => void
 const LOGO = '/docs/brand/icon-concepts/vector/pulse-violet.svg'
 const BG = '/docs/design/1.0-remaster/home-assets/night-transit.png'
@@ -58,42 +62,109 @@ function TrackRow({ song, onPlay, active = false }: { song: Track; onPlay: () =>
 
 function TrackShelf({ title, songs, variant, onPlay, current, cached, onCache }: {
   title: string; songs: Track[]; variant: Variant; onPlay: PlayTracks; current: Track | undefined;
-  cached: Set<number>; onCache: (id: number) => void
+  cached: Set<number>; onCache?: (id: number) => void
 }) {
   const [offset, setOffset] = useState(0)
-  const count = variant === 'a' ? 5 : variant === 'b' ? 4 : 3
+  const smooth = variant === 'b'
+  const cardSize = 88
+  const step = cardSize + 10
+  const rail = useRecommendationRail(smooth ? songs.length : 0, step)
+  const [edges, setEdges] = useState({ start: true, end: false })
+  const drag = useRef<{ pointerId: number; x: number; left: number; moved: boolean } | null>(null)
+  const suppressClick = useRef(false)
+  const count = variant === 'a' ? 5 : 3
   const max = Math.max(0, songs.length - count)
-  const visible = songs.slice(offset, offset + count)
+  const start = smooth ? rail.start : offset
+  const visible = songs.slice(start, smooth ? rail.end : offset + count)
+  const { ref } = rail
+  useLayoutEffect(() => {
+    const node = ref.current
+    if (!node) return
+    const update = () => {
+      const start = node.scrollLeft <= 1
+      const end = node.scrollLeft + node.clientWidth >= node.scrollWidth - 1
+      setEdges(prior => prior.start === start && prior.end === end ? prior : { start, end })
+    }
+    const observer = new ResizeObserver(update)
+    observer.observe(node)
+    node.addEventListener('scroll', update, { passive: true })
+    update()
+    return () => { observer.disconnect(); node.removeEventListener('scroll', update) }
+  }, [ref, songs.length])
+  const slide = (direction: number) => {
+    if (!smooth) { setOffset(value => Math.min(max, Math.max(0, value + count * direction))); return }
+    const node = ref.current
+    if (node) node.scrollBy({
+      left: direction * Math.max(1, Math.floor(node.clientWidth / step) - 1) * step,
+      behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+    })
+  }
+  if (!songs.length) return null
+  const cards = visible.map((song, i) => <article className="pv-shelf-track" key={song.id}>
+    {variant === 'c' ? <TrackRow song={song} active={current?.id === song.id} onPlay={() => onPlay(songs, start + i)} /> :
+      <button className="pv-track-card" aria-pressed={current?.id === song.id} onClick={() => onPlay(songs, start + i)}>
+        <span className="pv-card-image"><Artwork art={song.art} name={song.title} /><span className="pv-art-play"><Play size={18} fill="currentColor" /></span></span>
+        <strong title={song.title}>{song.title}</strong><small title={song.artist}>{song.artist}</small>
+      </button>}
+    {onCache && <button className="pv-icon pv-cache" aria-label={cached.has(song.id) ? `Скачано — ${song.title}` : `Кэшировать — ${song.title}`}
+      aria-pressed={cached.has(song.id)} onClick={() => onCache(song.id)}
+      title={cached.has(song.id) ? 'Скачано' : 'Кэшировать'}>{cached.has(song.id) ? <Check size={14} /> : <ArrowDownToLine size={14} />}</button>}
+  </article>)
   return <section className={`pv-track-shelf pv-shelf-${variant}`} aria-label={title}>
     <header className="pv-section-head">
       <h2>{title}</h2>
       <div className="pv-shelf-nav">
         <button className="pv-icon" onClick={() => onPlay(songs)} title="Воспроизвести все" aria-label={`Воспроизвести все — ${title}`}><Play size={14} /></button>
-        <button className="pv-icon" onClick={() => setOffset(Math.max(0, offset - count))} disabled={offset === 0} aria-label={`Назад — ${title}`}><ChevronLeft size={15} /></button>
-        <button className="pv-icon" onClick={() => setOffset(Math.min(offset + count, max))} disabled={offset >= max} aria-label={`Дальше — ${title}`}><ChevronRight size={15} /></button>
+        <button className="pv-icon" onClick={() => slide(-1)} disabled={smooth ? edges.start : offset === 0} aria-label={`Назад — ${title}`}><ChevronLeft size={15} /></button>
+        <button className="pv-icon" onClick={() => slide(1)} disabled={smooth ? edges.end : offset >= max} aria-label={`Дальше — ${title}`}><ChevronRight size={15} /></button>
       </div>
     </header>
-    <div className="pv-shelf-items" key={offset}>
-      {visible.map((song, i) => <article className="pv-shelf-track" key={song.id}>
-        {variant === 'c' ? <TrackRow song={song} active={current?.id === song.id} onPlay={() => onPlay(songs, offset + i)} /> :
-          <button className="pv-track-card" aria-pressed={current?.id === song.id} onClick={() => onPlay(songs, offset + i)}>
-            <span className="pv-card-image"><Artwork art={song.art} name={song.title} /><span className="pv-art-play"><Play size={18} fill="currentColor" /></span></span>
-            <strong>{song.title}</strong><small>{song.artist}</small>
-          </button>}
-        <button className="pv-icon pv-cache" aria-label={cached.has(song.id) ? `Скачано — ${song.title}` : `Кэшировать — ${song.title}`}
-          aria-pressed={cached.has(song.id)} onClick={() => onCache(song.id)}
-          title={cached.has(song.id) ? 'Скачано' : 'Кэшировать'}>{cached.has(song.id) ? <Check size={14} /> : <ArrowDownToLine size={14} />}</button>
-      </article>)}
-    </div>
+    {smooth ? <div className="pv-shelf-scroll" ref={ref} tabIndex={0} aria-label={`Прокрутить — ${title}`}
+      onPointerDown={event => {
+        suppressClick.current = false
+        if (event.pointerType !== 'mouse' || event.button !== 0 || (event.target as Element).closest('.pv-cache')) return
+        drag.current = { pointerId: event.pointerId, x: event.clientX, left: event.currentTarget.scrollLeft, moved: false }
+      }}
+      onPointerMove={event => {
+        const active = drag.current
+        if (!active || active.pointerId !== event.pointerId || !(event.buttons & 1)) return
+        const dx = event.clientX - active.x
+        if (!active.moved && Math.abs(dx) < 6) return
+        if (!active.moved) {
+          active.moved = true
+          event.currentTarget.setPointerCapture(event.pointerId)
+        }
+        suppressClick.current = true
+        event.currentTarget.scrollLeft = active.left - dx
+      }}
+      onLostPointerCapture={() => { drag.current = null }}
+      onPointerUp={() => { drag.current = null }}
+      onPointerCancel={() => { drag.current = null }}
+      onClickCapture={event => {
+        if (!suppressClick.current || event.detail === 0) return
+        suppressClick.current = false
+        event.stopPropagation()
+      }}
+      onKeyDown={event => {
+        if (event.target !== event.currentTarget || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+        event.preventDefault()
+        slide(event.key === 'ArrowLeft' ? -1 : 1)
+      }}>
+      <div className="pv-shelf-window" style={{ width: songs.length * step - 10, paddingInlineStart: start * step, '--shelf-card': `${cardSize}px` } as CSSProperties}>{cards}</div>
+    </div> : <div className="pv-shelf-items" key={offset}>{cards}</div>}
   </section>
 }
 
-function Home({ variant, onPlay, open, current, cached, onCache }: {
+function Home({ variant, onPlay, open, current, cached, onCache, mixList, liked }: {
   variant: Variant; onPlay: PlayTracks; open: (modal: Modal) => void; current: Track | undefined;
-  cached: Set<number>; onCache: (id: number) => void
+  cached: Set<number>; onCache: (id: number) => void; mixList: Mix[]; liked: ReadonlySet<number>
 }) {
-  const [selected, setSelected] = useState(0)
-  const mix = mixes[selected]
+  const [selected, setSelected] = useState<Mix | null>(null)
+  const [railOpen, setRailOpen] = useState(false)
+  const collapsed = variant === 'b'
+  const mix = selected ?? mixList[0]
+  const artworks = [...new Set(mix.tracks.flatMap(song => song.art && song.art !== mix.art ? [song.art] : []))]
+  const shelf = { variant, onPlay, current, cached }
   return <div className={`pv-page pv-home pv-home-${variant}`}>
     <header className="pv-page-head">
       <div><h1>Главная</h1></div>
@@ -109,30 +180,66 @@ function Home({ variant, onPlay, open, current, cached, onCache }: {
           <div className="pv-hero-actions"><PlayAll onClick={() => onPlay(mix.tracks)}>Слушать подборку</PlayAll>
             <button className="pv-secondary" onClick={() => open({ kind: 'mix', mix })}>Посмотреть треки<ArrowRight size={15} /></button></div>
         </div>
-        <button className="pv-mix-art" onClick={() => open({ kind: 'mix', mix })} aria-label={`Открыть подборку ${mix.name}`}>
+        <button className={`pv-mix-art${collapsed ? ' has-three-cards' : ''}`} onClick={() => open({ kind: 'mix', mix })} aria-label={`Открыть подборку ${mix.name}`}>
+          {collapsed && <>
+            <span className="pv-stack-card is-left" aria-hidden="true"><Artwork art={artworks[0] ?? mix.art} name={mix.name} /></span>
+            <span className="pv-stack-card is-right" aria-hidden="true"><Artwork art={artworks[1] ?? mix.art} name={mix.name} /></span>
+          </>}
           {variant === 'c' && <span className="pv-art-stack" aria-hidden="true"><Artwork art={mix.tracks[2]?.art ?? mix.art} name={mix.name} /></span>}
           <Artwork art={mix.art} name={mix.name} eager />
         </button>
       </article>
-      <div className="pv-mix-selector" aria-label="Выбор подборки">
-        {mixes.map((item, index) => <button key={item.name} aria-pressed={index === selected}
-          className={index === selected ? 'is-selected' : undefined} onClick={() => setSelected(index)}>
-          {variant !== 'c' && <Artwork art={item.art} name={item.name} />}
-          <span><strong>{item.name}</strong>{variant === 'b' && <small>{item.kind}</small>}</span>
-          {variant === 'b' && <ChevronRight size={16} />}
-        </button>)}
+      <div className={`pv-mix-dock${collapsed && railOpen ? ' is-expanded' : ''}`}>
+        <div className="pv-mix-selector" id="pv-mix-selector" role="group" aria-label="Выбор подборки"
+          onKeyDown={event => {
+            if (event.key === 'Escape' && collapsed) {
+              setRailOpen(false)
+              event.currentTarget.querySelector<HTMLButtonElement>('.pv-mix-expand')?.focus()
+            }
+          }}>
+          {collapsed && <button className="pv-mix-expand" aria-label={railOpen ? 'Свернуть колонку подборок' : 'Раскрыть колонку подборок'}
+            aria-expanded={railOpen} onClick={() => setRailOpen(value => !value)}><ChevronLeft size={16} /></button>}
+          <div className="pv-mix-options">
+            {mixList.map((item) => <button key={item.name} aria-pressed={item === mix} aria-label={item.name} title={item.name}
+              className={item === mix ? 'is-selected' : undefined} onClick={() => setSelected(item)}>
+              {variant !== 'c' && <Artwork art={item.art} name={item.name} />}
+              <span className="pv-mix-option-copy"><strong>{item.name}</strong>{collapsed && <small>{item.kind} · {item.tracks.length} тр.</small>}</span>
+              {collapsed && <ChevronRight size={15} className="pv-mix-option-arrow" />}
+            </button>)}
+          </div>
+          {collapsed && <button className="pv-mix-create" onClick={() => open({ kind: 'new-rule' })}><Plus size={16} />Добавить своё правило</button>}
+        </div>
       </div>
     </section>
     <div className="pv-home-bottom">
       <div className="pv-recommendations">
-        <TrackShelf title="Рекомендации для вас" songs={recommendations} {...{ variant, onPlay, current, cached, onCache }} />
-        <TrackShelf title="Alternative Rock" songs={genreTracks} {...{ variant, onPlay, current, cached, onCache }} />
+        <TrackShelf title="Рекомендации для вас" songs={recommendations} {...shelf} onCache={onCache} />
+        <TrackShelf title="Alternative Rock" songs={genreTracks} {...shelf} onCache={onCache} />
+        {collapsed && <>
+          <TrackShelf title="Слушали недавно" songs={recent} {...shelf} />
+          <TrackShelf title="Часто слушаете" songs={mostPlayed} {...shelf} />
+          <TrackShelf title="Лайки" songs={tracks.filter(song => liked.has(song.id))} {...shelf} />
+        </>}
       </div>
-      <section className="pv-recent" aria-label="Слушали недавно">
+      {collapsed ? <div className="pv-home-side">
+        <section className="pv-recent" aria-label="Недавно добавленные">
+          <header className="pv-section-head"><h2>Недавно добавленные</h2><Clock3 size={15} /></header>
+          {recentlyAdded.slice(0, 6).map((song, index) => <TrackRow key={song.id} song={song}
+            active={current?.id === song.id} onPlay={() => onPlay(recentlyAdded, index)} />)}
+        </section>
+        <section className="pv-recent pv-playlist-section" aria-label="Часто включаете">
+          <header className="pv-section-head"><h2>Часто включаете</h2><ListMusic size={15} /></header>
+          {playlists.map(list => <div key={list.name} className="pv-recent-playlist">
+            <button onClick={() => open({ kind: 'mix', mix: list })}><Artwork art={list.art} name={list.name} />
+              <strong title={list.name}>{list.name}</strong></button>
+            <button className="pv-icon" aria-label={`Воспроизвести — ${list.name}`} onClick={() => onPlay(list.tracks)}><Play size={15} /></button>
+          </div>)}
+        </section>
+      </div> : <section className="pv-recent" aria-label="Слушали недавно">
         <header className="pv-section-head"><h2>Слушали недавно</h2><Clock3 size={15} /></header>
         {recent.slice(0, variant === 'a' ? 4 : 6).map((song, index) =>
           <TrackRow key={song.id} song={song} active={current?.id === song.id} onPlay={() => onPlay(recent, index)} />)}
-      </section>
+      </section>}
     </div>
   </div>
 }
@@ -146,11 +253,9 @@ function ArtistCatalog({ items, variant, open }: { items: Artist[]; variant: Var
   const [columns, setColumns] = useState(WIDE_COLUMNS)
   const [rows, setRows] = useState({ start: 0, end: 5 })
   const [{ batches, addedFrom }, setBatch] = useState<{ batches: number; addedFrom: number | null }>({ batches: 1, addedFrom: null })
-  const tornSlots = columns >= 5 ? [0, 2, columns - 1] : [0, columns - 1]
-  const completeRows = batches * BATCH_ROWS - 1
-  const loaded = Math.min(items.length, completeRows * columns + tornSlots.length)
+  const loaded = Math.min(items.length, batches * BATCH_ROWS * columns)
   const remaining = loaded < items.length
-  const rowCount = remaining ? completeRows + 1 : Math.ceil(loaded / columns)
+  const rowCount = Math.ceil(loaded / columns)
   const loadMore = () => {
     setBatch(batch => ({ batches: batch.batches + 1, addedFrom: loaded }))
   }
@@ -204,8 +309,7 @@ function ArtistCatalog({ items, variant, open }: { items: Artist[]; variant: Var
     <div className="pv-catalog-cells" style={{ top: rows.start * ROW_HEIGHT }}>
       {items.slice(first, end).map((artist, offset) => {
         const index = first + offset
-        const last = remaining && index >= completeRows * columns
-        const column = last ? tornSlots[index - completeRows * columns] : index % columns
+        const column = index % columns
         const entering = addedFrom !== null && index >= addedFrom
         return <button key={artist.name} className={`pv-artist-card${entering ? ' is-entering' : ''}`} style={{
           gridColumn: column + 1, gridRow: Math.floor(index / columns) - rows.start + 1,
@@ -235,7 +339,9 @@ function Artists({ variant, onPlay, open, query, setQuery }: {
       <header className="pv-section-head"><h2>Часто слушаете</h2><Headphones size={17} /></header>
       <div className="pv-featured-artists">
         {favoriteArtists.map((artist, index) => <article key={artist.name} className="pv-featured-artist pv-glass">
-          {artist.art && <Glow art={artist.art} />}
+          {artist.art && (variant === 'b'
+            ? <span className="pv-artist-wall" style={artStyle(artist.art)} aria-hidden="true" />
+            : <Glow art={artist.art} />)}
           <button className="pv-featured-open" onClick={() => openArtist(artist)}>
             <Artwork art={artist.art} name={artist.name} eager round />
             <span className="pv-featured-copy">
@@ -262,16 +368,21 @@ function Artists({ variant, onPlay, open, query, setQuery }: {
   </div>
 }
 
-function PreviewDialog({ modal, close, open, onPlay }: {
-  modal: Modal; close: () => void; open: (modal: Modal) => void; onPlay: PlayTracks
+function PreviewDialog({ modal, close, open, onPlay, mixList, onCreateMix }: {
+  modal: Modal; close: () => void; open: (modal: Modal) => void; onPlay: PlayTracks;
+  mixList: Mix[]; onCreateMix: (mix: Mix) => void
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
+  const [name, setName] = useState('')
+  const [artistName, setArtistName] = useState('')
+  const [limit, setLimit] = useState(10)
   useEffect(() => {
     const element = dialog.current
     element?.showModal()
     return () => element?.close()
   }, [])
-  const title = modal.kind === 'mix' ? modal.mix.name : modal.kind === 'artist' ? modal.artist.name : 'Все подборки'
+  const title = modal.kind === 'mix' ? modal.mix.name : modal.kind === 'artist' ? modal.artist.name
+    : modal.kind === 'new-rule' ? 'Своё правило' : 'Все подборки'
   const art = modal.kind === 'mix' ? modal.mix.art : modal.kind === 'artist' ? modal.artist.art : null
   const songs = modal.kind === 'mix' ? modal.mix.tracks : modal.kind === 'artist' ? tracks.filter(song => song.artist === modal.artist.name) : []
   return <dialog className="pv-dialog" ref={dialog} aria-label={title} onCancel={event => { event.preventDefault(); close() }}
@@ -287,10 +398,25 @@ function PreviewDialog({ modal, close, open, onPlay }: {
         </div>
       </header>
       {modal.kind === 'all-mixes' ? <div className="pv-dialog-mixes">
-        {mixes.map(mix => <button className="pv-secondary" key={mix.name} onClick={() => open({ kind: 'mix', mix })}>
+        {mixList.map(mix => <button className="pv-secondary" key={mix.name} onClick={() => open({ kind: 'mix', mix })}>
           <Artwork art={mix.art} name={mix.name} /><strong>{mix.name}</strong><ArrowRight size={16} />
         </button>)}
-      </div> : songs.length ? <div className="pv-dialog-tracks">
+        <button className="pv-secondary" onClick={() => open({ kind: 'new-rule' })}><Plus size={16} /><strong>Добавить своё правило</strong></button>
+      </div> : modal.kind === 'new-rule' ? <form className="pv-rule-form" onSubmit={event => {
+        event.preventDefault()
+        const title = name.trim()
+        if (!title || mixList.some(mix => normalizeSearchText(mix.name) === normalizeSearchText(title))) return
+        const selected = (artistName ? tracks.filter(song => song.artist === artistName) : mostPlayed).slice(0, limit)
+        onCreateMix({ name: title, hint: artistName || '', kind: 'Своя подборка', tracks: selected, art: selected.find(song => song.art)?.art ?? mixList[0].art })
+      }}>
+        <label>Название подборки<input placeholder="Название подборки" value={name} onChange={event => setName(event.target.value)} maxLength={64} required /></label>
+        <label>Исполнитель<select value={artistName} onChange={event => setArtistName(event.target.value)}>
+          <option value="">Все исполнители</option>
+          {[...new Set(tracks.map(song => song.artist))].sort((a, b) => a.localeCompare(b, 'ru')).map(artist => <option key={artist}>{artist}</option>)}
+        </select></label>
+        <label>Количество песен <output>{limit}</output><input type="range" min={1} max={20} value={limit} onChange={event => setLimit(+event.target.value)} /></label>
+        <button className="pv-primary" disabled={!name.trim() || mixList.some(mix => normalizeSearchText(mix.name) === normalizeSearchText(name.trim()))}>Сохранить правило</button>
+      </form> : songs.length ? <div className="pv-dialog-tracks">
         {songs.map((song, index) => <TrackRow key={song.id} song={song} onPlay={() => { onPlay(songs, index); close() }} />)}
       </div> : <p className="pv-empty">В медиатеке нет записей для этого исполнителя</p>}
     </div>
@@ -302,6 +428,7 @@ function Preview() {
   const [wallpaper, setWallpaper] = useState(true)
   const [query, setQuery] = useState('')
   const [modal, setModal] = useState<Modal | null>(null)
+  const [mixList, setMixList] = useState(mixes)
   const [cached, setCached] = useState(new Set<number>())
   const [queue, setQueue] = useState({ tracks: recent, index: 0 })
   const [playing, setPlaying] = useState(false)
@@ -309,7 +436,7 @@ function Preview() {
   const [volume, setVolume] = useState(54)
   const [repeat, setRepeat] = useState(false)
   const [shuffle, setShuffle] = useState(false)
-  const [liked, setLiked] = useState(new Set<number>())
+  const [liked, setLiked] = useState(() => new Set(initialLikes))
   const scroll = useRef<HTMLElement>(null)
   const song = queue.tracks[queue.index]
 
@@ -370,7 +497,7 @@ function Preview() {
         </div>
         <div className="pv-side-pins">
           <h2>Избранное</h2>
-          <button onClick={() => setModal({ kind: 'mix', mix: { ...mixes[0], name: 'Лайки', tracks: tracks.filter(item => liked.has(item.id)) } })}><Heart size={15} />Лайки</button>
+          <button onClick={() => setModal({ kind: 'mix', mix: { ...mixList[0], name: 'Лайки', tracks: tracks.filter(item => liked.has(item.id)) } })}><Heart size={15} />Лайки</button>
           <button onClick={() => setModal({ kind: 'all-mixes' })}><ListMusic size={15} />Подборки</button>
           {favoriteArtists.map(artist => <button key={artist.name} onClick={() => setModal({ kind: 'artist', artist })}>
             <Artwork art={artist.art} name={artist.name} round />{artist.name}
@@ -378,7 +505,7 @@ function Preview() {
         </div>
       </aside>
       <main className="pv-main" ref={scroll}>
-        {page === 'home' ? <Home key={variant} variant={variant} onPlay={play} open={setModal} current={playing ? song : undefined} cached={cached} onCache={id => toggle(id, setCached)} />
+        {page === 'home' ? <Home key={variant} variant={variant} onPlay={play} open={setModal} current={playing ? song : undefined} cached={cached} onCache={id => toggle(id, setCached)} {...{ mixList, liked }} />
           : <Artists key={variant} {...{ variant, query, setQuery }} onPlay={play} open={setModal} />}
       </main>
       <footer className="pv-player">
@@ -403,7 +530,8 @@ function Preview() {
         </div>
       </footer>
     </div>
-    {modal && <PreviewDialog {...{ modal }} close={() => setModal(null)} open={setModal} onPlay={play} />}
+    {modal && <PreviewDialog key={modal.kind} {...{ modal, mixList }} close={() => setModal(null)} open={setModal} onPlay={play}
+      onCreateMix={mix => { setMixList(previous => [...previous, mix]); setModal({ kind: 'mix', mix }) }} />}
   </div>
 }
 

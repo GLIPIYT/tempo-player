@@ -20,6 +20,16 @@ const withArt = tracks.filter(item => item.art)
 export const recent = [...tracks.slice(0, 3), ...withArt.slice(14, 20)]
 export const recommendations = [...withArt.slice(20), ...withArt.slice(14, 20), ...withArt.slice(0, 8)]
 export const genreTracks = [...withArt.slice(14, 20), ...withArt.slice(3, 8), ...withArt.slice(-4)]
+export const mostPlayed = showcase.topTrackIds.flatMap(id => {
+  const song = tracks.find(item => item.id === id)
+  return song ? [song] : []
+})
+export const recentlyAdded = [...withArt.slice(-8), ...withArt.slice(5, 11)]
+export const initialLikes = mostPlayed.slice(2).map(song => song.id)
+export const playlists: Mix[] = showcase.playlists.map((playlist, index) => ({
+  name: playlist.name, hint: '', kind: 'Плейлист',
+  tracks: recommendations.slice(index * 3, index * 3 + 8), art: playlist.coverPath,
+}))
 
 export const mixes: Mix[] = [
   { name: 'Музыка этого часа', hint: 'Песни, которые вы обычно слушаете в это время', kind: 'Подборка Tempo', tracks: recent, art: libraryArt + 'cover-2.png' },
