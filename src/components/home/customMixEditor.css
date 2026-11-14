@@ -721,7 +721,6 @@
   animation: mix-rule-out 0.17s ease both;
   pointer-events: none;
 }
-.home-mix-copy p { overflow-wrap: anywhere; white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .hour-mix-page .editorial-detail-description { overflow-wrap: anywhere; white-space: pre-line; }
 @keyframes mix-rule-backdrop-in {
   from {
