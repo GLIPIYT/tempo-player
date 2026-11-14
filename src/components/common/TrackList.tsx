@@ -7,6 +7,7 @@ import { fmtTime } from '../../utils/format'
 import { trackToUnified } from '../../utils/unified'
 import { beginTrackDrag } from '../../dnd/trackDrag'
 import Cover from './Cover'
+import CollectionTrackTableHeader from './CollectionTrackTableHeader'
 import TrackSourceIcon from './TrackSourceIcon'
 import TrackMenu from './TrackMenu'
 import type { TrackMenuHandle } from './TrackMenu'
@@ -41,15 +42,7 @@ export default function TrackList({ tracks, showAlbum = true, showIndex = true, 
 
   return (
     <div className={cls.join(' ')}>
-      {showHeader ? (
-        <div className="tl-head" aria-hidden="true">
-          {showIndex ? <span>#</span> : null}
-          <span>{t('Title')}</span>
-          {showAlbum ? <span className="tl-head-album">{t('Album')}</span> : null}
-          <span>{t('Duration')}</span>
-          <span />
-        </div>
-      ) : null}
+      {showHeader && <CollectionTrackTableHeader showIndex={showIndex} showAlbum={showAlbum} />}
       {tracks.map((t, i) => {
         const playing = player.currentTrack?.source === t.source && player.currentTrack?.sourceId === (t.source === 'local' ? String(t.id) : t.externalId)
         return (

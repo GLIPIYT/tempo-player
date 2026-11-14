@@ -7,6 +7,10 @@
   const EQ_BANDS = 10;
   const NUM_BINS = 64;
   const SPECTRUM_INTERVAL_MS = 40;
+  const LOUDNESS_TARGET = -16;
+  const LOUDNESS_CEILING = -1.5;
+  const LOUDNESS_GATE = -70;
+  const LOUDNESS_BUCKETS = 111;
   const sourceGraphs = new WeakMap();
 
   if (location.origin !== SC_ORIGIN || !location.pathname.startsWith('/player/')) return;
@@ -39,19 +43,20 @@
   function validSettings(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
       || !hasOnlyKeys(value, ['volume', 'playbackRate', 'preservePitch', 'equalizerEnabled',
-        'equalizerGains', 'gainDb', 'spectrumEnabled'])
+        'equalizerGains', 'normalize', 'spectrumEnabled'])
       || !Array.isArray(value.equalizerGains) || value.equalizerGains.length !== EQ_BANDS) return null;
-    const numbers = [value.volume, value.playbackRate, value.gainDb, ...value.equalizerGains];
+    const numbers = [value.volume, value.playbackRate, ...value.equalizerGains];
     if (numbers.some((item) => !finite(item))) return null;
     if (typeof value.preservePitch !== 'boolean'
       || typeof value.equalizerEnabled !== 'boolean'
+      || typeof value.normalize !== 'boolean'
       || typeof value.spectrumEnabled !== 'boolean') return null;
     return {
       playbackRate: clamp(value.playbackRate, 0.5, 2),
       preservePitch: value.preservePitch,
       equalizerEnabled: value.equalizerEnabled,
       equalizerGains: value.equalizerGains.map((gain) => clamp(gain, -18, 18)),
-      gainDb: clamp(value.gainDb, -36, 36),
+      normalize: value.normalize,
       spectrumEnabled: value.spectrumEnabled,
     };
   }
@@ -126,6 +131,122 @@
     }, SPECTRUM_INTERVAL_MS);
   }
 
+  function makeLoudnessMeter(graph) {
+    const { source, context } = graph;
+    const connect = window.__tempoNativeAudioConnect;
+    const shelf = context.createBiquadFilter();
+    shelf.type = 'highshelf';
+    shelf.frequency.value = 1681.97;
+    shelf.gain.value = 4;
+    const highpass = context.createBiquadFilter();
+    highpass.type = 'highpass';
+    highpass.frequency.value = 38.14;
+    highpass.Q.value = 0.5;
+    const weighted = context.createChannelSplitter(2);
+    const raw = context.createChannelSplitter(2);
+    const analysers = [0, 1, 2, 3].map(() => {
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 2 ** Math.floor(Math.log2(context.sampleRate / 10));
+      return analyser;
+    });
+    connect.call(shelf, highpass);
+    connect.call(highpass, weighted);
+    for (let channel = 0; channel < 2; channel += 1) {
+      connect.call(weighted, analysers[channel], channel);
+      connect.call(raw, analysers[channel + 2], channel);
+    }
+    connect.call(source, shelf);
+    connect.call(source, raw);
+    return {
+      disconnect: () => {
+        source.disconnect(shelf);
+        source.disconnect(raw);
+      },
+      analysers,
+      data: new Float32Array(analysers[0].fftSize),
+      counts: new Uint32Array(LOUDNESS_BUCKETS),
+      energies: new Float64Array(LOUDNESS_BUCKETS),
+      blocks: new Float64Array(4),
+      peak: 0,
+      ticks: 0,
+      gain: 1,
+      timer: null,
+    };
+  }
+
+  function measureLoudness(graph, meter) {
+    if (!active?.playing || !active.settings.normalize || graph.element.paused
+      || graph.element.readyState < 3 || graph.element.seeking
+      || graph.context.state !== 'running') return;
+    let energy = 0;
+    for (let channel = 0; channel < 2; channel += 1) {
+      meter.analysers[channel].getFloatTimeDomainData(meter.data);
+      for (const value of meter.data) energy += value * value;
+      meter.analysers[channel + 2].getFloatTimeDomainData(meter.data);
+      for (const value of meter.data) meter.peak = Math.max(meter.peak, Math.abs(value));
+    }
+    meter.blocks[meter.ticks % meter.blocks.length] = energy / meter.data.length;
+    meter.ticks += 1;
+    if (meter.ticks < meter.blocks.length) return;
+    const block = meter.blocks.reduce((sum, value) => sum + value, 0) / meter.blocks.length;
+    const lufs = -0.691 + 10 * Math.log10(block);
+    if (finite(lufs) && lufs >= LOUDNESS_GATE) {
+      const index = Math.min(LOUDNESS_BUCKETS - 1, Math.floor(lufs - LOUDNESS_GATE));
+      meter.counts[index] += 1;
+      meter.energies[index] += block;
+    }
+    if (meter.ticks !== meter.blocks.length && meter.ticks % 10 !== 0) return;
+    let sum = meter.energies.reduce((total, value) => total + value, 0);
+    let count = meter.counts.reduce((total, value) => total + value, 0);
+    if (!count || !(meter.peak > 0)) return;
+    const relativeGate = -0.691 + 10 * Math.log10(sum / count) - 10;
+    const threshold = clamp(Math.floor(relativeGate - LOUDNESS_GATE), 0, LOUDNESS_BUCKETS);
+    for (let index = 0; index < threshold; index += 1) {
+      count -= meter.counts[index];
+      sum -= meter.energies[index];
+    }
+    if (!count || !(sum > 0)) return;
+    const integrated = -0.691 + 10 * Math.log10(sum / count);
+    const peakGain = LOUDNESS_CEILING - 20 * Math.log10(meter.peak);
+    const gainDb = Math.min(clamp(LOUDNESS_TARGET - integrated, -30, meter.ticks >= 40 ? 12 : 0), peakGain);
+    meter.gain = Math.pow(10, gainDb / 20);
+    graph.nodes.trackGain.gain.setTargetAtTime(meter.gain, graph.context.currentTime, 0.075);
+  }
+
+  function stopLoudnessTimer(graph) {
+    const meter = graph?.meter;
+    if (meter && meter.timer !== null) {
+      clearInterval(meter.timer);
+      meter.timer = null;
+    }
+  }
+
+  function resetLoudness(graph) {
+    if (!graph?.meter) return;
+    stopLoudnessTimer(graph);
+    try { graph.meter.disconnect(); } catch (_) {}
+    graph.meter = null;
+  }
+
+  function updateLoudness(graph) {
+    if (!graph?.nodes) return;
+    const enabled = active?.settings.normalize === true;
+    if (enabled && !graph.meter) {
+      try { graph.meter = makeLoudnessMeter(graph); } catch (_) {}
+    } else if (!enabled) {
+      resetLoudness(graph);
+    }
+    const meter = graph.meter;
+    if (enabled && active.playing && !graph.element.paused) {
+      if (meter && meter.timer === null) {
+        meter.timer = setInterval(() => measureLoudness(graph, meter), 100);
+      }
+    } else {
+      stopLoudnessTimer(graph);
+    }
+    graph.nodes.trackGain.gain.setTargetAtTime(meter?.gain ?? 1, graph.context.currentTime, 0.075);
+  }
+
   function applyMediaSettings(graph) {
     if (!active || !graph || !graph.element) return;
     const settings = active.settings;
@@ -142,21 +263,22 @@
 
     if (!graph.nodes) return;
     const now = graph.context.currentTime;
-    const gain = Math.pow(10, clamp(settings.gainDb, -36, 36) / 20);
-    graph.nodes.trackGain.gain.setTargetAtTime(finite(gain) ? gain : 1, now, 0.01);
     for (let index = 0; index < EQ_BANDS; index += 1) {
       const amount = settings.equalizerEnabled ? settings.equalizerGains[index] : 0;
       graph.nodes.equalizer[index].gain.setTargetAtTime(amount, now, 0.01);
     }
     const hasBoost = settings.equalizerEnabled
       && settings.equalizerGains.some((amount) => amount > 0.01);
-    graph.nodes.limiter.ratio.setTargetAtTime(settings.gainDb > 0.01 || hasBoost ? 20 : 1, now, 0.01);
+    graph.nodes.limiter.threshold.setTargetAtTime(settings.normalize ? LOUDNESS_CEILING : -1, now, 0.01);
+    graph.nodes.limiter.ratio.setTargetAtTime(settings.normalize || hasBoost ? 20 : 1, now, 0.01);
+    updateLoudness(graph);
     startSpectrumTimer();
   }
 
   function disconnectGraph(graph) {
     if (!graph) return;
     clearSpectrumTimer();
+    resetLoudness(graph);
     if (graph.mediaListeners) {
       graph.element.removeEventListener('play', graph.mediaListeners.play);
       graph.element.removeEventListener('pause', graph.mediaListeners.pause);
@@ -174,10 +296,18 @@
   }
 
   function createGraph(source, element, context) {
-    const graph = { source, element, context, nodes: null, connectedSource: false };
+    const graph = { source, element, context, nodes: null, meter: null, connectedSource: false };
     graph.mediaListeners = {
-      play: () => { if (currentGraph === graph) startSpectrumTimer(); },
-      pause: () => { if (currentGraph === graph) clearSpectrumTimer(); },
+      play: () => {
+        if (currentGraph !== graph) return;
+        startSpectrumTimer();
+        updateLoudness(graph);
+      },
+      pause: () => {
+        if (currentGraph !== graph) return;
+        clearSpectrumTimer();
+        stopLoudnessTimer(graph);
+      },
     };
     element.addEventListener('play', graph.mediaListeners.play);
     element.addEventListener('pause', graph.mediaListeners.pause);
@@ -302,20 +432,23 @@
       || message.protocol !== 1 || message.type !== 'tempo-control') return;
 
     if (!['activate', 'configure', 'play', 'pause'].includes(message.command)) return;
-    if (!active) {
-      if (message.command !== 'activate'
-        || !numericId(message.trackId)
+    const replacingTrack = message.command === 'activate'
+      && (!active || message.generation > active.generation);
+    if (replacingTrack) {
+      if (!numericId(message.trackId)
         || !Number.isSafeInteger(message.generation)
         || typeof message.nonce !== 'string' || message.nonce.length > 80) return;
       const initialSettings = validSettings(message.settings);
       if (!initialSettings) return;
+      resetLoudness(currentGraph);
       active = {
         trackId: message.trackId,
         generation: message.generation,
         nonce: message.nonce,
         settings: initialSettings,
+        playing: false,
       };
-    } else if (message.nonce !== active.nonce
+    } else if (!active || message.nonce !== active.nonce
       || message.generation !== active.generation
       || message.trackId !== active.trackId) {
       return;
@@ -323,11 +456,13 @@
     if (message.command === 'play') {
       active.playing = true;
       if (currentGraph) startSpectrumTimer();
+      updateLoudness(currentGraph);
       return;
     }
     if (message.command === 'pause') {
       active.playing = false;
       clearSpectrumTimer();
+      stopLoudnessTimer(currentGraph);
       return;
     }
     const settings = validSettings(message.settings);

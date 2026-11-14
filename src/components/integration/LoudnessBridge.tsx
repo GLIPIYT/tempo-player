@@ -1,22 +1,13 @@
 import { useEffect } from 'react'
 import { usePlayerField } from '../../player'
+import { isNativePlayback } from '../../player/controller'
 import { useSettings } from '../../state/settings'
 import { analyzeTracks } from '../../audio/loudnessRunner'
 
 /** How far ahead of the current track to measure. */
 const LOOKAHEAD = 3
 
-/**
- * Keeps the queue levelled without ever grinding the library.
- *
- * Whenever the track changes, the next few queue entries that still have no
- * measurement are measured in the background. A track lasts minutes and a
- * measurement takes a fraction of that, so the next track is normally levelled
- * before it starts - and nothing is spent on tracks the user never reaches.
- *
- * Renders `null`; mounted once inside the app shell.
- */
-export default function LoudnessBridge(): null {
+function BrowserLoudnessBridge(): null {
   const { settings } = useSettings()
   const currentTrack = usePlayerField('currentTrack')
   const queue = usePlayerField('queue')
@@ -43,4 +34,9 @@ export default function LoudnessBridge(): null {
   }, [enabled, currentTrack?.sourceId])
 
   return null
+}
+
+/** Desktop playback measures decoded audio in the native player. */
+export default function LoudnessBridge() {
+  return isNativePlayback() ? null : <BrowserLoudnessBridge />
 }

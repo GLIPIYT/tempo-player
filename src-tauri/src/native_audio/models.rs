@@ -229,11 +229,4 @@ impl TrackPayload {
         // unknown length. Let the decoder report its probed duration instead.
         self.number("durationSec").filter(|value| *value > 0.0)
     }
-
-    pub fn gain_db(&self, normalize: bool) -> f64 {
-        if !normalize {
-            return 0.0;
-        }
-        self.number("gainDb").unwrap_or(0.0).clamp(-36.0, 36.0)
-    }
 }

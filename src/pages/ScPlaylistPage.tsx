@@ -1,21 +1,24 @@
-import { useEffect, useState, type MouseEvent } from 'react'
-import { Download, ExternalLink, Lock, Play, Star } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Disc3, Download, ExternalLink, ListMusic } from 'lucide-react'
 import { api } from '../api/client'
 import type { ScPlaylistDetail, ScTrack } from '../types/models'
 import ScArtwork from '../components/common/ScArtwork'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
+import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
+import CollectionPlayButton from '../components/common/CollectionPlayButton'
+import CollectionShuffleButton from '../components/common/CollectionShuffleButton'
+import OnlineCollectionTracks from '../components/common/OnlineCollectionTracks'
 import BrandIcon from '../components/common/BrandIcon'
 import { toast } from '../components/common/Toast'
 import CacheBadge, { CacheProgress } from '../soundcloud/CacheBadge'
 import { useNav } from '../state/nav'
-import { usePlayerActions } from '../player'
 import { useT } from '../i18n'
 import { fmtTime } from '../utils/format'
-import { scTrackToUnified } from '../utils/unified'
-import { favoritePlaylist, requestPlaylistCache, requestTrackCache, type CacheRequestOutcome } from '../soundcloud/cacheJobs'
-import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
+import { favoritePlaylist, requestPlaylistCache, type CacheRequestOutcome } from '../soundcloud/cacheJobs'
+import { useScCollectionTracks } from '../soundcloud/useScCollectionTracks'
 import { openExternalUrl } from '../utils/externalLinks'
-import { canPlaySoundCloudTrack } from '../soundcloud/playability'
+
+const EMPTY_TRACKS: ScTrack[] = []
 
 /**
  * A SoundCloud playlist or release, read live.
@@ -26,11 +29,11 @@ import { canPlaySoundCloudTrack } from '../soundcloud/playability'
 export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
   const t = useT()
   const { navigate } = useNav()
-  const player = usePlayerActions()
   const [data, setData] = useState<ScPlaylistDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const { rows, play, onMenu, canPlay } = useScCollectionTracks(data?.tracks ?? EMPTY_TRACKS)
 
   useEffect(() => {
     let cancelled = false
@@ -72,45 +75,7 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
     )
   }
 
-  const { playlist, tracks } = data
-  // Include explicit protected variants; the browser session determines access at playback.
-  const playable = tracks.filter(canPlaySoundCloudTrack)
-
-  const playFrom = (track: ScTrack): void => {
-    const index = playable.findIndex((p) => p.id === track.id)
-    if (index >= 0) player.playTracks(playable.map(scTrackToUnified), index)
-  }
-
-  const onTrackContextMenu = (e: MouseEvent, track: ScTrack): void => {
-    e.preventDefault()
-    e.stopPropagation()
-    const playableHere = canPlaySoundCloudTrack(track)
-    const cacheableHere = /^[1-9]\d*$/.test(track.id)
-    const items: ContextMenuItem[] = [
-      {
-        id: 'play',
-        label: t('Play now'),
-        icon: <Play size={13} />,
-        disabled: !playableHere,
-        onSelect: () => playFrom(track),
-      },
-      {
-        id: 'cache',
-        label: t('Cache track'),
-        icon: <Download size={13} />,
-        disabled: !cacheableHere,
-        onSelect: () => {
-          void requestTrackCache(track)
-            .then((outcome) => {
-              if (outcome === 'cached') toast.show(t('Cached'))
-              else if (outcome === 'empty') toast.show(t('This track cannot be cached'), 'info')
-            })
-            .catch((error: unknown) => toast.show(error instanceof Error ? error.message : String(error), 'error'))
-        },
-      },
-    ]
-    openContextMenu({ x: e.clientX, y: e.clientY, title: track.title, items })
-  }
+  const { playlist } = data
 
   const run = async (action: () => Promise<CacheRequestOutcome>, done?: string) => {
     setBusy(true)
@@ -129,6 +94,12 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
   return (
     <EditorialDetailLayout
       className="sc-playlist-page"
+      variant="panorama"
+      artworkLabel={playlist.artworkUrl ? playlist.title : undefined}
+      artworkPath={playlist.artworkUrl}
+      artworkPreview={<ScArtwork url={playlist.artworkUrl} title={playlist.title} />}
+      artworkGlow={playlist.artworkUrl && <ScArtwork url={playlist.artworkUrl} title="" loading="lazy" fetchPriority="low" />}
+      kindIcon={playlist.isAlbum ? <Disc3 size={13} /> : <ListMusic size={13} />}
       onBack={() => navigate({ name: 'search' })}
       backLabel={t('Back to search')}
       art={
@@ -146,20 +117,13 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
       }
       title={playlist.title}
       meta={
-        <span>
-          {playlist.user} · {playlist.trackCount} {t('tracks')}
-        </span>
+        <span>{[playlist.user, `${playlist.trackCount} ${t('tracks')}`, playlist.durationMs > 0 ? fmtTime(playlist.durationMs / 1000) : null].filter(Boolean).join(' · ')}</span>
       }
       actions={
         <>
-          <button
-            className="btn btn-primary"
-            disabled={playable.length === 0}
-            onClick={() => playFrom(playable[0] ?? tracks[0])}
-          >
-            <Play size={14} />
-            <span>{t('Play')}</span>
-          </button>
+          <CollectionPlayButton disabled={!canPlay} onClick={() => play()} />
+          <CollectionFavoriteButton disabled={busy} onClick={() => void run(() => favoritePlaylist(playlist), t('Added to favorites'))} />
+          <CollectionShuffleButton disabled={!canPlay} onPlay={play} />
           <button
             className="btn"
             disabled={busy}
@@ -168,21 +132,14 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
             <Download size={14} />
             <span>{t('Cache playlist')}</span>
           </button>
-          <button
-            className="btn"
-            disabled={busy}
-            onClick={() => void run(() => favoritePlaylist(playlist), t('Added to favorites'))}
-          >
-            <Star size={14} />
-            <span>{t('Add to favorites')}</span>
-          </button>
           {playlist.permalinkUrl ? (
             <button
-              className="btn"
+              className="collection-icon-action"
+              title={t('Open on SoundCloud')}
+              aria-label={t('Open on SoundCloud')}
               onClick={() => void openExternalUrl(playlist.permalinkUrl ?? '').catch(() => toast.show(t('Could not open external link'), 'error'))}
             >
-              <ExternalLink size={14} />
-              <span>{t('Open on SoundCloud')}</span>
+              <ExternalLink size={19} />
             </button>
           ) : null}
         </>
@@ -190,36 +147,7 @@ export default function ScPlaylistPage({ playlistId }: { playlistId: string }) {
     >
       <CacheProgress kind="playlist" scId={playlist.id} />
 
-      <div className="detail-tracklist-heading sc-tracklist-heading">
-        <h2>{t('Tracks')}</h2>
-        <span>{playable.length} / {tracks.length}</span>
-      </div>
-      <div className="sc-list">
-        {tracks.map((trk) => {
-          const playableHere = canPlaySoundCloudTrack(trk)
-          return (
-            <div
-              key={trk.id}
-              className={playableHere ? 'sc-row' : 'sc-row is-disabled'}
-              onClick={() => playFrom(trk)}
-              onContextMenu={(e) => onTrackContextMenu(e, trk)}
-            >
-              <span style={{ width: 32, height: 32, flexShrink: 0 }}>
-                <CacheBadge kind="track" scId={trk.id}>
-                  <ScArtwork url={trk.artworkUrl} title={trk.title} />
-                </CacheBadge>
-              </span>
-              <div className="sc-meta">
-                <span className="sc-title">{trk.title}</span>
-                <span className="sc-artist">{trk.artist}</span>
-              </div>
-              <span className="sc-duration">
-                {playableHere ? fmtTime(trk.durationMs / 1000) : <Lock size={13} />}
-              </span>
-            </div>
-          )
-        })}
-      </div>
+      <OnlineCollectionTracks key={playlist.id} tracks={rows} onPlay={play} onMenu={onMenu} />
     </EditorialDetailLayout>
   )
 }

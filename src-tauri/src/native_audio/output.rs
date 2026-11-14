@@ -6,6 +6,7 @@
 
 mod dsp;
 mod input;
+mod loudness;
 mod pitch;
 mod spectrum;
 
@@ -43,6 +44,7 @@ pub struct OutputSettings {
     pub volume: f32,
     pub playback_rate: f32,
     pub preserve_pitch: bool,
+    pub normalize: bool,
     pub equalizer_enabled: bool,
     pub equalizer_gains: [f64; 10],
 }
@@ -53,6 +55,7 @@ impl Default for OutputSettings {
             volume: 0.8,
             playback_rate: 1.0,
             preserve_pitch: false,
+            normalize: false,
             equalizer_enabled: false,
             equalizer_gains: [0.0; 10],
         }
@@ -86,7 +89,6 @@ impl OutputSettings {
 pub struct SourceSpec {
     pub location: String,
     pub duration_sec: Option<f64>,
-    pub gain_db: f64,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -125,7 +127,6 @@ pub struct OutputEngine {
     recovery: Option<Recovery>,
     settings: OutputSettings,
     settings_configured: bool,
-    track_gain_db: f64,
     spectrum: Arc<SpectrumBuffer>,
     last_error: Option<String>,
 }
@@ -161,6 +162,7 @@ struct RecoveryRequest {
     settings: OutputSettings,
     bin_dir: PathBuf,
     playing: bool,
+    live_loudness_gain: Option<f32>,
 }
 
 struct Recovery {
@@ -254,7 +256,6 @@ impl OutputEngine {
             recovery: None,
             settings: OutputSettings::default(),
             settings_configured: false,
-            track_gain_db: 0.0,
             spectrum: SpectrumBuffer::new(),
             last_error: None,
         })
@@ -265,14 +266,10 @@ impl OutputEngine {
         audio: PreparedAudio,
         playing: bool,
         fade_sec: f64,
+        keep_loudness: bool,
     ) -> Result<(), String> {
         self.recovery.take();
         self.pending.take();
-        self.track_gain_db = if audio.spec.gain_db.is_finite() {
-            audio.spec.gain_db.clamp(-36.0, 36.0)
-        } else {
-            0.0
-        };
         if !self.settings_configured {
             self.settings = audio.settings.clone().sanitized();
         }
@@ -280,6 +277,11 @@ impl OutputEngine {
 
         let fade = fade_sec.is_finite() && fade_sec > 0.0 && playing;
         if let Some(mut old) = self.active.take() {
+            if keep_loudness {
+                audio
+                    .loudness
+                    .seed_live_gain(old.controls.live_loudness_gain());
+            }
             if fade && old.requested_playing && old.player.is_some() {
                 let start_volume = old.player.as_ref().map(Player::volume).unwrap_or(0.0);
                 old.fade = Some(Fade {
@@ -334,7 +336,7 @@ impl OutputEngine {
             .source
             .take()
             .ok_or_else(|| "Prepared audio source was already consumed".to_string())?;
-        let controls = EffectControls::new(self.track_gain_db, source.sample_rate());
+        let controls = EffectControls::new(audio.loudness.clone(), source.sample_rate());
         controls.configure(&self.settings);
         let player = Player::connect_new(sink.mixer());
         player.set_speed(self.settings.playback_rate.clamp(0.5, 2.0));
@@ -442,18 +444,6 @@ impl OutputEngine {
         track.last_progress_position = position;
         track.last_progress_at = Instant::now();
         Ok(())
-    }
-
-    /// Updates per-track loudness/normalization gain without replacing the source.
-    pub fn set_track_gain(&mut self, gain_db: f64) {
-        self.track_gain_db = if gain_db.is_finite() {
-            gain_db.clamp(-60.0, 24.0)
-        } else {
-            0.0
-        };
-        if let Some(track) = self.active.as_ref() {
-            track.controls.set_track_gain_db(self.track_gain_db);
-        }
     }
 
     pub fn play(&mut self) {
@@ -675,6 +665,7 @@ impl OutputEngine {
                 settings: self.settings.clone(),
                 bin_dir: track.bin_dir.clone(),
                 playing: track.requested_playing,
+                live_loudness_gain: track.controls.live_loudness_gain(),
             };
             track.shutdown();
             self.start_recovery(request);
@@ -691,10 +682,15 @@ impl OutputEngine {
         let settings = request.settings.clone();
         let bin_dir = request.bin_dir.clone();
         let position = request.position;
+        let loudness = request.live_loudness_gain;
         let spawn = thread::Builder::new()
             .name("tempo-audio-recovery".into())
             .spawn(move || {
-                let _ = sender.send(prepare(spec, position, settings, bin_dir));
+                let result = prepare(spec, position, settings, bin_dir).map(|audio| {
+                    audio.loudness.seed_live_gain(loudness);
+                    audio
+                });
+                let _ = sender.send(result);
             });
         match spawn {
             Ok(_) => self.recovery = Some(Recovery { request, receiver }),

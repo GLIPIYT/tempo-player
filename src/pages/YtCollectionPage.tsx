@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
 import { getSettings } from '../state/settings'
 import { useNav } from '../state/nav'
 import { useT } from '../i18n'
 import { usePlayerActions } from '../player'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
+import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
+import CollectionPlayButton from '../components/common/CollectionPlayButton'
+import CollectionShuffleButton from '../components/common/CollectionShuffleButton'
+import OnlineCollectionTracks from '../components/common/OnlineCollectionTracks'
 import BrandIcon from '../components/common/BrandIcon'
 import ScArtwork from '../components/common/ScArtwork'
 import LoadingLine from '../components/common/LoadingLine'
@@ -17,8 +21,8 @@ import {
   type SaveJob,
 } from '../youtube/collectionSaver'
 import { fmtTime } from '../utils/format'
-import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
-import { Copy, Download, ExternalLink, Play, Star } from 'lucide-react'
+import { openContextMenu, type ContextMenuItem, type ContextMenuRequest } from '../components/common/ContextMenu'
+import { Copy, Disc3, Download, ExternalLink, ListMusic, MicVocal, Play } from 'lucide-react'
 import { toast } from '../components/common/Toast'
 import type { YtCollectionDetail } from '../types/models'
 import { openExternalUrl } from '../utils/externalLinks'
@@ -61,6 +65,8 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
     let cancelled = false
     setDetail(null)
     setError(null)
+    setFavRow(null)
+    setIsFav(false)
     api
       .ytdlpOpenCollection(getSettings().ytdlp.path, `https://music.youtube.com/browse/${id}`)
       .then((d) => {
@@ -72,7 +78,22 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
     return () => {
       cancelled = true
     }
-  }, [id])
+  }, [id, kind])
+
+  const name = detail
+    ? kind === 'artist'
+      ? (detail.uploader ?? detail.title ?? '')
+      : kind === 'album'
+        ? (detail.title ?? '').replace(/^Album - /i, '')
+        : (detail.title ?? '')
+    : ''
+  const tracks = useMemo(() => detail?.tracks.map(hit => {
+    const track = ytHitToUnified(hit)
+    return {
+      ...track,
+      coverPath: track.coverPath ?? `https://i.ytimg.com/vi/${encodeURIComponent(track.sourceId)}/mqdefault.jpg`,
+    }
+  }) ?? [], [detail])
 
   // Looked up again once a save finishes, because saving is what creates the
   // row in the first place.
@@ -94,22 +115,12 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- name is derived from detail
-  }, [detail, kind, saveFinished])
+  }, [detail, kind, name, saveFinished])
 
   const kindLabel =
     kind === 'album' ? t('Album') : kind === 'artist' ? t('Artist') : t('Playlist')
   const pageSave = saving?.id === id ? saving : null
   const anotherSaveRunning = saving?.state === 'running' && saving.id !== id
-
-  // An album arrives as "Album - <name>", with the kind already spelled out.
-  const name = detail
-    ? kind === 'artist'
-      ? (detail.uploader ?? detail.title ?? '')
-      : kind === 'album'
-        ? (detail.title ?? '').replace(/^Album - /i, '')
-        : (detail.title ?? '')
-    : ''
 
   if (error) {
     return (
@@ -129,13 +140,10 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
     )
   }
 
-  const tracks = detail.tracks.map(ytHitToUnified)
-
   // The same things a track offers anywhere else, minus the ones that need a
   // library row: a search result has none until it has been saved, and
   // favourites are kept against those rows.
-  const trackMenu = (e: React.MouseEvent, index: number): void => {
-    e.preventDefault()
+  const trackMenu = (point: Pick<ContextMenuRequest, 'x' | 'y' | 'trigger'>, index: number): void => {
     const hit = detail.tracks[index]
     if (!hit) return
     const items: ContextMenuItem[] = [
@@ -171,12 +179,21 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
         onSelect: () => void openExternalUrl(hit.url).catch(() => toast.show(t('Could not open external link'), 'error')),
       },
     ]
-    openContextMenu({ x: e.clientX, y: e.clientY, title: hit.title, items })
+    openContextMenu({ ...point, title: hit.title, items })
   }
 
+  const hasArtwork = Boolean(detail.thumbnailUrl || detail.thumbnailUrls?.length)
+  const duration = tracks.reduce((total, track) => total + (track.durationSec ?? 0), 0)
+  const playAll = () => player.playTracks(tracks, 0)
   return (
     <EditorialDetailLayout
       className="yt-collection-page"
+      variant="panorama"
+      kindIcon={kind === 'artist' ? <MicVocal size={13} /> : kind === 'album' ? <Disc3 size={13} /> : <ListMusic size={13} />}
+      artworkPath={detail.thumbnailUrl}
+      artworkLabel={hasArtwork ? name : undefined}
+      artworkPreview={<ScArtwork url={detail.thumbnailUrl} fallbackUrls={detail.thumbnailUrls} title={name} />}
+      artworkGlow={hasArtwork && <ScArtwork url={detail.thumbnailUrl} fallbackUrls={detail.thumbnailUrls} title="" loading="lazy" fetchPriority="low" />}
       onBack={() => navigate({ name: 'search' })}
       backLabel={t('Back to search')}
       round={kind === 'artist'}
@@ -200,27 +217,18 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
       title={name}
       meta={
         <span>
-          {[detail.uploader && kind !== 'artist' ? detail.uploader : null, detail.count
-            ? `${detail.count} ${t('tracks')}`
-            : null]
+          {[detail.uploader && kind !== 'artist' ? detail.uploader : null,
+            `${detail.count ?? tracks.length} ${t('tracks')}`, duration > 0 ? fmtTime(duration) : null]
             .filter(Boolean)
             .join(' · ')}
         </span>
       }
       actions={
         <>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={tracks.length === 0}
-            onClick={() => player.playTracks(tracks, 0)}
-          >
-            {t('Play')}
-          </button>
+          <CollectionPlayButton disabled={tracks.length === 0} onClick={playAll} />
           {kind !== 'playlist' ? (
-            <button
-              type="button"
-              className="btn"
+            <CollectionFavoriteButton
+              active={isFav}
               disabled={favRow === null}
               title={favRow === null ? t('Save it first to add it to favorites.') : undefined}
               onClick={() => {
@@ -232,12 +240,11 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
                 void next.then((now) => {
                   setIsFav(now)
                   toast.show(now ? t('Added to favorites') : t('Remove from favorites'))
-                })
+                }).catch(error => toast.show(error instanceof Error ? error.message : String(error), 'error'))
               }}
-            >
-              <Star size={14} fill={isFav ? 'currentColor' : 'none'} />
-            </button>
+            />
           ) : null}
+          <CollectionShuffleButton disabled={tracks.length === 0} onPlay={playAll} />
           {pageSave?.state === 'running' ? (
             <button type="button" className="btn" onClick={cancelSave}>
               {t('Cancel')} · {pageSave.done}/{pageSave.total}
@@ -250,6 +257,7 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
               title={anotherSaveRunning ? t('Another collection is being saved.') : undefined}
               onClick={() => void saveCollection(id, name, detail.tracks)}
             >
+              <Download size={14} />
               {anotherSaveRunning ? t('Another collection is being saved.') : t('Save to library')}
             </button>
           )}
@@ -284,33 +292,7 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
             : `${t('Saved')} ${pageSave.done} ${t('tracks')}`}
         </div>
       ) : null}
-      <div className="detail-tracklist-heading yt-tracklist-heading">
-        <h2>{t('Tracklist')}</h2>
-        <span>{tracks.length} {tracks.length === 1 ? t('track') : t('tracks')}</span>
-      </div>
-      <div className="sc-list">
-        {tracks.map((track, index) => (
-          <div
-            key={track.sourceId}
-            className="sc-row"
-            onClick={() => player.playTracks(tracks, index)}
-            onContextMenu={(e) => trackMenu(e, index)}
-          >
-            <ScArtwork
-              url={track.coverPath ?? `https://i.ytimg.com/vi/${encodeURIComponent(track.sourceId)}/mqdefault.jpg`}
-              title={track.title}
-              compact
-            />
-            <div className="sc-meta">
-              <span className="sc-title">{track.title}</span>
-              <span className="sc-artist">{track.artists.join(', ')}</span>
-            </div>
-            <span className="sc-duration">
-              {track.durationSec ? fmtTime(track.durationSec) : '—'}
-            </span>
-          </div>
-        ))}
-      </div>
+      <OnlineCollectionTracks key={id} tracks={tracks} onPlay={index => player.playTracks(tracks, index)} onMenu={trackMenu} />
     </EditorialDetailLayout>
   )
 }

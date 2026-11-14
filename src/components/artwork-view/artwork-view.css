@@ -40,6 +40,9 @@
   font-size: clamp(32px, 18vmin, 218px) !important;
 }
 
+.artwork-view__image .sc-art-box,
+.artwork-view__image .sc-art { width: 100%; height: 100%; object-fit: contain; }
+
 .artwork-view__close {
   position: absolute;
   top: 16px;

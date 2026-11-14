@@ -1,9 +1,14 @@
-import { useEffect, useState, type MouseEvent } from 'react'
-import { Check, Download, ExternalLink, Lock, Play, Star } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Check, ExternalLink, MicVocal } from 'lucide-react'
 import { api } from '../api/client'
 import type { ScArtist, ScPlaylist, ScTrack } from '../types/models'
 import ScArtwork from '../components/common/ScArtwork'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
+import CollectionArtistTabs from '../components/common/CollectionArtistTabs'
+import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
+import CollectionPlayButton from '../components/common/CollectionPlayButton'
+import CollectionShuffleButton from '../components/common/CollectionShuffleButton'
+import OnlineCollectionTracks from '../components/common/OnlineCollectionTracks'
 import BrandIcon from '../components/common/BrandIcon'
 import { ScPlaylistCard } from '../components/common/ScCards'
 import { toast } from '../components/common/Toast'
@@ -11,127 +16,76 @@ import CacheBadge, { CacheProgress } from '../soundcloud/CacheBadge'
 import { useNav, type ScArtistFallback } from '../state/nav'
 import { usePlayerActions } from '../player'
 import { useT } from '../i18n'
-import { fmtTime } from '../utils/format'
 import { scTrackToUnified } from '../utils/unified'
-import { requestArtistCache, requestTrackCache } from '../soundcloud/cacheJobs'
-import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
+import { requestArtistCache } from '../soundcloud/cacheJobs'
+import { useScCollectionTracks } from '../soundcloud/useScCollectionTracks'
 import { openExternalUrl } from '../utils/externalLinks'
 import { canPlaySoundCloudTrack } from '../soundcloud/playability'
 import { resolveLocalArtistView } from '../utils/artistNavigation'
 
-/** SoundCloud returns a user's tracks in pages; one page is plenty to look at. */
-const TRACK_LIMIT = 50
+const PAGE_LIMIT = 50
 
-/**
- * A SoundCloud artist, read live.
- *
- * The track list is capped rather than paged: this is the look-before-you-keep
- * view, and the full crawl belongs to the caching flow, where it can report
- * progress instead of blocking the page.
- */
 export default function ScArtistPage({ artistId, fallback }: { artistId: string; fallback?: ScArtistFallback }) {
   const t = useT()
   const { navigate } = useNav()
   const player = usePlayerActions()
   const [artist, setArtist] = useState<ScArtist | null>(null)
-  const [tracks, setTracks] = useState<ScTrack[]>([])
+  const [tracks, setTracks] = useState<ScTrack[] | null>(null)
   const [releases, setReleases] = useState<ScPlaylist[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [tracksError, setTracksError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [tab, setTab] = useState('tracks')
   const fallbackArtistName = fallback?.artistName
   const fallbackImagePath = fallback?.imagePath
+  const { rows, play, onMenu, canPlay } = useScCollectionTracks(tracks ?? EMPTY_TRACKS)
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
+    setArtist(null)
+    setTracks(null)
+    setReleases([])
     setError(null)
-    Promise.all([
-      api.scGetArtist(artistId),
-      api.scArtistTracks(artistId, TRACK_LIMIT, 0),
-      api.scArtistPlaylists(artistId, 50, 0),
-    ])
-      .then(([who, list, pls]) => {
-        if (cancelled) return
-        setArtist(who)
-        setTracks(list)
-        setReleases(pls)
-        setLoading(false)
-      })
+    setTracksError(null)
+    setTab('tracks')
+
+    void api.scGetArtist(artistId)
+      .then(who => { if (!cancelled) setArtist(who) })
       .catch(async (e: unknown) => {
         if (cancelled) return
         if (fallbackArtistName) {
           const localView = await resolveLocalArtistView(fallbackArtistName, fallbackImagePath ?? null)
-          if (cancelled) return
-          navigate(localView)
+          if (!cancelled) navigate(localView)
           return
         }
         setError(e instanceof Error ? e.message : String(e))
-        setLoading(false)
       })
-    return () => {
-      cancelled = true
-    }
+    void api.scArtistTracks(artistId, PAGE_LIMIT, 0)
+      .then(list => { if (!cancelled) setTracks(list) })
+      .catch(e => { if (!cancelled) setTracksError(e instanceof Error ? e.message : String(e)) })
+    void api.scArtistPlaylists(artistId, PAGE_LIMIT, 0)
+      .then(list => { if (!cancelled) setReleases(list) })
+      .catch(() => undefined)
+
+    return () => { cancelled = true }
   }, [artistId, fallbackArtistName, fallbackImagePath, navigate])
 
-  if (loading) {
+  if (error !== null) {
     return (
       <div className="page">
-        <div className="muted">{t('Loading…')}</div>
+        <div className="error-line">{error}</div>
+        <button className="btn" onClick={() => navigate({ name: 'search' })}>{t('Back to search')}</button>
       </div>
     )
   }
 
-  if (error !== null || !artist) {
-    return (
-      <div className="page">
-        <div className="error-line">{error ?? t('Could not load this artist.')}</div>
-        <button className="btn" onClick={() => navigate({ name: 'search' })}>
-          {t('Back to search')}
-        </button>
-      </div>
-    )
-  }
+  if (!artist) return <div className="page"><div className="muted">{t('Loading…')}</div></div>
 
-  const playable = tracks.filter(canPlaySoundCloudTrack)
-  const albums = releases.filter((r) => r.isAlbum)
-  const playlists = releases.filter((r) => !r.isAlbum)
-
-  const playFrom = (track: ScTrack): void => {
-    const index = playable.findIndex((p) => p.id === track.id)
-    if (index >= 0) player.playTracks(playable.map(scTrackToUnified), index)
-  }
-
-  const onTrackContextMenu = (e: MouseEvent, track: ScTrack): void => {
-    e.preventDefault()
-    e.stopPropagation()
-    const playableHere = canPlaySoundCloudTrack(track)
-    const cacheableHere = /^[1-9]\d*$/.test(track.id)
-    const items: ContextMenuItem[] = [
-      {
-        id: 'play',
-        label: t('Play now'),
-        icon: <Play size={13} />,
-        disabled: !playableHere,
-        onSelect: () => playFrom(track),
-      },
-      {
-        id: 'cache',
-        label: t('Cache track'),
-        icon: <Download size={13} />,
-        disabled: !cacheableHere,
-        onSelect: () => {
-          void requestTrackCache(track)
-            .then((outcome) => {
-              if (outcome === 'cached') toast.show(t('Cached'))
-              else if (outcome === 'empty') toast.show(t('This track cannot be cached'), 'info')
-            })
-            .catch((error: unknown) => toast.show(error instanceof Error ? error.message : String(error), 'error'))
-        },
-      },
-    ]
-    openContextMenu({ x: e.clientX, y: e.clientY, title: track.title, items })
-  }
+  const albums = releases.filter(release => release.isAlbum)
+  const playlists = releases.filter(release => !release.isAlbum)
+  const tabs = [{ id: 'tracks', label: t('Tracks') }]
+  if (albums.length) tabs.push({ id: 'albums', label: t('Albums') })
+  if (playlists.length) tabs.push({ id: 'playlists', label: t('Playlists') })
 
   const keep = async (): Promise<void> => {
     setBusy(true)
@@ -139,7 +93,6 @@ export default function ScArtistPage({ artistId, fallback }: { artistId: string;
       const outcome = await requestArtistCache(artist, true)
       if (outcome === 'empty') toast.show(t('Nothing to cache for this artist'), 'info')
       else if (outcome === 'started') toast.show(t('Added to favorites'))
-      // 'asked' leaves the track picker on screen; it reports its own result
     } catch (e) {
       toast.show(e instanceof Error ? e.message : String(e), 'error')
     } finally {
@@ -147,9 +100,37 @@ export default function ScArtistPage({ artistId, fallback }: { artistId: string;
     }
   }
 
+  const playRelease = async (release: ScPlaylist) => {
+    try {
+      const detail = await api.scGetPlaylist(release.id)
+      const queue = detail.tracks.filter(canPlaySoundCloudTrack).map(scTrackToUnified)
+      if (queue.length) player.playTracks(queue, 0)
+      else toast.show(t('No tracks'), 'info')
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : String(e), 'error')
+    }
+  }
+
+  const trackList = tracksError ? <div className="error-line">{tracksError}</div> : tracks
+    ? <OnlineCollectionTracks tracks={rows} onPlay={play} onMenu={onMenu} />
+    : <p className="muted">{t('Loading…')}</p>
+  const releaseGrid = (list: ScPlaylist[]) => (
+    <section className="collection-discography">
+      <div className="collection-album-grid">
+        {list.map(release => <ScPlaylistCard key={release.id} playlist={release} editorial onPlay={() => void playRelease(release)} />)}
+      </div>
+    </section>
+  )
+
   return (
     <EditorialDetailLayout
       className="sc-artist-page"
+      variant="panorama"
+      artworkLabel={artist.avatarUrl ? artist.username : undefined}
+      artworkPath={artist.avatarUrl}
+      artworkPreview={<ScArtwork url={artist.avatarUrl} title={artist.username} />}
+      artworkGlow={artist.avatarUrl && <ScArtwork url={artist.avatarUrl} title="" loading="lazy" fetchPriority="low" />}
+      kindIcon={<MicVocal size={13} />}
       onBack={() => navigate({ name: 'search' })}
       backLabel={t('Back to search')}
       round
@@ -169,101 +150,35 @@ export default function ScArtistPage({ artistId, fallback }: { artistId: string;
       title={artist.username}
       meta={
         <>
-          <span>
-            {artist.trackCount} {t('tracks')}
-          </span>
-          {artist.verified ? (
-            <>
-              <span className="meta-dot">·</span>
-              <span className="sc-verified-line">
-                <Check size={12} />
-                {t('Verified')}
-              </span>
-            </>
-          ) : null}
+          <span>{artist.trackCount} {t('tracks')}</span>
+          {artist.verified && <>
+            <span className="meta-dot">·</span>
+            <span className="sc-verified-line"><Check size={12} />{t('Verified')}</span>
+          </>}
         </>
       }
       actions={
         <>
-          <button
-            className="btn btn-primary"
-            disabled={playable.length === 0}
-            onClick={() => playFrom(playable[0] ?? tracks[0])}
-          >
-            <Play size={14} />
-            <span>{t('Play')}</span>
-          </button>
-          <button className="btn" disabled={busy} onClick={() => void keep()}>
-            <Star size={14} />
-            <span>{t('Add to favorites')}</span>
-          </button>
-          {artist.permalinkUrl ? (
-            <button className="btn" onClick={() => void openExternalUrl(artist.permalinkUrl ?? '').catch(() => toast.show(t('Could not open external link'), 'error'))}>
-              <ExternalLink size={14} />
-              <span>{t('Open on SoundCloud')}</span>
+          <CollectionPlayButton disabled={!canPlay} onClick={() => play()} />
+          <CollectionFavoriteButton disabled={busy} onClick={() => void keep()} />
+          <CollectionShuffleButton disabled={!canPlay} onPlay={play} />
+          {artist.permalinkUrl && (
+            <button type="button" className="collection-icon-action" title={t('Open on SoundCloud')} aria-label={t('Open on SoundCloud')}
+              onClick={() => void openExternalUrl(artist.permalinkUrl ?? '').catch(() => toast.show(t('Could not open external link'), 'error'))}>
+              <ExternalLink size={19} />
             </button>
-          ) : null}
+          )}
         </>
       }
     >
       <CacheProgress kind="artist" scId={artist.id} />
-
-      {tracks.length > 0 ? (
-        <>
-          <div className="detail-tracklist-heading sc-tracklist-heading">
-            <h2>{t('Tracks')}</h2>
-            <span>{playable.length} / {tracks.length}</span>
-          </div>
-          <div className="sc-list">
-            {tracks.map((trk) => {
-              const playableHere = canPlaySoundCloudTrack(trk)
-              return (
-                <div
-                  key={trk.id}
-                  className={playableHere ? 'sc-row' : 'sc-row is-disabled'}
-                  onClick={() => playFrom(trk)}
-                  onContextMenu={(e) => onTrackContextMenu(e, trk)}
-                >
-                  <span style={{ width: 32, height: 32, flexShrink: 0 }}>
-                    <CacheBadge kind="track" scId={trk.id}>
-                      <ScArtwork url={trk.artworkUrl} title={trk.title} />
-                    </CacheBadge>
-                  </span>
-                  <div className="sc-meta">
-                    <span className="sc-title">{trk.title}</span>
-                    <span className="sc-artist">{trk.artist}</span>
-                  </div>
-                  <span className="sc-duration">
-                    {playableHere ? fmtTime(trk.durationMs / 1000) : <Lock size={13} />}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        </>
-      ) : null}
-
-      {albums.length > 0 ? (
-        <>
-          <div className="section-label">{t('Albums')}</div>
-          <div className="cards-grid cards-grid-tight">
-            {albums.map((al) => (
-              <ScPlaylistCard key={al.id} playlist={al} />
-            ))}
-          </div>
-        </>
-      ) : null}
-
-      {playlists.length > 0 ? (
-        <>
-          <div className="section-label">{t('Playlists')}</div>
-          <div className="cards-grid cards-grid-tight">
-            {playlists.map((pl) => (
-              <ScPlaylistCard key={pl.id} playlist={pl} />
-            ))}
-          </div>
-        </>
-      ) : null}
+      {tabs.length === 1 ? trackList : (
+        <CollectionArtistTabs active={tab} onChange={setTab} tabs={tabs}>
+          {tab === 'tracks' ? trackList : releaseGrid(tab === 'albums' ? albums : playlists)}
+        </CollectionArtistTabs>
+      )}
     </EditorialDetailLayout>
   )
 }
+
+const EMPTY_TRACKS: ScTrack[] = []

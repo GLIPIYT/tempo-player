@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useFormatCount } from '../i18n/count'
-import { MicVocal, Play } from 'lucide-react'
+import { MicVocal } from 'lucide-react'
 import { api } from '../api/client'
 import { CollectionTrackHeading } from '../components/common/CollectionCatalog'
 import Cover from '../components/common/Cover'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
+import CollectionPlayButton from '../components/common/CollectionPlayButton'
 import EmptyState from '../components/common/EmptyState'
 import TrackList from '../components/common/TrackList'
 import { useAsync } from '../hooks/useAsync'
@@ -34,7 +35,7 @@ export default function LocalArtistPage({ name, imagePath }: { name: string; ima
     <EditorialDetailLayout variant="panorama" artworkPath={imagePath} artworkLabel={name} artworkSize={232} kindIcon={<MicVocal size={13} />} className="local-artist-page" onBack={() => navigate({ name: 'artists' })} backLabel={t('Artists')}
       round art={<Cover path={imagePath} label={name} size={232} loading="eager" fetchPriority="high" />} kind={t('Artist')} title={name}
       meta={<span>{count(tracks.length, 'track')}</span>}
-      actions={tracks.length > 0 && <button className="btn btn-primary" onClick={() => player.playTracks(tracksToUnified(tracks), 0)}><Play size={14} />{t('Play all')}</button>}>
+      actions={tracks.length > 0 && <CollectionPlayButton onClick={() => player.playTracks(tracksToUnified(tracks), 0)} />}>
       <CollectionTrackHeading count={shownTracks.length} query={query} onQuery={setQuery} />
       {loading && !data ? <div className="muted">{t('Loading…')}</div> : error ? (
         <div><p className="error-line">{error}</p><button className="btn" onClick={reload}>{t('Retry')}</button></div>

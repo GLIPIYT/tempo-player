@@ -39,6 +39,11 @@ function relLuminance(c: Rgb): number {
   return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b)
 }
 
+function whiteTextNeedsOutline(color: string): boolean {
+  const rgb = parseHex(color)
+  return rgb !== null && 1.05 / (relLuminance(rgb) + 0.05) < 4.5
+}
+
 export function toHex(c: Rgb): string {
   const h = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')
   return '#' + h(c.r) + h(c.g) + h(c.b)
@@ -69,6 +74,9 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
   const anchors = custom?.gradientAnchors ?? preset?.gradientAnchors
   const isGradient = anchors !== undefined
   const wasGradient = root.classList.contains('theme-gradient')
+  const updateAccentOutline = (accent: string, hoverAccent: string) => {
+    root.toggleAttribute('data-bright-accent', [accent, hoverAccent].some(whiteTextNeedsOutline))
+  }
 
   const clearInlineTheme = () => {
     for (const k of TOKEN_KEYS) root.style.removeProperty(TOKEN_VARS[k])
@@ -89,10 +97,8 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
     const normalized = normalizeGradientAnchors(anchors)
     root.style.setProperty('--t-gradient-first', normalized.first)
     root.style.setProperty('--t-gradient-second', normalized.second)
-    const needsOutline = [normalized.first, normalized.second].some((color) => {
-      const rgb = parseHex(color)
-      return rgb !== null && 1.05 / (relLuminance(rgb) + 0.05) < 4.5
-    })
+    const needsOutline = [normalized.first, normalized.second].some(whiteTextNeedsOutline)
+    root.removeAttribute('data-bright-accent')
     if (needsOutline) root.dataset.brightGradient = 'true'
     else delete root.dataset.brightGradient
     root.dataset.themeGradientSource = gradientSource
@@ -119,6 +125,7 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
     if (preset) {
       for (const k of TOKEN_KEYS) root.style.setProperty(TOKEN_VARS[k], preset.tokens[k])
     }
+    updateAccentOutline(preset?.tokens.accent ?? '#6c8cff', preset?.tokens.accentStrong ?? '#86a1ff')
     return
   }
   const base = custom.base
@@ -133,6 +140,7 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
   const bgRgb = parseHex(bg)
   root.style.setProperty('--t-text', bgRgb ? deriveText(bgRgb) : '#e8ebf2')
   const overrides = custom.overrides
+  updateAccentOutline(overrides.accent ?? accent, overrides.accentStrong ?? accent)
   for (const k of TOKEN_KEYS) {
     const v = overrides[k]
     if (v) root.style.setProperty(TOKEN_VARS[k], v)

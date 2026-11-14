@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react'
 import { useFormatCount } from '../i18n/count'
-import { ArrowRight, Disc3, Folder, Play, Shuffle, Users } from 'lucide-react'
+import { ArrowRight, Disc3, Folder, Users } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
-import { usePlayerActions, usePlayerField } from '../player'
+import { usePlayerActions } from '../player'
 import { tracksToUnified } from '../utils/unified'
 import { CollectionTrackHeading } from '../components/common/CollectionCatalog'
 import Cover from '../components/common/Cover'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
+import CollectionPlayButton from '../components/common/CollectionPlayButton'
+import CollectionShuffleButton from '../components/common/CollectionShuffleButton'
 import EmptyState from '../components/common/EmptyState'
 import TrackList from '../components/common/TrackList'
 import { useT } from '../i18n'
@@ -23,7 +25,6 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
   const t = useT()
   const count = useFormatCount()
   const player = usePlayerActions()
-  const shuffle = usePlayerField('shuffle')
   const [query, setQuery] = useState('')
   useEffect(() => setQuery(''), [albumId])
   const version = useLibraryVersion()
@@ -53,6 +54,7 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
   const unknownArtist = t('Unknown artist')
   const search = normalizeSearchText(query.trim())
   const shownTracks = tracks.filter(track => normalizeSearchText(`${track.title} ${track.artistName ?? ''}`).includes(search))
+  const playAll = () => player.playTracks(tracksToUnified(tracks), 0)
 
   return (
     <EditorialDetailLayout
@@ -72,17 +74,11 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
       actions={
         tracks.length > 0 ? (
           <>
-            <button
-              className="btn btn-primary"
-              onClick={() => player.playTracks(tracksToUnified(tracks), 0)}
-            >
-              <Play size={14} />
-              {t('Play all')}
-            </button>
+            <CollectionPlayButton onClick={playAll} />
             <CollectionFavoriteButton active={fav.data ?? false} onClick={() => {
               void api.toggleFavoriteAlbum(albumId).then(() => { fav.reload(); bumpLibraryVersion() }).catch(() => {})
             }} />
-            <button type="button" className={`collection-icon-action${shuffle ? ' is-active' : ''}`} aria-label={t('Shuffle')} title={t('Shuffle')} onClick={() => { if (!shuffle) player.toggleShuffle(); player.playTracks(tracksToUnified(tracks), 0) }}><Shuffle size={19} /></button>
+            <CollectionShuffleButton onPlay={playAll} />
           </>
         ) : undefined
       }

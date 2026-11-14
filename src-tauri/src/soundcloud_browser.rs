@@ -104,7 +104,7 @@ pub struct BrowserSettings {
     pub preserve_pitch: bool,
     pub equalizer_enabled: bool,
     pub equalizer_gains: [f64; 10],
-    pub gain_db: f64,
+    pub normalize: bool,
     pub spectrum_enabled: bool,
 }
 
@@ -150,13 +150,13 @@ struct SettingsPayload {
     preserve_pitch: bool,
     equalizer_enabled: bool,
     equalizer_gains: [f64; 10],
-    gain_db: f64,
+    normalize: bool,
     spectrum_enabled: bool,
 }
 
 impl BrowserSettings {
     fn validated(self) -> Result<SettingsPayload, String> {
-        let scalar_values = [self.volume, self.playback_rate, self.gain_db];
+        let scalar_values = [self.volume, self.playback_rate];
         if scalar_values.iter().any(|value| !value.is_finite())
             || self.equalizer_gains.iter().any(|value| !value.is_finite())
         {
@@ -168,7 +168,7 @@ impl BrowserSettings {
             preserve_pitch: self.preserve_pitch,
             equalizer_enabled: self.equalizer_enabled,
             equalizer_gains: self.equalizer_gains.map(|value| value.clamp(-18.0, 18.0)),
-            gain_db: self.gain_db.clamp(-36.0, 36.0),
+            normalize: self.normalize,
             spectrum_enabled: self.spectrum_enabled,
         })
     }

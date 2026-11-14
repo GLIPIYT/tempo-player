@@ -154,7 +154,7 @@ export default function ProfilePage() {
     <div className="page profile-panorama">
       <div className="pf-page-backdrop" aria-hidden="true" />
       <header className="pf-passport">
-        <div className="pf-passport-glow" aria-hidden="true"><Cover path={headerArtwork} label={nickname ?? t('Profile')} size={900} /></div>
+        {headerArtwork && <div className="pf-passport-glow" aria-hidden="true"><Cover path={headerArtwork} label="" size={256} fetchPriority="low" thumbnailOnly /></div>}
         <div className="pf-identity">
           <span className="pf-kicker">{t('Profile')}</span>
           {editingName ? <form className="pf-name-form" onSubmit={event => { event.preventDefault(); saveName() }}><input className="text-input" autoFocus value={nameDraft} aria-label={t('What should we call you?')} placeholder={t('What should we call you?')} maxLength={32} onChange={event => setNameDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') setEditingName(false) }} /><button type="submit" className="icon-btn" aria-label={t('Save')}><CheckCircle2 size={21} /></button></form> : <h1><button onClick={() => { setNameDraft(nickname ?? ''); setEditingName(true) }}>{nickname ?? t('Your profile')}<Pencil size={18} /></button></h1>}

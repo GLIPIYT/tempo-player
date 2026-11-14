@@ -23,6 +23,7 @@ export default function EditorialDetailLayout({
   artworkLabel,
   artworkSize = 300,
   artworkPreview,
+  artworkGlow,
   kindIcon,
   byline,
   afterContent,
@@ -44,6 +45,7 @@ export default function EditorialDetailLayout({
   /** Match the primary cover's requested image size where possible. */
   artworkSize?: number
   artworkPreview?: ReactNode
+  artworkGlow?: ReactNode
   kindIcon?: ReactNode
   byline?: ReactNode
   afterContent?: ReactNode
@@ -67,7 +69,7 @@ export default function EditorialDetailLayout({
   const content = <>
       <header className="editorial-detail-hero">
         {variant && artworkLabel ? <button type="button" className={`editorial-detail-art collection-art-open${round ? ' is-round' : ''}`} aria-label={`${t('View artwork')}: ${artworkLabel}`} onClick={() => setViewingArtwork(true)}>{artwork}</button> : <div className={round ? 'editorial-detail-art is-round' : 'editorial-detail-art'}>{art}</div>}
-        {variant && artworkPath && <div className="collection-detail-glow" aria-hidden="true"><Cover path={artworkPath} label="" size={artworkSize} loading="lazy" fetchPriority="low" thumbnailOnly /></div>}
+        {variant && (artworkGlow || artworkPath) && <div className="collection-detail-glow" aria-hidden="true">{artworkGlow ?? <Cover path={artworkPath} label="" size={artworkSize} loading="lazy" fetchPriority="low" thumbnailOnly />}</div>}
         <div className="editorial-detail-copy">
           <div className="section-label editorial-detail-kind">{kindIcon}{kind}{variant && <span className="collection-local-badge"><Folder size={11} />{t('In library')}</span>}</div>
           <h1 className="editorial-detail-title">{title}</h1>

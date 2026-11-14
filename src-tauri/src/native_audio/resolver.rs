@@ -72,13 +72,6 @@ pub fn prepare_track(
         .get("durationSec")
         .and_then(Value::as_f64)
         .filter(|value| value.is_finite() && *value >= 0.0);
-    let gain_db = track
-        .get("gainDb")
-        .and_then(Value::as_f64)
-        .filter(|value| value.is_finite())
-        .filter(|_| settings.normalize)
-        .unwrap_or(0.0)
-        .clamp(-36.0, 36.0);
     let (db, covers_dir, sc_cache_dir, yt_cache_dir, bin_dir) = {
         let state = app.state::<crate::commands::AppState>();
         (
@@ -100,7 +93,6 @@ pub fn prepare_track(
         SourceSpec {
             location: path.to_string_lossy().into_owned(),
             duration_sec: duration,
-            gain_db,
         }
     } else {
         match source.as_str() {
@@ -136,7 +128,6 @@ pub fn prepare_track(
                 SourceSpec {
                     location: path.to_string_lossy().into_owned(),
                     duration_sec: duration,
-                    gain_db,
                 }
             }
             "soundcloud" => {
@@ -246,11 +237,9 @@ pub fn prepare_track(
                     .and_then(Value::as_f64)
                     .filter(|value| value.is_finite() && *value >= 0.0)
                     .or(duration);
-                let resolved_gain = TrackPayload(track.clone()).gain_db(settings.normalize);
                 SourceSpec {
                     location,
                     duration_sec: resolved_duration,
-                    gain_db: resolved_gain,
                 }
             }
             "youtube" => {
@@ -369,7 +358,6 @@ pub fn prepare_track(
                 SourceSpec {
                     location: path.to_string_lossy().into_owned(),
                     duration_sec: final_duration,
-                    gain_db,
                 }
             }
             other => return Err(format!("unsupported audio source: {other}")),
@@ -380,6 +368,7 @@ pub fn prepare_track(
         volume: settings.volume,
         playback_rate: settings.playback_rate,
         preserve_pitch: settings.preserve_pitch,
+        normalize: settings.normalize,
         equalizer_enabled: settings.equalizer_enabled,
         equalizer_gains: settings.equalizer_gains,
     };

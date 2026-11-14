@@ -1,6 +1,7 @@
 import { useFormatCount } from '../i18n/count'
-import { useEffect, useId, useState } from 'react'
-import { ImagePlus, MicVocal, Play, Search, Shuffle } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import CollectionArtistTabs from '../components/common/CollectionArtistTabs'
+import { ImagePlus, MicVocal, Search } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useNav } from '../state/nav'
 import { api } from '../api/client'
@@ -8,11 +9,13 @@ import type { ArtistImageCandidate, Track } from '../types/models'
 import { useAsync } from '../hooks/useAsync'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
-import { usePlayerActions, usePlayerField } from '../player'
+import { usePlayerActions } from '../player'
 import { tracksToUnified, trackToUnified } from '../utils/unified'
 import Cover from '../components/common/Cover'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
+import CollectionPlayButton from '../components/common/CollectionPlayButton'
+import CollectionShuffleButton from '../components/common/CollectionShuffleButton'
 import CacheBadge from '../soundcloud/CacheBadge'
 import CollectionAlbumGrid from '../components/common/CollectionAlbumGrid'
 import TrackList from '../components/common/TrackList'
@@ -26,11 +29,9 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
   const t = useT()
   const count = useFormatCount()
   const player = usePlayerActions()
-  const shuffle = usePlayerField('shuffle')
   const version = useLibraryVersion()
   const [tab, setTab] = useState('popular')
   const [query, setQuery] = useState('')
-  const panelId = useId()
   useEffect(() => { setTab('popular'); setQuery('') }, [artistId])
   const [imageBusy, setImageBusy] = useState(false)
   const [imageSearchBusy, setImageSearchBusy] = useState(false)
@@ -175,35 +176,26 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
       actions={
         albums.length > 0 || (tracks.data?.length ?? 0) > 0 ? (
           <>
-            <button className="btn btn-primary" disabled={!artistTracks.length} onClick={() => void playAll()}>
-              <Play size={14} />
-              {t('Play all')}
-            </button>
+            <CollectionPlayButton disabled={!artistTracks.length} onClick={playAll} />
             <CollectionFavoriteButton active={fav.data ?? false} onClick={() => {
               void api.toggleFavoriteArtist(artistId).then(() => { fav.reload(); bumpLibraryVersion() }).catch(() => {})
             }} />
-            <button type="button" className={`collection-icon-action${shuffle ? ' is-active' : ''}`} disabled={!artistTracks.length} title={t('Shuffle')} aria-label={t('Shuffle')} onClick={() => { if (!shuffle) player.toggleShuffle(); playAll() }}><Shuffle size={19} /></button>
+            <CollectionShuffleButton disabled={!artistTracks.length} onPlay={playAll} />
             <button type="button" className="collection-icon-action" title={t('Change image')} aria-label={t('Change image')} disabled={imageBusy || imageSearchBusy} onClick={openImagePicker}><ImagePlus size={19} /></button>
           </>
         ) : undefined
       }
     >
 
-      <div className="collection-artist-tabs" role="tablist" aria-label={t('Artist')} onKeyDown={event => {
-        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-        const keys = ['popular', 'albums', 'tracks']
-        const index = event.key === 'Home' ? 0 : event.key === 'End' ? 2 : (keys.indexOf(tab) + (event.key === 'ArrowRight' ? 1 : 2)) % 3
-        event.preventDefault(); setTab(keys[index]); event.currentTarget.querySelectorAll<HTMLButtonElement>('button')[index]?.focus()
-      }}>
-        {[['popular', 'Popular'], ['albums', 'Albums'], ['tracks', 'All tracks']].map(([key, label]) => <button key={key} id={`${panelId}-${key}`} type="button" role="tab" aria-selected={tab === key} aria-controls={`${panelId}-panel`} tabIndex={tab === key ? 0 : -1} onClick={() => setTab(key)}>{t(label)}</button>)}
-      </div>
-      <div key={tab} className={`collection-tab-panel is-${tab}`} id={`${panelId}-panel`} role="tabpanel" aria-labelledby={`${panelId}-${tab}`}>
+      <CollectionArtistTabs active={tab} onChange={setTab} tabs={[
+        { id: 'popular', label: t('Popular') }, { id: 'albums', label: t('Albums') }, { id: 'tracks', label: t('All tracks') },
+      ]}>
         {tab !== 'albums' && <section>
           <div className="collection-section-heading"><h2>{t(tab === 'popular' ? 'Popular tracks' : 'Tracks')}<span>{shownTracks.length}</span></h2><label className="collection-catalog-search"><Search size={14} /><input type="search" aria-label={t('Search tracks')} placeholder={t('Search tracks')} value={query} onChange={event => setQuery(event.target.value)} /></label></div>
           {tracks.loading && !tracks.data ? <p className="muted">{t('Loading…')}</p> : shownTracks.length ? <TrackList showSource tracks={shownTracks} showHeader /> : <EmptyState icon={<Search size={26} />} title={t(query ? 'No tracks found' : 'No tracks')} hint={query ? t('Try another search.') : t('No saved tracks by this artist yet.')} />}
         </section>}
         {tab === 'albums' && discography}
-      </div>
+      </CollectionArtistTabs>
 
       <Modal
         open={imagePickerOpen}

@@ -43,12 +43,13 @@
   function settingsFrom(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
       || !hasOnlyKeys(value, ['volume', 'playbackRate', 'preservePitch', 'equalizerEnabled',
-        'equalizerGains', 'gainDb', 'spectrumEnabled'])) return null;
+        'equalizerGains', 'normalize', 'spectrumEnabled'])) return null;
     if (!Array.isArray(value.equalizerGains) || value.equalizerGains.length !== 10) return null;
-    const values = [value.volume, value.playbackRate, value.gainDb, ...value.equalizerGains];
+    const values = [value.volume, value.playbackRate, ...value.equalizerGains];
     if (values.some((item) => !finite(item))) return null;
     if (typeof value.preservePitch !== 'boolean'
       || typeof value.equalizerEnabled !== 'boolean'
+      || typeof value.normalize !== 'boolean'
       || typeof value.spectrumEnabled !== 'boolean') return null;
     return {
       volume: bounded(value.volume, 0, 1),
@@ -56,7 +57,7 @@
       preservePitch: value.preservePitch,
       equalizerEnabled: value.equalizerEnabled,
       equalizerGains: value.equalizerGains.map((gain) => bounded(gain, -18, 18)),
-      gainDb: bounded(value.gainDb, -36, 36),
+      normalize: value.normalize,
       spectrumEnabled: value.spectrumEnabled,
     };
   }

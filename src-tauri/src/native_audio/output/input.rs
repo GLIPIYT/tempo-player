@@ -13,6 +13,7 @@ use rodio::source::SeekError;
 use rodio::{Decoder, Source};
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use super::loudness::{LiveLoudness, TrackLoudness};
 use super::{OutputSettings, SourceSpec};
 
 const REMOTE_SAMPLE_RATE: u32 = 48_000;
@@ -46,6 +47,7 @@ pub struct PreparedAudio {
     pub(super) remote: Option<RemoteControl>,
     pub(super) local: Option<LocalControl>,
     pub(super) buffering: Option<Arc<AtomicBool>>,
+    pub(super) loudness: Arc<TrackLoudness>,
 }
 
 impl PreparedAudio {
@@ -81,6 +83,7 @@ pub(super) fn prepare_input(
     let mut remote = None;
     let mut local = None;
     let buffering;
+    let loudness = TrackLoudness::new(settings.normalize);
 
     let source: AudioSource;
     let duration_sec;
@@ -89,8 +92,13 @@ pub(super) fn prepare_input(
         let ffmpeg = ensure_ffmpeg(&bin_dir)?;
         log_startup_timing("ffmpeg_ready", "remote", helper_started);
         let decoder_started = Instant::now();
-        let (remote_source, control, status) =
-            open_decoder_input(&ffmpeg, OsStr::new(&url), position, spec.duration_sec)?;
+        let (remote_source, control, status) = open_decoder_input(
+            &ffmpeg,
+            OsStr::new(&url),
+            position,
+            spec.duration_sec,
+            loudness.clone(),
+        )?;
         log_startup_timing("decoder_start", "remote", decoder_started);
         duration_sec = valid_duration(spec.duration_sec);
         source = Box::new(remote_source);
@@ -128,8 +136,11 @@ pub(super) fn prepare_input(
                 log_startup_timing("decoder_initial_seek", "local", seek_started);
                 if seek_result.is_ok() && decoder.channels().get() as usize <= LOCAL_MAX_CHANNELS {
                     duration_sec = valid_duration(spec.duration_sec).or(decoder_duration);
+                    loudness.set_file(&path);
                     let worker_started = Instant::now();
-                    let (local_source, control, status) = open_local_buffered(decoder, position)?;
+                    let (local_source, control, status) =
+                        open_local_buffered(decoder, position, loudness.clone())?;
+                    loudness.configure(settings.normalize);
                     log_startup_timing("local_worker_start", "local", worker_started);
                     source = Box::new(local_source);
                     buffering = Some(status.buffering.clone());
@@ -141,8 +152,13 @@ pub(super) fn prepare_input(
                     })?;
                     log_startup_timing("ffmpeg_ready", "local", helper_started);
                     let decoder_started = Instant::now();
-                    let (remote_source, control, status) =
-                        open_decoder_input(&ffmpeg, path.as_os_str(), position, spec.duration_sec)?;
+                    let (remote_source, control, status) = open_decoder_input(
+                        &ffmpeg,
+                        path.as_os_str(),
+                        position,
+                        spec.duration_sec,
+                        loudness.clone(),
+                    )?;
                     log_startup_timing("decoder_start", "local_ffmpeg", decoder_started);
                     duration_sec = valid_duration(spec.duration_sec).or(decoder_duration);
                     source = Box::new(remote_source);
@@ -160,8 +176,13 @@ pub(super) fn prepare_input(
                 })?;
                 log_startup_timing("ffmpeg_ready", "local", helper_started);
                 let decoder_started = Instant::now();
-                let (remote_source, control, status) =
-                    open_decoder_input(&ffmpeg, path.as_os_str(), position, spec.duration_sec)?;
+                let (remote_source, control, status) = open_decoder_input(
+                    &ffmpeg,
+                    path.as_os_str(),
+                    position,
+                    spec.duration_sec,
+                    loudness.clone(),
+                )?;
                 log_startup_timing("decoder_start", "local_ffmpeg", decoder_started);
                 duration_sec = valid_duration(spec.duration_sec);
                 source = Box::new(remote_source);
@@ -189,6 +210,7 @@ pub(super) fn prepare_input(
         remote,
         local,
         buffering,
+        loudness,
     })
 }
 
@@ -416,6 +438,7 @@ fn open_decoder_input(
     input: &OsStr,
     position: f64,
     duration_sec: Option<f64>,
+    loudness: Arc<TrackLoudness>,
 ) -> Result<(RemoteSource, RemoteControl, Arc<RemoteStatus>), String> {
     let (producer, consumer) =
         RingBuffer::<[f32; 2]>::new(REMOTE_SAMPLE_RATE as usize * REMOTE_RING_SECONDS);
@@ -508,6 +531,7 @@ fn open_decoder_input(
                 producer,
                 worker_state,
                 stderr_worker,
+                LiveLoudness::new(loudness, 2, REMOTE_SAMPLE_RATE),
             );
         }) {
         Ok(worker) => worker,
@@ -594,6 +618,7 @@ impl Drop for LocalControl {
 fn open_local_buffered<D>(
     decoder: D,
     position: f64,
+    loudness: Arc<TrackLoudness>,
 ) -> Result<(LocalSource, LocalControl, Arc<RemoteStatus>), String>
 where
     D: Source<Item = f32> + Send + 'static,
@@ -613,7 +638,11 @@ where
     let worker_state = state.clone();
     let worker = thread::Builder::new()
         .name("tempo-local-audio".into())
-        .spawn(move || pump_local(decoder, producer, worker_state))
+        .spawn(move || {
+            let loudness =
+                LiveLoudness::new(loudness, u32::from(channels.get()), sample_rate.get());
+            pump_local(decoder, producer, worker_state, loudness)
+        })
         .map_err(|error| format!("Could not start the local audio decoder: {error}"))?;
     let source = LocalSource {
         consumer,
@@ -631,8 +660,12 @@ where
     Ok((source, control, status))
 }
 
-fn pump_local<D>(mut decoder: D, mut producer: Producer<LocalFrame>, state: Arc<LocalState>)
-where
+fn pump_local<D>(
+    mut decoder: D,
+    mut producer: Producer<LocalFrame>,
+    state: Arc<LocalState>,
+    mut loudness: LiveLoudness,
+) where
     D: Source<Item = f32> + Send + 'static,
 {
     let worker_started = Instant::now();
@@ -709,6 +742,7 @@ where
             }
             match producer.push(pending) {
                 Ok(()) => {
+                    loudness.observe(&frame[..channels]);
                     if !first_frame_logged {
                         log_startup_timing("local_first_frame", "local", worker_started);
                         first_frame_logged = true;
@@ -814,6 +848,7 @@ fn pump_remote(
     mut producer: Producer<[f32; 2]>,
     state: Arc<RemoteState>,
     stderr_worker: Option<JoinHandle<()>>,
+    mut loudness: LiveLoudness,
 ) {
     let worker_started = Instant::now();
     let mut first_frame_logged = false;
@@ -836,6 +871,7 @@ fn pump_remote(
                     }
                     match producer.push(pending) {
                         Ok(()) => {
+                            loudness.observe(&frame);
                             if !first_frame_logged {
                                 log_startup_timing("remote_first_frame", "ffmpeg", worker_started);
                                 first_frame_logged = true;

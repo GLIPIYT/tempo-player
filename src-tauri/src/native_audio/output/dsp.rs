@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -7,6 +7,7 @@ use rodio::source::SeekError;
 use rodio::{ChannelCount, SampleRate, Source};
 
 use super::input::AudioSource;
+use super::loudness::TrackLoudness;
 use super::spectrum::SpectrumBuffer;
 use super::OutputSettings;
 
@@ -27,34 +28,30 @@ struct EqSnapshot {
 
 pub(super) struct EffectControls {
     pub pitch_ratio: Arc<AtomicU32>,
-    gain_db: AtomicU64,
-    linear_gain: AtomicU32,
+    loudness: Arc<TrackLoudness>,
     eq_snapshot: RwLock<EqSnapshot>,
-    eq_boost: AtomicBool,
     limiter_enabled: AtomicBool,
     sample_rate: SampleRate,
 }
 
 impl EffectControls {
-    pub fn new(gain_db: f64, sample_rate: SampleRate) -> Arc<Self> {
-        let gain_db = finite_gain(gain_db);
+    pub fn new(loudness: Arc<TrackLoudness>, sample_rate: SampleRate) -> Arc<Self> {
         let coefficients = std::array::from_fn(|index| make_coefficients(sample_rate, index, 0.0));
         Arc::new(Self {
             pitch_ratio: Arc::new(AtomicU32::new(1.0f32.to_bits())),
-            gain_db: AtomicU64::new(gain_db.to_bits()),
-            linear_gain: AtomicU32::new(db_to_linear(gain_db).to_bits()),
+            loudness,
             eq_snapshot: RwLock::new(EqSnapshot {
                 generation: 0,
                 enabled: false,
                 coefficients,
             }),
-            eq_boost: AtomicBool::new(false),
-            limiter_enabled: AtomicBool::new(gain_db > 0.01),
+            limiter_enabled: AtomicBool::new(false),
             sample_rate,
         })
     }
 
     pub fn configure(&self, settings: &OutputSettings) {
+        self.loudness.configure(settings.normalize);
         let rate = settings.playback_rate.clamp(0.5, 2.0);
         let pitch = if settings.preserve_pitch {
             (1.0 / rate) as f32
@@ -83,42 +80,21 @@ impl EffectControls {
             coefficients,
         };
         let eq_boost = settings.equalizer_enabled && gains.iter().any(|gain| *gain > 0.01);
-        self.eq_boost.store(eq_boost, Ordering::Release);
-        let gain_db = f64::from_bits(self.gain_db.load(Ordering::Acquire));
         self.limiter_enabled
-            .store(eq_boost || gain_db > 0.01, Ordering::Release);
-    }
-
-    pub fn set_track_gain_db(&self, gain_db: f64) {
-        let gain_db = finite_gain(gain_db);
-        self.gain_db.store(gain_db.to_bits(), Ordering::Release);
-        self.linear_gain
-            .store(db_to_linear(gain_db).to_bits(), Ordering::Release);
-        self.limiter_enabled.store(
-            gain_db > 0.01 || self.eq_boost.load(Ordering::Acquire),
-            Ordering::Release,
-        );
+            .store(eq_boost || settings.normalize, Ordering::Release);
     }
 
     fn linear_gain(&self) -> f32 {
-        f32::from_bits(self.linear_gain.load(Ordering::Acquire))
+        self.loudness.linear_gain()
+    }
+
+    pub fn live_loudness_gain(&self) -> Option<f32> {
+        self.loudness.live_gain()
     }
 
     fn limiter_enabled(&self) -> bool {
         self.limiter_enabled.load(Ordering::Acquire)
     }
-}
-
-fn finite_gain(gain_db: f64) -> f64 {
-    if gain_db.is_finite() {
-        gain_db.clamp(-36.0, 36.0)
-    } else {
-        0.0
-    }
-}
-
-fn db_to_linear(gain_db: f64) -> f32 {
-    (10.0f64.powf(gain_db / 20.0)) as f32
 }
 
 pub(super) fn process_source(
@@ -139,17 +115,27 @@ struct GainSource<S: Source<Item = f32>> {
     channels: ChannelCount,
     channel: u16,
     gain: f32,
+    gain_target: f32,
+    gain_smoothing: f32,
+    until_target_refresh: u32,
+    target_interval: u32,
 }
 
 impl<S: Source<Item = f32>> GainSource<S> {
     fn new(source: S, controls: Arc<EffectControls>) -> Self {
         let channels = source.channels();
+        let sample_rate = source.sample_rate().get();
+        let gain = controls.linear_gain();
         Self {
             source,
-            controls: controls.clone(),
+            controls,
             channels,
             channel: 0,
-            gain: controls.linear_gain(),
+            gain,
+            gain_target: gain,
+            gain_smoothing: 1.0 - (-1.0 / (sample_rate as f32 * 0.075)).exp(),
+            until_target_refresh: 0,
+            target_interval: (sample_rate / 100).max(1),
         }
     }
 }
@@ -160,7 +146,12 @@ impl<S: Source<Item = f32>> Iterator for GainSource<S> {
     fn next(&mut self) -> Option<Self::Item> {
         let sample = self.source.next()?;
         if self.channel == 0 {
-            self.gain = self.controls.linear_gain();
+            if self.until_target_refresh == 0 {
+                self.gain_target = self.controls.linear_gain();
+                self.until_target_refresh = self.target_interval;
+            }
+            self.until_target_refresh -= 1;
+            self.gain += (self.gain_target - self.gain) * self.gain_smoothing;
         }
         self.channel = (self.channel + 1) % self.channels.get();
         // Keep headroom for the EQ stage. Peak protection happens afterward.

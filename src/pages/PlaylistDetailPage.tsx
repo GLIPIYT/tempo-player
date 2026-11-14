@@ -1,7 +1,7 @@
 import { useFormatCount } from '../i18n/count'
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { save } from '@tauri-apps/plugin-dialog'
-import { Check, Download, Ellipsis, FileDown, Folder, ListMusic, Pencil, Play, Shuffle, Trash2, X } from 'lucide-react'
+import { Check, Download, Ellipsis, FileDown, Folder, ListMusic, Pencil, Play, Trash2, X } from 'lucide-react'
 import { useNav } from '../state/nav'
 import { useT } from '../i18n'
 import { api } from '../api/client'
@@ -17,6 +17,8 @@ import Cover from '../components/common/Cover'
 import { CollectionTrackHeading } from '../components/common/CollectionCatalog'
 import CollectionArtwork from '../components/common/CollectionArtwork'
 import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
+import CollectionPlayButton from '../components/common/CollectionPlayButton'
+import CollectionShuffleButton from '../components/common/CollectionShuffleButton'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import CacheBadge from '../soundcloud/CacheBadge'
@@ -38,7 +40,6 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const t = useT()
   const count = useFormatCount()
   const player = usePlayerActions()
-  const shuffleEnabled = usePlayerField('shuffle')
   const currentTrack = usePlayerField('currentTrack')
   const version = useLibraryVersion()
   const detail = useAsync(() => api.getPlaylist(playlistId), [playlistId, version])
@@ -242,9 +243,8 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
 
   const artworkPaths = playlist?.coverPath ? [playlist.coverPath] : tracks.map(track => track.coverPath)
   const artwork = <CollectionArtwork paths={artworkPaths} label={displayName} likes={isLikes} eager fetchPriority="high" />
-  const playAll = (shuffle = false) => {
+  const playAll = () => {
     if (!tracks.length) return
-    if (shuffle && !shuffleEnabled) player.toggleShuffle()
     player.playTracks(tracks.map(trackToUnified), 0)
     void api.recordPlaylistStart(playlistId).then(bumpLibraryVersion).catch(cause => toast.show(String(cause), 'error'))
   }
@@ -310,10 +310,10 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
         </span>
       }
       actions={<>
-        {tracks.length > 0 && <button className="btn btn-primary" onClick={() => playAll()}><Play size={15} fill="currentColor" />{t('Play all')}</button>}
+        {tracks.length > 0 && <CollectionPlayButton onClick={playAll} />}
         {playlist && <>
           <CollectionFavoriteButton active={playlist.pinned ?? false} onClick={() => void togglePin()} />
-          <button type="button" className={`collection-icon-action${shuffleEnabled ? ' is-active' : ''}`} title={t('Shuffle')} aria-label={t('Shuffle')} disabled={!tracks.length} onClick={() => playAll(true)}><Shuffle size={19} /></button>
+          <CollectionShuffleButton disabled={!tracks.length} onPlay={playAll} />
           <button type="button" className="collection-icon-action" aria-label={t('More')} title={t('More')} onClick={collectionMenu}><Ellipsis size={22} /></button>
         </>}
       </>}

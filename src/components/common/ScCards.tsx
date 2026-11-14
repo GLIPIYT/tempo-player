@@ -4,6 +4,7 @@ import type { ScArtist, ScPlaylist } from '../../types/models'
 import { useNav } from '../../state/nav'
 import { useT } from '../../i18n'
 import ScArtwork from './ScArtwork'
+import CollectionAlbumCard from './CollectionAlbumCard'
 import { toast } from './Toast'
 import { openContextMenu, type ContextMenuItem } from './ContextMenu'
 import CacheBadge from '../../soundcloud/CacheBadge'
@@ -23,7 +24,7 @@ function report(promise: Promise<unknown>): void {
   })
 }
 
-export function ScPlaylistCard({ playlist }: { playlist: ScPlaylist }) {
+export function ScPlaylistCard({ playlist, editorial = false, onPlay }: { playlist: ScPlaylist; editorial?: boolean; onPlay?: () => void }) {
   const t = useT()
   const { navigate } = useNav()
 
@@ -62,12 +63,20 @@ export function ScPlaylistCard({ playlist }: { playlist: ScPlaylist }) {
     openContextMenu({ x: e.clientX, y: e.clientY, title: playlist.title, items })
   }
 
+  const open = () => navigate({ name: 'sc-playlist', id: playlist.id })
+  if (editorial) {
+    return (
+      <CollectionAlbumCard title={playlist.title} artist={playlist.user} count={playlist.trackCount} onOpen={open} onPlay={onPlay} onMenu={onContextMenu}
+        art={<CacheBadge kind="playlist" scId={playlist.id}><ScArtwork url={playlist.artworkUrl} title={playlist.title} loading="lazy" /></CacheBadge>} />
+    )
+  }
+
   return (
     <button
       type="button"
       className="card sc-card"
       title={playlist.title}
-      onClick={() => navigate({ name: 'sc-playlist', id: playlist.id })}
+      onClick={open}
       onContextMenu={onContextMenu}
     >
       <span className="sc-card-art">

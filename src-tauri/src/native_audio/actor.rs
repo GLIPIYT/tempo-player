@@ -346,7 +346,7 @@ struct Actor {
 }
 
 impl Actor {
-    fn browser_settings(&self, track: Option<&Value>) -> BrowserSettings {
+    fn browser_settings(&self) -> BrowserSettings {
         let settings = &self.persisted.settings;
         BrowserSettings {
             volume: settings.volume as f64,
@@ -354,9 +354,7 @@ impl Actor {
             preserve_pitch: settings.preserve_pitch,
             equalizer_enabled: settings.equalizer_enabled,
             equalizer_gains: settings.equalizer_gains,
-            gain_db: track
-                .map(|track| TrackPayload(track.clone()).gain_db(settings.normalize))
-                .unwrap_or(0.0),
+            normalize: settings.normalize,
             spectrum_enabled: (self.spectrum_enabled || self.analysis_enabled) && self.visible,
         }
     }
@@ -401,7 +399,7 @@ impl Actor {
                 self.load_attempts = 0;
                 self.preloaded = None;
                 self.preload_requested = None;
-                let settings = self.browser_settings(self.active_track.as_ref());
+                let settings = self.browser_settings();
                 if let Some(browser) = self.browser.as_ref() {
                     if let Err(error) = browser.handle.configure(settings) {
                         self.current_error = Some(error);
@@ -909,17 +907,6 @@ impl Actor {
                         .is_some_and(|current| same_identity(current, &track))
                     {
                         self.active_track = Some(track.clone());
-                        self.engine.set_track_gain(
-                            TrackPayload(track.clone()).gain_db(self.persisted.settings.normalize),
-                        );
-                        if let Some(browser) = self.browser.as_ref() {
-                            if let Err(error) = browser
-                                .handle
-                                .configure(self.browser_settings(Some(&track)))
-                            {
-                                self.current_error = Some(error);
-                            }
-                        }
                         let _ = self.listening.update_metadata(&track);
                     }
                     changed = true;
@@ -1087,7 +1074,7 @@ impl Actor {
                         }
                         self.stop_output();
                         self.browser = None;
-                        let settings = self.browser_settings(Some(&track));
+                        let settings = self.browser_settings();
                         let app = self.app.clone();
                         let sender = self.sender.clone();
                         let generation = pending.generation;
@@ -1134,12 +1121,12 @@ impl Actor {
                 self.persisted
                     .queue
                     .update_entry(&pending.entry_id, track.clone());
-                let gain = TrackPayload(track.clone()).gain_db(self.persisted.settings.normalize);
                 self.engine
                     .configure(output_settings(&self.persisted.settings));
-                if let Err(error) = self
-                    .engine
-                    .install(audio, pending.playing, pending.fade_sec)
+                let keep_loudness = self.active_entry_id.as_ref() == Some(&pending.entry_id);
+                if let Err(error) =
+                    self.engine
+                        .install(audio, pending.playing, pending.fade_sec, keep_loudness)
                 {
                     if let Some(mut session) = outgoing_session {
                         if let Some(event) = session.finish("error") {
@@ -1155,7 +1142,6 @@ impl Actor {
                     return;
                 }
                 self.fading_listening = outgoing_session;
-                self.engine.set_track_gain(gain);
                 self.active_entry_id = Some(pending.entry_id);
                 self.active_track = Some(track);
                 self.active_reason = pending.reason;
@@ -2003,17 +1989,9 @@ impl Actor {
         self.engine
             .configure(output_settings(&self.persisted.settings));
         if let Some(browser) = self.browser.as_ref() {
-            if let Err(error) = browser
-                .handle
-                .configure(self.browser_settings(self.active_track.as_ref()))
-            {
+            if let Err(error) = browser.handle.configure(self.browser_settings()) {
                 self.current_error = Some(error);
             }
-        }
-        if let Some(track) = self.active_track.as_ref() {
-            self.engine.set_track_gain(
-                TrackPayload(track.clone()).gain_db(self.persisted.settings.normalize),
-            );
         }
         self.listening.reanchor();
     }
@@ -2300,10 +2278,7 @@ impl Actor {
         self.engine
             .set_spectrum_enabled((self.spectrum_enabled || self.analysis_enabled) && self.visible);
         if let Some(browser) = self.browser.as_ref() {
-            if let Err(error) = browser
-                .handle
-                .configure(self.browser_settings(self.active_track.as_ref()))
-            {
+            if let Err(error) = browser.handle.configure(self.browser_settings()) {
                 self.current_error = Some(error);
             }
         }
@@ -2342,6 +2317,7 @@ fn output_settings(settings: &NativeSettings) -> OutputSettings {
         volume: settings.volume,
         playback_rate: settings.playback_rate,
         preserve_pitch: settings.preserve_pitch,
+        normalize: settings.normalize,
         equalizer_enabled: settings.equalizer_enabled,
         equalizer_gains: settings.equalizer_gains,
     }
