@@ -173,7 +173,7 @@ export default function HomeMixFeature({
         }
       }}
     >
-      <div className={`home-mix-layout${pickerOpen ? ' is-picker-open' : ''}`}>
+      <div className={`home-mix-layout${pickerOpen ? ' is-picker-open' : ''}${dockExpanded && !pickerOpen ? ' is-dock-expanded' : ''}`}>
         <div className={`home-mix-stage home-mix-stage--b${pickerOpen ? ' is-picker-open' : ''}`} onContextMenu={onSectionMenu}>
           {mixes.map((mix, index) => {
             const current = index === activeIndex

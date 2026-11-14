@@ -7,9 +7,10 @@ import { useSoundCloudGenreRecommendations } from '../../hooks/useSoundCloudGenr
 import { getTrackCacheProgress, subscribeTrackCacheProgress } from '../../soundcloud/cacheJobs'
 import { useSettings } from '../../state/settings'
 import ScArtwork from '../common/ScArtwork'
-import { HOME_RAIL_CARD_SIZE, HOME_RAIL_STEP, homeRailLayout, onHomeRailKeyDown, scrollHomeRail, useRecommendationRail } from './useRecommendationRail'
+import { HOME_RAIL_GAP, onHomeRailKeyDown, scrollHomeRail, useRecommendationRail } from './useRecommendationRail'
 
 interface RecommendationsShelfProps {
+  cardSize: number
   tracks: ScTrack[]
   favoriteGenre: { key: string; label: string } | null
   loading: boolean
@@ -97,6 +98,7 @@ const RecommendationCacheControl = memo(function RecommendationCacheControl({ tr
 })
 
 export default function RecommendationsShelf({
+  cardSize,
   tracks,
   favoriteGenre,
   loading,
@@ -121,7 +123,8 @@ export default function RecommendationsShelf({
 }: RecommendationsShelfProps) {
   const t = useT()
   const { settings } = useSettings()
-  const artworkPixels = HOME_RAIL_CARD_SIZE * (Math.max(50, Math.min(200, settings.font.uiScalePct)) / 100) * (window.devicePixelRatio || 1)
+  const step = cardSize + HOME_RAIL_GAP
+  const artworkPixels = cardSize * (Math.max(50, Math.min(200, settings.font.uiScalePct)) / 100) * (window.devicePixelRatio || 1)
   const resolution = artworkPixels <= 200 ? 'small-card' : artworkPixels <= 300 ? 'card' : 'full'
   const {
     tracks: favoriteGenreTracks,
@@ -134,13 +137,13 @@ export default function RecommendationsShelf({
   } = useSoundCloudGenreRecommendations(favoriteGenre, tracks)
   const genreCachedTrackIds = useMemo(() => new Set([...cachedTrackIds, ...genreCachedIds]), [cachedTrackIds, genreCachedIds])
   const sectionRef = useRef<HTMLElement>(null)
-  const mainRail = useRecommendationRail(tracks.length)
-  const genreRail = useRecommendationRail(favoriteGenreTracks.length)
+  const mainRail = useRecommendationRail(tracks.length, step)
+  const genreRail = useRecommendationRail(favoriteGenreTracks.length, step)
   const { ref: railRef, measure: measureMainRail } = mainRail
   const { ref: genreRailRef } = genreRail
   const endRef = useRef<HTMLSpanElement>(null)
   const genreEndRef = useRef<HTMLSpanElement>(null)
-  const trimAnchor = useRef<{ id: string; left: number } | null>(null)
+  const trimAnchor = useRef<{ id: string; position: number } | null>(null)
   const trimFrame = useRef<number | null>(null)
   const [expiredRetryAt, setExpiredRetryAt] = useState<number | null>(() => retryAt === null || retryAt <= Date.now() ? retryAt : null)
   const coolingDown = retryAt !== null && retryAt > Date.now() && expiredRetryAt !== retryAt
@@ -275,14 +278,14 @@ export default function RecommendationsShelf({
       trimFrame.current = null
       const rail = railRef.current
       if (!rail || tracks.length < 280 || trimAnchor.current) return
-      const fullyPassed = Math.floor((rail.scrollLeft - HOME_RAIL_CARD_SIZE) / HOME_RAIL_STEP) + 1
+      const fullyPassed = Math.floor((rail.scrollLeft - cardSize) / step) + 1
       const count = Math.min(20, fullyPassed)
       if (count <= 0) return
       const anchor = tracks[count]
-      trimAnchor.current = { id: anchor.id, left: rail.scrollLeft - count * HOME_RAIL_STEP }
+      trimAnchor.current = { id: anchor.id, position: rail.scrollLeft / step - count }
       onTrimPassed(tracks.slice(0, count).map(track => `soundcloud:${track.id}`))
     })
-  }, [onTrimPassed, tracks, railRef])
+  }, [onTrimPassed, tracks, railRef, cardSize, step])
 
   useEffect(() => () => {
     if (trimFrame.current !== null) window.cancelAnimationFrame(trimFrame.current)
@@ -294,9 +297,9 @@ export default function RecommendationsShelf({
     if (!rail || !anchor) return
     trimAnchor.current = null
     if (tracks[0]?.id !== anchor.id) return
-    rail.scrollLeft = anchor.left
+    rail.scrollLeft = anchor.position * step
     measureMainRail()
-  }, [tracks, railRef, measureMainRail])
+  }, [tracks, railRef, measureMainRail, step])
 
   const renderCards = (items: ScTrack[], rail: typeof mainRail, play: (index: number) => void, cachedIds = cachedTrackIds) => items.slice(rail.start, rail.end).map((track, offset) => (
     <div className="home-recommendation-card" key={track.id} data-track-id={track.id}>
@@ -328,10 +331,10 @@ export default function RecommendationsShelf({
     play: (index: number) => void, cachedIds?: ReadonlySet<string>, onScroll?: () => void,
   ) => (
     <div className="home-track-rail home-recommendation-rail" ref={rail.ref} onScroll={onScroll}
-      onKeyDown={onHomeRailKeyDown} tabIndex={0} aria-label={label} style={homeRailLayout}>
+      onKeyDown={(event) => onHomeRailKeyDown(event, step)} tabIndex={0} aria-label={label}>
       <div className="home-rail-row" style={{
-        width: items.length * HOME_RAIL_STEP + 1,
-        paddingInlineStart: rail.start * HOME_RAIL_STEP,
+        width: items.length * step - HOME_RAIL_GAP + 1,
+        paddingInlineStart: rail.start * step,
       }}>
         {renderCards(items, rail, play, cachedIds)}
         <span ref={sentinel} className="home-recommendation-end" aria-hidden="true" />
@@ -340,7 +343,7 @@ export default function RecommendationsShelf({
   )
 
   return (
-    <section className="home-recommendations" ref={sectionRef} aria-label={t('Recommended for you')} style={homeRailLayout}>
+    <section className="home-recommendations" ref={sectionRef} aria-label={t('Recommended for you')}>
       <div className="home-section home-recommendations-panel">
         <div className="home-section-head" onContextMenu={onSectionMenu}>
           <div className="home-recommendations-title">
@@ -365,8 +368,8 @@ export default function RecommendationsShelf({
             ) : null}
             {tracks.length > 0 && (mainRail.canScrollLeft || mainRail.canScrollRight) ? (
               <div className="home-rail-controls home-recommendations-scroll-controls">
-                <button type="button" aria-label={t('Scroll left')} disabled={!mainRail.canScrollLeft} onClick={() => scrollHomeRail(railRef.current, -1)}><ChevronLeft size={15} /></button>
-                <button type="button" aria-label={t('Scroll right')} disabled={!mainRail.canScrollRight} onClick={() => scrollHomeRail(railRef.current, 1)}><ChevronRight size={15} /></button>
+                <button type="button" aria-label={t('Scroll left')} disabled={!mainRail.canScrollLeft} onClick={() => scrollHomeRail(railRef.current, -1, step)}><ChevronLeft size={15} /></button>
+                <button type="button" aria-label={t('Scroll right')} disabled={!mainRail.canScrollRight} onClick={() => scrollHomeRail(railRef.current, 1, step)}><ChevronRight size={15} /></button>
               </div>
             ) : null}
           </div>
@@ -416,8 +419,8 @@ export default function RecommendationsShelf({
                 </button>
               ) : null}
               {(genreRail.canScrollLeft || genreRail.canScrollRight) && favoriteGenreTracks.length > 0 && <div className="home-rail-controls">
-                <button type="button" aria-label={t('Scroll left')} disabled={!genreRail.canScrollLeft} onClick={() => scrollHomeRail(genreRailRef.current, -1)}><ChevronLeft size={15} /></button>
-                <button type="button" aria-label={t('Scroll right')} disabled={!genreRail.canScrollRight} onClick={() => scrollHomeRail(genreRailRef.current, 1)}><ChevronRight size={15} /></button>
+                <button type="button" aria-label={t('Scroll left')} disabled={!genreRail.canScrollLeft} onClick={() => scrollHomeRail(genreRailRef.current, -1, step)}><ChevronLeft size={15} /></button>
+                <button type="button" aria-label={t('Scroll right')} disabled={!genreRail.canScrollRight} onClick={() => scrollHomeRail(genreRailRef.current, 1, step)}><ChevronRight size={15} /></button>
               </div>}
             </div>
           </div>

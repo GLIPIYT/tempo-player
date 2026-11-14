@@ -535,10 +535,22 @@ html.theme-gradient .home-mix-art::after {
 }
 .hour-mix-page .editorial-detail-title { color: #fff; }
 
-.home-content-grid { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 16px; }
-.home-content-grid.has-two-columns { grid-template-columns: minmax(0, 1fr) minmax(180px, 22%); }
+.home-content-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .home-content-main, .home-content-side, .home-library-shelves { min-width: 0; }
-.home-library-shelves { padding-top: 8px; }
+.home-content-side {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(245px, 100%), 1fr));
+  gap: 14px;
+  min-height: 0;
+}
+.tempo-home .home-content-side .home-section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+}
+.home-library-shelves:not(:empty) { margin-top: 18px; }
 .home-section-tools, .home-rail-controls { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .home-recommendation-error { display: flex; flex-direction: column; gap: 4px; color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
 .home-rail-controls button {
@@ -594,8 +606,8 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
 .home-rail-track { flex: 0 0 var(--home-rail-card-size); min-width: 0; padding: 0; text-align: left; }
 .home-rail-track .cover { width: var(--home-rail-card-size) !important; height: var(--home-rail-card-size) !important; object-fit: cover; border-radius: 8px !important; }
 .home-rail-track strong, .home-rail-track small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.home-rail-track strong { margin-top: 7px; font-size: 11px; }
-.home-rail-track small { margin-top: 2px; color: var(--text-muted); font-size: 10px; }
+.home-rail-track strong { margin-top: 7px; font-size: 13px; }
+.home-rail-track small { margin-top: 2px; color: var(--text-muted); font-size: 11px; }
 .home-rail-track:hover strong { color: var(--accent-strong); }
 .home-recommendations { margin-top: 0; }
 .home-recommendations-scroll-controls { margin-left: auto; }
@@ -610,7 +622,8 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
 }
 .home-recommendation-end { position: absolute; inset: 0 0 0 auto; width: 1px; }
-.home-favorite-genre, .home-playlist-section { margin-top: 11px; padding: 0 5px; }
+.home-favorite-genre { margin-top: 11px; padding: 0 5px; }
+.home-playlist-section { padding: 8px 5px 4px; }
 .home-recommendation-card { position: relative; flex: 0 0 var(--home-rail-card-size); min-width: 0; }
 .home-recommendation-card .home-rail-track { width: 100%; }
 .home-recommendation-cover { display: grid; width: var(--home-rail-card-size); height: var(--home-rail-card-size); place-items: center; overflow: hidden; border-radius: 8px; background: var(--surface); color: var(--text-muted); font-size: 25px; }
@@ -662,10 +675,10 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
 .home-recommendation-skeletons { display: flex; gap: var(--home-rail-gap); overflow: hidden; min-height: calc(var(--home-rail-card-size) + 38px); padding-bottom: 7px; }
 .home-recommendation-skeleton { flex: 0 0 var(--home-rail-card-size); align-self: start; aspect-ratio: 1; border-radius: 8px; background: linear-gradient(100deg, var(--surface) 24%, var(--surface-hover) 38%, var(--surface) 62%); background-size: 300% 100%; animation: home-recommendation-shimmer 1.4s ease-in-out infinite; }
 @keyframes home-recommendation-shimmer { to { background-position-x: -150%; } }
-.home-playlist-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; }
+.home-playlist-list, .home-new-list { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 3px; }
 .home-playlist-card { display: flex; align-items: center; min-width: 0; border: 1px solid transparent; border-radius: 8px; }
 .home-playlist-card:hover { border-color: var(--accent); background: var(--surface-hover); }
-.home-playlist-open { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 4px 5px; text-align: left; }
+.home-playlist-open { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 3px 5px; text-align: left; }
 .home-playlist-open .cover { flex: none; }
 .home-playlist-open span { min-width: 0; }
 .home-playlist-open strong, .home-playlist-open small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -674,13 +687,12 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
 .home-playlist-play { display: grid; flex: none; width: 28px; height: 28px; margin-right: 4px; place-items: center; border-radius: 50%; color: var(--accent-strong); }
 .home-playlist-play:hover { background: var(--accent); color: var(--bg); }
 
-.home-new-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; }
 .home-new-track {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
-  padding: 5px 7px;
+  padding: 3px 7px;
   border: 1px solid transparent;
   border-radius: 8px;
   text-align: left;
@@ -695,9 +707,22 @@ html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
 .home-new-track .home-new-track-duration { flex: none; font-variant-numeric: tabular-nums; }
 .home-new-track-play { flex: none; color: var(--accent-strong); }
 
-@container (max-width: 700px) {
-  .home-content-grid.has-two-columns { grid-template-columns: minmax(0, 1fr); gap: 7px; }
-  .home-content-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 12px; }
+@container (min-width: 701px) {
+  .home-content-grid.has-two-columns:has(.home-favorite-genre) {
+    grid-template-columns: minmax(0, 1fr) clamp(215px, 22cqw, 390px);
+  }
+  .home-content-grid.has-two-columns:has(.home-favorite-genre) .home-content-side {
+    /* The recommendations set the row height. Scroll long lists inside their panels. */
+    contain: size;
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: minmax(0, 1fr);
+  }
+  .home-content-grid.has-two-columns:has(.home-favorite-genre) :is(.home-new-list, .home-playlist-list) {
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
 }
 
 @media (max-width: 1050px) {

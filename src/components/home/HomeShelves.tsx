@@ -7,11 +7,12 @@ import { isSectionHidden } from '../../utils/hiddenSections'
 import { playlistDisplayName } from '../../utils/playlists'
 import { fmtTime } from '../../utils/format'
 import Cover from '../common/Cover'
-import { HOME_RAIL_CARD_SIZE, HOME_RAIL_GAP, HOME_RAIL_STEP, homeRailLayout, onHomeRailKeyDown, scrollHomeRail, useRecommendationRail } from './useRecommendationRail'
+import { HOME_RAIL_GAP, onHomeRailKeyDown, scrollHomeRail, useRecommendationRail } from './useRecommendationRail'
 
 type Section = { title: string; id: string; tracks?: Track[] }
 
 interface HomeShelvesProps {
+  cardSize: number
   topTracks: TopTrackItem[]
   recentAdded: Track[]
   recentPlays: Track[]
@@ -33,6 +34,7 @@ function startDrag(event: PointerEvent<HTMLButtonElement>, track: Track, scrollR
 }
 
 interface TrackRailProps {
+  cardSize: number
   title: string
   id: string
   tracks: Track[]
@@ -44,10 +46,11 @@ interface TrackRailProps {
   onSectionMenu: HomeShelvesProps['onSectionMenu']
 }
 
-function TrackRail({ title, id, tracks, unknownArtist, caption, onOpen, onPlay, onTrackMenu, onSectionMenu }: TrackRailProps) {
+function TrackRail({ cardSize, title, id, tracks, unknownArtist, caption, onOpen, onPlay, onTrackMenu, onSectionMenu }: TrackRailProps) {
   const t = useT()
   const visible = tracks.length > 0 && !isSectionHidden(id)
-  const { ref, start, end, canScrollLeft, canScrollRight } = useRecommendationRail(visible ? tracks.length : 0)
+  const step = cardSize + HOME_RAIL_GAP
+  const { ref, start, end, canScrollLeft, canScrollRight } = useRecommendationRail(visible ? tracks.length : 0, step)
   if (!visible) return null
 
   return (
@@ -59,14 +62,14 @@ function TrackRail({ title, id, tracks, unknownArtist, caption, onOpen, onPlay, 
           <div className="home-rail-controls">
             <button type="button" aria-label={t('Play all')} title={t('Play all')} onClick={() => onPlay(tracks, 0)}><Play size={13} /></button>
             {(canScrollLeft || canScrollRight) && <>
-              <button type="button" aria-label={t('Scroll left')} disabled={!canScrollLeft} onClick={() => scrollHomeRail(ref.current, -1)}><ChevronLeft size={15} /></button>
-              <button type="button" aria-label={t('Scroll right')} disabled={!canScrollRight} onClick={() => scrollHomeRail(ref.current, 1)}><ChevronRight size={15} /></button>
+              <button type="button" aria-label={t('Scroll left')} disabled={!canScrollLeft} onClick={() => scrollHomeRail(ref.current, -1, step)}><ChevronLeft size={15} /></button>
+              <button type="button" aria-label={t('Scroll right')} disabled={!canScrollRight} onClick={() => scrollHomeRail(ref.current, 1, step)}><ChevronRight size={15} /></button>
             </>}
           </div>
         </div>
       </div>
-      <div className="home-track-rail" ref={ref} tabIndex={0} aria-label={title} onKeyDown={onHomeRailKeyDown} style={homeRailLayout}>
-        <div className="home-rail-row" style={{ width: tracks.length * HOME_RAIL_STEP - HOME_RAIL_GAP, paddingInlineStart: start * HOME_RAIL_STEP }}>
+      <div className="home-track-rail" ref={ref} tabIndex={0} aria-label={title} onKeyDown={(event) => onHomeRailKeyDown(event, step)}>
+        <div className="home-rail-row" style={{ width: tracks.length * step - HOME_RAIL_GAP, paddingInlineStart: start * step }}>
           {tracks.slice(start, end).map((track, offset) => {
             const index = start + offset
             const subtitle = caption?.(track) ?? track.artistName ?? unknownArtist
@@ -79,7 +82,7 @@ function TrackRail({ title, id, tracks, unknownArtist, caption, onOpen, onPlay, 
                 onPointerDown={(event) => startDrag(event, track, ref.current)}
                 onContextMenu={(event) => onTrackMenu(event, track, tracks, index)}
               >
-                <Cover path={track.coverPath} label={track.title} size={HOME_RAIL_CARD_SIZE} />
+                <Cover path={track.coverPath} label={track.title} size={cardSize} />
                 <strong title={track.title}>{track.title}</strong>
                 <small title={subtitle}>{subtitle}</small>
               </button>
@@ -91,14 +94,14 @@ function TrackRail({ title, id, tracks, unknownArtist, caption, onOpen, onPlay, 
   )
 }
 
-export default function HomeShelves({ topTracks, recentAdded, recentPlays, likedTracks, likesPlaylist, featuredPlaylists, recommendations, hasPlaylistHistory, unknownArtist, onPlay, onPlayPlaylist, onOpenPlaylist, onTrackMenu, onSectionMenu }: HomeShelvesProps) {
+export default function HomeShelves({ cardSize, topTracks, recentAdded, recentPlays, likedTracks, likesPlaylist, featuredPlaylists, recommendations, hasPlaylistHistory, unknownArtist, onPlay, onPlayPlaylist, onOpenPlaylist, onTrackMenu, onSectionMenu }: HomeShelvesProps) {
   const t = useT()
   const topList = useMemo(() => topTracks.map((item) => item.track), [topTracks])
   const playCounts = useMemo(() => new Map(topTracks.map((item) => [item.track.id, item.playCount])), [topTracks])
   const addedVisible = recentAdded.length > 0 && !isSectionHidden('home.recent')
   const playlistVisible = featuredPlaylists.length > 0 && !isSectionHidden('home.playlists')
   const playlistTitle = t(hasPlaylistHistory ? 'Frequently played playlists' : 'Your playlists')
-  const trackActions = { unknownArtist, onPlay, onTrackMenu, onSectionMenu }
+  const trackActions = { cardSize, unknownArtist, onPlay, onTrackMenu, onSectionMenu }
 
   return (
     <>

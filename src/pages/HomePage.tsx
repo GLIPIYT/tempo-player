@@ -2,7 +2,9 @@ import {
   lazy,
   Suspense,
   useMemo,
+  useRef,
   useState,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
 import { Eye, EyeOff, FolderPlus, Play, RefreshCw, UserRound, Pencil, Trash2 } from 'lucide-react'
@@ -28,6 +30,7 @@ import type { CustomMixRule } from '../features/mixes/types'
 import { applyMixOrder, hideMixUntilNextGeneration, isMixGenerationHidden, mergeMixOrder, saveMixOrder, useMixPresentation } from '../features/mixes/presentation'
 import HomeShelves from '../components/home/HomeShelves'
 import RecommendationsShelf from '../components/home/RecommendationsShelf'
+import { HOME_RAIL_GAP, useHomeRailCardSize } from '../components/home/useRecommendationRail'
 import EmptyState from '../components/common/EmptyState'
 import ScanLine from '../components/common/ScanLine'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
@@ -56,6 +59,8 @@ const NO_TOP_TRACKS: TopTrackItem[] = []
 const NO_PLAYLISTS: Playlist[] = []
 
 export default function HomePage() {
+  const page = useRef<HTMLDivElement>(null)
+  const cardSize = useHomeRailCardSize(page)
   const [deletingRule, setDeletingRule] = useState<CustomMixRule | null>(null)
   const t = useT()
   const { settings } = useSettings()
@@ -171,7 +176,10 @@ export default function HomePage() {
   }
 
   return (
-    <div className="page tempo-home">
+    <div className="page tempo-home" ref={page} style={{
+      '--home-rail-card-size': `${cardSize}px`,
+      '--home-rail-gap': `${HOME_RAIL_GAP}px`,
+    } as CSSProperties}>
       {deletingRule?.id != null ? <DeleteRuleDialog name={deletingRule.name} onDelete={() => custom.remove(deletingRule.id!)} onClose={() => setDeletingRule(null)} /> : null}
       {editingRule ? <Suspense fallback={null}><CustomMixEditor initial={editingRule === 'new' ? undefined : editingRule}
         genres={custom.genres}
@@ -261,6 +269,7 @@ export default function HomePage() {
       ) : (
         <>
           <HomeShelves
+            cardSize={cardSize}
             topTracks={topTracks}
             recentAdded={recentAdded}
             recentPlays={recentPlays}
@@ -269,6 +278,7 @@ export default function HomePage() {
             featuredPlaylists={featuredPlaylists}
             recommendations={!hidden('home.recommendations') ? (
               <RecommendationsShelf
+                cardSize={cardSize}
                 tracks={recommendations.tracks}
                 favoriteGenre={recommendations.favoriteGenre}
                 loading={recommendations.loading}

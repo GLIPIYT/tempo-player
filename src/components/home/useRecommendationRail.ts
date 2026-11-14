@@ -1,30 +1,41 @@
-import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 
-export const HOME_RAIL_CARD_SIZE = 88
-export const HOME_RAIL_GAP = 10
-export const HOME_RAIL_STEP = HOME_RAIL_CARD_SIZE + HOME_RAIL_GAP
+const DEFAULT_CARD_SIZE = 120
+export const HOME_RAIL_GAP = 12
 const OVERSCAN = 2
 
-export const homeRailLayout = {
-  '--home-rail-card-size': `${HOME_RAIL_CARD_SIZE}px`,
-  '--home-rail-gap': `${HOME_RAIL_GAP}px`,
-} as CSSProperties
+export function useHomeRailCardSize(page: RefObject<HTMLDivElement>) {
+  const [size, setSize] = useState(DEFAULT_CARD_SIZE)
+  useLayoutEffect(() => {
+    const element = page.current
+    if (!element) return
+    const measure = () => {
+      const width = element.clientWidth
+      setSize(width >= 1820 ? 168 : width >= 1300 ? 144 : width < 800 ? 104 : DEFAULT_CARD_SIZE)
+    }
+    const observer = new ResizeObserver(measure)
+    measure()
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [page])
+  return size
+}
 
-export function scrollHomeRail(rail: HTMLDivElement | null, direction: number) {
+export function scrollHomeRail(rail: HTMLDivElement | null, direction: number, step: number) {
   if (!rail) return
-  const cards = Math.max(1, Math.floor(rail.clientWidth / HOME_RAIL_STEP) - 1)
+  const cards = Math.max(1, Math.floor(rail.clientWidth / step) - 1)
   rail.scrollBy({
-    left: direction * cards * HOME_RAIL_STEP,
+    left: direction * cards * step,
     behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
   })
 }
 
-export function onHomeRailKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+export function onHomeRailKeyDown(event: KeyboardEvent<HTMLDivElement>, step: number) {
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
   const rail = event.currentTarget
   switch (event.key) {
     case 'ArrowLeft': case 'ArrowRight':
-      scrollHomeRail(rail, event.key === 'ArrowLeft' ? -1 : 1)
+      scrollHomeRail(rail, event.key === 'ArrowLeft' ? -1 : 1, step)
       break
     case 'Home': case 'End':
       rail.scrollTo({ left: event.key === 'Home' ? 0 : rail.scrollWidth })
@@ -37,7 +48,7 @@ export function onHomeRailKeyDown(event: KeyboardEvent<HTMLDivElement>) {
   event.stopPropagation()
 }
 
-export function useRecommendationRail(count: number, step = HOME_RAIL_STEP) {
+export function useRecommendationRail(count: number, step: number) {
   const ref = useRef<HTMLDivElement>(null)
   const [range, setRange] = useState({ start: 0, end: 0, canScrollLeft: false, canScrollRight: false })
   const [nearViewport, setNearViewport] = useState(false)
