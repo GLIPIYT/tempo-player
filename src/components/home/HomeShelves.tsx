@@ -101,13 +101,18 @@ export default function HomeShelves({ cardSize, topTracks, recentAdded, recentPl
   const playCounts = useMemo(() => new Map(topTracks.map((item) => [item.track.id, item.playCount])), [topTracks])
   const addedVisible = recentAdded.length > 0 && !isSectionHidden('home.recent')
   const playlistVisible = featuredPlaylists.length > 0 && !isSectionHidden('home.playlists')
+  const likesVisible = likedTracks.length > 0 && !isSectionHidden('home.likes')
   const playlistTitle = t(hasPlaylistHistory ? 'Frequently played playlists' : 'Your playlists')
   const trackActions = { cardSize, unknownArtist, onPlay, onTrackMenu, onSectionMenu }
 
   return (
     <>
-      <div className={`home-content-grid${recommendations && (addedVisible || playlistVisible) ? ' has-two-columns' : ''}`}>
-        {recommendations && <div className="home-content-main">{recommendations}</div>}
+      <div className="home-content-grid">
+        {(recommendations || likesVisible) && <div className="home-content-main">
+          {recommendations}
+          <TrackRail title={t('Likes')} id="home.likes" tracks={likedTracks}
+            onOpen={likesPlaylist ? () => onOpenPlaylist(likesPlaylist) : undefined} {...trackActions} />
+        </div>}
         {(addedVisible || playlistVisible) && <div className="home-content-side">
           {addedVisible ? (
             <section className="home-section home-recent-section" aria-label={t('Recently added')}>
@@ -150,8 +155,6 @@ export default function HomeShelves({ cardSize, topTracks, recentAdded, recentPl
         <TrackRail title={t('Listened recently')} id="home.played" tracks={recentPlays} {...trackActions} />
         <TrackRail title={t('Most played')} id="home.top" tracks={topList}
           caption={(track) => `${track.artistName ?? unknownArtist} · ${playCounts.get(track.id) ?? 0} ${t('plays')}`} {...trackActions} />
-        <TrackRail title={t('Likes')} id="home.likes" tracks={likedTracks}
-          onOpen={likesPlaylist ? () => onOpenPlaylist(likesPlaylist) : undefined} {...trackActions} />
       </div>
     </>
   )

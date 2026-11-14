@@ -71,7 +71,8 @@ html.theme-gradient .home-mix-feature--b .home-mix-stage--b {
 .home-mix-feature--b .home-mix-copy {
   z-index: 1;
   min-height: 0;
-  padding: 24px clamp(22px, 3vw, 43px) 42px;
+  justify-content: flex-end;
+  padding: 18px clamp(22px, 3vw, 43px) 28px;
 }
 
 .home-mix-feature--b .home-mix-kicker {
@@ -101,7 +102,7 @@ html.theme-gradient .home-mix-feature--b .home-mix-stage--b {
 }
 
 .home-mix-feature--b .home-mix-actions { flex-shrink: 0; margin-top: 12px; }
-.home-mix-feature--b .home-mix-meta { padding-top: 8px; }
+.home-mix-feature--b .home-mix-meta { flex-shrink: 0; margin-top: 10px; padding: 0; }
 
 .home-mix-feature--b .home-mix-play {
   background: linear-gradient(#0003, #0003), var(--tempo-gradient, linear-gradient(var(--accent), var(--accent)));
@@ -142,12 +143,11 @@ html.theme-gradient .home-mix-feature--b .home-mix-art::after {
 
 .home-mix-feature--b .home-mix-controls {
   right: 0;
-  left: 0;
+  left: auto;
   height: 43px;
   padding: 4px 16px 6px;
   border: 0;
-  justify-content: flex-end;
-  background: linear-gradient(0deg, color-mix(in srgb, var(--bg-elevated) 68%, transparent), transparent);
+  background: none;
   backdrop-filter: none;
 }
 
@@ -386,14 +386,14 @@ html.theme-gradient .home-mix-feature--b .home-mix-dock {
   }
   .home-mix-feature--b .home-mix-stage--b { height: 320px; }
   .home-mix-feature--b .home-mix-slide { grid-template-columns: minmax(0, 1fr) minmax(174px, 35%); }
-  .home-mix-feature--b .home-mix-copy { padding: 24px 22px 52px; }
+  .home-mix-feature--b .home-mix-copy { padding-inline: 22px; }
   .home-mix-feature--b .home-mix-copy h2 { font-size: clamp(30px, 5.2vw, 48px); }
   .home-mix-feature--b .home-mix-art-card { width: min(76%, 204px); }
   .home-mix-feature--b .home-mix-layout.is-dock-expanded .home-mix-slide {
     grid-template-columns: minmax(0, 1fr) minmax(84px, 28%);
   }
   .home-mix-feature--b .home-mix-layout.is-dock-expanded .home-mix-copy {
-    padding: 20px 6px 51px 14px;
+    padding-inline: 14px 6px;
   }
   .home-mix-feature--b .home-mix-layout.is-dock-expanded .home-mix-copy h2 {
     max-width: 100%;
@@ -413,14 +413,14 @@ html.theme-gradient .home-mix-feature--b .home-mix-dock {
   }
   .home-mix-feature--b .home-mix-stage--b { height: clamp(352px, 96vw, 392px); }
   .home-mix-feature--b .home-mix-slide { grid-template-columns: minmax(0, 1fr) minmax(108px, 31%); }
-  .home-mix-feature--b .home-mix-copy { padding: 20px 12px 52px; }
+  .home-mix-feature--b .home-mix-copy { padding-inline: 12px; }
   .home-mix-feature--b .home-mix-kicker { gap: 5px; padding: 4px 6px; font-size: 9px; }
   .home-mix-feature--b .home-mix-copy h2 { font-size: clamp(24px, 6.5cqw, 34px); }
   .home-mix-feature--b .home-mix-copy p { font-size: 11px; }
   .home-mix-feature--b .home-mix-actions { gap: 6px; margin-top: 14px; }
   .home-mix-feature--b .home-mix-play,
   .home-mix-feature--b .home-mix-view { min-height: 33px; gap: 6px; padding-inline: 9px; font-size: 10px; }
-  .home-mix-feature--b .home-mix-meta { padding-top: 9px; font-size: 9px; }
+  .home-mix-feature--b .home-mix-meta { font-size: 9px; }
   .home-mix-feature--b .home-mix-art-card { width: min(92%, 132px); border-width: 3px; }
   .home-mix-feature--b .home-mix-controls { right: 0; padding-inline: 8px; }
   .home-mix-feature--b .home-mix-navigation { gap: 1px; }
@@ -442,7 +442,6 @@ html.theme-gradient .home-mix-feature--b .home-mix-dock {
 @media (max-height: 680px) {
   @container home-mix-feature (max-width: 530px) {
     .home-mix-feature--b .home-mix-stage--b { height: 340px; }
-    .home-mix-feature--b .home-mix-copy { padding-top: 16px; }
     .home-mix-feature--b .home-mix-actions { margin-top: 10px; }
   }
 }

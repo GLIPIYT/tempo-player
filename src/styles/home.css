@@ -324,6 +324,9 @@ html.theme-gradient .home-mix-art::after {
 
 .home-content-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .home-content-main, .home-content-side, .home-library-shelves { min-width: 0; }
+.home-content-main,
+.home-recommendations { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.tempo-home .home-content-main .home-section { margin: 0; }
 .home-content-side {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(245px, 100%), 1fr));
@@ -395,6 +398,7 @@ html.theme-gradient .home-mix-art::after {
 .home-recommendations-play { gap: 6px; }
 .home-recommendations-panel,
 .home-favorite-genre,
+.home-content-main > .home-rail-section,
 .home-recent-section,
 .home-playlist-section {
   padding: 11px 13px 7px;
@@ -487,35 +491,16 @@ html.theme-gradient .home-mix-art::after {
 .home-new-track .home-new-track-duration { flex: none; font-variant-numeric: tabular-nums; }
 
 @container (min-width: 701px) {
-  .home-content-grid.has-two-columns:has(.home-favorite-genre) {
+  .home-content-grid:has(.home-favorite-genre):has(.home-recommendations + .home-rail-section):has(.home-recent-section + .home-playlist-section) {
     grid-template-columns: minmax(0, 1fr) clamp(255px, 26cqw, 480px);
     align-items: start;
-  }
-
-  .home-content-grid.has-two-columns:has(.home-favorite-genre) .home-content-side {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .home-content-grid:has(.home-favorite-genre):has(.home-recent-section + .home-playlist-section) {
-    align-items: stretch;
-
-    .home-content-main { display: contents; }
-    .home-recommendations, .home-content-side {
-      display: grid;
-      grid-row: 1 / span 2;
-      grid-template-rows: subgrid;
+    .home-content-side {
       grid-template-columns: minmax(0, 1fr);
-      row-gap: normal;
+      align-self: stretch;
     }
-    .home-recommendations { grid-column: 1; }
-    .home-content-side { grid-column: 2; }
-    .home-recommendations-panel { margin-bottom: 0; }
-    :is(.home-recommendations-panel, .home-favorite-genre) {
-      display: flex;
-      flex-direction: column;
-    }
-    :is(.home-recommendations-panel, .home-favorite-genre) > .home-track-rail {
-      margin-block: auto;
+    :is(.home-new-list, .home-playlist-list) {
+      flex: 1;
+      align-content: space-between;
     }
   }
 }
