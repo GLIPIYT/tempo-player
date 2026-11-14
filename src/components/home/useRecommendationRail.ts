@@ -11,7 +11,7 @@ export function useHomeRailCardSize(page: RefObject<HTMLDivElement>) {
     if (!element) return
     const measure = () => {
       const width = element.clientWidth
-      setSize(width >= 1820 ? 168 : width >= 1300 ? 144 : width < 800 ? 104 : DEFAULT_CARD_SIZE)
+      setSize(width >= 1700 ? 128 : width < 800 ? 104 : DEFAULT_CARD_SIZE)
     }
     const observer = new ResizeObserver(measure)
     measure()

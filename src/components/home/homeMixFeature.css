@@ -18,12 +18,6 @@
   grid-template-columns: minmax(0, 1fr) var(--home-mix-dock-expanded);
 }
 
-.home-mix-feature--b .home-mix-layout.is-picker-open {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.home-mix-feature--b .home-mix-layout.is-picker-open .home-mix-dock-slot { display: none; }
-
 .home-mix-feature--b .home-mix-stage--b {
   height: clamp(292px, 27vw, 320px);
   overflow: hidden;
@@ -74,13 +68,6 @@ html.theme-gradient .home-mix-feature--b .home-mix-stage--b {
   transition: opacity .42s ease, visibility 0s linear .42s;
 }
 
-.home-mix-feature--b .home-mix-stage--b.is-picker-open .home-mix-slide {
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .22s ease, visibility 0s linear .22s;
-}
-
 .home-mix-feature--b .home-mix-copy {
   z-index: 1;
   min-height: 0;
@@ -114,11 +101,10 @@ html.theme-gradient .home-mix-feature--b .home-mix-stage--b {
 .home-mix-feature--b .home-mix-actions { margin-top: 18px; }
 
 .home-mix-feature--b .home-mix-play {
-  background: var(--tempo-gradient, var(--accent));
-  color: var(--bg);
+  background: linear-gradient(#0003, #0003), var(--tempo-gradient, linear-gradient(var(--accent), var(--accent)));
+  color: #fff;
+  text-shadow: 0 1px 2px #0008;
 }
-
-html.theme-gradient .home-mix-feature--b .home-mix-play { color: var(--bg); }
 
 .home-mix-feature--b .home-mix-art {
   z-index: 0;
@@ -157,15 +143,9 @@ html.theme-gradient .home-mix-feature--b .home-mix-art::after {
   height: 43px;
   padding: 4px 16px 6px;
   border: 0;
+  justify-content: flex-end;
   background: linear-gradient(0deg, color-mix(in srgb, var(--bg-elevated) 68%, transparent), transparent);
   backdrop-filter: none;
-}
-
-.home-mix-feature--b .home-mix-picker-button {
-  height: 32px;
-  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
-  background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
-  backdrop-filter: blur(12px);
 }
 
 .home-mix-feature--b .home-mix-navigation { gap: 3px; }
@@ -175,22 +155,6 @@ html.theme-gradient .home-mix-feature--b .home-mix-art::after {
   height: 25px;
   border-color: color-mix(in srgb, var(--text) 14%, transparent);
   background: color-mix(in srgb, var(--bg-elevated) 76%, transparent);
-}
-
-.home-mix-feature--b .home-mix-stage--b .home-mix-picker {
-  inset: 0;
-  z-index: 6;
-  padding: 20px 22px;
-  border-radius: inherit;
-  background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
-  backdrop-filter: blur(22px);
-}
-
-.home-mix-feature--b .home-mix-stage--b.is-picker-open .home-mix-picker {
-  visibility: visible;
-  opacity: 1;
-  pointer-events: auto;
-  transform: none;
 }
 
 .home-mix-feature--b .home-mix-dock-slot {
@@ -243,6 +207,7 @@ html.theme-gradient .home-mix-feature--b .home-mix-dock {
 }
 
 .home-mix-feature--b .home-mix-dock-list {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -251,13 +216,12 @@ html.theme-gradient .home-mix-feature--b .home-mix-dock {
   overflow-x: hidden;
   overflow-y: auto;
   padding: 1px 0 3px;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--accent-strong) 40%, transparent) transparent;
+  scrollbar-width: none;
+  touch-action: pan-y;
 }
 
-.home-mix-feature--b .home-mix-dock:not(.is-expanded) .home-mix-dock-list { scrollbar-width: none; }
-
 .home-mix-feature--b .home-mix-dock-choice {
+  position: relative;
   display: grid;
   flex: 0 0 53px;
   grid-template-columns: 34px minmax(0, 1fr) 12px;
@@ -272,7 +236,30 @@ html.theme-gradient .home-mix-feature--b .home-mix-dock {
   border-radius: 8px;
   color: var(--text);
   text-align: left;
+  user-select: none;
   transition: border-color .16s, background .16s, color .16s;
+}
+
+.home-mix-feature--b .home-mix-dock.is-expanded .home-mix-dock-choice { cursor: grab; }
+.home-mix-feature--b .home-mix-dock-list.is-reordering .home-mix-dock-choice {
+  transition: transform .2s cubic-bezier(.2,.8,.2,1);
+}
+.home-mix-feature--b .home-mix-dock-list.is-reordering .home-mix-dock-choice.is-dragging {
+  z-index: 2;
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  cursor: grabbing;
+  transition: none;
+}
+.home-mix-feature--b .home-mix-drop-slot {
+  position: absolute;
+  inset-inline-start: 0;
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  opacity: 0;
+  pointer-events: none;
+  transition: top .2s cubic-bezier(.2,.8,.2,1), opacity .12s;
 }
 
 .home-mix-feature--b .home-mix-dock-choice:hover,
@@ -384,7 +371,7 @@ html.theme-gradient .home-mix-feature--b .home-mix-dock {
   visibility: visible;
 }
 
-.home-mix-feature--b :is(.home-mix-dock-toggle, .home-mix-dock-choice, .home-mix-dock-create, .home-mix-picker-button, .home-mix-navigation button):focus-visible {
+.home-mix-feature--b :is(.home-mix-dock-toggle, .home-mix-dock-choice, .home-mix-dock-create, .home-mix-navigation button):focus-visible {
   outline: 2px solid var(--accent-strong);
   outline-offset: 1px;
 }
@@ -434,16 +421,12 @@ html.theme-gradient .home-mix-feature--b .home-mix-dock {
   .home-mix-feature--b .home-mix-meta { padding-top: 9px; font-size: 9px; }
   .home-mix-feature--b .home-mix-art-card { width: min(92%, 132px); border-width: 3px; }
   .home-mix-feature--b .home-mix-controls { right: 0; padding-inline: 8px; }
-  .home-mix-feature--b .home-mix-picker-button { gap: 5px; padding-inline: 5px; font-size: 10px; }
-  .home-mix-feature--b .home-mix-stack .cover { width: 20px !important; height: 20px !important; }
   .home-mix-feature--b .home-mix-navigation { gap: 1px; }
   .home-mix-feature--b .home-mix-navigation > button { width: 23px; height: 23px; }
   .home-mix-feature--b .home-mix-dock { padding-inline: 4px; }
   .home-mix-feature--b .home-mix-dock-choice { grid-template-columns: 32px minmax(0, 1fr); gap: 4px; padding-inline: 4px; }
   .home-mix-feature--b .home-mix-dock-arrow { display: none; }
   .home-mix-feature--b .home-mix-dock-art { width: 32px; height: 32px; }
-  .home-mix-feature--b .home-mix-stage--b .home-mix-picker { padding: 15px 11px; }
-  .home-mix-feature--b .home-mix-picker-rail { gap: 8px; }
 }
 
 @container home-mix-feature (max-width: 400px) {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FocusEvent, type MouseEvent } from 'react'
-import { ChevronDown, ChevronLeft, ChevronRight, Clock3, ListMusic, Play, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Clock3, ListMusic, Play, Plus } from 'lucide-react'
 import type { Track } from '../../types/models'
 import { resolveLang, useT } from '../../i18n'
 import { formatCount } from '../../i18n/count'
@@ -36,14 +36,10 @@ export default function HomeMixFeature({
   const { settings } = useSettings()
   const lang = resolveLang(settings.lang)
   const sectionRef = useRef<HTMLElement>(null)
-  const pickerButtonRef = useRef<HTMLButtonElement>(null)
-  const dockRef = useRef<HTMLDivElement>(null)
+  const dockToggleRef = useRef<HTMLButtonElement>(null)
   const heroPlayRef = useRef<HTMLButtonElement>(null)
-  const firstChoiceRef = useRef<HTMLButtonElement>(null)
   const pointerInput = useRef(false)
   const [slide, setSlide] = useState<{ selected: string | null; previous: string | null }>({ selected: null, previous: null })
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const [pickerMounted, setPickerMounted] = useState(false)
   const [dockOpen, setDockOpen] = useState(false)
   const [dockFocused, setDockFocused] = useState(false)
   const [dockHovered, setDockHovered] = useState(false)
@@ -60,7 +56,7 @@ export default function HomeMixFeature({
   const activeMix = mixes[activeIndex]
   const nextMix = mixes[(activeIndex + 1) % mixes.length]
   const mixKeys = mixes.map((mix) => mix.key).join('\u0001')
-  const dockExpanded = dockOpen || dockFocused || (dockHovered && !dockHoverDismissed)
+  const dockExpanded = dockOpen || dockFocused || reorder.draggingKey !== null || (dockHovered && !dockHoverDismissed)
 
   useEffect(() => {
     const onVisibility = () => setVisible(!document.hidden)
@@ -90,7 +86,7 @@ export default function HomeMixFeature({
 
   useEffect(() => {
     const keys = mixKeys ? mixKeys.split('\u0001') : []
-    if (keys.length < 2 || hovered || focused || pickerOpen || !visible || !inViewport || reducedMotion) return
+    if (keys.length < 2 || hovered || focused || !visible || !inViewport || reducedMotion) return
     const delay = Math.max(3000, manualUntil - Date.now())
     const timer = window.setTimeout(() => {
       setSlide((current) => {
@@ -100,7 +96,7 @@ export default function HomeMixFeature({
       setManualUntil(0)
     }, delay)
     return () => window.clearTimeout(timer)
-  }, [mixKeys, slide.selected, hovered, focused, pickerOpen, visible, inViewport, reducedMotion, manualUntil])
+  }, [mixKeys, slide.selected, hovered, focused, visible, inViewport, reducedMotion, manualUntil])
 
   useEffect(() => {
     if (!slide.previous) return
@@ -108,41 +104,22 @@ export default function HomeMixFeature({
     return () => window.clearTimeout(timer)
   }, [slide.previous, slide.selected, reducedMotion])
 
-  useEffect(() => {
-    if (pickerOpen || !pickerMounted) return
-    const timer = window.setTimeout(() => setPickerMounted(false), reducedMotion ? 0 : 300)
-    return () => window.clearTimeout(timer)
-  }, [pickerOpen, pickerMounted, reducedMotion])
-
-  useEffect(() => {
-    if (!pickerOpen) return
-    firstChoiceRef.current?.focus()
-    const onOutsidePointer = (event: PointerEvent) => {
-      if (!sectionRef.current?.contains(event.target as Node)) setPickerOpen(false)
-    }
-    document.addEventListener('pointerdown', onOutsidePointer)
-    return () => document.removeEventListener('pointerdown', onOutsidePointer)
-  }, [pickerOpen])
-
   if (!activeMix) return <section ref={sectionRef} className="home-mix-feature home-mix-feature--b"><button className="btn" onClick={onCreateRule}><Plus size={16} />{t('Your rule')}</button></section>
 
   const chooseMix = (index: number) => {
-    if (pickerOpen) pickerButtonRef.current?.focus()
     const selected = mixes[(index + mixes.length) % mixes.length].key
     if (selected !== activeMix.key) setSlide({ selected, previous: activeMix.key })
     setManualUntil(Date.now() + 9000)
-    setPickerOpen(false)
   }
 
   const onBlur = (event: FocusEvent<HTMLElement>) => {
     const relatedTarget = event.relatedTarget as Node | null
     if (!event.currentTarget.contains(relatedTarget)) setFocused(false)
-    if (!dockRef.current?.contains(relatedTarget)) setDockFocused(false)
   }
 
   const focusAfterDockClose = () => {
-    if (heroPlayRef.current && !heroPlayRef.current.disabled) heroPlayRef.current.focus()
-    else pickerButtonRef.current?.focus()
+    if (heroPlayRef.current?.disabled) dockToggleRef.current?.focus()
+    else heroPlayRef.current?.focus()
   }
 
   return (
@@ -160,21 +137,18 @@ export default function HomeMixFeature({
       }}
       onKeyDown={(event) => {
         setFocused(true)
-        if (event.key === 'Escape') {
-          if (pickerOpen) {
-            pickerButtonRef.current?.focus()
-            setPickerOpen(false)
-          } else if (dockExpanded) {
-            setDockOpen(false)
-            setDockFocused(false)
-            setDockHoverDismissed(true)
-            focusAfterDockClose()
-          }
+        if (event.key === 'Escape' && dockExpanded) {
+          event.preventDefault()
+          event.stopPropagation()
+          setDockOpen(false)
+          setDockFocused(false)
+          setDockHoverDismissed(true)
+          focusAfterDockClose()
         }
       }}
     >
-      <div className={`home-mix-layout${pickerOpen ? ' is-picker-open' : ''}${dockExpanded && !pickerOpen ? ' is-dock-expanded' : ''}`}>
-        <div className={`home-mix-stage home-mix-stage--b${pickerOpen ? ' is-picker-open' : ''}`} onContextMenu={onSectionMenu}>
+      <div className={`home-mix-layout${dockExpanded ? ' is-dock-expanded' : ''}`}>
+        <div className="home-mix-stage home-mix-stage--b" onContextMenu={onSectionMenu}>
           {mixes.map((mix, index) => {
             const current = index === activeIndex
             const leaving = !current && mix.key === slide.previous
@@ -185,7 +159,7 @@ export default function HomeMixFeature({
               <article
                 key={mix.key}
                 className={`home-mix-slide${current ? ' is-active' : ''}${leaving ? ' is-leaving' : ''}`}
-                aria-hidden={!current || pickerOpen}
+                aria-hidden={!current}
                 onContextMenu={(event) => onMixMenu(event, mix)}
               >
                 <div className="home-mix-copy">
@@ -196,14 +170,14 @@ export default function HomeMixFeature({
                   <h2>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</h2>
                   {mix.description ? <p>{mix.kind === 'custom' ? mix.description : t(mix.description)}</p> : null}
                   <div className="home-mix-actions">
-                    <button ref={current ? heroPlayRef : undefined} type="button" className="home-mix-play" disabled={!mix.tracks.length} tabIndex={current && !pickerOpen ? 0 : -1} onClick={() => onPlay(mix.tracks, 0)}>
+                    <button ref={current ? heroPlayRef : undefined} type="button" className="home-mix-play" disabled={!mix.tracks.length} tabIndex={current ? 0 : -1} onClick={() => onPlay(mix.tracks, 0)}>
                       <Play size={15} fill="currentColor" />
                       {t('Play mix')}
                     </button>
                     <button
                       type="button"
                       className="home-mix-view"
-                      tabIndex={current && !pickerOpen ? 0 : -1}
+                      tabIndex={current ? 0 : -1}
                       onClick={() => onOpen(mix)}
                     >
                       <ListMusic size={15} />
@@ -223,70 +197,8 @@ export default function HomeMixFeature({
               </article>
             )
           })}
-          <div className="home-mix-picker" id="home-mix-picker" aria-hidden={!pickerOpen}>
-            {pickerMounted && <>
-              <div className="home-mix-picker-heading"><strong>{t('All mixes')}</strong><span>{t('Choose a mix')}</span></div>
-              <div ref={reorder.railRef} {...reorder.railHandlers} className={`home-mix-picker-rail${mixes.length < 4 ? ' is-short' : ''}${reorder.draggingKey ? ' is-reordering' : ''}`}>
-                <span ref={reorder.slotRef} className="home-mix-drop-slot" aria-hidden="true" />
-                {mixes.map((mix, index) => (
-                  <button
-                    key={mix.key}
-                    ref={index === 0 ? firstChoiceRef : undefined}
-                    type="button"
-                    className={`home-mix-choice${reorder.draggingKey === mix.key ? ' is-dragging' : ''}`}
-                    data-mix-key={mix.key}
-                    title={t('Drag to reorder. Alt + arrow keys also move the mix.')}
-                    onPointerDown={event => reorder.onPointerDown(event, mix.key)}
-                    onDragStart={event => event.preventDefault()}
-                    tabIndex={pickerOpen ? 0 : -1}
-                    aria-current={index === activeIndex ? 'true' : undefined}
-                    onClick={() => chooseMix(index)}
-                    onContextMenu={(event) => {
-                      if (reorder.draggingKey) { event.preventDefault(); event.stopPropagation(); return }
-                      onMixMenu(event, mix)
-                    }}
-                  >
-                    <span className="home-mix-choice-art"><Cover path={mixCover(mix)} label={mix.title} size={146} /></span>
-                    <span className="home-mix-choice-copy">
-                      <small>{mix.kind === 'custom' ? t('Custom mix') : mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')}</small>
-                      <strong>{mix.kind === 'hour' ? t('Music for this hour') : mix.title}</strong>
-                      <span className="home-mix-choice-description">{mix.kind === 'custom' ? mix.description : t(mix.description)}</span>
-                      <span className="home-mix-choice-meta">{formatCount(mix.tracks.length, 'track', t, lang)}</span>
-                    </span>
-                  </button>
-                ))}
-                <button type="button" className="home-mix-choice home-mix-create" tabIndex={pickerOpen ? 0 : -1} onClick={onCreateRule}>
-                  <span className="home-mix-choice-art"><Plus size={42} strokeWidth={1.2} /></span>
-                  <span className="home-mix-choice-copy"><strong>{t('Your rule')}</strong><span className="home-mix-choice-description">{t('Create your own personal mix')}</span></span>
-                </button>
-              </div>
-            </>}
-          </div>
-          <div className="home-mix-controls">
-            <button
-              ref={pickerButtonRef}
-              type="button"
-              className="home-mix-picker-button"
-              aria-expanded={pickerOpen}
-              aria-controls="home-mix-picker"
-              onClick={() => {
-                if (!pickerOpen) {
-                  setPickerMounted(true)
-                  setDockOpen(false)
-                  setDockFocused(false)
-                  setDockHoverDismissed(true)
-                }
-                setPickerOpen(!pickerOpen)
-              }}
-            >
-              <span className="home-mix-stack" aria-hidden="true">
-                {mixes.slice(0, 3).map((mix) => <Cover key={mix.key} path={mixCover(mix)} label={mix.title} size={24} />)}
-              </span>
-              <span>{t('All mixes')}</span>
-              <span className="home-mix-count">{mixes.length}</span>
-              <ChevronDown size={14} className={pickerOpen ? 'is-open' : undefined} />
-            </button>
-            {mixes.length > 1 && !pickerOpen ? (
+          {mixes.length > 1 ? (
+            <div className="home-mix-controls">
               <div className="home-mix-navigation" aria-label={t('Choose a mix')}>
                 <button type="button" aria-label={t('Previous mix')} onClick={() => chooseMix(activeIndex - 1)}><ChevronLeft size={17} /></button>
                 <div className="home-mix-dots">
@@ -302,14 +214,12 @@ export default function HomeMixFeature({
                 </div>
                 <button type="button" aria-label={t('Next mix')} onClick={() => chooseMix(activeIndex + 1)}><ChevronRight size={17} /></button>
               </div>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
         </div>
         <div className="home-mix-dock-slot">
           <div
-            ref={dockRef}
             className={`home-mix-dock${dockExpanded ? ' is-expanded' : ''}`}
-            aria-hidden={pickerOpen}
             onFocusCapture={() => {
               if (!pointerInput.current) setDockFocused(true)
             }}
@@ -330,26 +240,31 @@ export default function HomeMixFeature({
             }}
           >
             <button
+              ref={dockToggleRef}
               type="button"
               className="home-mix-dock-toggle"
               aria-label={dockExpanded ? t('Collapse mix list') : t('Expand mix list')}
               aria-expanded={dockExpanded}
               aria-controls="home-mix-dock-list"
               onClick={() => {
-                const willOpen = !dockExpanded
-                setDockOpen(willOpen)
-                if (!willOpen) {
+                setDockOpen(!dockExpanded)
+                if (dockExpanded) {
+                  setDockFocused(false)
                   setDockHoverDismissed(true)
-                  if (dockRef.current?.contains(document.activeElement)) {
-                    setDockFocused(false)
-                    focusAfterDockClose()
-                  }
                 }
               }}
             >
               {dockExpanded ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
             </button>
-            <div className="home-mix-dock-list" id="home-mix-dock-list" role="group" aria-label={t('Choose a mix')}>
+            <div
+              ref={reorder.railRef}
+              {...reorder.railHandlers}
+              className={`home-mix-dock-list${reorder.draggingKey ? ' is-reordering' : ''}`}
+              id="home-mix-dock-list"
+              role="group"
+              aria-label={t('Choose a mix')}
+            >
+              <span ref={reorder.slotRef} className="home-mix-drop-slot" aria-hidden="true" />
               {mixes.map((mix, index) => {
                 const title = mix.kind === 'hour' ? t('Music for this hour') : mix.title
                 const kind = mix.kind === 'custom' ? t('Custom mix') : mix.kind === 'hour' ? t('For this hour') : mix.kind === 'artist' ? t('Artist mix') : t('From your library')
@@ -358,12 +273,23 @@ export default function HomeMixFeature({
                   <button
                     key={mix.key}
                     type="button"
-                    className="home-mix-dock-choice"
+                    className={`home-mix-dock-choice${reorder.draggingKey === mix.key ? ' is-dragging' : ''}`}
+                    data-mix-key={mix.key}
                     aria-label={`${title}, ${kind}, ${formatCount(mix.tracks.length, 'track', t, lang)}`}
                     aria-pressed={index === activeIndex}
-                    title={title}
+                    title={dockExpanded ? t('Drag to reorder. Alt + arrow keys also move the mix.') : title}
+                    onPointerDown={(event) => {
+                      if (dockExpanded) reorder.onPointerDown(event, mix.key)
+                    }}
+                    onDragStart={(event) => event.preventDefault()}
                     onClick={() => chooseMix(index)}
-                    onContextMenu={(event) => onMixMenu(event, mix)}
+                    onContextMenu={(event) => {
+                      if (reorder.draggingKey) {
+                        event.preventDefault()
+                        return
+                      }
+                      onMixMenu(event, mix)
+                    }}
                   >
                     <span className="home-mix-dock-art"><Cover path={mixCover(mix)} label={title} size={38} loading={index === activeIndex ? 'eager' : 'lazy'} fetchPriority={index === activeIndex ? 'auto' : 'low'} thumbnailOnly /></span>
                     <span className="home-mix-dock-copy">

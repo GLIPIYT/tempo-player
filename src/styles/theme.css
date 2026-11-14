@@ -48,7 +48,6 @@ html.theme-gradient .pb-toggle,
 html.theme-gradient .lyr-play,
 html.theme-gradient .lyr-editor-save,
 html.theme-gradient .background-search-use,
-html.theme-gradient .home-mix-play,
 html.theme-gradient .album-wall-play,
 html.theme-gradient .playlist-list-play {
   background: var(--tempo-gradient);
@@ -162,19 +161,11 @@ html.theme-gradient .home-mix-kicker {
   color: #fff;
 }
 
-html.theme-gradient .home-mix-copy p,
-html.theme-gradient .home-mix-choice-copy small,
-html.theme-gradient .home-mix-choice-copy strong,
-html.theme-gradient .home-mix-choice-copy .home-mix-choice-description,
-html.theme-gradient .home-mix-choice-copy .home-mix-choice-meta,
-html.theme-gradient .home-mix-picker-heading strong,
-html.theme-gradient .home-mix-picker-heading span {
+html.theme-gradient .home-mix-copy p {
   color: #fff;
 }
 
-html.theme-gradient .home-mix-count,
 html.theme-gradient .home-section-open,
-html.theme-gradient .home-mix-picker-heading strong,
 html.theme-gradient .section-label,
 html.theme-gradient .detail-title,
 html.theme-gradient .link-btn,
@@ -185,12 +176,6 @@ html.theme-gradient .lyr-time-cur {
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
-}
-
-html.theme-gradient .home-mix-play {
-  background: var(--tempo-gradient);
-  color: #fff;
-  border-color: transparent;
 }
 
 html.theme-gradient .hour-mix-page .editorial-detail-kind {
@@ -213,24 +198,11 @@ html.theme-gradient[data-bright-gradient='true'] .btn-primary {
 
 html.theme-gradient .home-mix-view:hover,
 html.theme-gradient .home-mix-view[aria-expanded='true'],
-html.theme-gradient .home-mix-picker-button,
-html.theme-gradient .home-mix-navigation > button:hover,
-html.theme-gradient .home-mix-choice:hover,
-html.theme-gradient .home-mix-choice[aria-current='true'] {
+html.theme-gradient .home-mix-navigation > button:hover {
   border-color: color-mix(in srgb, var(--t-gradient-second) 54%, var(--border));
   background: var(--tempo-gradient-soft);
 }
 
-html.theme-gradient .home-mix-picker-button { color: var(--text); }
-
-html.theme-gradient .home-mix-count {
-  background-color: var(--bg-elevated);
-  background-image: var(--tempo-gradient-text), var(--tempo-gradient-soft);
-  -webkit-background-clip: text, padding-box;
-  background-clip: text, padding-box;
-}
-
-html.theme-gradient .home-mix-picker-button > svg,
 html.theme-gradient .home-mix-navigation > button svg,
 html.theme-gradient .home-section-open svg,
 html.theme-gradient .editorial-detail-kind svg,
@@ -253,8 +225,7 @@ html.theme-gradient .album-wall-play {
   background: var(--tempo-gradient);
 }
 
-html.theme-gradient .home-mix-dots button[aria-pressed='true']::before,
-html.theme-gradient .home-mix-picker-rail::-webkit-scrollbar-thumb {
+html.theme-gradient .home-mix-dots button[aria-pressed='true']::before {
   background: var(--tempo-gradient);
 }
 

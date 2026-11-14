@@ -721,21 +721,6 @@
   animation: mix-rule-out 0.17s ease both;
   pointer-events: none;
 }
-.home-mix-choice.home-mix-create {
-  border: 1px dashed #ffffff35;
-  background: #ffffff03;
-}
-.home-mix-create .home-mix-choice-art {
-  display: grid;
-  place-items: center;
-  background: #ffffff04;
-  color: var(--text-muted);
-  height: 130px;
-}
-.home-mix-create:hover {
-  border-color: var(--accent, #eb6096);
-  color: var(--accent, #eb6096);
-}
 .home-mix-copy p { overflow-wrap: anywhere; white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .hour-mix-page .editorial-detail-description { overflow-wrap: anywhere; white-space: pre-line; }
 @keyframes mix-rule-backdrop-in {

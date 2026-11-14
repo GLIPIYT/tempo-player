@@ -17,7 +17,6 @@ const ESCAPE_HANDLED_SURFACES = [
   '.modal-overlay',
   '.confirm-overlay',
   '.background-search-filter-popover',
-  '.home-mix-picker[aria-hidden="false"]',
   '.qpanel.is-open',
 ].join(',')
 

@@ -10,6 +10,7 @@ import Cover from '../common/Cover'
 import { HOME_RAIL_GAP, onHomeRailKeyDown, scrollHomeRail, useRecommendationRail } from './useRecommendationRail'
 
 type Section = { title: string; id: string; tracks?: Track[] }
+const SIDEBAR_COVER_SIZE = 42
 
 interface HomeShelvesProps {
   cardSize: number
@@ -116,7 +117,7 @@ export default function HomeShelves({ cardSize, topTracks, recentAdded, recentPl
               <div className="home-new-list">
                 {recentAdded.map((track, index) => (
                   <button key={track.id} type="button" className="home-new-track" onClick={() => { if (!consumeDragClick()) onPlay(recentAdded, index) }} onPointerDown={(event) => startDrag(event, track)} onContextMenu={(event) => onTrackMenu(event, track, recentAdded, index)}>
-                    <Cover path={track.coverPath} label={track.title} size={33} />
+                    <Cover path={track.coverPath} label={track.title} size={SIDEBAR_COVER_SIZE} />
                     <span><strong>{track.title}</strong><small>{track.artistName ?? unknownArtist}</small></span>
                     <small className="home-new-track-duration">{fmtTime(track.durationSec)}</small>
                     <Play size={13} className="home-new-track-play" />
@@ -134,7 +135,7 @@ export default function HomeShelves({ cardSize, topTracks, recentAdded, recentPl
                 {featuredPlaylists.map((playlist) => (
                   <div key={playlist.id} className="home-playlist-card" onContextMenu={(event) => onSectionMenu(event, { title: playlistTitle, id: 'home.playlists' })}>
                     <button type="button" className="home-playlist-open" onClick={() => onOpenPlaylist(playlist)}>
-                      <Cover path={playlist.coverPath} label={playlist.name} size={33} />
+                      <Cover path={playlist.coverPath} label={playlist.name} size={SIDEBAR_COVER_SIZE} />
                       <span><strong>{playlistDisplayName(playlist, playlist.name, t)}</strong><small>{playlist.trackCount} {t('tracks')}</small></span>
                     </button>
                     <button type="button" className="home-playlist-play" aria-label={`${t('Play all')}: ${playlist.name}`} onClick={() => onPlayPlaylist(playlist)}><Play size={16} fill="currentColor" /></button>
