@@ -6,10 +6,12 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
 } from 'react'
+import { createPortal } from 'react-dom'
 import { ArrowDown, ArrowUp, Disc3, FolderOpen, Heart, MoreHorizontal, PencilLine, Plus, Trash2, User } from 'lucide-react'
 import { api } from '../../api/client'
-import type { Playlist, Track } from '../../types/models'
+import type { Playlist, Track, UnifiedTrack } from '../../types/models'
 import { usePlayer } from '../../player'
 import { useLikes } from '../../hooks/useLikes'
 import { useNav } from '../../state/nav'
@@ -33,6 +35,12 @@ interface TrackMenuProps {
   hideTrigger?: boolean
   onChanged?: () => void
   onMove?: (delta: 1 | -1) => void
+  playback?: TrackMenuPlayback
+}
+
+export interface TrackMenuPlayback {
+  track: UnifiedTrack
+  playNow: () => void
 }
 
 /** Lets a row open its own menu on right-click without owning the open state. */
@@ -45,8 +53,7 @@ export interface TrackMenuHandle {
 /** Keeps the menu inside the viewport when it is opened at the cursor. */
 const EDGE_GAP = 8
 
-function clampToViewport(x: number, y: number, el: HTMLElement | null): { x: number; y: number } {
-  if (!el) return { x, y }
+function clampToViewport(x: number, y: number, el: HTMLElement): { x: number; y: number } {
   const w = el.offsetWidth
   const h = el.offsetHeight
   return {
@@ -60,7 +67,7 @@ function errText(e: unknown): string {
 }
 
 const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu(
-  { track, tracks, index, playlistMode = false, playlistId, hideTrigger = false, onChanged, onMove },
+  { track, tracks, index, playlistMode = false, playlistId, hideTrigger = false, onChanged, onMove, playback },
   ref,
 ) {
   const player = usePlayer()
@@ -77,16 +84,23 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
   const rootRef = useRef<HTMLDivElement | null>(null)
   const popRef = useRef<HTMLDivElement | null>(null)
 
-  // the menu is measured once it exists, then pulled back inside the window if
-  // it would hang off the right or bottom edge
   useLayoutEffect(() => {
-    if (!open || !pos) return
     const el = popRef.current
-    if (!el) return
-    const clamped = clampToViewport(pos.x, pos.y, el)
-    if (clamped.x !== pos.x || clamped.y !== pos.y) setPos(clamped)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, pos !== null])
+    if (!open || !pos || !el) return
+    const placeAtCursor = () => {
+      const clamped = clampToViewport(pos.x, pos.y, el)
+      el.style.left = `${clamped.x}px`
+      el.style.top = `${clamped.y}px`
+    }
+    placeAtCursor()
+    const observer = new ResizeObserver(placeAtCursor)
+    observer.observe(el)
+    window.addEventListener('resize', placeAtCursor)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', placeAtCursor)
+    }
+  }, [open, pos])
 
   const flash = useCallback((text: string, bad: boolean) => {
     toast.show(text, bad ? 'error' : 'success')
@@ -95,7 +109,8 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
   useEffect(() => {
     if (!open) return
     const onDown = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (!rootRef.current?.contains(target) && !popRef.current?.contains(target)) setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
@@ -158,10 +173,11 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
     openFresh()
   }
 
-  const unified = trackToUnified(track)
+  const unified = playback?.track ?? trackToUnified(track)
 
   const playNow = () => {
-    player.playTracks(tracks.map((t) => trackToUnified(t)), index)
+    if (playback) playback.playNow()
+    else player.playTracks(tracks.map((t) => trackToUnified(t)), index)
     close()
   }
 
@@ -322,6 +338,10 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
       </>
     ) : null
 
+  // Cursor coordinates are relative to the viewport. Keep the menu outside
+  // the scaled app shell and any containing blocks inside a page.
+  const renderMenu = (menu: ReactNode) => pos ? createPortal(menu, document.body) : menu
+
   return (
     <div
       ref={rootRef}
@@ -338,12 +358,15 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
           <MoreHorizontal size={15} />
         </button>
       )}
-      {open ? (
+      {open ? renderMenu(
         <div
           ref={popRef}
           className={'menu-pop' + (pos ? ' menu-pop-at-point' : '')}
           role="menu"
-          style={pos ? { left: pos.x, top: pos.y } : undefined}
+          onContextMenu={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
         >
           <button className="menu-item" role="menuitem" onClick={toggleLike}>
             <Heart size={13} fill={likes.isLiked(track.id) ? 'currentColor' : 'none'} />
@@ -381,13 +404,13 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
                 {t('Remove from playlist')}
               </button>
               <div className="menu-sep" />
-              <button className="menu-item" role="menuitem" onClick={playNow}>
+              <button className="menu-item" role="menuitem" disabled={!unified.playable} onClick={playNow}>
                 {t('Play now')}
               </button>
-              <button className="menu-item" role="menuitem" onClick={playNext}>
+              <button className="menu-item" role="menuitem" disabled={!unified.playable} onClick={playNext}>
                 {t('Play next')}
               </button>
-              <button className="menu-item" role="menuitem" onClick={addQueue}>
+              <button className="menu-item" role="menuitem" disabled={!unified.playable} onClick={addQueue}>
                 {t('Add to queue')}
               </button>
               {navRows}
@@ -423,13 +446,13 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
             </>
           ) : (
             <>
-              <button className="menu-item" role="menuitem" onClick={playNow}>
+              <button className="menu-item" role="menuitem" disabled={!unified.playable} onClick={playNow}>
                 {t('Play now')}
               </button>
-              <button className="menu-item" role="menuitem" onClick={playNext}>
+              <button className="menu-item" role="menuitem" disabled={!unified.playable} onClick={playNext}>
                 {t('Play next')}
               </button>
-              <button className="menu-item" role="menuitem" onClick={addQueue}>
+              <button className="menu-item" role="menuitem" disabled={!unified.playable} onClick={addQueue}>
                 {t('Add to queue')}
               </button>
               <div className="menu-sep" />

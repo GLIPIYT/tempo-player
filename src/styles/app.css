@@ -2526,6 +2526,10 @@
   top: auto;
   right: auto;
   z-index: 220;
+  width: max-content;
+  max-height: calc(100vh - 16px);
+  max-width: calc(100vw - 16px);
+  overflow: auto;
 }
 
 .home-restore {

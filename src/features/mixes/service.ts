@@ -3,6 +3,7 @@ import { api } from '../../api/client'
 import type { ScTrack, Track } from '../../types/models'
 import { canPlaySoundCloudTrack } from '../../soundcloud/playability'
 import { rememberSoundCloudTrack } from '../../soundcloud/cacheMetadata'
+import { transientSoundCloudTrack } from '../../utils/transientTracks'
 import { acousticAffinity, buildTasteProfile, type TasteProfile } from '../recommendations/profile'
 import { recommendationLanguagePreference } from '../recommendations/service'
 import { normalizeRecordingText } from '../recommendations/identity'
@@ -469,19 +470,6 @@ function buildLibraryArtistIndex(candidates: readonly CustomMixCandidate[]): Map
   return new Map([...ids].filter((entry): entry is [string, number] => entry[1] != null))
 }
 
-function onlineTrackId(sourceId: string): number {
-  if (/^[1-9]\d*$/u.test(sourceId)) {
-    const numericId = Number(sourceId)
-    if (Number.isSafeInteger(numericId) && numericId > 0) return -numericId
-  }
-  let hash = 2166136261
-  for (const char of sourceId) {
-    hash ^= char.charCodeAt(0)
-    hash = Math.imul(hash, 16777619)
-  }
-  return -1 - ((hash >>> 0) % 2_147_483_647)
-}
-
 function toOnlineCandidate(
   source: ScTrack,
   queriedGenre: string,
@@ -492,33 +480,11 @@ function toOnlineCandidate(
   const genre = source.genre?.trim() && matchesFavoriteGenre(source, queriedGenre)
     ? source.genre.trim()
     : queriedGenre
-  const durationSec = Number.isFinite(source.durationMs) && source.durationMs > 0
-    ? source.durationMs / 1000 : null
   const artistId = libraryArtists.get(normalizeName(artistName)) ?? null
   const track: Track = {
-    id: onlineTrackId(source.id),
-    path: `soundcloud://${source.id}`,
-    title: source.title,
+    ...transientSoundCloudTrack(source),
     artistId,
-    artistName,
-    albumId: null,
-    albumTitle: null,
-    trackNumber: null,
-    discNumber: null,
-    durationSec,
-    year: null,
     genre,
-    coverPath: source.artworkUrl,
-    fileSize: 0,
-    modifiedAt: 0,
-    addedAt: Math.floor(Date.now() / 1000),
-    source: 'soundcloud',
-    externalId: source.id,
-    lastPlayedAt: null,
-    playCount: 0,
-    skipCount: 0,
-    gainDb: null,
-    peakDb: null,
   }
   return {
     track,

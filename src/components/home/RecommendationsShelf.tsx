@@ -24,6 +24,7 @@ interface RecommendationsShelfProps {
   cachedTrackIds: ReadonlySet<string>
   onPlay: (index: number) => void
   onPlayFavoriteGenre: (tracks: ScTrack[], index: number) => void
+  onTrackMenu: (event: MouseEvent, track: ScTrack, playNow: () => void, isGenre: boolean) => void
   onCache: (track: ScTrack) => void
   onDropToPlaylist: (playlistId: number, track: ScTrack) => void
   onRetry: () => void
@@ -112,6 +113,7 @@ export default function RecommendationsShelf({
   cachedTrackIds,
   onPlay,
   onPlayFavoriteGenre,
+  onTrackMenu,
   onCache,
   onDropToPlaylist,
   onRetry,
@@ -302,8 +304,9 @@ export default function RecommendationsShelf({
     measureMainRail()
   }, [tracks, railRef, measureMainRail, step])
 
-  const renderCards = (items: ScTrack[], rail: typeof mainRail, play: (index: number) => void, cachedIds = cachedTrackIds) => items.slice(rail.start, rail.end).map((track, offset) => (
-    <div className="home-recommendation-card" key={track.id} data-track-id={track.id}>
+  const renderCards = (items: ScTrack[], rail: typeof mainRail, play: (index: number) => void, isGenre: boolean, cachedIds = cachedTrackIds) => items.slice(rail.start, rail.end).map((track, offset) => (
+    <div className="home-recommendation-card" key={track.id} data-track-id={track.id}
+      onContextMenu={(event) => onTrackMenu(event, track, () => play(rail.start + offset), isGenre)}>
       <button
         type="button"
         className="home-rail-track"
@@ -329,7 +332,7 @@ export default function RecommendationsShelf({
 
   const renderRail = (
     rail: typeof mainRail, sentinel: typeof endRef, label: string, items: ScTrack[],
-    play: (index: number) => void, cachedIds?: ReadonlySet<string>, onScroll?: () => void,
+    play: (index: number) => void, isGenre: boolean, cachedIds?: ReadonlySet<string>, onScroll?: () => void,
   ) => (
     <div className="home-track-rail home-recommendation-rail" ref={rail.ref} onScroll={onScroll}
       onKeyDown={(event) => onHomeRailKeyDown(event, step)} tabIndex={0} aria-label={label}>
@@ -337,7 +340,7 @@ export default function RecommendationsShelf({
         width: items.length * step - HOME_RAIL_GAP + 1,
         paddingInlineStart: rail.start * step,
       }}>
-        {renderCards(items, rail, play, cachedIds)}
+        {renderCards(items, rail, play, isGenre, cachedIds)}
         <span ref={sentinel} className="home-recommendation-end" aria-hidden="true" />
       </div>
     </div>
@@ -381,7 +384,7 @@ export default function RecommendationsShelf({
             {Array.from({ length: 5 }, (_, index) => <span className="home-recommendation-skeleton" key={index} />)}
           </div>
         ) : tracks.length > 0 ? (
-          renderRail(mainRail, endRef, t('Recommended for you'), tracks, onPlay, cachedTrackIds, trimPassed)
+          renderRail(mainRail, endRef, t('Recommended for you'), tracks, onPlay, false, cachedTrackIds, trimPassed)
         ) : error ? (
           <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}</div>
         ) : (
@@ -431,7 +434,7 @@ export default function RecommendationsShelf({
             </div>
           ) : favoriteGenreTracks.length > 0 ? (
             renderRail(genreRail, genreEndRef, `${favoriteGenre.label} · ${t('Recommended for you')}`, favoriteGenreTracks,
-              (index) => onPlayFavoriteGenre(favoriteGenreTracks, index), genreCachedTrackIds)
+              (index) => onPlayFavoriteGenre(favoriteGenreTracks, index), true, genreCachedTrackIds)
           ) : genreError ? (
             <div className="home-recommendation-empty" role="status">{t('Could not load recommendations')}: {genreError}</div>
           ) : (

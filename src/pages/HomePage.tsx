@@ -21,7 +21,8 @@ import { playerController } from '../player/controller'
 import { useNav } from '../state/nav'
 import { bumpLibraryVersion } from '../utils/libraryVersion'
 import { toast } from '../components/common/Toast'
-import { scTracksToUnified, trackToUnified } from '../utils/unified'
+import { scTrackToUnified, scTracksToUnified, trackToUnified } from '../utils/unified'
+import { transientSoundCloudTrack } from '../utils/transientTracks'
 import HomeMixFeature from '../components/home/HomeMixFeature'
 import DeleteRuleDialog from '../components/common/DeleteRuleDialog'
 import { useCustomMixes } from '../features/mixes/useCustomMixes'
@@ -143,7 +144,16 @@ export default function HomePage() {
 
   const trackContext = (e: ReactMouseEvent, track: Track, tracks: Track[], index: number) => {
     e.preventDefault()
+    e.stopPropagation()
     setCtx({ x: e.clientX, y: e.clientY, track, tracks, index })
+  }
+
+  const recommendationContext = (event: ReactMouseEvent, source: ScTrack, playNow: () => void, isGenre: boolean) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const track = transientSoundCloudTrack(source)
+    const unified = isGenre ? scTrackToUnified(source) : recommendationService.toUnified(source)
+    setCtx({ x: event.clientX, y: event.clientY, track, tracks: [track], index: 0, playback: { track: unified, playNow } })
   }
 
   const hidden = (id: string) => isSectionHidden(id)
@@ -291,6 +301,7 @@ export default function HomePage() {
                 retryAt={recommendations.retryAt}
                 onPlay={playRecommendations}
                 onPlayFavoriteGenre={playFavoriteGenre}
+                onTrackMenu={recommendationContext}
                 onCache={cacheRecommendation}
                 onDropToPlaylist={addRecommendationToPlaylist}
                 onRetry={recommendations.retry}

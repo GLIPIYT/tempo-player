@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Track } from '../../types/models'
-import TrackMenu, { type TrackMenuHandle } from './TrackMenu'
+import TrackMenu, { type TrackMenuHandle, type TrackMenuPlayback } from './TrackMenu'
 
 export interface TrackContextRequest {
   x: number
@@ -8,6 +8,7 @@ export interface TrackContextRequest {
   track: Track
   tracks: Track[]
   index: number
+  playback?: TrackMenuPlayback
 }
 
 interface TrackContextMenuProps {
@@ -41,6 +42,7 @@ export default function TrackContextMenu({ req, onClose }: TrackContextMenuProps
         track={req.track}
         tracks={req.tracks}
         index={req.index}
+        playback={req.playback}
         onChanged={onClose}
       />
     </div>
