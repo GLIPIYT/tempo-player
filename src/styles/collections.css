@@ -242,7 +242,9 @@
   border: 1px solid #ffffff45;
   border-radius: 5px;
   background: #10161db8;
-  color: #f1e8ff !important;
+}
+.artists-featured-copy > small.artists-featured-label {
+  color: #f1e8ff;
 }
 .artists-featured-card.is-lead .artists-featured-open { padding: 18px 22px; }
 .artists-featured-card.is-lead .artists-featured-copy { max-width: calc(100% - 205px); }

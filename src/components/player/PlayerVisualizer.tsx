@@ -85,7 +85,7 @@ export default function PlayerVisualizer() {
     const accent = resolveVar('--accent', FALLBACK_ACCENT)
     setColors({
       accent,
-      accentEnd: isGradient ? resolveVar('--t-gradient-second', accent) : accent,
+      accentEnd: isGradient ? resolveVar('--range-end', accent) : accent,
       plain: resolveVar('--text', FALLBACK_PLAIN),
     })
   }, [settings.theme])

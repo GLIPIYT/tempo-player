@@ -1,4 +1,4 @@
-import { useEffect, type ReactElement } from 'react'
+import { useEffect, useLayoutEffect, type ReactElement } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import type { ActiveTheme, ThemeTokens } from '../types/theme'
 import { TOKEN_VARS } from '../types/theme'
@@ -22,6 +22,8 @@ interface Rgb {
   b: number
 }
 
+type ThemeMode = 'light' | 'dark'
+
 export function parseHex(input: string): Rgb | null {
   const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(input.trim())
   if (!m) return null
@@ -34,14 +36,18 @@ export function parseHex(input: string): Rgb | null {
 function relLuminance(c: Rgb): number {
   const f = (v: number) => {
     const s = v / 255
-    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+    return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
   }
   return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b)
 }
 
+function contrast(a: number, b: number): number {
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+}
+
 function whiteTextNeedsOutline(color: string): boolean {
   const rgb = parseHex(color)
-  return rgb !== null && 1.05 / (relLuminance(rgb) + 0.05) < 4.5
+  return rgb !== null && contrast(1, relLuminance(rgb)) < 4.5
 }
 
 export function toHex(c: Rgb): string {
@@ -57,9 +63,18 @@ function mix(a: Rgb, b: Rgb, t: number): Rgb {
   }
 }
 
-function deriveText(bg: Rgb): string {
-  const anchor: Rgb = relLuminance(bg) > 0.4 ? { r: 18, g: 19, b: 22 } : { r: 237, g: 239, b: 244 }
-  return toHex(mix(anchor, bg, 0.1))
+function setThemeMode(root: HTMLElement, background: Rgb | null): ThemeMode {
+  const luminance = background ? relLuminance(background) : 0
+  const mode = contrast(0, luminance) >= contrast(1, luminance) ? 'light' : 'dark'
+  if (root.dataset.themeMode !== mode) root.dataset.themeMode = mode
+  if (root.style.colorScheme !== mode) root.style.colorScheme = mode
+  return mode
+}
+
+function deriveText(bg: Rgb, mode: ThemeMode): string {
+  const preferred = mode === 'light' ? { r: 24, g: 34, b: 49 } : mix({ r: 237, g: 239, b: 244 }, bg, 0.1)
+  if (contrast(relLuminance(bg), relLuminance(preferred)) >= 4.5) return toHex(preferred)
+  return mode === 'light' ? '#000000' : '#ffffff'
 }
 
 function safeColor(value: string | undefined, fallback: string): string {
@@ -70,7 +85,8 @@ function safeColor(value: string | undefined, fallback: string): string {
 export function applyTheme(active: ActiveTheme | null | undefined): void {
   const root = document.documentElement
   const custom = active?.kind === 'custom' ? active.custom : undefined
-  const preset = active?.kind === 'preset' ? getPreset(active.presetId) : undefined
+  const presetId = active?.kind === 'preset' ? active.presetId : 'tempo'
+  const preset = custom ? undefined : (getPreset(presetId) ?? getPreset('tempo'))
   const anchors = custom?.gradientAnchors ?? preset?.gradientAnchors
   const isGradient = anchors !== undefined
   const wasGradient = root.classList.contains('theme-gradient')
@@ -95,6 +111,9 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
     // Drop the previous theme's inline tokens once. During color picking the
     // app then changes only two CSS variables instead of rebuilding all tokens.
     const normalized = normalizeGradientAnchors(anchors)
+    const first = parseHex(normalized.first)!
+    const second = parseHex(normalized.second)!
+    setThemeMode(root, preset ? parseHex(preset.tokens.bg) : mix(first, second, 0.5))
     root.style.setProperty('--t-gradient-first', normalized.first)
     root.style.setProperty('--t-gradient-second', normalized.second)
     const needsOutline = [normalized.first, normalized.second].some(whiteTextNeedsOutline)
@@ -120,8 +139,7 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
   delete root.dataset.brightGradient
   clearInlineTheme()
   if (!custom) {
-    const presetId = active && active.kind === 'preset' ? active.presetId : 'tempo'
-    const preset = getPreset(presetId) ?? getPreset('tempo')
+    setThemeMode(root, parseHex(preset?.tokens.bg ?? CUSTOM_DEFAULT_BASE.background))
     if (preset) {
       for (const k of TOKEN_KEYS) root.style.setProperty(TOKEN_VARS[k], preset.tokens[k])
     }
@@ -129,17 +147,18 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
     return
   }
   const base = custom.base
-  const accent = safeColor(base.accent, CUSTOM_DEFAULT_BASE.accent)
-  const bg = safeColor(base.background, CUSTOM_DEFAULT_BASE.background)
-  const surface = safeColor(base.surface, CUSTOM_DEFAULT_BASE.surface)
+  const overrides = custom.overrides ?? {}
+  const accent = safeColor(base?.accent, CUSTOM_DEFAULT_BASE.accent)
+  const bg = safeColor(base?.background, CUSTOM_DEFAULT_BASE.background)
+  const surface = safeColor(base?.surface, CUSTOM_DEFAULT_BASE.surface)
+  const bgRgb = parseHex(safeColor(overrides.bg, bg))
+  const mode = setThemeMode(root, bgRgb)
   root.style.setProperty('--t-base-accent', accent)
   root.style.setProperty('--t-base-bg', bg)
   root.style.setProperty('--t-base-surface', surface)
-  const playBtn = safeColor(base.playButton, '')
+  const playBtn = safeColor(base?.playButton, '')
   if (playBtn !== '') root.style.setProperty('--t-base-play-btn', playBtn)
-  const bgRgb = parseHex(bg)
-  root.style.setProperty('--t-text', bgRgb ? deriveText(bgRgb) : '#e8ebf2')
-  const overrides = custom.overrides
+  root.style.setProperty('--t-text', bgRgb ? deriveText(bgRgb, mode) : '#e8ebf2')
   updateAccentOutline(overrides.accent ?? accent, overrides.accentStrong ?? accent)
   for (const k of TOKEN_KEYS) {
     const v = overrides[k]
@@ -206,8 +225,10 @@ export function applyBackground(background: AppSettings['background']): void {
 
 export function useThemeEffect(): void {
   const { settings } = useSettings()
-  useEffect(() => {
+  useLayoutEffect(() => {
     applyTheme(settings.theme)
+  }, [settings.theme])
+  useEffect(() => {
     applyFont(settings.font)
     applyBackground(settings.background)
   }, [settings])

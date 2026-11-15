@@ -27,6 +27,24 @@ export const PRESETS: ThemePreset[] = [
     },
   },
   {
+    id: 'tempo-light',
+    name: 'Tempo Light',
+    tokens: {
+      bg: '#e9eef5',
+      bgElevated: '#f8fafd',
+      surface: '#fdfdff',
+      surfaceHover: '#eaf0f8',
+      border: '#c9d4e3',
+      text: '#182231',
+      textMuted: '#465367',
+      accent: '#405caa',
+      accentStrong: '#345190',
+      accentSoft: 'rgba(64, 92, 170, 0.12)',
+      playButton: '#637fc0',
+      danger: '#a5223e',
+    },
+  },
+  {
     id: 'soundcloud',
     name: 'SoundCloud',
     tokens: {

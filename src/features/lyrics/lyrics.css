@@ -208,7 +208,7 @@
   margin-top: 26px;
   width: min(320px, 100%);
   text-align: left;
-  color: #fff;
+  color: var(--lyrics-ink, #fff);
   font-size: 21px;
   font-weight: 650;
   letter-spacing: -0.01em;
@@ -1053,7 +1053,7 @@
   font-size: calc(var(--lyr-text-size, 21px) * 1.333333);
   font-weight: 700;
   line-height: 1.4;
-  color: #fff;
+  color: var(--lyrics-ink, #fff);
   opacity: 0.3;
   filter: blur(1.6px);
   cursor: pointer;
@@ -1085,7 +1085,7 @@
 }
 
 .lyr-line.is-active {
-  color: #fff;
+  color: var(--lyrics-ink, #fff);
   font-size: calc(var(--lyr-text-size, 21px) * 1.333333);
   font-weight: 700;
   opacity: 1;
@@ -1106,10 +1106,10 @@
 .lyr-line.is-active .lyr-line-text {
   background-image: linear-gradient(
     90deg,
-    #fff 0%,
-    #fff var(--lyr-fill, 0%),
-    color-mix(in srgb, #fff 38%, transparent) var(--lyr-fill, 0%),
-    color-mix(in srgb, #fff 38%, transparent) 100%
+    currentColor 0%,
+    currentColor var(--lyr-fill, 0%),
+    color-mix(in srgb, currentColor var(--lyrics-pending-ink, 38%), transparent) var(--lyr-fill, 0%),
+    color-mix(in srgb, currentColor var(--lyrics-pending-ink, 38%), transparent) 100%
   );
   -webkit-background-clip: text;
   background-clip: text;
@@ -1136,7 +1136,7 @@
     transform min(140ms, var(--lyr-line-duration, 140ms)) cubic-bezier(.16,.7,.3,1),
     text-shadow min(140ms, var(--lyr-line-duration, 140ms)) ease;
 }
-.lyr-line.is-active .lyr-word { opacity: .34; }
+.lyr-line.is-active .lyr-word { opacity: var(--lyrics-pending-ink, .34); }
 .lyr-line.is-active .lyr-word.is-filled { opacity: .82; }
 .lyr-line.is-active .lyr-word.is-current-word {
   opacity: 1;
@@ -1325,7 +1325,7 @@
   padding: 11vh 12px 20vh;
   font-size: var(--lyr-text-size, 21px);
   line-height: 2;
-  color: #fff;
+  color: var(--lyrics-ink, #fff);
   white-space: pre-wrap;
   word-break: break-word;
 }

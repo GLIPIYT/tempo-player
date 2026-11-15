@@ -3,8 +3,8 @@ export interface GradientAnchors {
   second: string
 }
 
-function normalizeHex(value: string, fallback: string): string {
-  const match = /^#([\da-f]{3}|[\da-f]{6})$/i.exec(value.trim())
+function normalizeHex(value: unknown, fallback: string): string {
+  const match = typeof value === 'string' ? /^#([\da-f]{3}|[\da-f]{6})$/i.exec(value.trim()) : null
   if (!match) return fallback
   const raw = match[1]
   const full = raw.length === 3 ? raw.split('').map((part) => part + part).join('') : raw

@@ -106,11 +106,12 @@ function scale(color: Rgb, amount: number): Rgb {
   return { r: Math.round(color.r * amount), g: Math.round(color.g * amount), b: Math.round(color.b * amount) }
 }
 
-function lyricsBackdropColor(artwork: Rgb | null, themeBackground: Rgb): Rgb {
+function lyricsBackdropColor(artwork: Rgb | null, themeBackground: Rgb, light: boolean): Rgb {
   if (!artwork) return themeBackground
-  // Match the bottom of the current lyrics backdrop: its cover is rendered at
-  // 58% brightness, then the shade blends 66% of the theme background there.
-  return blend(scale(artwork, 0.58), themeBackground, 0.66)
+  // Use the cover and the shade at the foot of the lyrics screen.
+  return light
+    ? blend(artwork, themeBackground, 0.89)
+    : blend(scale(artwork, 0.58), themeBackground, 0.66)
 }
 
 export default function LyricsVisualizer({ coverPath, hasCurrentTrack }: { coverPath: string | null; hasCurrentTrack: boolean }) {
@@ -120,9 +121,11 @@ export default function LyricsVisualizer({ coverPath, hasCurrentTrack }: { cover
 
   useEffect(() => {
     if (!hasCurrentTrack || visualizer.style === 'off') return
-    const gradient = document.documentElement.classList.contains('theme-gradient')
+    const root = document.documentElement
+    const gradient = root.classList.contains('theme-gradient')
+    const light = root.dataset.themeMode === 'light'
     const accent = resolveThemeColor('--accent', FALLBACK_ACCENT)
-    const accentEnd = gradient ? resolveThemeColor('--t-gradient-second', accent) : accent
+    const accentEnd = gradient ? resolveThemeColor('--range-end', accent) : accent
     const plain = resolveThemeColor('--text', FALLBACK_PLAIN)
     const baseStart = visualizer.useThemeColor ? accent : plain
     const baseEnd = visualizer.useThemeColor ? accentEnd : plain
@@ -133,15 +136,15 @@ export default function LyricsVisualizer({ coverPath, hasCurrentTrack }: { cover
     }
 
     let current = true
-    const themeBackground = resolveThemeColor('--bg', FALLBACK_BACKGROUND)
-    const initialBackground = lyricsBackdropColor(null, themeBackground)
+    const themeBackground = resolveThemeColor(light ? '--light-veil' : '--bg', FALLBACK_BACKGROUND)
+    const initial = contrastBackgroundColor(themeBackground)
     setColors({
-      start: contrastBackgroundColor(initialBackground),
-      end: contrastBackgroundColor(initialBackground),
+      start: initial,
+      end: initial,
     })
     void sampleArtwork(coverPath).then((artwork) => {
       if (!current) return
-      const background = lyricsBackdropColor(artwork, themeBackground)
+      const background = lyricsBackdropColor(artwork, themeBackground, light)
       setColors({
         start: contrastBackgroundColor(background),
         end: contrastBackgroundColor(background),

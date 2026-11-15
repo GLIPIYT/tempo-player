@@ -94,6 +94,7 @@ function updateOutlineForText(element: Element): void {
 }
 
 function refreshTextOutlines(): void {
+  if (document.documentElement.dataset.themeMode === 'light') return
   document.querySelectorAll('body *').forEach(updateOutlineForText)
 }
 
@@ -167,6 +168,7 @@ export default function BackgroundLayer() {
     image.src = convertFileSrc(bg.path)
 
     observer = new MutationObserver((records) => {
+      if (root.dataset.themeMode === 'light') return
       for (const record of records) {
         if (record.type === 'characterData' && record.target.parentElement) {
           updateOutlineForText(record.target.parentElement)

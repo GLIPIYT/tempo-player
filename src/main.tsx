@@ -1,7 +1,11 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import { loadSettings } from './state/settings'
+import { applyTheme } from './theme/engine'
 import './styles/global.css'
+
+applyTheme(loadSettings().theme)
 
 function renderApp(): void {
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(

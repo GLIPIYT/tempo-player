@@ -1,0 +1,360 @@
+/* Tempo's light materials. Keep artwork and custom color selections intact. */
+html[data-theme-mode='light'] {
+  --light-tint: var(--bg);
+  --light-accent-source: var(--accent);
+  --light-action-ink: #182231;
+  --light-action-fill: color-mix(in srgb, var(--light-accent-source) 27%, #fff);
+  --light-play-fill: color-mix(in srgb, var(--play-btn, var(--light-accent-source)) 35%, #fff);
+  --light-control-bg: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
+  --light-veil: color-mix(in srgb, #f8fafd 78%, var(--light-tint));
+  --light-divider: color-mix(in srgb, var(--text) 15%, transparent);
+  --light-hover: color-mix(in srgb, var(--text) 7%, transparent);
+  --light-shadow: 0 16px 44px #24365125;
+  --light-panel: color-mix(in srgb, var(--bg-elevated) 87%, transparent);
+  --light-panel-text: var(--text);
+  --light-panel-muted: var(--text-muted);
+  --light-panel-border: var(--border);
+  --light-panel-surface: var(--surface);
+  --light-panel-hover: var(--surface-hover);
+  --light-panel-elevated: var(--bg-elevated);
+  --ring-accent: var(--accent);
+  --mini-surface: var(--light-control-bg);
+}
+
+html:root[data-theme-mode='light'].theme-custom {
+  --light-tint: var(--t-base-bg, #e9eef5);
+  --light-accent-source: var(--t-base-accent, #6c8cff);
+  --bg: color-mix(in srgb, var(--light-tint) 47%, #fff);
+  --bg-elevated: color-mix(in srgb, var(--light-tint) 13%, #fff);
+  --surface: color-mix(in srgb, var(--t-base-surface, var(--light-tint)) 8%, #fff);
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, #344563);
+  --border: color-mix(in srgb, var(--bg-elevated) 79%, #506481);
+  --text: var(--t-text, #182231);
+  --text-muted: #465367;
+  --accent: color-mix(in srgb, var(--light-accent-source) 28%, #243452);
+  --accent-strong: color-mix(in srgb, var(--light-accent-source) 21%, #182b4b);
+  --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
+  --danger: #a5223e;
+}
+
+html:root[data-theme-mode='light'].theme-custom.theme-gradient {
+  --light-tint: color-mix(in srgb, var(--t-gradient-first), var(--t-gradient-second));
+  --light-accent-source: var(--t-gradient-first);
+  --surface: color-mix(in srgb, var(--light-tint) 7%, #fff);
+}
+
+html[data-theme-mode='light'].theme-gradient {
+  --light-action-fill: linear-gradient(110deg,
+    color-mix(in srgb, var(--t-gradient-first) 34%, #fff),
+    color-mix(in srgb, var(--t-gradient-second) 34%, #fff));
+  --light-play-fill: var(--light-action-fill);
+  --range-start: color-mix(in srgb, var(--t-gradient-first) 42%, #263b60);
+  --range-end: color-mix(in srgb, var(--t-gradient-second) 42%, #263b60);
+  --light-range-start: var(--range-start);
+  --light-range-end: var(--range-end);
+  --tempo-gradient-text: linear-gradient(100deg, var(--range-start), var(--range-end));
+}
+
+html:root[data-theme-mode='light'].theme-gradient .pb-volume {
+  --range-start: var(--light-range-start);
+  --range-end: var(--light-range-end);
+}
+
+html:root[data-theme-mode='light'].theme-gradient .lyr-seek-range {
+  background: linear-gradient(to right,
+    var(--range-start) 0%, var(--range-end) var(--fill, 0%), var(--border) var(--fill, 0%));
+}
+
+html:root[data-theme-mode='light'] .bg-layer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--light-veil) 82%, transparent);
+}
+
+html[data-theme-mode='light'].has-bg :is(.sidebar, .titlebar, .topbar, .playerbar, .qpanel) {
+  background: var(--light-panel);
+}
+
+html:root[data-theme-mode='light'] :is(.topbar-search input, .text-input):hover,
+html:root[data-theme-mode='light'] .btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 37%, var(--border));
+}
+
+html:root[data-theme-mode='light'] :is(.btn-primary, .playlist-create-submit, .playlist-confirm-primary,
+  .lyr-editor-save, .background-search-use, .home-mix-play, .collection-card-play, .artists-featured-play,
+  .artists-catalog-play, .album-wall-play, .playlist-list-play, .card-play, .playlist-create-covers button > svg) {
+  background: var(--light-action-fill);
+  color: var(--light-action-ink);
+  box-shadow: none;
+  text-shadow: none;
+  -webkit-text-stroke: 0;
+}
+
+html:root[data-theme-mode='light'].theme-gradient .lyr-editor-capture-time:hover:not(:disabled) {
+  background: var(--light-action-fill);
+  color: var(--light-action-ink);
+}
+
+html:root[data-theme-mode='light'] :is(.pb-toggle, .lyr-play) {
+  background: var(--light-play-fill);
+  color: var(--light-action-ink);
+}
+
+html:root[data-theme-mode='light'] :is(.btn-danger-solid, .rule-delete-confirm) {
+  background: #f9d9e1;
+  border-color: #eab5c3;
+  color: #761b34;
+}
+
+html:root[data-theme-mode='light'] :is(.btn-danger-solid, .rule-delete-confirm):hover:not(:disabled) {
+  background: #f3cbd6;
+}
+
+html:root[data-theme-mode='light'] :is(.collection-play-all, .collection-play-all > span, .mix-rule-save) {
+  color: var(--light-action-ink);
+  text-shadow: none;
+  -webkit-text-stroke: 0;
+}
+
+html:root[data-theme-mode='light'] :is(.playlist-list-play, .album-wall-play, .artist-gallery-inline-play) svg {
+  color: var(--light-action-ink);
+}
+
+html:root[data-theme-mode='light'] :is(.switch.is-on, .home-side-play:hover, .home-side-play:focus-visible) {
+  background: var(--light-action-fill);
+  color: var(--light-action-ink);
+}
+
+html:root[data-theme-mode='light'] .switch.is-on {
+  box-shadow: inset 0 0 0 1px var(--light-divider);
+}
+
+html:root[data-theme-mode='light'] .switch.is-on::after {
+  background: var(--accent-strong);
+}
+
+html:root[data-theme-mode='light'] :is(.hero-title, .home-mix-copy h2, .home-mix-kicker, .home-mix-meta,
+  .home-section-title, .hour-mix-page .editorial-detail-title, .hour-mix-page .editorial-detail-kind,
+  .local-album-page .editorial-detail-meta > .link-btn) {
+  color: var(--text);
+  -webkit-text-fill-color: currentColor;
+  text-shadow: none;
+}
+
+html:root[data-theme-mode='light'] .home-mix-copy p {
+  color: var(--text-muted);
+}
+
+html:root[data-theme-mode='light'] .home-mix-kicker {
+  background: var(--light-control-bg);
+  border-color: var(--light-divider);
+}
+
+html:root[data-theme-mode='light'].theme-gradient :is(.home-mix-navigation > button, .home-section-open,
+  .editorial-detail-kind, .home-side-play) svg {
+  color: var(--accent-strong);
+}
+
+html:root[data-theme-mode='light'] .home-mix-feature--b .home-mix-art-back {
+  opacity: .26;
+}
+
+html:root[data-theme-mode='light'] .home-mix-feature--b :is(.home-mix-dock, .home-mix-art-card) {
+  box-shadow: var(--light-shadow);
+}
+
+html:root[data-theme-mode='light'] :is(.profile-panorama, .collection-detail-surface) {
+  --text: var(--light-panel-text);
+  --text-muted: var(--light-panel-muted);
+  --border: var(--light-panel-border);
+  --surface: var(--light-panel-surface);
+  --surface-hover: var(--light-panel-hover);
+  --bg-elevated: var(--light-panel-elevated);
+}
+
+html:root[data-theme-mode='light'] :is(.collection-detail-backdrop, .pf-page-backdrop) {
+  background: var(--light-panel);
+  border-color: var(--light-divider);
+}
+
+html:root[data-theme-mode='light'] :is(.profile-panorama, .pf-summary, .pf-playlist-grid > button,
+  .pf-artist-list > button, .pf-chart-controls .seg, .pf-chart-foot, .pf-bar-slot i) {
+  border-color: var(--light-divider);
+}
+
+html:root[data-theme-mode='light'] .pf-chart {
+  background: repeating-linear-gradient(0deg, transparent, transparent 47px, var(--light-hover) 48px, transparent 49px);
+}
+
+html:root[data-theme-mode='light'] .pf-passport::before {
+  background: linear-gradient(color-mix(in srgb, var(--light-tint) 50%, transparent), transparent);
+}
+
+html:root[data-theme-mode='light'] :is(.pf-passport-glow, .collection-detail--panorama .collection-detail-glow) {
+  opacity: .2;
+  filter: blur(46px);
+}
+
+html:root[data-theme-mode='light'] :is(.pf-avatar-fallback, .pf-name-form input, .pf-chart-controls .seg,
+  .pf-playlist-grid > button) {
+  background: var(--light-control-bg);
+}
+
+html:root[data-theme-mode='light'] :is(.pf-chart-controls .seg-btn.is-active, .pf-track-list > article:hover,
+  .pf-recent-list > article:hover, .pf-artist-list > button:hover, .pf-playlist-grid > button:hover) {
+  background: var(--light-hover);
+}
+
+html:root[data-theme-mode='light'] .artists-featured-art::after {
+  background: linear-gradient(105deg, var(--light-control-bg) 12%,
+    color-mix(in srgb, var(--bg-elevated) 79%, transparent) 66%,
+    color-mix(in srgb, var(--bg-elevated) 38%, transparent));
+}
+
+html:root[data-theme-mode='light'] .artists-featured-copy {
+  color: var(--text);
+}
+
+html:root[data-theme-mode='light'] .artists-featured-copy > small {
+  color: var(--text-muted);
+}
+
+html:root[data-theme-mode='light'] .artists-featured-copy > small.artists-featured-label {
+  color: var(--text);
+}
+
+html:root[data-theme-mode='light'] :is(.artists-featured-label, .home-recommendation-cache, .collection-art-count,
+  .album-wall-track-count, .collection-playlist-card-actions .collection-icon-action, .collection-album-favorite,
+  .collection-detail .collection-art-zoom, .pf-track-art > i, .pf-avatar-edit, .rail-badge, .rail-rank) {
+  background: var(--light-control-bg);
+  color: var(--text);
+  border-color: var(--light-divider);
+}
+
+html:root[data-theme-mode='light'] :is(.home-recommendation-cache:hover,
+  .collection-album-favorite:hover, .collection-playlist-card-actions .collection-icon-action:hover) {
+  background: var(--light-action-fill);
+  color: var(--light-action-ink);
+}
+
+html:root[data-theme-mode='light'] .home-recommendation-cache.is-failed {
+  color: var(--danger);
+}
+
+html:root[data-theme-mode='light'] .home-recommendation-cache.is-progress::after {
+  background: var(--light-control-bg);
+}
+
+html:root[data-theme-mode='light'] :is(.playlist-create-layer, .rule-delete-layer, .mix-rule-copy-backdrop,
+  .modal-overlay, .update-modal-overlay, .onb-backdrop) {
+  background: color-mix(in srgb, var(--light-veil) 65%, transparent);
+}
+
+html:root[data-theme-mode='light'] :is(.playlist-create-dialog, .rule-delete-dialog, .mix-rule-dialog,
+  .mix-rule-copy-dialog, .menu-pop, .fav-menu, .history-detail-dialog, .metadata-editor-modal,
+  .modal, .pb-speed-menu, .track-details--compact) {
+  border-color: var(--light-divider);
+  box-shadow: var(--light-shadow);
+}
+
+html:root[data-theme-mode='light'] :is(.playlist-create-close, .mix-rule-icon:hover, .mix-rule-field-toggle,
+  .mix-rule-mode, .mix-rule-select-field, .mix-rule-chip, .mix-rule-select-search, .mix-rule-option:hover,
+  .mix-rule-option:focus-visible, .mix-rule-option[aria-pressed='true'], .mix-rule-presets > button:hover) {
+  background: var(--light-hover);
+}
+
+html:root[data-theme-mode='light'] .mix-rule-range-rail,
+html:root[data-theme-mode='light'] .mix-rule-range-rail::before,
+html:root[data-theme-mode='light'] .mix-rule-range-rail::after {
+  background: var(--light-divider);
+}
+
+html:root[data-theme-mode='light'] .mix-rule-range input[type='range']::-webkit-slider-thumb {
+  background: var(--surface);
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 3px var(--surface);
+}
+
+html:root[data-theme-mode='light'] .mix-rule-range input[type='range']::-moz-range-thumb {
+  background: var(--surface);
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 3px var(--surface);
+}
+
+html:root[data-theme-mode='light'] .mix-rule-range-labels > span.is-active {
+  color: var(--text);
+}
+
+html:root[data-theme-mode='light'] :is(.mix-rule-body, .mix-rule-options) {
+  scrollbar-color: var(--border) transparent;
+}
+
+html:root[data-theme-mode='light'] .mix-rule-options::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+
+html:root[data-theme-mode='light'] .history-track-source[data-source='local'] {
+  color: var(--text-muted);
+}
+
+html:root[data-theme-mode='light'] .history-detail-body:hover::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+
+html:root[data-theme-mode='light'] .history-delta {
+  background: var(--light-hover);
+}
+
+html:root[data-theme-mode='light'] .history-delta[data-direction='1'] {
+  background: #dcefe6;
+  color: #18634c;
+}
+
+html:root[data-theme-mode='light'] .history-delta[data-direction='-1'] {
+  background: #fae5e9;
+  color: #a5223e;
+}
+
+html:root[data-theme-mode='light'] .update-release-kind {
+  background: color-mix(in srgb, var(--release-kind-color) 26%, var(--surface));
+  color: var(--text);
+  text-shadow: none;
+}
+
+html:root[data-theme-mode='light'] .update-version-choice.is-major-release .update-version-choice-main > strong {
+  color: #6d4a09;
+}
+
+html:root[data-theme-mode='light'] .processing-warning {
+  color: #67420c;
+  background: #f9ecd7;
+  border-color: #e6cda8;
+}
+
+html:root[data-theme-mode='light'] .processing-state.is-ready .processing-state-main > svg {
+  color: #18634c;
+}
+
+html:root[data-theme-mode='light'] .processing-state.is-error .processing-state-main > svg {
+  color: #954219;
+}
+
+html:root[data-theme-mode='light'] .lyr-overlay {
+  --lyrics-ink: var(--text);
+  --lyrics-pending-ink: 57%;
+}
+
+html:root[data-theme-mode='light'] :is(.lyr-bg-img, .lyr-bg-fallback) {
+  filter: blur(50px) saturate(.83);
+}
+
+html:root[data-theme-mode='light'] .lyr-bg-shade {
+  background: linear-gradient(180deg, var(--light-veil),
+    color-mix(in srgb, var(--light-veil) 82%, transparent) 50%,
+    color-mix(in srgb, var(--light-veil) 89%, transparent));
+}
+
+html:root[data-theme-mode='light'] .lyr-restore-player {
+  background: var(--light-hover);
+}
