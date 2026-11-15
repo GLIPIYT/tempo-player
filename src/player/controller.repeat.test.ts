@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readBrowserTrackPlaybackPreferences, writeBrowserTrackPlaybackPreferences } from './browserTrackPlaybackPreferences'
 
 const mocks = vi.hoisted(() => ({
   api: {
@@ -87,6 +88,8 @@ type TestEngine = {
   replay: ReturnType<typeof vi.fn>
   loadWithFormat: ReturnType<typeof vi.fn>
   replaceStreamWithCachedFile: ReturnType<typeof vi.fn>
+  setPlaybackRate: ReturnType<typeof vi.fn>
+  setVolume: ReturnType<typeof vi.fn>
 }
 
 type ControllerClass = typeof import('./controller').PlayerController
@@ -292,5 +295,92 @@ describe('SoundCloud Search repeat-one', () => {
     })
     engine.onTime(0.5, currentEpoch)
     expect(controller.getSnapshot().position).toBe(0.5)
+  })
+
+  it('applies per-track levels on selection and keeps temporary lyric speed separate', async () => {
+    mocks.api.scGetPlayback.mockImplementation(async (sourceId: string) => ({
+      url: `https://media.example/${sourceId}.mp3`,
+      cachedPath: null,
+      format: 'mp3',
+    }))
+    const first = searchTrack('personal-first')
+    const second = searchTrack('personal-second')
+    writeBrowserTrackPlaybackPreferences(first, { volume: 0.45, playbackRate: 1.3 })
+
+    const controller = new PlayerController()
+    const engine = mocks.engines.at(-1) as TestEngine
+    controller.playTracks([first, second])
+    expect(controller.getSnapshot()).toMatchObject({ volume: 0.45, playbackRate: 1.3, globalVolume: 0.8, globalPlaybackRate: 1 })
+    await flushMicrotasks()
+    expect(engine.setVolume).toHaveBeenLastCalledWith(0.45)
+    expect(engine.setPlaybackRate).toHaveBeenLastCalledWith(1.3)
+
+    controller.setVolume(0.35)
+    controller.setPlaybackRate(1.15)
+    controller.setPlaybackRate(0.65, false)
+    expect(controller.getSnapshot().playbackRate).toBe(0.65)
+    expect(readBrowserTrackPlaybackPreferences(first)).toMatchObject({ volume: 0.35, playbackRate: 1.15 })
+    controller.clearTemporaryPlaybackRate()
+    expect(controller.getSnapshot().playbackRate).toBe(1.15)
+
+    const secondPreferences = writeBrowserTrackPlaybackPreferences(second, { volume: 0.6 })
+    controller.refreshTrackPlaybackPreferences(second)
+    expect(controller.getSnapshot().volume).toBe(0.35)
+    controller.setPlaybackRate(0.7, false)
+    await controller.next()
+    expect(controller.getSnapshot()).toMatchObject({ volume: 0.6, playbackRate: 1, trackPlaybackPreferences: secondPreferences })
+    controller.clearTemporaryPlaybackRate()
+    expect(engine.setPlaybackRate).toHaveBeenLastCalledWith(1)
+
+    writeBrowserTrackPlaybackPreferences(second, { volume: null })
+    controller.refreshTrackPlaybackPreferences(second)
+    expect(controller.getSnapshot()).toMatchObject({
+      volume: 0.8,
+      trackPlaybackPreferences: { volume: null, savedVolume: 0.6 },
+    })
+    expect(engine.setVolume).toHaveBeenLastCalledWith(0.8)
+  })
+
+  it('keeps storage independent across providers and surfaces failed writes', () => {
+    const local = { source: 'local' as const, sourceId: '7' }
+    const online = { source: 'soundcloud' as const, sourceId: '7' }
+    writeBrowserTrackPlaybackPreferences(local, { volume: 0, playbackRate: 1.9 })
+    expect(readBrowserTrackPlaybackPreferences(online)).toMatchObject({ volume: null, playbackRate: null })
+    expect(writeBrowserTrackPlaybackPreferences(local, { playbackRate: null })).toMatchObject({
+      volume: 0,
+      playbackRate: null,
+      savedVolume: 0,
+      savedPlaybackRate: 1.9,
+    })
+    vi.spyOn(localStorageStub, 'setItem').mockImplementation(() => { throw new Error('Storage full') })
+    expect(() => writeBrowserTrackPlaybackPreferences(local, { volume: 0.5 })).toThrow('Storage full')
+    expect(readBrowserTrackPlaybackPreferences(local).volume).toBe(0)
+  })
+
+  it('restores personal levels for a paused queue when the player is reopened', async () => {
+    const track = searchTrack('personal-restored')
+    localStorageStub.setItem('tempo.volume', '0.55')
+    localStorageStub.setItem('tempo.playbackRate', '0.9')
+    localStorageStub.setItem('tempo.queue.snapshot.v1', JSON.stringify({ q: [track], i: 0 }))
+    writeBrowserTrackPlaybackPreferences(track, { volume: 0.25, playbackRate: 1.4 })
+    mocks.api.scGetPlayback.mockResolvedValue({
+      url: 'https://media.example/restored.mp3',
+      cachedPath: null,
+      format: 'mp3',
+    })
+
+    const controller = new PlayerController()
+    const engine = mocks.engines.at(-1) as TestEngine
+    expect(controller.getSnapshot()).toMatchObject({
+      isPlaying: false,
+      currentTrack: expect.objectContaining({ sourceId: track.sourceId }),
+      volume: 0.25,
+      playbackRate: 1.4,
+      globalVolume: 0.55,
+      globalPlaybackRate: 0.9,
+    })
+    await controller.toggle()
+    expect(engine.setVolume).toHaveBeenLastCalledWith(0.25)
+    expect(engine.setPlaybackRate).toHaveBeenLastCalledWith(1.4)
   })
 })

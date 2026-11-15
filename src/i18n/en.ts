@@ -176,6 +176,7 @@ export const en: Record<string, string> = {
   'Seek forward 50 ms': 'Seek forward 50 ms',
   'Ctrl arrows seek by 50 ms': 'Ctrl + ← / →: seek by 50 ms',
   'Editing playback speed': 'Playback speed while editing',
+  'Track speed': 'Speed',
   'Move lyric line': 'Move lyric line',
   'Set line start to current position': 'Set line start to current position',
   'Set line end to current position': 'Set line end to current position',

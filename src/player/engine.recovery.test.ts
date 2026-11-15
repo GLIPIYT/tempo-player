@@ -231,6 +231,25 @@ describe('playback output recovery', () => {
     expect(TestAudio.instances.at(-1)!.paused).toBe(false)
   })
 
+  it('preserves outgoing volume and speed while crossfading to different track settings', async () => {
+    const { engine, context, media } = await playing()
+    await engine.crossfadeTo('asset://next.mp3', null, 'local', 1, 'next-session', {
+      volume: 0.75,
+      playbackRate: 0.85,
+      trackGain: 1,
+    })
+    const incoming = TestAudio.instances.at(-1)!
+    expect(media.playbackRate).toBe(1.25)
+    expect(context.gains[0].gain.value).toBeCloseTo(0.35)
+    expect(incoming.playbackRate).toBe(0.85)
+    await vi.advanceTimersByTimeAsync(480)
+    expect(context.gains[0].gain.value).toBeCloseTo(0.35 * 0.52)
+    expect(context.gains.at(-1)!.gain.value).toBeCloseTo(0.75 * 0.48)
+    engine.setPlaybackRate(1.1)
+    expect(media.playbackRate).toBe(1.25)
+    expect(incoming.playbackRate).toBe(1.1)
+  })
+
   it('repeats ended HLS media without destroying its loaded stream', async () => {
     const engine = new AudioEngine()
     await engine.loadWithFormat('https://provider/stream.m3u8', 'hls', 'local', 'first')

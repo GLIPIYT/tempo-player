@@ -29,6 +29,12 @@ interface MediaGraph {
   nodes: AudioNode[]
 }
 
+interface TrackPlaybackLevels {
+  volume: number
+  playbackRate: number
+  trackGain: number
+}
+
 /**
  * Two playback paths, chosen per track.
  *
@@ -139,6 +145,8 @@ export class AudioEngine {
     gain: GainNode | null
     compressor: DynamicsCompressorNode | null
     eqFilters: BiquadFilterNode[]
+    /** Null for a stream-to-cache handoff, where both elements are the same track. */
+    originalLevel: number | null
   } | null = null
   private fadeTimer = 0
   private fadeDurationMs = 0
@@ -396,7 +404,7 @@ export class AudioEngine {
     this.playbackRate = Math.round(Math.min(2, Math.max(0.5, safeRate)) * 20) / 20
     this.applyPlaybackOptions(this.channels.local)
     this.applyPlaybackOptions(this.channels.stream)
-    this.applyPlaybackOptions(this.fading?.el ?? null)
+    if (this.fading?.originalLevel === null) this.applyPlaybackOptions(this.fading.el)
     this.samplePlayback()
   }
 
@@ -404,7 +412,7 @@ export class AudioEngine {
     this.preservePitch = preserve
     this.applyPlaybackOptions(this.channels.local)
     this.applyPlaybackOptions(this.channels.stream)
-    this.applyPlaybackOptions(this.fading?.el ?? null)
+    if (this.fading) this.applyPlaybackOptions(this.fading.el, this.fading.el.playbackRate)
   }
 
   setEqualizer(settings: EqualizerSettings): void {
@@ -450,6 +458,13 @@ export class AudioEngine {
     if (stream) stream.volume = this.volumeLevel * level
   }
 
+  private applyTrackPlaybackLevels(levels?: TrackPlaybackLevels): void {
+    if (!levels) return
+    this.setVolume(levels.volume)
+    this.setPlaybackRate(levels.playbackRate)
+    this.setTrackGain(levels.trackGain)
+  }
+
   /**
    * Starts the next track while the current one is still playing, ramping one
    * down as the other comes up.
@@ -466,9 +481,11 @@ export class AudioEngine {
     channel: AudioChannel,
     seconds: number,
     sessionId?: string,
+    levels?: TrackPlaybackLevels,
   ): Promise<void> {
     const outgoing = this.active()
     if (!outgoing || outgoing.paused || seconds <= 0) {
+      this.applyTrackPlaybackLevels(levels)
       const loading = this.loadWithFormat(url, format, channel, sessionId)
       const generation = this.loadGeneration
       try {
@@ -486,22 +503,27 @@ export class AudioEngine {
     this.destroyHls()
     this.detachFade()
     const outgoingChannel = this.activeChannel
+    const gain = outgoingChannel === 'local' ? this.gainNode : null
     const transition = {
       el: outgoing,
-      gain: this.gainNode,
-      compressor: this.compressorNode,
-      eqFilters: this.eqFilters,
+      gain,
+      compressor: gain ? this.compressorNode : null,
+      eqFilters: gain ? this.eqFilters : [],
+      originalLevel: gain?.gain.value ?? outgoing.volume,
     }
     this.fading = transition
-    this.gainNode = null
-    this.compressorNode = null
-    this.eqFilters = []
+    if (outgoingChannel === 'local' || channel === 'local') {
+      this.gainNode = null
+      this.compressorNode = null
+      this.eqFilters = []
+    }
     this.channels[outgoingChannel] = null
     const parked = this.channels[channel]
     if (parked && parked !== outgoing) this.disposeMedia(parked)
     this.channels[channel] = null
     this.activeChannel = channel
     this.fadeLevel = 0
+    this.applyTrackPlaybackLevels(levels)
 
     const loading = this.loadWithFormat(url, format, channel, sessionId)
     const generation = this.loadGeneration
@@ -646,7 +668,7 @@ export class AudioEngine {
       this.onProgress(null)
       this.onLoaded(Number.isFinite(incoming.duration) ? incoming.duration : 0)
       this.fading = shouldPlay
-        ? { el: outgoing, gain: null, compressor: null, eqFilters: [] }
+        ? { el: outgoing, gain: null, compressor: null, eqFilters: [], originalLevel: null }
         : null
       this.fadeLevel = shouldPlay ? 0 : 1
       incoming.muted = false
@@ -721,8 +743,8 @@ export class AudioEngine {
     this.fadeLevel = level
     this.applyGain()
     const fade = this.fading
-    if (fade?.gain) fade.gain.gain.value = this.volumeLevel * this.trackGain * (1 - level)
-    else if (fade) fade.el.volume = Math.max(0, Math.min(1, this.volumeLevel * (1 - level)))
+    if (fade?.gain) fade.gain.gain.value = (fade.originalLevel ?? this.volumeLevel * this.trackGain) * (1 - level)
+    else if (fade) fade.el.volume = (fade.originalLevel ?? this.volumeLevel) * (1 - level)
   }
 
   private resumeFade(): void {
@@ -875,12 +897,12 @@ export class AudioEngine {
     el.load()
   }
 
-  private applyPlaybackOptions(el: HTMLAudioElement | null): void {
+  private applyPlaybackOptions(el: HTMLAudioElement | null, rate = this.playbackRate): void {
     if (!el) return
     // load() resets playbackRate to defaultPlaybackRate. Keep both in sync so
     // a newly loaded track retains the user's selected speed.
-    el.defaultPlaybackRate = this.playbackRate
-    el.playbackRate = this.playbackRate
+    el.defaultPlaybackRate = rate
+    el.playbackRate = rate
     const pitchElement = el as HTMLAudioElement & {
       preservesPitch?: boolean
       webkitPreservesPitch?: boolean

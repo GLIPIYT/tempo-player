@@ -190,6 +190,24 @@ describe('native player clock and track transitions', () => {
     expect(controller.getSnapshot().queue).toBe(queue)
   })
 
+  it('targets the displayed track and keeps the lyrics editor rate temporary', async () => {
+    const controller = new NativePlayerController()
+    await flush()
+    controller.setVolume(0.34)
+    controller.setPlaybackRate(0.85, false)
+    controller.clearTemporaryPlaybackRate()
+    await flush()
+
+    const changes = mocks.invoke.mock.calls.flatMap(([name, args]) =>
+      name === 'native_audio_command' && args?.command?.op === 'settings' ? [args.command] : [],
+    )
+    expect(changes).toEqual([
+      { op: 'settings', volume: 0.34, controlTrackKey: 'local:first' },
+      { op: 'settings', playbackRate: 0.85, persistPlaybackRate: false, controlTrackKey: 'local:first' },
+      { op: 'settings', clearTemporaryPlaybackRate: true, controlTrackKey: 'local:first' },
+    ])
+  })
+
   it('keeps an optimistic seek visible until the native clock confirms it', async () => {
     const controller = new NativePlayerController()
     await flush()

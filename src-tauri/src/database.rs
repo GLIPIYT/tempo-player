@@ -541,6 +541,7 @@ const MIGRATIONS: &[&str] = &[
     crate::recommendation_audio::AUDIO_MIGRATION,
     MIGRATION_21,
     MIGRATION_22, MIGRATION_23, MIGRATION_24,
+    crate::native_audio::track_preferences::MIGRATION,
 ];
 
 pub struct Db {

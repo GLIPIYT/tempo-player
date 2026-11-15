@@ -166,6 +166,8 @@ pub fn run() {
             commands::resolve_library_audio_path,
             native_audio::native_audio_command,
             native_audio::native_audio_snapshot,
+            native_audio::get_track_playback_preferences,
+            native_audio::set_track_playback_preferences,
             recommendation_store::record_listening_session,
             recommendation_store::get_recommendation_context,
             recommendation_store::record_recommendation_impressions,

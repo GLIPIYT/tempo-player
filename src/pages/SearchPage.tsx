@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { listen } from '@tauri-apps/api/event'
-import { Ellipsis, ExternalLink, Lock, Plus, Search } from 'lucide-react'
+import { Ellipsis, ExternalLink, Lock, Play, Plus, Search } from 'lucide-react'
 import { api } from '../api/client'
 import type {
   Playlist,
@@ -11,6 +12,7 @@ import type {
   ScTrack,
   SearchResults,
   Track,
+  UnifiedTrack,
   YtEnrichment,
   YtSearchHit,
 } from '../types/models'
@@ -18,6 +20,9 @@ import { useSearchQuery } from '../hooks/useSearchQuery'
 import { useSettings } from '../state/settings'
 import { useLibraryVersion } from '../hooks/useLibraryVersion'
 import TrackList from '../components/common/TrackList'
+import { openContextMenu } from '../components/common/ContextMenu'
+import TrackPlaybackMenu from '../components/common/TrackPlaybackMenu'
+import { useMenuPosition, type MenuPoint } from '../components/common/useMenuPosition'
 import CreatePlaylistDialog from '../components/common/CreatePlaylistDialog'
 import Cover from '../components/common/Cover'
 import EmptyState from '../components/common/EmptyState'
@@ -149,21 +154,39 @@ function sanitizeScSearchError(error: unknown): string | null {
   return sanitized ? sanitized.slice(0, 160) : null
 }
 
-function ScRowMenu({ track }: { track: ScTrack }) {
+interface ScRowMenuHandle {
+  openAt: (x: number, y: number) => void
+}
+
+interface ScRowMenuProps {
+  track: ScTrack
+  unified: UnifiedTrack
+  onPlay: () => void
+}
+
+const ScRowMenu = forwardRef<ScRowMenuHandle, ScRowMenuProps>(function ScRowMenu(
+  { track, unified, onPlay },
+  ref,
+) {
   const t = useT()
-  const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState<MenuPoint | null>(null)
+  const open = position !== null
   const [sub, setSub] = useState(false)
   const [creating, setCreating] = useState(false)
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const popRef = useRef<HTMLDivElement | null>(null)
+
+  useMenuPosition(popRef, position)
 
   useEffect(() => {
     if (!open) return
     const onDown = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (!rootRef.current?.contains(target) && !popRef.current?.contains(target)) setPosition(null)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') setPosition(null)
     }
     document.addEventListener('pointerdown', onDown)
     document.addEventListener('keydown', onKey)
@@ -190,21 +213,28 @@ function ScRowMenu({ track }: { track: ScTrack }) {
   }, [open, sub, playlists])
 
   const close = useCallback(() => {
-    setOpen(false)
+    setPosition(null)
     setSub(false)
     setCreating(false)
     setPlaylists(null)
   }, [])
 
-  const toggleOpen = () => {
+  const openAt = useCallback((point: MenuPoint) => {
+    setSub(false)
+    setCreating(false)
+    setPlaylists(null)
+    setPosition(point)
+  }, [])
+
+  useImperativeHandle(ref, () => ({ openAt: (x, y) => openAt({ x, y }) }), [openAt])
+
+  const toggleOpen = (event: MouseEvent<HTMLButtonElement>) => {
     if (open) {
       close()
       return
     }
-    setSub(false)
-    setCreating(false)
-    setPlaylists(null)
-    setOpen(true)
+    const anchor = event.currentTarget.getBoundingClientRect()
+    openAt({ x: anchor.right, y: anchor.bottom + 4, align: 'right' })
   }
 
   const addTo = async (pl: Playlist) => {
@@ -229,7 +259,7 @@ function ScRowMenu({ track }: { track: ScTrack }) {
   const openOnSoundCloud = () => {
     if (!track.permalinkUrl) return
     void openExternalUrl(track.permalinkUrl).catch(() => toast.show(t('Could not open external link'), 'error'))
-    setOpen(false)
+    close()
   }
 
   return (
@@ -246,8 +276,12 @@ function ScRowMenu({ track }: { track: ScTrack }) {
       >
         <Ellipsis size={15} />
       </button>
-      {open ? (
-        <div className="menu-pop" role="menu">
+      {position ? createPortal(
+        <div ref={popRef} className="menu-pop menu-pop-at-point has-track-playback-settings" onContextMenu={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+        }}>
+          <TrackPlaybackMenu key={`${position.x}:${position.y}:${position.align ?? ''}`} track={unified} showEntry={!sub}>
           {sub ? (
             <>
               <div className="menu-title">{t('Add to playlist')}</div>
@@ -275,6 +309,13 @@ function ScRowMenu({ track }: { track: ScTrack }) {
             </>
           ) : (
             <>
+              <button className="menu-item" role="menuitem" disabled={!unified.playable} onClick={() => {
+                close()
+                onPlay()
+              }}>
+                <Play size={13} />
+                {t('Play now')}
+              </button>
               <button
                 className="menu-item"
                 role="menuitem"
@@ -296,7 +337,9 @@ function ScRowMenu({ track }: { track: ScTrack }) {
               </button>
             </>
           )}
-        </div>
+          </TrackPlaybackMenu>
+        </div>,
+        document.body,
       ) : null}
       {creating ? <CreatePlaylistDialog
         initialCoverPath={track.artworkUrl}
@@ -306,7 +349,7 @@ function ScRowMenu({ track }: { track: ScTrack }) {
       /> : null}
     </div>
   )
-}
+})
 
 export default function SearchPage() {
   const t = useT()
@@ -325,6 +368,7 @@ export default function SearchPage() {
   })
   const [scErrors, setScErrors] = useState<Record<ScSearchKind, string | null>>(emptyScErrors)
   const [scTracks, setScTracks] = useState<ScTrack[]>([])
+  const scRowMenus = useRef(new Map<string, ScRowMenuHandle>())
   const [ytHits, setYtHits] = useState<YtSearchHit[]>([])
   const [ytStatus, setYtStatus] = useState<ScStatus>('idle')
   /** Ids whose artist, album and duration have not come back yet. */
@@ -687,6 +731,26 @@ export default function SearchPage() {
     player.playTracks(scTracksToUnified(playableTracks), idx)
   }
 
+  const openYouTube = (hit: YtSearchHit) => {
+    void openExternalUrl(hit.url).catch(() => toast.show(t('Could not open external link'), 'error'))
+  }
+
+  const openYouTubeTrackMenu = (event: MouseEvent, hit: YtSearchHit) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const track = ytHitToUnified(hit)
+    openContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      title: track.title,
+      track,
+      items: [
+        { id: 'play', icon: <Play size={13} />, label: t('Play now'), onSelect: () => player.playTracks([track], 0) },
+        { id: 'external', icon: <ExternalLink size={13} />, label: t('Open on YouTube'), onSelect: () => openYouTube(hit) },
+      ],
+    })
+  }
+
   const libraryCounts = {
     tracks: results?.tracks.length ?? 0,
     albums: results?.albums.length ?? 0,
@@ -921,6 +985,11 @@ export default function SearchPage() {
                               key={track.id}
                               className={'sc-row' + (idx === undefined ? ' is-disabled' : '')}
                               onClick={() => playSoundCloud(track)}
+                              onContextMenu={(event) => {
+                                event.preventDefault()
+                                event.stopPropagation()
+                                scRowMenus.current.get(track.id)?.openAt(event.clientX, event.clientY)
+                              }}
                             >
                               <ScArtwork url={track.artworkUrl} title={track.title} compact />
                               <div className="sc-meta">
@@ -946,7 +1015,15 @@ export default function SearchPage() {
                               ) : (
                                 <span className="sc-open-spacer" />
                               )}
-                              <ScRowMenu track={track} />
+                              <ScRowMenu
+                                ref={(handle) => {
+                                  if (handle) scRowMenus.current.set(track.id, handle)
+                                  else scRowMenus.current.delete(track.id)
+                                }}
+                                track={track}
+                                unified={unified}
+                                onPlay={() => playSoundCloud(track)}
+                              />
                             </div>
                           )
                         })}
@@ -1000,6 +1077,7 @@ export default function SearchPage() {
                             key={hit.id}
                             className="sc-row"
                             onClick={() => player.playTracks([ytHitToUnified(hit)], 0)}
+                            onContextMenu={(event) => openYouTubeTrackMenu(event, hit)}
                           >
                             <ScArtwork url={hit.thumbnailUrl} title={hit.title} />
                             <div className="sc-meta">
@@ -1016,7 +1094,7 @@ export default function SearchPage() {
                               aria-label={t('Open on YouTube')}
                               onClick={(event) => {
                                 event.stopPropagation()
-                                void openExternalUrl(hit.url).catch(() => toast.show(t('Could not open external link'), 'error'))
+                                openYouTube(hit)
                               }}
                             >
                               <ExternalLink size={14} />

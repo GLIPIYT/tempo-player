@@ -403,4 +403,10 @@ body,
   height: 100%;
   border-radius: 999px;
   background: var(--mini-accent);
+  transition: width 220ms cubic-bezier(.24,.72,.2,1);
+}
+
+.mini-volume-bar:active .mini-volume-fill { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .mini-volume-fill { transition: none; }
 }

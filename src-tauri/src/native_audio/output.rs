@@ -126,7 +126,6 @@ pub struct OutputEngine {
     pending: Option<PendingInstall>,
     recovery: Option<Recovery>,
     settings: OutputSettings,
-    settings_configured: bool,
     spectrum: Arc<SpectrumBuffer>,
     last_error: Option<String>,
 }
@@ -142,6 +141,7 @@ struct ActiveTrack {
     local: Option<LocalControl>,
     buffering: Option<Arc<AtomicBool>>,
     requested_playing: bool,
+    playback_rate: f32,
     fade: Option<Fade>,
     last_progress_position: f64,
     last_progress_at: Instant,
@@ -255,7 +255,6 @@ impl OutputEngine {
             pending: None,
             recovery: None,
             settings: OutputSettings::default(),
-            settings_configured: false,
             spectrum: SpectrumBuffer::new(),
             last_error: None,
         })
@@ -267,12 +266,10 @@ impl OutputEngine {
         playing: bool,
         fade_sec: f64,
         keep_loudness: bool,
+        settings: OutputSettings,
     ) -> Result<(), String> {
         self.recovery.take();
         self.pending.take();
-        if !self.settings_configured {
-            self.settings = audio.settings.clone().sanitized();
-        }
         self.stop_outgoing();
 
         let fade = fade_sec.is_finite() && fade_sec > 0.0 && playing;
@@ -298,6 +295,7 @@ impl OutputEngine {
             }
         }
 
+        self.settings = settings.sanitized();
         if self.sink.is_none() {
             self.pending = Some(PendingInstall {
                 audio,
@@ -363,6 +361,7 @@ impl OutputEngine {
             local: audio.local.take(),
             buffering: audio.buffering.clone(),
             requested_playing: playing,
+            playback_rate: self.settings.playback_rate,
             fade: fade_in.then(|| Fade {
                 started: now,
                 duration: Duration::from_secs_f64(fade_sec.clamp(0.0, 30.0)),
@@ -384,27 +383,25 @@ impl OutputEngine {
 
     pub fn configure(&mut self, settings: OutputSettings) {
         self.settings = settings.sanitized();
-        self.settings_configured = true;
         let now = Instant::now();
         if let Some(track) = self.active.as_mut() {
             track.controls.configure(&self.settings);
+            track.playback_rate = self.settings.playback_rate;
             if let Some(player) = track.player.as_ref() {
-                player.set_speed(self.settings.playback_rate.clamp(0.5, 2.0));
+                player.set_speed(track.playback_rate);
                 if let Some(fade) = track.fade.as_mut() {
-                    if fade.to > 0.0 {
-                        fade.to = self.settings.volume;
-                        player.set_volume(fade.value(now).0);
-                    }
+                    fade.to = self.settings.volume;
+                    player.set_volume(fade.value(now).0);
                 } else {
                     player.set_volume(self.settings.volume);
                 }
             }
         }
         for track in &mut self.outgoing {
-            track.controls.configure(&self.settings);
-            if let Some(player) = track.player.as_ref() {
-                player.set_speed(self.settings.playback_rate);
-            }
+            track.controls.configure(&OutputSettings {
+                playback_rate: track.playback_rate,
+                ..self.settings.clone()
+            });
         }
     }
 
@@ -836,9 +833,9 @@ impl OutputEngine {
         self.spectrum.enabled.store(enabled, Ordering::Release);
     }
 
-    /// Returns source time, duration and whether the outgoing fade source is
-    /// actively contributing audio. There is at most one outgoing source.
-    pub fn outgoing_clock(&self) -> Option<(f64, Option<f64>, bool)> {
+    /// Returns source time, duration, playback rate, and playing state for the
+    /// outgoing fade. There is at most one outgoing source.
+    pub fn outgoing_clock(&self) -> Option<(f64, Option<f64>, f64, bool)> {
         self.outgoing.first().map(|track| {
             let is_playing = track.requested_playing
                 && track
@@ -846,7 +843,12 @@ impl OutputEngine {
                     .as_ref()
                     .is_some_and(|player| !player.is_paused() && !player.empty())
                 && !track.is_buffering();
-            (track.position(), track.duration_sec, is_playing)
+            (
+                track.position(),
+                track.duration_sec,
+                f64::from(track.playback_rate),
+                is_playing,
+            )
         })
     }
 }

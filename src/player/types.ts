@@ -1,5 +1,6 @@
 import type { RepeatMode, Track, UnifiedTrack } from '../types/models'
 import type { EqualizerSettings } from '../audio/equalizer'
+import type { TrackPlaybackPreferences } from './trackPlaybackPreferences'
 
 export type TrackChangeReason = 'manual' | 'next' | 'previous' | 'queue' | 'natural-end' | 'autoplay' | 'restore'
 
@@ -20,6 +21,9 @@ export interface PlayerApi {
   duration: number
   volume: number
   playbackRate: number
+  globalVolume?: number
+  globalPlaybackRate?: number
+  trackPlaybackPreferences?: TrackPlaybackPreferences
   preservePitch: boolean
   repeat: RepeatMode
   shuffle: boolean
@@ -34,6 +38,7 @@ export interface PlayerApi {
   seek(sec: number): void
   setVolume(v: number): void
   setPlaybackRate(rate: number, persist?: boolean): void
+  clearTemporaryPlaybackRate?: () => void
   setPreservePitch(preserve: boolean): void
   setEqualizer(settings: EqualizerSettings): void
   setRepeat(m: RepeatMode): void

@@ -5,6 +5,7 @@ pub mod queue;
 pub mod resolver;
 
 mod actor;
+pub(crate) mod track_preferences;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Sender};
@@ -13,6 +14,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, Runtime};
+use track_preferences::{TrackKey, TrackPlaybackPreferences, TrackPreferencesPatch};
 
 pub const STATE_EVENT: &str = "native-audio://state";
 pub const CLOCK_EVENT: &str = "native-audio://clock";
@@ -30,6 +32,11 @@ pub(crate) enum ActorMessage {
     Preloaded(actor::PreloadMessage),
     ReservoirReady(actor::ReservoirMessage),
     GenerationChanged(i64),
+    TrackPreferences {
+        key: TrackKey,
+        patch: Option<TrackPreferencesPatch>,
+        reply: Sender<Result<TrackPlaybackPreferences, String>>,
+    },
     Snapshot(Sender<Result<Value, String>>),
     Shutdown(Sender<Result<(), String>>),
 }
@@ -196,4 +203,48 @@ pub async fn native_audio_snapshot(app: AppHandle) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || snapshot(&app))
         .await
         .map_err(|error| format!("native audio snapshot task failed: {error}"))?
+}
+
+fn dispatch_track_preferences(
+    app: &AppHandle,
+    key: TrackKey,
+    patch: Option<TrackPreferencesPatch>,
+) -> Result<TrackPlaybackPreferences, String> {
+    let handle = app
+        .try_state::<NativeAudioHandle>()
+        .ok_or("native audio is not initialized")?;
+    let (reply, result) = mpsc::channel();
+    handle
+        .sender
+        .send(ActorMessage::TrackPreferences { key, patch, reply })
+        .map_err(|error| error.to_string())?;
+    result
+        .recv_timeout(Duration::from_secs(3))
+        .map_err(|error| format!("Track playback preferences timed out: {error}"))?
+}
+
+#[tauri::command]
+pub async fn get_track_playback_preferences(
+    app: AppHandle,
+    source: String,
+    source_id: String,
+) -> Result<TrackPlaybackPreferences, String> {
+    let key = TrackKey::new(source, source_id)?;
+    tauri::async_runtime::spawn_blocking(move || dispatch_track_preferences(&app, key, None))
+        .await
+        .map_err(|error| format!("Track playback preferences task failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn set_track_playback_preferences(
+    app: AppHandle,
+    source: String,
+    source_id: String,
+    patch: Value,
+) -> Result<TrackPlaybackPreferences, String> {
+    let key = TrackKey::new(source, source_id)?;
+    let patch = TrackPreferencesPatch::parse(&patch)?;
+    tauri::async_runtime::spawn_blocking(move || dispatch_track_preferences(&app, key, Some(patch)))
+        .await
+        .map_err(|error| format!("Track playback preferences task failed: {error}"))?
 }

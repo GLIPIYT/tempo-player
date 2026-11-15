@@ -13,6 +13,7 @@ type PlayerActions = Pick<
   | 'seek'
   | 'setVolume'
   | 'setPlaybackRate'
+  | 'clearTemporaryPlaybackRate'
   | 'setPreservePitch'
   | 'setEqualizer'
   | 'setRepeat'
@@ -32,6 +33,7 @@ const actions: PlayerActions = {
   seek: sec => playerController.seek(sec),
   setVolume: v => playerController.setVolume(v),
   setPlaybackRate: (rate, persist) => playerController.setPlaybackRate(rate, persist),
+  clearTemporaryPlaybackRate: () => playerController.clearTemporaryPlaybackRate(),
   setPreservePitch: preserve => playerController.setPreservePitch(preserve),
   setEqualizer: settings => playerController.setEqualizer(settings),
   setRepeat: m => playerController.setRepeat(m),
@@ -52,6 +54,9 @@ export function composePlayerApi(state: PlayerSnapshot): PlayerApi {
     duration: state.duration,
     volume: state.volume,
     playbackRate: state.playbackRate,
+    globalVolume: state.globalVolume,
+    globalPlaybackRate: state.globalPlaybackRate,
+    trackPlaybackPreferences: state.trackPlaybackPreferences,
     preservePitch: state.preservePitch,
     repeat: state.repeat,
     shuffle: state.shuffle,

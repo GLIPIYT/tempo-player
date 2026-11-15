@@ -3,7 +3,6 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -24,6 +23,8 @@ import { trackMenuNavigationVisibility } from '../../utils/trackMenuNavigation'
 import { toast } from './Toast'
 import CreatePlaylistDialog from './CreatePlaylistDialog'
 import TrackMetadataEditor from './TrackMetadataEditor'
+import TrackPlaybackMenu from './TrackPlaybackMenu'
+import { useMenuPosition, type MenuPoint } from './useMenuPosition'
 
 interface TrackMenuProps {
   track: Track
@@ -50,18 +51,6 @@ export interface TrackMenuHandle {
   openAt: (x: number, y: number) => void
 }
 
-/** Keeps the menu inside the viewport when it is opened at the cursor. */
-const EDGE_GAP = 8
-
-function clampToViewport(x: number, y: number, el: HTMLElement): { x: number; y: number } {
-  const w = el.offsetWidth
-  const h = el.offsetHeight
-  return {
-    x: Math.min(Math.max(EDGE_GAP, x), Math.max(EDGE_GAP, window.innerWidth - w - EDGE_GAP)),
-    y: Math.min(Math.max(EDGE_GAP, y), Math.max(EDGE_GAP, window.innerHeight - h - EDGE_GAP)),
-  }
-}
-
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
@@ -76,31 +65,14 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
   const t = useT()
   const [open, setOpen] = useState(false)
   const [editingMetadata, setEditingMetadata] = useState(false)
-  /** Null means anchored to the trigger button; a point means opened at the cursor. */
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const [pos, setPos] = useState<MenuPoint | null>(null)
   const [sub, setSub] = useState(false)
   const [creating, setCreating] = useState(false)
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const popRef = useRef<HTMLDivElement | null>(null)
 
-  useLayoutEffect(() => {
-    const el = popRef.current
-    if (!open || !pos || !el) return
-    const placeAtCursor = () => {
-      const clamped = clampToViewport(pos.x, pos.y, el)
-      el.style.left = `${clamped.x}px`
-      el.style.top = `${clamped.y}px`
-    }
-    placeAtCursor()
-    const observer = new ResizeObserver(placeAtCursor)
-    observer.observe(el)
-    window.addEventListener('resize', placeAtCursor)
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', placeAtCursor)
-    }
-  }, [open, pos])
+  useMenuPosition(popRef, open ? pos : null)
 
   const flash = useCallback((text: string, bad: boolean) => {
     toast.show(text, bad ? 'error' : 'success')
@@ -151,7 +123,8 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
     setSub(false)
     setCreating(false)
     setPlaylists(null)
-    setPos(null)
+    const anchor = rootRef.current?.getBoundingClientRect()
+    setPos(anchor ? { x: anchor.right, y: anchor.bottom + 4, align: 'right' } : null)
     setOpen(true)
   }, [])
 
@@ -361,13 +334,13 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
       {open ? renderMenu(
         <div
           ref={popRef}
-          className={'menu-pop' + (pos ? ' menu-pop-at-point' : '')}
-          role="menu"
+          className={'menu-pop has-track-playback-settings' + (pos ? ' menu-pop-at-point' : '')}
           onContextMenu={(event) => {
             event.preventDefault()
             event.stopPropagation()
           }}
         >
+          <TrackPlaybackMenu track={unified} showEntry={!sub}>
           <button className="menu-item" role="menuitem" onClick={toggleLike}>
             <Heart size={13} fill={likes.isLiked(track.id) ? 'currentColor' : 'none'} />
             {likes.isLiked(track.id) ? t('Remove from Likes') : t('Add to Likes')}
@@ -470,6 +443,7 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
               {hideRow}
             </>
           )}
+          </TrackPlaybackMenu>
         </div>
       ) : null}
       {editingMetadata && track.source === 'local' ? (

@@ -17,6 +17,8 @@ import { recommendationService, type RadioReservation } from '../features/recomm
 import type { ListeningEvent, ListeningEndReason, ListeningStartReason } from '../features/recommendations/types'
 import { getNativePlayerController, isNativePlayback, NativePlayerController } from './nativeController'
 import type { TrackChangeEvent, TrackChangeReason } from './types'
+import { readBrowserTrackPlaybackPreferences, writeBrowserTrackPlaybackPreferences } from './browserTrackPlaybackPreferences'
+import type { TrackPlaybackIdentity, TrackPlaybackPreferences } from './trackPlaybackPreferences'
 
 export interface PlayerSnapshot {
   currentTrack: UnifiedTrack | null
@@ -27,6 +29,9 @@ export interface PlayerSnapshot {
   duration: number
   volume: number
   playbackRate: number
+  globalVolume?: number
+  globalPlaybackRate?: number
+  trackPlaybackPreferences?: TrackPlaybackPreferences
   preservePitch: boolean
   repeat: RepeatMode
   shuffle: boolean
@@ -299,8 +304,11 @@ export class PlayerController {
   private isPlaying = false
   private position = 0
   private duration = 0
-  private volume = readStoredVolume()
-  private playbackRate = readStoredPlaybackRate()
+  private globalVolume = readStoredVolume()
+  private globalPlaybackRate = readStoredPlaybackRate()
+  private trackPlaybackTarget: TrackPlaybackIdentity | null = null
+  private trackPlaybackPreferences = readBrowserTrackPlaybackPreferences(null)
+  private temporaryPlaybackRate: number | null = null
   private preservePitch = readStoredPreservePitch()
   private repeat: RepeatMode = readStoredRepeat()
   private shuffle = readPref(SHUFFLE_KEY) === '1'
@@ -339,6 +347,8 @@ export class PlayerController {
     this.queueCtl.setShuffled(this.shuffle)
     void this.ensureFeedbackGeneration().catch(error => { console.warn('[tempo listening] context unavailable', error) })
     this.loadSnapshot()
+    this.syncTrackPlaybackPreferences()
+    this.engine.setVolume(this.volume)
     this.engine.setPlaybackRate(this.playbackRate)
     this.engine.setPreservePitch(this.preservePitch)
     this.engine.setEqualizer(getSettings().audio.equalizer)
@@ -453,6 +463,9 @@ export class PlayerController {
       this.startTrack(cur, resolved)
       return
     }
+    this.syncTrackPlaybackPreferences(true)
+    this.engine.setVolume(this.volume)
+    this.engine.setPlaybackRate(this.playbackRate)
     this.engine.play()
     this.isPlaying = true
     this.emit()
@@ -521,20 +534,88 @@ export class PlayerController {
   }
 
   setVolume(v: number): void {
-    this.volume = clampUnit(v)
-    writePref(VOLUME_KEY, String(this.volume))
+    if (!Number.isFinite(v)) return
+    this.syncTrackPlaybackPreferences()
+    const next = clampUnit(v)
+    const track = this.trackPlaybackTarget
+    if (track && this.trackPlaybackPreferences.volume !== null) {
+      try {
+        this.trackPlaybackPreferences = writeBrowserTrackPlaybackPreferences(track, { volume: next })
+      } catch (error) {
+        toast.show(String(error), 'error')
+        return
+      }
+    } else {
+      this.globalVolume = next
+      writePref(VOLUME_KEY, String(next))
+    }
     this.engine.setVolume(this.volume)
     this.emit()
   }
 
   setPlaybackRate(rate: number, persist = true): void {
+    this.syncTrackPlaybackPreferences()
+    const previous = this.playbackRate
     const safeRate = Number.isFinite(rate) ? rate : 1
     const next = Math.round(Math.min(2, Math.max(0.5, safeRate)) * 20) / 20
-    if (next === this.playbackRate) return
-    this.playbackRate = next
-    if (persist) writePref(PLAYBACK_RATE_KEY, String(next))
-    this.engine.setPlaybackRate(next)
+    if (persist) {
+      const track = this.trackPlaybackTarget
+      if (track && this.trackPlaybackPreferences.playbackRate !== null) {
+        try {
+          this.trackPlaybackPreferences = writeBrowserTrackPlaybackPreferences(track, { playbackRate: next })
+        } catch (error) {
+          toast.show(String(error), 'error')
+          return
+        }
+      } else {
+        this.globalPlaybackRate = next
+        writePref(PLAYBACK_RATE_KEY, String(next))
+      }
+      this.temporaryPlaybackRate = null
+    } else {
+      this.temporaryPlaybackRate = next
+    }
+    if (this.playbackRate !== previous) this.engine.setPlaybackRate(this.playbackRate)
     this.emit()
+  }
+
+  clearTemporaryPlaybackRate(): void {
+    this.syncTrackPlaybackPreferences()
+    if (this.temporaryPlaybackRate === null) return
+    this.temporaryPlaybackRate = null
+    this.engine.setPlaybackRate(this.playbackRate)
+    this.emit()
+  }
+
+  refreshTrackPlaybackPreferences(track: TrackPlaybackIdentity): void {
+    const current = this.queueCtl.current()
+    if (current?.source !== track.source || current.sourceId !== track.sourceId) return
+    const volume = this.volume
+    const rate = this.playbackRate
+    this.syncTrackPlaybackPreferences(true)
+    if (this.volume !== volume) this.engine.setVolume(this.volume)
+    if (this.playbackRate !== rate) this.engine.setPlaybackRate(this.playbackRate)
+    this.emit()
+  }
+
+  private get volume(): number {
+    return this.trackPlaybackPreferences.volume ?? this.globalVolume
+  }
+
+  private get playbackRate(): number {
+    return this.temporaryPlaybackRate ?? this.trackPlaybackPreferences.playbackRate ?? this.globalPlaybackRate
+  }
+
+  private syncTrackPlaybackPreferences(reload = false): void {
+    const current = this.queueCtl.current()
+    const previous = this.trackPlaybackTarget
+    const changed = current?.source !== previous?.source || current?.sourceId !== previous?.sourceId
+    if (!changed && !reload) return
+    if (changed) {
+      this.temporaryPlaybackRate = null
+      this.trackPlaybackTarget = current && { source: current.source, sourceId: current.sourceId }
+    }
+    this.trackPlaybackPreferences = readBrowserTrackPlaybackPreferences(current)
   }
 
   setPreservePitch(preserve: boolean): void {
@@ -887,19 +968,22 @@ export class PlayerController {
     this.duration = track.durationSec ?? 0
     this.bufferPct = null
     this.preparing = false
-    this.engine.setVolume(this.volume)
-    // Level this track. Unmeasured tracks and streamed sources pass 1, which
-    // leaves the audio path exactly as it was.
-    this.engine.setTrackGain(
-      normalizationEnabled() && track.gainDb !== null ? dbToLinear(track.gainDb) : 1,
-    )
+    this.syncTrackPlaybackPreferences(true)
+    const trackGain = normalizationEnabled() && track.gainDb !== null ? dbToLinear(track.gainDb) : 1
     if (fadeSec > 0) {
       // starts the incoming track without stopping the outgoing one; the engine
       // ramps between them
       void this.engine
-        .crossfadeTo(resolved.url, resolved.format, resolved.channel, fadeSec, session.id)
+        .crossfadeTo(resolved.url, resolved.format, resolved.channel, fadeSec, session.id, {
+          volume: this.volume,
+          playbackRate: this.playbackRate,
+          trackGain,
+        })
         .catch(() => { this.finishSession(session.id, 'error') })
     } else {
+      this.engine.setVolume(this.volume)
+      this.engine.setPlaybackRate(this.playbackRate)
+      this.engine.setTrackGain(trackGain)
       void this.engine
         .loadWithFormat(resolved.url, resolved.format, resolved.channel, session.id)
         .then(() => {
@@ -1417,6 +1501,7 @@ export class PlayerController {
   }
 
   private emit(): void {
+    this.syncTrackPlaybackPreferences()
     const cur = this.queueCtl.current()
     this.snapshot = {
       currentTrack: cur,
@@ -1427,6 +1512,9 @@ export class PlayerController {
       duration: this.duration,
       volume: this.volume,
       playbackRate: this.playbackRate,
+      globalVolume: this.globalVolume,
+      globalPlaybackRate: this.globalPlaybackRate,
+      trackPlaybackPreferences: this.trackPlaybackPreferences,
       preservePitch: this.preservePitch,
       repeat: this.repeat,
       shuffle: this.shuffle,

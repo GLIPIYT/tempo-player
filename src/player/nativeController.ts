@@ -9,6 +9,7 @@ import type { RepeatMode, Track, UnifiedTrack } from '../types/models'
 import type { TrackChangeEvent, TrackChangeReason } from './types'
 import { trackToUnified } from '../utils/unified'
 import type { PlayerSnapshot } from './controller'
+import type { TrackPlaybackPreferences } from './trackPlaybackPreferences'
 
 const PLAYER_PREFS = {
   volume: 'tempo.volume',
@@ -25,6 +26,9 @@ interface NativePlayerSnapshot extends PlayerSnapshot {
   buffering?: boolean
   seekPending?: boolean
   trackChange?: TrackChangeEvent
+  globalVolume?: number
+  globalPlaybackRate?: number
+  trackPlaybackPreferences?: TrackPlaybackPreferences
 }
 
 interface ContinuationRequest {
@@ -51,6 +55,9 @@ type NativeSettingsValues = {
   equalizer?: { enabled: boolean; bands: number[] }
   cacheBeforePlay?: boolean
   ytdlpPath?: string
+  controlTrackKey?: string | null
+  persistPlaybackRate?: boolean
+  clearTemporaryPlaybackRate?: boolean
 }
 
 type AppAudioPreferences = Pick<AppSettings, 'audio' | 'soundcloud' | 'ytdlp'>
@@ -67,6 +74,16 @@ type NativeCommand =
   | { op: 'updateTrack'; track: UnifiedTrack }
   | { op: 'visibility'; visible: boolean }
   | { op: 'spectrum'; enabled: boolean }
+
+function mergeQueuedControl(previous: NativeCommand, next: NativeCommand): boolean {
+  if (previous.op === 'seek' && next.op === 'seek') return true
+  if (previous.op !== 'settings' || next.op !== 'settings' || previous.controlTrackKey === undefined
+    || previous.controlTrackKey !== next.controlTrackKey || previous.clearTemporaryPlaybackRate
+    || next.clearTemporaryPlaybackRate) return false
+  return (previous.volume !== undefined && next.volume !== undefined)
+    || (previous.playbackRate !== undefined && next.playbackRate !== undefined
+      && previous.persistPlaybackRate === next.persistPlaybackRate)
+}
 
 interface QueuedCommand {
   command: NativeCommand
@@ -170,6 +187,7 @@ function queueSignature(queue: readonly UnifiedTrack[]): string {
 
 function snapshotUiSignature(snapshot: PlayerSnapshot): string {
   const track = snapshot.currentTrack
+  const preferences = snapshot.trackPlaybackPreferences
   return [
     track ? queueSignature([track]) : '',
     queueSignature(snapshot.queue),
@@ -178,6 +196,12 @@ function snapshotUiSignature(snapshot: PlayerSnapshot): string {
     snapshot.duration,
     snapshot.volume,
     snapshot.playbackRate,
+    snapshot.globalVolume ?? '',
+    snapshot.globalPlaybackRate ?? '',
+    preferences?.volume ?? '',
+    preferences?.playbackRate ?? '',
+    preferences?.savedVolume ?? '',
+    preferences?.savedPlaybackRate ?? '',
     snapshot.preservePitch ? 1 : 0,
     snapshot.repeat,
     snapshot.shuffle ? 1 : 0,
@@ -321,13 +345,32 @@ export class NativePlayerController {
   }
 
   setVolume(volume: number): void {
-    if (Number.isFinite(volume)) this.send({ op: 'settings', volume: Math.max(0, Math.min(1, volume)) })
+    if (Number.isFinite(volume)) {
+      this.send({
+        op: 'settings',
+        volume: Math.max(0, Math.min(1, volume)),
+        controlTrackKey: this.snapshot.currentTrack ? queueKey(this.snapshot.currentTrack) : null,
+      })
+    }
   }
 
-  setPlaybackRate(playbackRate: number, _persist = true): void {
+  setPlaybackRate(playbackRate: number, persist = true): void {
     if (!Number.isFinite(playbackRate)) return
     const rate = Math.round(Math.max(0.5, Math.min(2, playbackRate)) * 20) / 20
-    this.send({ op: 'settings', playbackRate: rate })
+    this.send({
+      op: 'settings',
+      playbackRate: rate,
+      persistPlaybackRate: persist,
+      controlTrackKey: this.snapshot.currentTrack ? queueKey(this.snapshot.currentTrack) : null,
+    })
+  }
+
+  clearTemporaryPlaybackRate(): void {
+    this.send({
+      op: 'settings',
+      clearTemporaryPlaybackRate: true,
+      controlTrackKey: this.snapshot.currentTrack ? queueKey(this.snapshot.currentTrack) : null,
+    })
   }
 
   setPreservePitch(preservePitch: boolean): void {
@@ -397,17 +440,15 @@ export class NativePlayerController {
   }
 
   private enqueue(command: NativeCommand): Promise<void> {
-    if (command.op === 'seek') {
-      const queued = this.commandQueue.at(-1)
-      if (queued?.command.op === 'seek') {
-        queued.command = command
-        return new Promise((resolve, reject) => {
-          const previousResolve = queued.resolve
-          const previousReject = queued.reject
-          queued.resolve = () => { previousResolve(); resolve() }
-          queued.reject = error => { previousReject(error); reject(error) }
-        })
-      }
+    const queued = this.commandQueue.at(-1)
+    if (queued && mergeQueuedControl(queued.command, command)) {
+      queued.command = command
+      return new Promise((resolve, reject) => {
+        const previousResolve = queued.resolve
+        const previousReject = queued.reject
+        queued.resolve = () => { previousResolve(); resolve() }
+        queued.reject = error => { previousReject(error); reject(error) }
+      })
     }
     return new Promise((resolve, reject) => {
       this.commandQueue.push({ command, resolve, reject })
@@ -510,6 +551,9 @@ export class NativePlayerController {
       duration,
       volume: Number.isFinite(payload.volume) ? Math.max(0, Math.min(1, payload.volume)) : previous.volume,
       playbackRate: Number.isFinite(payload.playbackRate) ? payload.playbackRate : 1,
+      globalVolume: payload.globalVolume ?? payload.volume,
+      globalPlaybackRate: payload.globalPlaybackRate ?? payload.playbackRate,
+      trackPlaybackPreferences: payload.trackPlaybackPreferences,
       preservePitch: payload.preservePitch === true,
       repeat: payload.repeat === 'all' || payload.repeat === 'one' ? payload.repeat : 'off',
       shuffle: payload.shuffle === true,

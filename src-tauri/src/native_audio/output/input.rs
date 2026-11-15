@@ -39,7 +39,6 @@ pub(super) type AudioSource = Box<dyn Source<Item = f32> + Send + 'static>;
 
 pub struct PreparedAudio {
     pub(super) spec: SourceSpec,
-    pub(super) settings: OutputSettings,
     pub(super) source: Option<AudioSource>,
     pub(super) clock: Arc<PositionClock>,
     pub(super) duration_sec: Option<f64>,
@@ -201,7 +200,6 @@ pub(super) fn prepare_input(
     let clock = Arc::new(PositionClock::new(position, source_rate, source_channels));
     Ok(PreparedAudio {
         spec,
-        settings,
         source: Some(source),
         clock,
         duration_sec,

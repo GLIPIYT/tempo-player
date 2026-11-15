@@ -32,7 +32,7 @@ export function useScCollectionTracks(tracks: readonly ScTrack[]) {
 
   const onMenu = (point: Pick<ContextMenuRequest, 'x' | 'y' | 'trigger'>, index: number) => {
     const track = tracks[index]
-    openContextMenu({ ...point, title: track.title, items: [
+    openContextMenu({ ...point, title: track.title, track: rows[index], items: [
       { id: 'play', label: t('Play now'), icon: <Play size={13} />, disabled: !rows[index].playable, onSelect: () => play(index) },
       {
         id: 'cache',

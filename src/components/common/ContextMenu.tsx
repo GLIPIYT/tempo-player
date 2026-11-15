@@ -1,12 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import TrackPlaybackMenu, { type TrackPlaybackMenuTrack } from './TrackPlaybackMenu'
+import { useMenuPosition } from './useMenuPosition'
 
 /**
  * A small global context menu, opened by right-click anywhere.
  *
- * The track menu (TrackMenu) already owns a dozen actions and a playlist
- * submenu, so tracks use that. This one covers everything that is not a track:
- * section headers, rails, cards - anything that wants a couple of commands at
- * the cursor.
+ * Used by section headers, collection cards, and tracks that only have
+ * provider-specific actions. Library tracks have their own TrackMenu.
  */
 
 export interface ContextMenuItem {
@@ -24,6 +24,7 @@ export interface ContextMenuRequest {
   title?: string
   items: ContextMenuItem[]
   trigger?: HTMLElement
+  track?: TrackPlaybackMenuTrack
 }
 
 let current: ContextMenuRequest | null = null
@@ -60,33 +61,10 @@ function useRequest(): ContextMenuRequest | null {
   return state
 }
 
-const EDGE_GAP = 8
-
-function clamp(x: number, y: number, el: HTMLElement): { x: number; y: number } {
-  const w = el.offsetWidth
-  const h = el.offsetHeight
-  return {
-    x: Math.min(Math.max(EDGE_GAP, x), Math.max(EDGE_GAP, window.innerWidth - w - EDGE_GAP)),
-    y: Math.min(Math.max(EDGE_GAP, y), Math.max(EDGE_GAP, window.innerHeight - h - EDGE_GAP)),
-  }
-}
-
 export default function ContextMenuHost() {
   const req = useRequest()
   const ref = useRef<HTMLDivElement | null>(null)
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
-
-  useLayoutEffect(() => {
-    setPos(req ? { x: req.x, y: req.y } : null)
-  }, [req])
-
-  // pull the menu back inside the window before it is painted
-  useLayoutEffect(() => {
-    if (!pos || !ref.current) return
-    const el = ref.current
-    const next = clamp(pos.x, pos.y, el)
-    if (next.x !== pos.x || next.y !== pos.y) setPos(next)
-  }, [pos])
+  useMenuPosition(ref, req)
 
   useEffect(() => {
     if (!req) return
@@ -111,16 +89,9 @@ export default function ContextMenuHost() {
     }
   }, [req])
 
-  if (!req || !pos) return null
+  if (!req) return null
 
-  return (
-    <div
-      ref={ref}
-      className="menu-pop menu-pop-at-point"
-      role="menu"
-      style={{ left: pos.x, top: pos.y }}
-      onContextMenu={(e) => e.preventDefault()}
-    >
+  const actions = <>
       {req.title ? <div className="menu-title">{req.title}</div> : null}
       {req.items.map((item) => (
         <button
@@ -137,6 +108,16 @@ export default function ContextMenuHost() {
           {item.label}
         </button>
       ))}
+  </>
+
+  return (
+    <div
+      ref={ref}
+      className={`menu-pop menu-pop-at-point${req.track ? ' has-track-playback-settings' : ''}`}
+      role={req.track ? undefined : 'menu'}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {req.track ? <TrackPlaybackMenu key={`${req.track.source}:${req.track.sourceId}:${req.x}:${req.y}`} track={req.track}>{actions}</TrackPlaybackMenu> : actions}
     </div>
   )
 }

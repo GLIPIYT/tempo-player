@@ -16,6 +16,7 @@ use super::models::{
 use super::output::{OutputEngine, OutputSettings};
 use super::queue::{NativeQueue, QueueEntry};
 use super::resolver::{self, PreparedTrack, PreparedTransport, ReservoirResult};
+use super::track_preferences::{self, TrackKey, TrackPlaybackPreferences, TrackPreferencesPatch};
 use super::{
     ActorMessage, ANALYSIS_EVENT, CLOCK_EVENT, CONTINUATION_EVENT, FFT_EVENT, STATE_EVENT,
 };
@@ -196,6 +197,9 @@ pub fn run(
         .queue
         .current()
         .map(|entry| TrackPayload(entry.track.clone()).identity_key());
+    let preference_reader = track_preferences::open_reader(&db)
+        .map_err(|error| eprintln!("[tempo native audio] {error}"))
+        .ok();
     let mut actor = Actor {
         app,
         db,
@@ -203,6 +207,11 @@ pub fn run(
         engine,
         browser: None,
         persisted,
+        preference_reader,
+        preference_track_key: None,
+        track_preferences: TrackPlaybackPreferences::default(),
+        temporary_playback_rate: None,
+        transport_playback_rate: 1.0,
         version: 0,
         last_track_change_key: initial_track_change_key,
         track_change_id: 0,
@@ -309,6 +318,11 @@ struct Actor {
     engine: OutputEngine,
     browser: Option<BrowserOutput>,
     persisted: NativePersistedState,
+    preference_reader: Option<rusqlite::Connection>,
+    preference_track_key: Option<TrackKey>,
+    track_preferences: TrackPlaybackPreferences,
+    temporary_playback_rate: Option<f32>,
+    transport_playback_rate: f32,
     version: u64,
     last_track_change_key: Option<String>,
     track_change_id: u64,
@@ -348,11 +362,93 @@ struct Actor {
 }
 
 impl Actor {
+    fn refresh_track_preferences(&mut self) {
+        let key = self
+            .persisted
+            .queue
+            .current()
+            .and_then(|entry| TrackKey::from_payload(&entry.track));
+        if self.preference_track_key == key {
+            return;
+        }
+        self.temporary_playback_rate = None;
+        self.track_preferences = key
+            .as_ref()
+            .map(|key| {
+                track_preferences::get(&self.db, self.preference_reader.as_ref(), key)
+                    .unwrap_or_else(|error| {
+                        eprintln!("[tempo native audio] {error}");
+                        TrackPlaybackPreferences::default()
+                    })
+            })
+            .unwrap_or_default();
+        self.preference_track_key = key;
+    }
+
+    fn effective_volume(&self) -> f32 {
+        self.track_preferences
+            .volume
+            .unwrap_or(self.persisted.settings.volume)
+    }
+
+    fn effective_playback_rate(&self) -> f32 {
+        self.temporary_playback_rate
+            .or(self.track_preferences.playback_rate)
+            .unwrap_or(self.persisted.settings.playback_rate)
+    }
+
+    fn effective_output_settings(&self) -> OutputSettings {
+        OutputSettings {
+            volume: self.effective_volume(),
+            playback_rate: self.effective_playback_rate(),
+            ..output_settings(&self.persisted.settings)
+        }
+    }
+
+    fn configure_selected_output(&mut self) {
+        let selected_is_active = match (&self.preference_track_key, &self.active_track) {
+            (Some(key), Some(track)) => key.matches_payload(track),
+            _ => false,
+        };
+        // A track selection can be published while its decoder is still opening.
+        // Leave the previous source's transport settings alone until install.
+        if !selected_is_active {
+            return;
+        }
+        let settings = self.effective_output_settings();
+        self.transport_playback_rate = settings.playback_rate;
+        self.engine.configure(settings);
+        if let Some(browser) = self.browser.as_ref() {
+            if let Err(error) = browser.handle.configure(self.browser_settings()) {
+                self.current_error = Some(error);
+            }
+        }
+        self.listening.reanchor();
+    }
+
+    fn track_preferences_command(
+        &mut self,
+        key: TrackKey,
+        patch: Option<TrackPreferencesPatch>,
+    ) -> Result<TrackPlaybackPreferences, String> {
+        let Some(patch) = patch.filter(|patch| !patch.is_empty()) else {
+            return track_preferences::get(&self.db, self.preference_reader.as_ref(), &key);
+        };
+        self.refresh_track_preferences();
+        let next = track_preferences::update(&self.db, &key, patch)?;
+        if self.preference_track_key.as_ref() == Some(&key) && self.track_preferences != next {
+            self.track_preferences = next;
+            self.configure_selected_output();
+            self.emit_state();
+        }
+        Ok(next)
+    }
+
     fn browser_settings(&self) -> BrowserSettings {
         let settings = &self.persisted.settings;
         BrowserSettings {
-            volume: settings.volume as f64,
-            playback_rate: settings.playback_rate as f64,
+            volume: self.effective_volume() as f64,
+            playback_rate: self.effective_playback_rate() as f64,
             preserve_pitch: settings.preserve_pitch,
             equalizer_enabled: settings.equalizer_enabled,
             equalizer_gains: settings.equalizer_gains,
@@ -368,6 +464,7 @@ impl Actor {
             return;
         }
         let pending = self.pending_start.take().expect("matching browser start");
+        self.refresh_track_preferences();
         match message.result {
             Ok((handle, events)) => {
                 if !pending.keep_session {
@@ -402,6 +499,7 @@ impl Actor {
                 self.preloaded = None;
                 self.preload_requested = None;
                 let settings = self.browser_settings();
+                self.transport_playback_rate = settings.playback_rate as f32;
                 if let Some(browser) = self.browser.as_ref() {
                     if let Err(error) = browser.handle.configure(settings) {
                         self.current_error = Some(error);
@@ -608,6 +706,9 @@ impl Actor {
             ActorMessage::Preloaded(message) => self.on_preloaded(message),
             ActorMessage::ReservoirReady(message) => self.on_reservoir(message),
             ActorMessage::GenerationChanged(generation) => self.on_generation(generation),
+            ActorMessage::TrackPreferences { key, patch, reply } => {
+                let _ = reply.send(self.track_preferences_command(key, patch));
+            }
             ActorMessage::Snapshot(reply) => {
                 let _ = reply.send(self.snapshot_value());
             }
@@ -742,10 +843,11 @@ impl Actor {
                     Ok(())
                 }
                 "settings" => {
+                    let previous = self.persisted.settings.clone();
                     self.merge_settings(&command)?;
+                    persist = !self.persisted.initialized || previous != self.persisted.settings;
                     self.persisted.initialized = true;
                     changed = true;
-                    persist = true;
                     Ok(())
                 }
                 "append" => {
@@ -1065,6 +1167,7 @@ impl Actor {
             return;
         }
         let pending = self.pending_start.take().expect("pending start checked");
+        self.refresh_track_preferences();
         match message.result {
             Ok(prepared) => {
                 let PreparedTrack { transport, track } = prepared;
@@ -1123,13 +1226,16 @@ impl Actor {
                 self.persisted
                     .queue
                     .update_entry(&pending.entry_id, track.clone());
-                self.engine
-                    .configure(output_settings(&self.persisted.settings));
                 let keep_loudness = self.active_entry_id.as_ref() == Some(&pending.entry_id);
-                if let Err(error) =
-                    self.engine
-                        .install(audio, pending.playing, pending.fade_sec, keep_loudness)
-                {
+                let settings = self.effective_output_settings();
+                let playback_rate = settings.playback_rate;
+                if let Err(error) = self.engine.install(
+                    audio,
+                    pending.playing,
+                    pending.fade_sec,
+                    keep_loudness,
+                    settings,
+                ) {
                     if let Some(mut session) = outgoing_session {
                         if let Some(event) = session.finish("error") {
                             self.listening_writer.record(event);
@@ -1143,6 +1249,7 @@ impl Actor {
                     self.emit_state();
                     return;
                 }
+                self.transport_playback_rate = playback_rate;
                 self.fading_listening = outgoing_session;
                 self.active_entry_id = Some(pending.entry_id);
                 self.active_track = Some(track);
@@ -1287,7 +1394,7 @@ impl Actor {
                 self.listening.sample(
                     self.transport_position(),
                     self.transport_duration(),
-                    self.persisted.settings.playback_rate as f64,
+                    self.transport_playback_rate as f64,
                     true,
                 );
             }
@@ -1793,31 +1900,40 @@ impl Actor {
         {
             return;
         }
-        let playback_rate = self.persisted.settings.playback_rate as f64;
+        let playback_rate = self.transport_playback_rate as f64;
         if !playback_rate.is_finite() || playback_rate <= 0.0 {
             return;
         }
-        let safe_fade = fade
-            .min(duration * CROSSFADE_TRACK_FRACTION / playback_rate)
-            .min(incoming_duration * CROSSFADE_TRACK_FRACTION / playback_rate);
-        if safe_fade < 0.2 {
+        let Some((preloaded_id, preloaded)) = self.preloaded.as_ref() else {
+            return;
+        };
+        if preloaded_id != &entry.id {
+            self.preloaded = None;
             return;
         }
+        if matches!(preloaded.transport, PreparedTransport::Browser(_)) {
+            return;
+        }
+        let outgoing_fade = fade.min(duration * CROSSFADE_TRACK_FRACTION / playback_rate);
         let remaining_wall = (duration - self.transport_position()) / playback_rate;
-        if !remaining_wall.is_finite() || remaining_wall <= 0.0 || remaining_wall > safe_fade + 0.15
+        if !remaining_wall.is_finite() || remaining_wall <= 0.0 || remaining_wall > outgoing_fade + 0.15
         {
             return;
         }
-        let Some((id, prepared)) = self.preloaded.take() else {
+        let incoming_rate = TrackKey::from_payload(&entry.track)
+            .and_then(|key| {
+                track_preferences::get(&self.db, self.preference_reader.as_ref(), &key).ok()
+            })
+            .and_then(|preferences| preferences.playback_rate)
+            .unwrap_or(self.persisted.settings.playback_rate);
+        let safe_fade =
+            outgoing_fade.min(incoming_duration * CROSSFADE_TRACK_FRACTION / f64::from(incoming_rate));
+        if safe_fade < 0.2 || remaining_wall > safe_fade + 0.15 {
+            return;
+        }
+        let Some((_, prepared)) = self.preloaded.take() else {
             return;
         };
-        if matches!(prepared.transport, PreparedTransport::Browser(_)) {
-            self.preloaded = Some((id, prepared));
-            return;
-        }
-        if id != entry.id {
-            return;
-        }
         self.sample_listening();
         let Some(entry) = self.persisted.queue.next(self.persisted.settings.repeat) else {
             return;
@@ -1918,8 +2034,61 @@ impl Actor {
     }
 
     fn merge_settings(&mut self, patch: &Value) -> Result<(), String> {
-        let settings = self.merged_settings(patch)?;
-        self.apply_settings(settings);
+        self.refresh_track_preferences();
+        let mut settings = self.merged_settings(patch)?;
+        let applies_to_selection = match patch.get("controlTrackKey") {
+            None => true,
+            Some(Value::Null) => self.preference_track_key.is_none(),
+            Some(Value::String(key)) => self
+                .preference_track_key
+                .as_ref()
+                .is_some_and(|track| track.matches_control_key(key)),
+            _ => false,
+        };
+        let mut track_patch = TrackPreferencesPatch::default();
+        let mut temporary_rate = self.temporary_playback_rate;
+        if !applies_to_selection {
+            settings.volume = self.persisted.settings.volume;
+            settings.playback_rate = self.persisted.settings.playback_rate;
+        } else {
+            if patch.get("volume").and_then(Value::as_f64).is_some()
+                && self.track_preferences.volume.is_some()
+            {
+                track_patch.volume = Some(Some(settings.volume));
+                settings.volume = self.persisted.settings.volume;
+            }
+            if patch.get("clearTemporaryPlaybackRate").and_then(Value::as_bool) == Some(true) {
+                temporary_rate = None;
+            }
+            if patch.get("playbackRate").and_then(Value::as_f64).is_some() {
+                if patch.get("persistPlaybackRate").and_then(Value::as_bool) == Some(false) {
+                    if self.preference_track_key.is_some() {
+                        temporary_rate = Some(settings.playback_rate);
+                    }
+                    settings.playback_rate = self.persisted.settings.playback_rate;
+                } else {
+                    temporary_rate = None;
+                    if self.track_preferences.playback_rate.is_some() {
+                        track_patch.playback_rate = Some(Some(settings.playback_rate));
+                        settings.playback_rate = self.persisted.settings.playback_rate;
+                    }
+                }
+            }
+        }
+        let preferences_before = self.track_preferences;
+        if !track_patch.is_empty() {
+            if let Some(key) = self.preference_track_key.as_ref() {
+                self.track_preferences = track_preferences::update(&self.db, key, track_patch)?;
+            }
+        }
+        let effective_change = self.temporary_playback_rate != temporary_rate
+            || self.track_preferences != preferences_before;
+        self.temporary_playback_rate = temporary_rate;
+        if self.persisted.settings != settings {
+            self.apply_settings(settings);
+        } else if effective_change {
+            self.configure_selected_output();
+        }
         Ok(())
     }
 
@@ -1988,14 +2157,8 @@ impl Actor {
             self.persisted.queue.set_shuffled(settings.shuffle);
         }
         self.persisted.settings = settings;
-        self.engine
-            .configure(output_settings(&self.persisted.settings));
-        if let Some(browser) = self.browser.as_ref() {
-            if let Err(error) = browser.handle.configure(self.browser_settings()) {
-                self.current_error = Some(error);
-            }
-        }
-        self.listening.reanchor();
+        self.refresh_track_preferences();
+        self.configure_selected_output();
     }
 
     fn sample_listening(&mut self) {
@@ -2014,24 +2177,19 @@ impl Actor {
         self.listening.sample(
             position,
             self.transport_duration(),
-            self.persisted.settings.playback_rate as f64,
+            self.transport_playback_rate as f64,
             playing,
         );
     }
 
     fn sample_fading_listening(&mut self) {
-        let Some((position, duration, outgoing_playing)) = self.engine.outgoing_clock() else {
+        let Some((position, duration, playback_rate, playing)) = self.engine.outgoing_clock()
+        else {
             self.finish_fading_session("end");
             return;
         };
-        let playing = outgoing_playing;
         if let Some(session) = self.fading_listening.as_mut() {
-            session.sample(
-                position,
-                duration,
-                self.persisted.settings.playback_rate as f64,
-                playing,
-            );
+            session.sample(position, duration, playback_rate, playing);
         }
     }
 
@@ -2039,14 +2197,9 @@ impl Actor {
         if self.fading_listening.is_none() {
             return;
         }
-        if let Some((position, duration, outgoing_playing)) = self.engine.outgoing_clock() {
+        if let Some((position, duration, playback_rate, playing)) = self.engine.outgoing_clock() {
             if let Some(session) = self.fading_listening.as_mut() {
-                session.sample(
-                    position,
-                    duration,
-                    self.persisted.settings.playback_rate as f64,
-                    outgoing_playing,
-                );
+                session.sample(position, duration, playback_rate, playing);
             }
         }
         if let Some(mut session) = self.fading_listening.take() {
@@ -2081,7 +2234,7 @@ impl Actor {
         self.listening.sample(
             position,
             self.transport_duration(),
-            self.persisted.settings.playback_rate as f64,
+            self.transport_playback_rate as f64,
             playing,
         );
         if let Some(event) = self.listening.finish(reason) {
@@ -2134,6 +2287,7 @@ impl Actor {
     }
 
     fn snapshot_value(&mut self) -> Result<Value, String> {
+        self.refresh_track_preferences();
         self.version = self.version.wrapping_add(1);
         let track = self
             .persisted
@@ -2157,8 +2311,11 @@ impl Actor {
                 .unwrap_or(self.playing_intent || self.transport_is_playing()),
             position: self.current_position(),
             duration,
-            volume: self.persisted.settings.volume,
-            playback_rate: self.persisted.settings.playback_rate,
+            volume: self.effective_volume(),
+            playback_rate: self.effective_playback_rate(),
+            global_volume: self.persisted.settings.volume,
+            global_playback_rate: self.persisted.settings.playback_rate,
+            track_playback_preferences: self.track_preferences,
             preserve_pitch: self.persisted.settings.preserve_pitch,
             repeat: self.persisted.settings.repeat,
             shuffle: self.persisted.settings.shuffle,

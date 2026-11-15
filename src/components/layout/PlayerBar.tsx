@@ -31,6 +31,7 @@ import { fmtTime } from '../../utils/format'
 import { trackToUnified } from '../../utils/unified'
 import { toast } from '../common/Toast'
 import Cover from '../common/Cover'
+import PlaybackRange from '../common/PlaybackRange'
 import ArtistLinks from '../common/ArtistLinks'
 import { Spinner } from '../common/ScArtwork'
 import WaveProgress from '../common/WaveProgress'
@@ -50,7 +51,6 @@ import {
 } from '../../audio/equalizer'
 
 let lastNonZeroVolume = 0.8
-const PLAYBACK_RATE_TICKS = Array.from({ length: 31 }, (_, index) => (50 + index * 5) / 100)
 const EQUALIZER_PRESET_KEYS = ['flat', 'bass', 'treble', 'vocal', 'rock', 'custom'] as const
 const EQUALIZER_PRESET_LABELS: Record<EqualizerPreset, string> = {
   flat: 'Flat',
@@ -112,7 +112,6 @@ function PlayerBarContent() {
   const livePos = Math.min(Math.max(0, displayPosition), maxDur)
   const sliderVal = scrubbing && scrubVal !== null ? Math.min(scrubVal, maxDur) : livePos
   const pct = (sliderVal / maxDur) * 100
-  const volPct = Math.round(p.volume * 100)
   const VolIcon = p.volume === 0 ? VolumeX : p.volume < 0.5 ? Volume1 : Volume2
   const bufPct = p.bufferPct
   const buffering = bufPct !== null && bufPct < 100
@@ -123,7 +122,6 @@ function PlayerBarContent() {
   const selectedPresetName = equalizer.selectedUserPresetId
     ? equalizer.userPresets.find((preset) => preset.id === equalizer.selectedUserPresetId)?.name ?? t('Custom curve')
     : t(EQUALIZER_PRESET_LABELS[equalizer.preset])
-  const speedPct = ((p.playbackRate - 0.5) / 1.5) * 100
   const trimmedPresetName = presetName.trim()
   const savedPresetNameExists = equalizer.userPresets.some(
     (preset) => preset.name.toLocaleLowerCase() === trimmedPresetName.toLocaleLowerCase(),
@@ -448,7 +446,7 @@ function PlayerBarContent() {
           ) : null}
           <div className="pb-speed-control" ref={speedRef}>
             <button
-              className={'icon-btn pb-speed-trigger' + (p.playbackRate !== 1 || equalizer.enabled ? ' is-active' : '')}
+              className={'icon-btn pb-speed-trigger' + (p.playbackRate !== 1 || equalizer.enabled || p.trackPlaybackPreferences?.playbackRate != null ? ' is-active' : '')}
               ref={speedTriggerRef}
               onClick={() => {
                 setSpeedOpen((open) => !open)
@@ -476,21 +474,16 @@ function PlayerBarContent() {
                     {t('Reset speed')}
                   </button>
                 </div>
-                <input
+                <PlaybackRange
                   className="pb-speed-slider"
-                  type="range"
                   min={0.5}
                   max={2}
                   step={0.05}
-                  list="pb-playback-rate-ticks"
                   value={p.playbackRate}
-                  onChange={(e) => p.setPlaybackRate(e.target.valueAsNumber)}
-                  style={{ '--fill': `${speedPct}%` } as CSSProperties}
-                  aria-label={t('Playback speed')}
+                  onChange={p.setPlaybackRate}
+                  valueText={formatPlaybackRate(p.playbackRate)}
+                  label={t('Playback speed')}
                 />
-                <datalist id="pb-playback-rate-ticks">
-                  {PLAYBACK_RATE_TICKS.map((rate) => <option key={rate} value={rate} />)}
-                </datalist>
                 <div className="pb-speed-scale" aria-hidden="true">
                   <span>0.5×</span>
                   <span>1×</span>
@@ -636,36 +629,34 @@ function PlayerBarContent() {
           </div>
           <div className="pb-vol">
             <button
-              className="icon-btn pb-vol-btn"
+              className={'icon-btn pb-vol-btn' + (p.trackPlaybackPreferences?.volume != null ? ' is-active' : '')}
               onClick={toggleMute}
               aria-label={p.volume === 0 ? t('Unmute') : t('Mute')}
             >
               <VolIcon size={16} />
             </button>
-            <input
+            <PlaybackRange
               className="pb-volume"
-              type="range"
               min={0}
               max={1}
               step={0.01}
               value={p.volume}
-              onChange={(e) => p.setVolume(e.target.valueAsNumber)}
-              style={{ '--fill': `${volPct}%` } as CSSProperties}
-              aria-label={t('Volume')}
+              onChange={p.setVolume}
+              valueText={`${Math.round(p.volume * 100)}%`}
+              label={t('Volume')}
             />
             {/* second copy for the narrow layout; CSS decides which one shows,
                 so the breakpoint lives in exactly one place */}
             <div className="pb-vol-pop">
-              <input
+              <PlaybackRange
                 className="pb-volume"
-                type="range"
                 min={0}
                 max={1}
                 step={0.01}
                 value={p.volume}
-                onChange={(e) => p.setVolume(e.target.valueAsNumber)}
-                style={{ '--fill': `${volPct}%` } as CSSProperties}
-                aria-label={t('Volume')}
+                onChange={p.setVolume}
+                valueText={`${Math.round(p.volume * 100)}%`}
+                label={t('Volume')}
               />
             </div>
           </div>

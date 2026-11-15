@@ -24,7 +24,7 @@ impl RepeatMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct NativeSettings {
     pub volume: f32,
@@ -124,6 +124,9 @@ pub struct PlayerSnapshot {
     pub duration: f64,
     pub volume: f32,
     pub playback_rate: f32,
+    pub global_volume: f32,
+    pub global_playback_rate: f32,
+    pub track_playback_preferences: super::track_preferences::TrackPlaybackPreferences,
     pub preserve_pitch: bool,
     pub repeat: RepeatMode,
     pub shuffle: bool,

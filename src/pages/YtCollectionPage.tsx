@@ -179,7 +179,7 @@ export default function YtCollectionPage({ kind, id }: { kind: Kind; id: string 
         onSelect: () => void openExternalUrl(hit.url).catch(() => toast.show(t('Could not open external link'), 'error')),
       },
     ]
-    openContextMenu({ ...point, title: hit.title, items })
+    openContextMenu({ ...point, title: hit.title, track: tracks[index], items })
   }
 
   const hasArtwork = Boolean(detail.thumbnailUrl || detail.thumbnailUrls?.length)

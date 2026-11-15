@@ -3,6 +3,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { ChevronRight, MicVocal, Pause, Pencil, Pin, Play, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { usePlayerActions, usePlayerField } from '../../player'
+import PlaybackRange from '../../components/common/PlaybackRange'
 import { playerContext } from '../../player/usePlayer'
 import { playerController } from '../../player/controller'
 import { getNativePlayerController, isNativePlayback } from '../../player/nativeController'
@@ -247,16 +248,15 @@ function LyricsVolumeRow() {
   return (
     <div className="lyr-volume-row">
       <Icon size={16} className="lyr-volume-icon" />
-      <input
+      <PlaybackRange
         className="lyr-volume-range"
-        type="range"
         min={0}
         max={1}
         step={0.01}
         value={volume}
-        onChange={(e) => setVolume(parseFloat(e.target.value))}
-        style={{ '--fill': `${pct}%` } as CSSProperties}
-        aria-label={t('Volume')}
+        onChange={setVolume}
+        valueText={`${pct}%`}
+        label={t('Volume')}
       />
       <span className="lyr-volume-pct">{pct}%</span>
     </div>
@@ -436,7 +436,7 @@ function LyricsEditMenu({
 }
 
 export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: LyricsOverlayProps) {
-  const { setPlaybackRate, previous, next, toggle, seek } = usePlayerActions()
+  const { setPlaybackRate, clearTemporaryPlaybackRate, previous, next, toggle, seek } = usePlayerActions()
   const playbackRate = usePlayerField('playbackRate')
   const isPlaying = usePlayerField('isPlaying')
   const t = useT()
@@ -478,7 +478,6 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
   const [editedVersion, setEditedVersion] = useState<PersistedEditedVersion | null>(null)
   const [pinnedLoaded, setPinnedLoaded] = useState(false)
   const [editingLyrics, setEditingLyrics] = useState(false)
-  const editingPlaybackRate = useRef<number | null>(null)
   const [savingLyrics, setSavingLyrics] = useState(false)
   const [publishingLyrics, setPublishingLyrics] = useState(false)
   /** the terms the last manual search actually used, for the pinned row's provenance */
@@ -486,23 +485,10 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
   const { settings } = useSettings()
 
   useEffect(() => {
-    if (editingLyrics) {
-      if (editingPlaybackRate.current === null) editingPlaybackRate.current = playbackRate
-      return
-    }
-    const restoreRate = editingPlaybackRate.current
-    editingPlaybackRate.current = null
-    if (restoreRate !== null && restoreRate !== playbackRate) setPlaybackRate(restoreRate)
-  }, [editingLyrics, playbackRate, setPlaybackRate])
-
-  useEffect(() => () => {
-    const restoreRate = editingPlaybackRate.current
-    editingPlaybackRate.current = null
-    if (restoreRate !== null) setPlaybackRate(restoreRate)
-  }, [setPlaybackRate])
+    if (editingLyrics) return () => clearTemporaryPlaybackRate?.()
+  }, [editingLyrics, clearTemporaryPlaybackRate])
 
   const startLyricsEditing = (): void => {
-    if (editingPlaybackRate.current === null) editingPlaybackRate.current = playbackRate
     setEditingLyrics(true)
   }
   // Only tracks with a database row can pin - there is nothing to pin to otherwise,
