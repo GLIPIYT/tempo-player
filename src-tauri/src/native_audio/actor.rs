@@ -23,7 +23,9 @@ use crate::soundcloud_browser::{BrowserEvent, BrowserPlayback, BrowserSettings};
 
 const ACTOR_TICK: Duration = Duration::from_millis(50);
 const CLOCK_INTERVAL: Duration = Duration::from_millis(100);
-const STATE_HEARTBEAT: Duration = Duration::from_millis(500);
+// Commands and source changes publish immediately. Keep the full queue
+// heartbeat for recovery while the lightweight clock handles playback.
+const STATE_HEARTBEAT: Duration = Duration::from_secs(5);
 const ANALYSIS_INTERVAL: Duration = Duration::from_millis(50);
 const CONTINUATION_DELAY: Duration = Duration::from_millis(1500);
 const PERSIST_POSITION_INTERVAL: Duration = Duration::from_secs(15);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { UnlistenFn } from '@tauri-apps/api/event'
@@ -18,7 +18,7 @@ import {
   MINI_COLLAPSED_SIZE,
   emitToMini,
   ensureMiniWindow,
-  hideMiniWindow,
+  closeMiniWindow,
   listenFor,
   positionMiniWindow,
   saveMiniSnapshot,
@@ -93,7 +93,7 @@ export default function MiniPlayerBridge(): null {
   const autoShowOnTrackChange = settings.miniPlayer.autoShowOnTrackChange
   const autoShowDurationMs = settings.miniPlayer.autoShowDurationMs
 
-  const [, setWindowReady] = useState(false)
+  const windowOperationRef = useRef(Promise.resolve())
 
   // Everything the 60Hz audio loop needs is read through refs so that the
   // subscription is never torn down and rebuilt mid-playback.
@@ -225,24 +225,22 @@ export default function MiniPlayerBridge(): null {
 
   // create / destroy the window when the feature is toggled
   useEffect(() => {
-    if (!enabled) {
-      setWindowReady(false)
-      void hideMiniWindow().catch(() => {})
-      return
-    }
     let cancelled = false
     // let the main window paint first; creating the webview too early competes
     // with startup and can leave the mini player briefly blank
     const timer = window.setTimeout(() => {
-      void ensureMiniWindow(false)
-        .then(async (win) => {
-          if (cancelled) return
-          await positionMiniWindow(win, MINI_COLLAPSED_SIZE.width, MINI_COLLAPSED_SIZE.height)
-          await win.show()
-          if (!cancelled) setWindowReady(true)
-        })
-        .catch((err) => console.error('[tempo mini player]', err))
-    }, WINDOW_CREATE_DELAY_MS)
+      windowOperationRef.current = windowOperationRef.current.then(async () => {
+        if (cancelled) return
+        if (!enabled) {
+          await closeMiniWindow()
+          return
+        }
+        const win = await ensureMiniWindow(false)
+        if (cancelled) return
+        await positionMiniWindow(win, MINI_COLLAPSED_SIZE.width, MINI_COLLAPSED_SIZE.height)
+        if (!cancelled) await win.show()
+      }).catch((err) => console.error('[tempo mini player]', err))
+    }, enabled ? WINDOW_CREATE_DELAY_MS : 0)
     return () => {
       cancelled = true
       window.clearTimeout(timer)

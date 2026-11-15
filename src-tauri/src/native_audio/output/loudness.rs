@@ -76,9 +76,16 @@ impl TrackLoudness {
         let _ = self.file.set(key);
     }
 
-    pub fn configure(self: &Arc<Self>, enabled: bool) {
+    pub fn configure(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
-        if !enabled || self.has_file_gain() || self.file_attempted.load(Ordering::Relaxed) {
+    }
+
+    /// Called for the active output only after playback has settled.
+    pub fn scan_file_when_idle(self: &Arc<Self>) {
+        if !self.enabled.load(Ordering::Relaxed)
+            || self.has_file_gain()
+            || self.file_attempted.load(Ordering::Relaxed)
+        {
             return;
         }
         let Some(key) = self.file.get().cloned() else {
@@ -236,14 +243,25 @@ impl LiveLoudness {
             meter: None,
             channels,
             rate,
-            chunk: Vec::with_capacity((rate as usize / 100).max(1) * channels as usize),
+            chunk: Vec::new(),
             until_update: rate as usize * LIVE_INITIAL_MS / 1000,
         }
     }
 
     pub fn observe(&mut self, frame: &[f32]) {
-        if !self.target.enabled.load(Ordering::Relaxed) || self.target.has_file_gain() {
+        if self.target.has_file_gain() {
+            if self.chunk.capacity() != 0 {
+                self.meter = None;
+                self.chunk = Vec::new();
+            }
             return;
+        }
+        if !self.target.enabled.load(Ordering::Relaxed) {
+            return;
+        }
+        if self.chunk.capacity() == 0 {
+            self.chunk =
+                Vec::with_capacity((self.rate as usize / 100).max(1) * self.channels as usize);
         }
         self.chunk.extend(frame.iter().copied().map(clean_sample));
         if self.chunk.len() < self.chunk.capacity() {
@@ -361,6 +379,28 @@ mod tests {
         assert!(loud_gain < 1.0);
         let difference_db = 20.0 * (quiet_gain * 0.06 / (loud_gain * 0.9)).log10();
         assert!(difference_db.abs() < 0.1, "{difference_db:.3} dB");
+    }
+
+    #[test]
+    fn preparing_a_file_does_not_start_a_second_decoder_and_meter_releases_storage() {
+        let file = test_tone_file(0.7);
+        let target = TrackLoudness::new(false);
+        target.set_file(file.path());
+        let mut meter = LiveLoudness::new(target.clone(), 2, RATE);
+        meter.observe(&[0.5, 0.5]);
+        assert_eq!(meter.chunk.capacity(), 0);
+
+        target.configure(true);
+        assert!(!target.file_attempted.load(Ordering::Relaxed));
+        for frame in 0..RATE {
+            let sample = tone_sample(frame, 0.7);
+            meter.observe(&[sample, sample]);
+        }
+        assert!(meter.meter.is_some());
+        target.file_gain.store(0.4_f32.to_bits(), Ordering::Relaxed);
+        meter.observe(&[0.5, 0.5]);
+        assert!(meter.meter.is_none());
+        assert_eq!(meter.chunk.capacity(), 0);
     }
 
     #[test]

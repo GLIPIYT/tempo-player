@@ -92,6 +92,10 @@ impl EffectControls {
         self.loudness.live_gain()
     }
 
+    pub fn scan_file_loudness_when_idle(&self) {
+        self.loudness.scan_file_when_idle();
+    }
+
     fn limiter_enabled(&self) -> bool {
         self.limiter_enabled.load(Ordering::Acquire)
     }

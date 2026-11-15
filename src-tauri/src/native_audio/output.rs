@@ -146,7 +146,7 @@ struct ActiveTrack {
     last_progress_position: f64,
     last_progress_at: Instant,
     startup_started: Instant,
-    startup_reported: bool,
+    first_audio_at: Option<Instant>,
     error_reported: bool,
 }
 
@@ -374,7 +374,7 @@ impl OutputEngine {
             last_progress_position: audio.clock.position(),
             last_progress_at: now,
             startup_started: attach_started,
-            startup_reported: false,
+            first_audio_at: None,
             error_reported: false,
         });
         audio.shutdown();
@@ -621,14 +621,22 @@ impl OutputEngine {
                     .player
                     .as_ref()
                     .is_some_and(|player| !player.is_paused() && !player.empty());
-            if started && !track.startup_reported {
+            if started && track.first_audio_at.is_none() {
                 let source_kind = if track.remote.is_some() {
                     "ffmpeg"
                 } else {
                     "local"
                 };
                 log_startup_timing("output_first_audio", source_kind, track.startup_started);
-                track.startup_reported = true;
+                track.first_audio_at = Some(Instant::now());
+            }
+            if started
+                && self.outgoing.is_empty()
+                && track
+                    .first_audio_at
+                    .is_some_and(|at| at.elapsed() >= Duration::from_secs(2))
+            {
+                track.controls.scan_file_loudness_when_idle();
             }
         }
         self.advance_fades();

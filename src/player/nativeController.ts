@@ -611,7 +611,7 @@ export class NativePlayerController {
       position: effectivePosition,
       duration,
       isPlaying,
-      bufferPct: buffering ? previous.bufferPct ?? 0 : previous.bufferPct,
+      bufferPct: buffering ? previous.bufferPct ?? 0 : null,
       version: payload.version,
     }
 

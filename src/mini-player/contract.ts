@@ -202,9 +202,9 @@ export async function ensureMiniWindow(visible: boolean): Promise<WebviewWindow>
   return win
 }
 
-export async function hideMiniWindow(): Promise<void> {
+export async function closeMiniWindow(): Promise<void> {
   const win = await getMiniWindow()
-  if (win) await win.hide()
+  if (win) await win.close()
 }
 
 /**

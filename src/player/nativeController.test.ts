@@ -178,6 +178,18 @@ describe('native player clock and track transitions', () => {
     expect(controller.getDisplayPosition()).toBeGreaterThanOrEqual(72)
   })
 
+  it('clears buffering on the clock without waiting for a full queue snapshot', async () => {
+    const controller = new NativePlayerController()
+    await flush()
+    const access = controller as unknown as NativeControllerTestAccess
+    const queue = controller.getSnapshot().queue
+    access.applyClock({ position: 10, duration: 180, isPlaying: true, buffering: true, version: 2 })
+    expect(controller.getSnapshot().bufferPct).toBe(0)
+    access.applyClock({ position: 11, duration: 180, isPlaying: true, buffering: false, version: 3 })
+    expect(controller.getSnapshot().bufferPct).toBeNull()
+    expect(controller.getSnapshot().queue).toBe(queue)
+  })
+
   it('keeps an optimistic seek visible until the native clock confirms it', async () => {
     const controller = new NativePlayerController()
     await flush()

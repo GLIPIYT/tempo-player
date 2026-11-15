@@ -140,7 +140,6 @@ pub(super) fn prepare_input(
                     let worker_started = Instant::now();
                     let (local_source, control, status) =
                         open_local_buffered(decoder, position, loudness.clone())?;
-                    loudness.configure(settings.normalize);
                     log_startup_timing("local_worker_start", "local", worker_started);
                     source = Box::new(local_source);
                     buffering = Some(status.buffering.clone());
