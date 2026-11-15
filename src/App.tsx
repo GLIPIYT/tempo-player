@@ -24,7 +24,6 @@ import YtdlpBootstrapper from './providers/YtdlpBootstrapper'
 import SaveToasts from './youtube/SaveToasts'
 import SavePickDialog from './youtube/SavePickDialog'
 import CacheArtistDialog from './soundcloud/CacheArtistDialog'
-import BackgroundLayer from './components/layout/BackgroundLayer'
 import { ToastHost } from './components/common/Toast'
 import './styles/app.css'
 import './styles/collections.css'
@@ -77,7 +76,6 @@ export default function App() {
     <SettingsProvider>
       <I18nProvider>
         <ThemeApply />
-        <BackgroundLayer />
         <NavProvider>
           <Shell />
         </NavProvider>

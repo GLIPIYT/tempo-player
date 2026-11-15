@@ -1,17 +1,17 @@
 /* Tempo's light materials. Keep artwork and custom color selections intact. */
 html[data-theme-mode='light'] {
-  --light-paper: #eff1f5;
+  --light-paper: #e9edf2;
   --light-tint: var(--bg);
   --light-accent-source: var(--accent);
   --light-action-ink: #182231;
   --light-action-fill: color-mix(in srgb, var(--light-accent-source) 27%, var(--light-paper));
   --light-play-fill: color-mix(in srgb, var(--play-btn, var(--light-accent-source)) 35%, var(--light-paper));
-  --light-control-bg: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
-  --light-veil: color-mix(in srgb, var(--light-paper) 78%, var(--light-tint));
+  --light-control-bg: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+  --light-veil: color-mix(in srgb, var(--light-paper) 88%, var(--light-tint));
   --light-divider: color-mix(in srgb, var(--text) 15%, transparent);
   --light-hover: color-mix(in srgb, var(--text) 7%, transparent);
   --light-shadow: 0 16px 44px #24365125;
-  --light-panel: color-mix(in srgb, var(--bg-elevated) 87%, transparent);
+  --light-panel: color-mix(in srgb, var(--bg-elevated) 74%, transparent);
   --light-panel-text: var(--text);
   --light-panel-muted: var(--text-muted);
   --light-panel-border: var(--border);
@@ -19,7 +19,7 @@ html[data-theme-mode='light'] {
   --light-panel-hover: var(--surface-hover);
   --light-panel-elevated: var(--bg-elevated);
   --ring-accent: var(--accent);
-  --mini-surface: var(--light-control-bg);
+  --mini-surface: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
 }
 
 html:root[data-theme-mode='light'].theme-custom {
@@ -66,15 +66,29 @@ html:root[data-theme-mode='light'].theme-gradient .lyr-seek-range {
     var(--range-start) 0%, var(--range-end) var(--fill, 0%), var(--border) var(--fill, 0%));
 }
 
-html:root[data-theme-mode='light'] .bg-layer::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--light-veil) 82%, transparent);
+html[data-theme-mode='light'] :is(.bg-layer-dim, .set-bg-preview-dim) {
+  background: var(--light-veil);
+  opacity: calc(.72 + .28 * var(--wallpaper-dim, 0));
 }
 
-html[data-theme-mode='light'].has-bg :is(.sidebar, .titlebar, .topbar, .playerbar, .qpanel) {
+html[data-theme-mode='light'].has-bg .app-root {
+  --text-muted: color-mix(in srgb, var(--light-panel-muted) 62%, #0b1527);
+}
+
+html[data-theme-mode='light'].has-bg :is(.sidebar, .titlebar, .topbar, .playerbar) {
+  background: color-mix(in srgb, var(--bg-elevated) 62%, transparent);
+}
+
+html[data-theme-mode='light'].has-bg .qpanel {
   background: var(--light-panel);
+}
+
+html:root[data-theme-mode='light'].has-bg .home-mix-stage--b {
+  backdrop-filter: blur(8px);
+}
+
+html:root[data-theme-mode='light'] :is(.mini-pill, .mini-card) {
+  backdrop-filter: blur(12px) saturate(1.15);
 }
 
 html:root[data-theme-mode='light'] :is(.topbar-search input, .text-input):hover,
@@ -249,7 +263,11 @@ html:root[data-theme-mode='light'] .home-recommendation-cache.is-progress::after
 
 html:root[data-theme-mode='light'] :is(.playlist-create-layer, .rule-delete-layer, .mix-rule-copy-backdrop,
   .modal-overlay, .update-modal-overlay, .onb-backdrop) {
-  background: color-mix(in srgb, var(--light-veil) 65%, transparent);
+  background: color-mix(in srgb, var(--light-veil) 44%, transparent);
+}
+
+html:root[data-theme-mode='light'] :is(.playlist-create-layer, .rule-delete-layer, .mix-rule-copy-backdrop, .onb-backdrop) {
+  backdrop-filter: blur(9px);
 }
 
 html:root[data-theme-mode='light'] :is(.playlist-create-dialog, .rule-delete-dialog, .mix-rule-dialog,
@@ -351,9 +369,9 @@ html:root[data-theme-mode='light'] :is(.lyr-bg-img, .lyr-bg-fallback) {
 }
 
 html:root[data-theme-mode='light'] .lyr-bg-shade {
-  background: linear-gradient(180deg, var(--light-veil),
-    color-mix(in srgb, var(--light-veil) 82%, transparent) 50%,
-    color-mix(in srgb, var(--light-veil) 89%, transparent));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--light-veil) 92%, transparent),
+    color-mix(in srgb, var(--light-veil) 76%, transparent) 50%,
+    color-mix(in srgb, var(--light-veil) 84%, transparent));
 }
 
 html:root[data-theme-mode='light'] .lyr-restore-player {

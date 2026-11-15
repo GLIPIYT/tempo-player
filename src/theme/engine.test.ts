@@ -82,6 +82,9 @@ describe('applyTheme mode', () => {
     ['neon', 'dark'],
     ['aurora-gradient', 'dark'],
     ['tempo-light', 'light'],
+    ['linen-light', 'light'],
+    ['sage-light', 'light'],
+    ['lilac-light', 'light'],
   ])('uses the background for preset %s', (presetId, mode) => {
     const { root } = mockThemeDocument()
 

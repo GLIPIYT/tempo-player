@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, type CSSProperties } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { useSettings } from '../../state/settings'
 
@@ -209,7 +209,7 @@ export default function BackgroundLayer() {
           filter: bg.blurPx > 0 ? `blur(${bg.blurPx}px)` : undefined,
         }}
       />
-      <div className="bg-layer-dim" style={{ opacity: bg.dimPct / 100 }} />
+      <div className="bg-layer-dim" style={{ '--wallpaper-dim': bg.dimPct / 100 } as CSSProperties} />
     </div>
   )
 }

@@ -322,10 +322,15 @@ html.has-bg .page {
   transition: filter 0.15s ease;
 }
 
-.bg-layer-dim {
+.bg-layer-dim,
+.set-bg-preview-dim {
   position: absolute;
   inset: 0;
   background: #000;
+  opacity: var(--wallpaper-dim, 0);
+}
+
+.bg-layer-dim {
   transition: opacity 0.15s ease;
 }
 
@@ -1531,12 +1536,6 @@ html.theme-gradient .set-page .slider-row input[type='range']::-moz-range-thumb 
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-}
-
-.set-bg-preview-dim {
-  position: absolute;
-  inset: 0;
-  background: #000;
 }
 
 .set-viz-preview {

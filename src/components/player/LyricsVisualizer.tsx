@@ -110,7 +110,7 @@ function lyricsBackdropColor(artwork: Rgb | null, themeBackground: Rgb, light: b
   if (!artwork) return themeBackground
   // Use the cover and the shade at the foot of the lyrics screen.
   return light
-    ? blend(artwork, themeBackground, 0.89)
+    ? blend(artwork, themeBackground, 0.84)
     : blend(scale(artwork, 0.58), themeBackground, 0.66)
 }
 

@@ -1945,7 +1945,7 @@ export default function SettingsPage() {
                         filter: `blur(${settings.background.blurPx}px)`,
                       }}
                     />
-                    <div className="set-bg-preview-dim" style={{ opacity: settings.background.dimPct / 100 }} />
+                    <div className="set-bg-preview-dim" style={{ '--wallpaper-dim': settings.background.dimPct / 100 } as CSSProperties} />
                   </div>
                 ) : null}
                 <BackgroundImageLibrary
