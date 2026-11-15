@@ -11,7 +11,12 @@ html[data-theme-mode='light'] {
   --light-divider: color-mix(in srgb, var(--text) 15%, transparent);
   --light-hover: color-mix(in srgb, var(--text) 7%, transparent);
   --light-shadow: 0 16px 44px #24365125;
-  --light-panel: color-mix(in srgb, var(--bg-elevated) 74%, transparent);
+  --light-text-shadow: 0 0 2px var(--bg-elevated), 0 1px 3px var(--bg-elevated);
+  --detail-backdrop-color: var(--bg-elevated);
+  --profile-wash-color: var(--bg);
+  --profile-overlay-ink: var(--text);
+  --artwork-control-bg: var(--bg-elevated);
+  --artist-art-shade: var(--bg-elevated);
   --light-panel-text: var(--text);
   --light-panel-muted: var(--text-muted);
   --light-panel-border: var(--border);
@@ -19,7 +24,6 @@ html[data-theme-mode='light'] {
   --light-panel-hover: var(--surface-hover);
   --light-panel-elevated: var(--bg-elevated);
   --ring-accent: var(--accent);
-  --mini-surface: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
 }
 
 html:root[data-theme-mode='light'].theme-custom {
@@ -68,19 +72,14 @@ html:root[data-theme-mode='light'].theme-gradient .lyr-seek-range {
 
 html[data-theme-mode='light'] :is(.bg-layer-dim, .set-bg-preview-dim) {
   background: var(--light-veil);
-  opacity: calc(.72 + .28 * var(--wallpaper-dim, 0));
 }
 
 html[data-theme-mode='light'].has-bg .app-root {
   --text-muted: color-mix(in srgb, var(--light-panel-muted) 62%, #0b1527);
 }
 
-html[data-theme-mode='light'].has-bg :is(.sidebar, .titlebar, .topbar, .playerbar) {
-  background: color-mix(in srgb, var(--bg-elevated) 62%, transparent);
-}
-
-html[data-theme-mode='light'].has-bg .qpanel {
-  background: var(--light-panel);
+html[data-theme-mode='light'].has-bg .app-content {
+  text-shadow: var(--light-text-shadow);
 }
 
 html:root[data-theme-mode='light'].has-bg .home-mix-stage--b {
@@ -154,7 +153,7 @@ html:root[data-theme-mode='light'] :is(.hero-title, .home-mix-copy h2, .home-mix
   .local-album-page .editorial-detail-meta > .link-btn) {
   color: var(--text);
   -webkit-text-fill-color: currentColor;
-  text-shadow: none;
+  text-shadow: inherit;
 }
 
 html:root[data-theme-mode='light'] .home-mix-copy p {
@@ -171,10 +170,6 @@ html:root[data-theme-mode='light'].theme-gradient :is(.home-mix-navigation > but
   color: var(--accent-strong);
 }
 
-html:root[data-theme-mode='light'] .home-mix-feature--b .home-mix-art-back {
-  opacity: .26;
-}
-
 html:root[data-theme-mode='light'] .home-mix-feature--b :is(.home-mix-dock, .home-mix-art-card) {
   box-shadow: var(--light-shadow);
 }
@@ -186,10 +181,10 @@ html:root[data-theme-mode='light'] :is(.profile-panorama, .collection-detail-sur
   --surface: var(--light-panel-surface);
   --surface-hover: var(--light-panel-hover);
   --bg-elevated: var(--light-panel-elevated);
+  text-shadow: none;
 }
 
 html:root[data-theme-mode='light'] :is(.collection-detail-backdrop, .pf-page-backdrop) {
-  background: var(--light-panel);
   border-color: var(--light-divider);
 }
 
@@ -202,29 +197,12 @@ html:root[data-theme-mode='light'] .pf-chart {
   background: repeating-linear-gradient(0deg, transparent, transparent 47px, var(--light-hover) 48px, transparent 49px);
 }
 
-html:root[data-theme-mode='light'] .pf-passport::before {
-  background: linear-gradient(color-mix(in srgb, var(--light-tint) 50%, transparent), transparent);
-}
-
 html:root[data-theme-mode='light'] :is(.pf-passport-glow, .collection-detail--panorama .collection-detail-glow) {
-  opacity: .2;
   filter: blur(46px);
 }
 
-html:root[data-theme-mode='light'] :is(.pf-avatar-fallback, .pf-name-form input, .pf-chart-controls .seg,
-  .pf-playlist-grid > button) {
+html:root[data-theme-mode='light'] .pf-avatar-fallback {
   background: var(--light-control-bg);
-}
-
-html:root[data-theme-mode='light'] :is(.pf-chart-controls .seg-btn.is-active, .pf-track-list > article:hover,
-  .pf-recent-list > article:hover, .pf-artist-list > button:hover, .pf-playlist-grid > button:hover) {
-  background: var(--light-hover);
-}
-
-html:root[data-theme-mode='light'] .artists-featured-art::after {
-  background: linear-gradient(105deg, var(--light-control-bg) 12%,
-    color-mix(in srgb, var(--bg-elevated) 79%, transparent) 66%,
-    color-mix(in srgb, var(--bg-elevated) 38%, transparent));
 }
 
 html:root[data-theme-mode='light'] .artists-featured-copy {
@@ -242,9 +220,12 @@ html:root[data-theme-mode='light'] .artists-featured-copy > small.artists-featur
 html:root[data-theme-mode='light'] :is(.artists-featured-label, .home-recommendation-cache, .collection-art-count,
   .album-wall-track-count, .collection-playlist-card-actions .collection-icon-action, .collection-album-favorite,
   .collection-detail .collection-art-zoom, .pf-track-art > i, .pf-avatar-edit, .rail-badge, .rail-rank) {
-  background: var(--light-control-bg);
   color: var(--text);
   border-color: var(--light-divider);
+}
+
+html:root[data-theme-mode='light'] :is(.rail-badge, .rail-rank) {
+  background: var(--light-action-fill);
 }
 
 html:root[data-theme-mode='light'] :is(.home-recommendation-cache:hover,
@@ -257,13 +238,13 @@ html:root[data-theme-mode='light'] .home-recommendation-cache.is-failed {
   color: var(--danger);
 }
 
-html:root[data-theme-mode='light'] .home-recommendation-cache.is-progress::after {
-  background: var(--light-control-bg);
-}
-
-html:root[data-theme-mode='light'] :is(.playlist-create-layer, .rule-delete-layer, .mix-rule-copy-backdrop,
+html:root[data-theme-mode='light'] :is(.playlist-create-layer, .rule-delete-layer,
   .modal-overlay, .update-modal-overlay, .onb-backdrop) {
   background: color-mix(in srgb, var(--light-veil) 44%, transparent);
+}
+
+html:root[data-theme-mode='light'] .mix-rule-copy-backdrop {
+  background: color-mix(in srgb, var(--light-veil) 40%, transparent);
 }
 
 html:root[data-theme-mode='light'] :is(.playlist-create-layer, .rule-delete-layer, .mix-rule-copy-backdrop, .onb-backdrop) {
@@ -361,17 +342,16 @@ html:root[data-theme-mode='light'] .processing-state.is-error .processing-state-
 
 html:root[data-theme-mode='light'] .lyr-overlay {
   --lyrics-ink: var(--text);
-  --lyrics-pending-ink: 57%;
+  --lyrics-pending-ink: 63%;
+  --lyrics-shade-color: var(--light-veil);
 }
 
 html:root[data-theme-mode='light'] :is(.lyr-bg-img, .lyr-bg-fallback) {
   filter: blur(50px) saturate(.83);
 }
 
-html:root[data-theme-mode='light'] .lyr-bg-shade {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--light-veil) 92%, transparent),
-    color-mix(in srgb, var(--light-veil) 76%, transparent) 50%,
-    color-mix(in srgb, var(--light-veil) 84%, transparent));
+html:root[data-theme-mode='light'] :is(.lyr-title, .lyr-plain) {
+  text-shadow: var(--light-text-shadow);
 }
 
 html:root[data-theme-mode='light'] .lyr-restore-player {

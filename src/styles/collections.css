@@ -195,7 +195,10 @@
   position: absolute;
   z-index: 1;
   inset: 0;
-  background: linear-gradient(105deg, #070b10ed 0%, #080d10a8 51%, #0b11175c 100%);
+  background: linear-gradient(105deg,
+    color-mix(in srgb, var(--artist-art-shade, #070b10) 93%, transparent) 0%,
+    color-mix(in srgb, var(--artist-art-shade, #080d10) 66%, transparent) 51%,
+    color-mix(in srgb, var(--artist-art-shade, #0b1117) 36%, transparent) 100%);
   content: '';
 }
 .artists-featured-avatar {
@@ -241,7 +244,7 @@
   padding: 3px 7px;
   border: 1px solid #ffffff45;
   border-radius: 5px;
-  background: #10161db8;
+  background: color-mix(in srgb, var(--artwork-control-bg, #10161d) 72%, transparent);
 }
 .artists-featured-copy > small.artists-featured-label {
   color: #f1e8ff;
@@ -421,7 +424,7 @@
 .album-wall-open small { display: block; overflow: hidden; width: 100%; text-overflow: ellipsis; white-space: nowrap; }
 .album-wall-open strong { font-size: 12px; line-height: 1.4; }
 .album-wall-open small { margin-top: 3px; color: var(--text-muted); font-size: 10px; }
-.album-wall-track-count { position: absolute; right: 6px; bottom: 6px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid color-mix(in srgb, white 18%, transparent); border-radius: 6px; background: color-mix(in srgb, #090b10 78%, transparent); color: #f6f7f9; font-size: 10px; line-height: 1; backdrop-filter: blur(8px); }
+.album-wall-track-count { position: absolute; right: 6px; bottom: 6px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid color-mix(in srgb, white 18%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--artwork-control-bg, #090b10) 78%, transparent); color: #f6f7f9; font-size: 10px; line-height: 1; backdrop-filter: blur(8px); }
 .album-wall-play { top: 16px; right: 16px; width: 31px; height: 31px; opacity: 0; transform: translateY(3px); }
 .album-wall-open:hover { border-color: var(--border); background: color-mix(in srgb, var(--surface) 72%, transparent); transform: translateY(-2px); }
 .album-wall-item:hover .album-wall-play,

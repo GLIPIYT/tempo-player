@@ -58,9 +58,9 @@
   inset: 0;
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--bg) 65%, transparent) 0%,
-    color-mix(in srgb, var(--bg) 30%, transparent) 50%,
-    color-mix(in srgb, var(--bg) 66%, transparent) 100%
+    color-mix(in srgb, var(--lyrics-shade-color, var(--bg)) 65%, transparent) 0%,
+    color-mix(in srgb, var(--lyrics-shade-color, var(--bg)) 30%, transparent) 50%,
+    color-mix(in srgb, var(--lyrics-shade-color, var(--bg)) 66%, transparent) 100%
   );
 }
 

@@ -109,9 +109,7 @@ function scale(color: Rgb, amount: number): Rgb {
 function lyricsBackdropColor(artwork: Rgb | null, themeBackground: Rgb, light: boolean): Rgb {
   if (!artwork) return themeBackground
   // Use the cover and the shade at the foot of the lyrics screen.
-  return light
-    ? blend(artwork, themeBackground, 0.84)
-    : blend(scale(artwork, 0.58), themeBackground, 0.66)
+  return blend(light ? artwork : scale(artwork, 0.58), themeBackground, 0.66)
 }
 
 export default function LyricsVisualizer({ coverPath, hasCurrentTrack }: { coverPath: string | null; hasCurrentTrack: boolean }) {

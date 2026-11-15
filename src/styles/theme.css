@@ -2,6 +2,7 @@
 
 :root {
   --play-btn: var(--accent);
+  --detail-backdrop: color-mix(in srgb, var(--detail-backdrop-color, #15121d) 80%, transparent);
 }
 
 html.theme-custom {
