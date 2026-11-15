@@ -337,12 +337,16 @@ impl OutputEngine {
         let controls = EffectControls::new(audio.loudness.clone(), source.sample_rate());
         controls.configure(&self.settings);
         let player = Player::connect_new(sink.mixer());
-        player.set_speed(self.settings.playback_rate.clamp(0.5, 2.0));
         let fade_in = playing && fade_sec.is_finite() && fade_sec > 0.0;
         let target_volume = self.settings.volume.clamp(0.0, 1.0);
         player.set_volume(if fade_in { 0.0 } else { target_volume });
-        let source = process_source(source, controls.clone(), self.spectrum.clone());
-        let source = input::ClockSource::new(source, audio.clock.clone(), audio.buffering.clone());
+        let source = process_source(
+            source,
+            controls.clone(),
+            self.spectrum.clone(),
+            audio.clock.clone(),
+            audio.buffering.clone(),
+        );
         player.append(source);
         if playing {
             player.play();
@@ -388,7 +392,6 @@ impl OutputEngine {
             track.controls.configure(&self.settings);
             track.playback_rate = self.settings.playback_rate;
             if let Some(player) = track.player.as_ref() {
-                player.set_speed(track.playback_rate);
                 if let Some(fade) = track.fade.as_mut() {
                     fade.to = self.settings.volume;
                     player.set_volume(fade.value(now).0);

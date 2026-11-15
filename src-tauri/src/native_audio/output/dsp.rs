@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -6,8 +6,9 @@ use biquad::{Biquad, Coefficients, DirectForm1, Hertz, ToHertz, Type, Q_BUTTERWO
 use rodio::source::SeekError;
 use rodio::{ChannelCount, SampleRate, Source};
 
-use super::input::AudioSource;
+use super::input::{AudioSource, ClockSource, PositionClock};
 use super::loudness::TrackLoudness;
+use super::pitch::PlaybackRateSource;
 use super::spectrum::SpectrumBuffer;
 use super::OutputSettings;
 
@@ -27,7 +28,7 @@ struct EqSnapshot {
 }
 
 pub(super) struct EffectControls {
-    pub pitch_ratio: Arc<AtomicU32>,
+    playback_rate: Arc<AtomicU32>,
     loudness: Arc<TrackLoudness>,
     eq_snapshot: RwLock<EqSnapshot>,
     limiter_enabled: AtomicBool,
@@ -38,7 +39,7 @@ impl EffectControls {
     pub fn new(loudness: Arc<TrackLoudness>, sample_rate: SampleRate) -> Arc<Self> {
         let coefficients = std::array::from_fn(|index| make_coefficients(sample_rate, index, 0.0));
         Arc::new(Self {
-            pitch_ratio: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            playback_rate: Arc::new(AtomicU32::new(1.0f32.to_bits())),
             loudness,
             eq_snapshot: RwLock::new(EqSnapshot {
                 generation: 0,
@@ -53,12 +54,9 @@ impl EffectControls {
     pub fn configure(&self, settings: &OutputSettings) {
         self.loudness.configure(settings.normalize);
         let rate = settings.playback_rate.clamp(0.5, 2.0);
-        let pitch = if settings.preserve_pitch {
-            (1.0 / rate) as f32
-        } else {
-            1.0
-        };
-        self.pitch_ratio.store(pitch.to_bits(), Ordering::Release);
+        let signed_rate = if settings.preserve_pitch { rate } else { -rate };
+        self.playback_rate
+            .store(signed_rate.to_bits(), Ordering::Release);
 
         let gains: [f64; EQ_BANDS] = std::array::from_fn(|index| {
             let gain = settings.equalizer_gains[index];
@@ -105,12 +103,25 @@ pub(super) fn process_source(
     source: AudioSource,
     controls: Arc<EffectControls>,
     spectrum: Arc<SpectrumBuffer>,
+    clock: Arc<PositionClock>,
+    buffering: Option<Arc<AtomicBool>>,
 ) -> AudioSource {
     let gained = GainSource::new(source, controls.clone());
-    let pitched = super::pitch::PitchSource::new(gained, controls.pitch_ratio.clone());
-    let equalized = EqSource::new(pitched, controls.clone());
+    let source_frame_advance = Arc::new(AtomicU64::new(super::pitch::SOURCE_FRAME_SCALE));
+    let timed = PlaybackRateSource::new(
+        gained,
+        controls.playback_rate.clone(),
+        source_frame_advance.clone(),
+    );
+    let equalized = EqSource::new(timed, controls.clone());
     let compressed = CompressorSource::new(equalized, controls.clone());
-    Box::new(SpectrumSource::new(compressed, spectrum))
+    let processed = SpectrumSource::new(compressed, spectrum);
+    Box::new(ClockSource::new(
+        processed,
+        clock,
+        buffering,
+        source_frame_advance,
+    ))
 }
 
 struct GainSource<S: Source<Item = f32>> {

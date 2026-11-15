@@ -14,6 +14,7 @@ use rodio::{Decoder, Source};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use super::loudness::{LiveLoudness, TrackLoudness};
+use super::pitch::SOURCE_FRAME_SCALE;
 use super::{OutputSettings, SourceSpec};
 
 const REMOTE_SAMPLE_RATE: u32 = 48_000;
@@ -1123,7 +1124,7 @@ impl Source for RemoteSource {
 
 pub(super) struct PositionClock {
     base_bits: AtomicU64,
-    frames: AtomicU64,
+    source_frames: AtomicU64,
     seek_target_bits: AtomicU64,
     seek_generation: AtomicU64,
     handled_seek_generation: AtomicU64,
@@ -1136,7 +1137,7 @@ impl PositionClock {
     fn new(position: f64, sample_rate: u32, channels: u16) -> Self {
         Self {
             base_bits: AtomicU64::new(position.to_bits()),
-            frames: AtomicU64::new(0),
+            source_frames: AtomicU64::new(0),
             seek_target_bits: AtomicU64::new(position.to_bits()),
             seek_generation: AtomicU64::new(0),
             handled_seek_generation: AtomicU64::new(0),
@@ -1153,7 +1154,8 @@ impl PositionClock {
             return f64::from_bits(self.seek_target_bits.load(Ordering::Acquire));
         }
         f64::from_bits(self.base_bits.load(Ordering::Acquire))
-            + self.frames.load(Ordering::Acquire) as f64 / self.sample_rate as f64
+            + self.source_frames.load(Ordering::Acquire) as f64
+                / (SOURCE_FRAME_SCALE as f64 * self.sample_rate as f64)
     }
 
     pub fn seek_pending(&self) -> bool {
@@ -1173,31 +1175,34 @@ impl PositionClock {
     }
 
     pub fn set_position(&self, position: f64) {
-        self.frames.store(0, Ordering::Release);
+        self.source_frames.store(0, Ordering::Release);
         self.base_bits
             .store(position.max(0.0).to_bits(), Ordering::Release);
     }
 }
 
-pub(super) struct ClockSource {
-    source: AudioSource,
+pub(super) struct ClockSource<S> {
+    source: S,
     clock: Arc<PositionClock>,
     buffering: Option<Arc<AtomicBool>>,
+    source_frame_advance: Arc<AtomicU64>,
     channel: u16,
     frame_valid: bool,
     handled_seek_generation: u64,
 }
 
-impl ClockSource {
+impl<S: Source<Item = f32>> ClockSource<S> {
     pub fn new(
-        source: AudioSource,
+        source: S,
         clock: Arc<PositionClock>,
         buffering: Option<Arc<AtomicBool>>,
+        source_frame_advance: Arc<AtomicU64>,
     ) -> Self {
         Self {
             source,
             clock,
             buffering,
+            source_frame_advance,
             channel: 0,
             frame_valid: true,
             handled_seek_generation: 0,
@@ -1238,7 +1243,7 @@ impl ClockSource {
     }
 }
 
-impl Iterator for ClockSource {
+impl<S: Source<Item = f32>> Iterator for ClockSource<S> {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1254,7 +1259,11 @@ impl Iterator for ClockSource {
         self.channel += 1;
         if self.channel >= self.clock.channels {
             if self.frame_valid {
-                self.clock.frames.fetch_add(1, Ordering::AcqRel);
+                // Count source time after stretching, excluding lookahead.
+                self.clock.source_frames.fetch_add(
+                    self.source_frame_advance.load(Ordering::Relaxed),
+                    Ordering::AcqRel,
+                );
             }
             self.channel = 0;
             self.frame_valid = true;
@@ -1263,7 +1272,7 @@ impl Iterator for ClockSource {
     }
 }
 
-impl Source for ClockSource {
+impl<S: Source<Item = f32>> Source for ClockSource<S> {
     fn current_span_len(&self) -> Option<usize> {
         self.source.current_span_len()
     }
@@ -1286,5 +1295,32 @@ impl Source for ClockSource {
         self.channel = 0;
         self.frame_valid = true;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod clock_tests {
+    use super::*;
+    use crate::native_audio::output::pitch::PlaybackRateSource;
+    use rodio::{buffer::SamplesBuffer, ChannelCount, SampleRate};
+    use std::sync::atomic::AtomicU32;
+
+    #[test]
+    fn clock_counts_source_time_without_stretch_lookahead() {
+        let sample_rate = SampleRate::new(48_000).unwrap();
+        let clock = Arc::new(PositionClock::new(0.0, sample_rate.get(), 1));
+        let advance = Arc::new(AtomicU64::new(SOURCE_FRAME_SCALE));
+        let samples = SamplesBuffer::new(ChannelCount::MIN, sample_rate, vec![0.0; 48_000 * 4]);
+        let rate = Arc::new(AtomicU32::new(0.75f32.to_bits()));
+        let timed = PlaybackRateSource::new(samples, rate.clone(), advance.clone());
+        let mut source = ClockSource::new(timed, clock.clone(), None, advance);
+
+        assert_eq!(source.by_ref().take(48_000).count(), 48_000);
+        assert_eq!(clock.position(), 0.75);
+        clock.request_seek(2.0);
+        rate.store((-1.5f32).to_bits(), Ordering::Relaxed);
+        assert_eq!(source.by_ref().take(24_000).count(), 24_000);
+        assert_eq!(clock.position(), 2.75);
+        assert!(!clock.seek_pending());
     }
 }
