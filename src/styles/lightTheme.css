@@ -1,12 +1,13 @@
 /* Tempo's light materials. Keep artwork and custom color selections intact. */
 html[data-theme-mode='light'] {
+  --light-paper: #eff1f5;
   --light-tint: var(--bg);
   --light-accent-source: var(--accent);
   --light-action-ink: #182231;
-  --light-action-fill: color-mix(in srgb, var(--light-accent-source) 27%, #fff);
-  --light-play-fill: color-mix(in srgb, var(--play-btn, var(--light-accent-source)) 35%, #fff);
+  --light-action-fill: color-mix(in srgb, var(--light-accent-source) 27%, var(--light-paper));
+  --light-play-fill: color-mix(in srgb, var(--play-btn, var(--light-accent-source)) 35%, var(--light-paper));
   --light-control-bg: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
-  --light-veil: color-mix(in srgb, #f8fafd 78%, var(--light-tint));
+  --light-veil: color-mix(in srgb, var(--light-paper) 78%, var(--light-tint));
   --light-divider: color-mix(in srgb, var(--text) 15%, transparent);
   --light-hover: color-mix(in srgb, var(--text) 7%, transparent);
   --light-shadow: 0 16px 44px #24365125;
@@ -24,13 +25,13 @@ html[data-theme-mode='light'] {
 html:root[data-theme-mode='light'].theme-custom {
   --light-tint: var(--t-base-bg, #e9eef5);
   --light-accent-source: var(--t-base-accent, #6c8cff);
-  --bg: color-mix(in srgb, var(--light-tint) 47%, #fff);
-  --bg-elevated: color-mix(in srgb, var(--light-tint) 13%, #fff);
-  --surface: color-mix(in srgb, var(--t-base-surface, var(--light-tint)) 8%, #fff);
+  --bg: color-mix(in srgb, var(--light-tint) 47%, var(--light-paper));
+  --bg-elevated: color-mix(in srgb, var(--light-tint) 13%, var(--light-paper));
+  --surface: color-mix(in srgb, var(--t-base-surface, var(--light-tint)) 8%, var(--light-paper));
   --surface-hover: color-mix(in srgb, var(--surface) 92%, #344563);
   --border: color-mix(in srgb, var(--bg-elevated) 79%, #506481);
   --text: var(--t-text, #182231);
-  --text-muted: #465367;
+  --text-muted: #425065;
   --accent: color-mix(in srgb, var(--light-accent-source) 28%, #243452);
   --accent-strong: color-mix(in srgb, var(--light-accent-source) 21%, #182b4b);
   --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
@@ -40,13 +41,13 @@ html:root[data-theme-mode='light'].theme-custom {
 html:root[data-theme-mode='light'].theme-custom.theme-gradient {
   --light-tint: color-mix(in srgb, var(--t-gradient-first), var(--t-gradient-second));
   --light-accent-source: var(--t-gradient-first);
-  --surface: color-mix(in srgb, var(--light-tint) 7%, #fff);
+  --surface: color-mix(in srgb, var(--light-tint) 7%, var(--light-paper));
 }
 
 html[data-theme-mode='light'].theme-gradient {
   --light-action-fill: linear-gradient(110deg,
-    color-mix(in srgb, var(--t-gradient-first) 34%, #fff),
-    color-mix(in srgb, var(--t-gradient-second) 34%, #fff));
+    color-mix(in srgb, var(--t-gradient-first) 34%, var(--light-paper)),
+    color-mix(in srgb, var(--t-gradient-second) 34%, var(--light-paper)));
   --light-play-fill: var(--light-action-fill);
   --range-start: color-mix(in srgb, var(--t-gradient-first) 42%, #263b60);
   --range-end: color-mix(in srgb, var(--t-gradient-second) 42%, #263b60);
