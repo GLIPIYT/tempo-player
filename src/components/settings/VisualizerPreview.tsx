@@ -40,7 +40,17 @@ export default function VisualizerPreview({ visualizer, theme, offLabel, backgro
     const levels = levelsRef.current
     let frame = 0
     let lastTime = 0
-    let running = true
+    let visible = false
+    let gradient: CanvasGradient | null = null
+    const rootStyle = getComputedStyle(document.documentElement)
+    const fallbackColor = parseCanvasColor(getComputedStyle(canvas).color) ?? { r: 108, g: 140, b: 255 }
+    const gradientActive = visualizer.useThemeColor && document.documentElement.classList.contains('theme-gradient')
+    const firstColor = gradientActive
+      ? parseCanvasColor(rootStyle.getPropertyValue('--t-gradient-first')) ?? fallbackColor
+      : fallbackColor
+    const secondColor = gradientActive
+      ? parseCanvasColor(rootStyle.getPropertyValue('--t-gradient-second')) ?? firstColor
+      : firstColor
 
     const draw = (time: number) => {
       const width = canvas.clientWidth
@@ -52,6 +62,7 @@ export default function VisualizerPreview({ visualizer, theme, offLabel, backgro
       if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
         canvas.width = pixelWidth
         canvas.height = pixelHeight
+        gradient = null
       }
       context.setTransform(dpr, 0, 0, dpr, 0, 0)
       context.clearRect(0, 0, width, height)
@@ -61,19 +72,11 @@ export default function VisualizerPreview({ visualizer, theme, offLabel, backgro
       const amplitude = Math.min(visualizer.heightPx, height - 18)
       const phase = motion.matches ? 1.1 : time / 680
       const response = motion.matches ? 1 : Math.max(0.05, (100 - visualizer.smoothing) / 100)
-      const rootStyle = getComputedStyle(document.documentElement)
-      const fallbackColor = parseCanvasColor(getComputedStyle(canvas).color) ?? { r: 108, g: 140, b: 255 }
-      const gradientActive =
-        visualizer.useThemeColor && document.documentElement.classList.contains('theme-gradient')
-      const firstColor = gradientActive
-        ? parseCanvasColor(rootStyle.getPropertyValue('--t-gradient-first')) ?? fallbackColor
-        : fallbackColor
-      const secondColor = gradientActive
-        ? parseCanvasColor(rootStyle.getPropertyValue('--t-gradient-second')) ?? firstColor
-        : firstColor
-      const accentGradient = context.createLinearGradient(0, 0, width, 0)
-      accentGradient.addColorStop(0, `rgb(${firstColor.r}, ${firstColor.g}, ${firstColor.b})`)
-      accentGradient.addColorStop(1, `rgb(${secondColor.r}, ${secondColor.g}, ${secondColor.b})`)
+      if (gradient === null) {
+        gradient = context.createLinearGradient(0, 0, width, 0)
+        gradient.addColorStop(0, `rgb(${firstColor.r}, ${firstColor.g}, ${firstColor.b})`)
+        gradient.addColorStop(1, `rgb(${secondColor.r}, ${secondColor.g}, ${secondColor.b})`)
+      }
 
       for (let i = 0; i < count; i += 1) {
         const position = i / Math.max(1, count - 1)
@@ -86,8 +89,8 @@ export default function VisualizerPreview({ visualizer, theme, offLabel, backgro
 
       context.save()
       context.globalAlpha = visualizer.opacityPct / 100
-      context.fillStyle = accentGradient
-      context.strokeStyle = accentGradient
+      context.fillStyle = gradient
+      context.strokeStyle = gradient
       if (visualizer.mirror) {
         context.translate(width, 0)
         context.scale(-1, 1)
@@ -115,7 +118,7 @@ export default function VisualizerPreview({ visualizer, theme, offLabel, backgro
           context.lineTo(0, height)
           context.closePath()
           context.globalAlpha = visualizer.opacityPct / 100
-          context.fillStyle = accentGradient
+          context.fillStyle = gradient
           context.fill()
         } else {
           context.lineWidth = 2
@@ -127,28 +130,39 @@ export default function VisualizerPreview({ visualizer, theme, offLabel, backgro
     }
 
     const tick = (time: number) => {
-      lastTime = time
-      draw(time)
-      if (running && !motion.matches && visualizer.style !== 'off') frame = requestAnimationFrame(tick)
+      if (time - lastTime >= 1000 / 30) {
+        lastTime = time
+        draw(time)
+      }
+      frame = requestAnimationFrame(tick)
     }
-    const onMotionChange = () => {
+    const updatePlayback = () => {
       cancelAnimationFrame(frame)
+      if (!visible || document.hidden) return
       if (motion.matches || visualizer.style === 'off') draw(0)
       else frame = requestAnimationFrame(tick)
     }
-    const resize = new ResizeObserver(() => draw(lastTime))
+    const visibility = new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting
+      updatePlayback()
+    })
+    const resize = new ResizeObserver(() => {
+      gradient = null
+      if (visible) draw(lastTime)
+    })
+    visibility.observe(canvas)
     resize.observe(canvas)
-    motion.addEventListener('change', onMotionChange)
-    if (motion.matches || visualizer.style === 'off') draw(0)
-    else frame = requestAnimationFrame(tick)
+    motion.addEventListener('change', updatePlayback)
+    document.addEventListener('visibilitychange', updatePlayback)
 
     return () => {
-      running = false
       cancelAnimationFrame(frame)
       resize.disconnect()
-      motion.removeEventListener('change', onMotionChange)
+      visibility.disconnect()
+      motion.removeEventListener('change', updatePlayback)
+      document.removeEventListener('visibilitychange', updatePlayback)
     }
-  }, [visualizer, theme])
+  }, [visualizer, theme, backgroundColor])
 
   return (
     <div className="set-viz-preview" aria-hidden="true">

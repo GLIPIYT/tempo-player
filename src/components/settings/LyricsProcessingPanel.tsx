@@ -13,6 +13,8 @@ import { useT } from '../../i18n'
 import type { ModelState } from '../../features/lyrics/analysis/contract'
 import type { AnalysisSnapshot } from '../../features/lyrics/analysis/runner'
 import type { VocalSnapshot } from '../../features/lyrics/analysis/vocalRunner'
+import { SettingsSwitch } from './SettingsControls'
+import { SettingsSection } from './SettingsSection'
 import './lyricsProcessing.css'
 
 interface Props {
@@ -121,17 +123,8 @@ export default function LyricsProcessingPanel({
       )
   const size = (bytes: number) => (bytes / 1048576).toFixed(1)
   return (
-    <section
-      className="set-card processing-card"
-      aria-labelledby="lyrics-processing-title"
-    >
-      <h3
-        className="set-card-title processing-title"
-        id="lyrics-processing-title"
-      >
-        <SlidersHorizontal size={16} />
-        {t('Additional processing')}
-      </h3>
+    <SettingsSection id="lyrics-processing" defaultOpen icon={SlidersHorizontal} title={t('Lyrics analysis')}>
+      <div className="processing-card">
       <div className="processing-warning" role="note">
         <AlertTriangle size={18} />
         <p>
@@ -145,12 +138,7 @@ export default function LyricsProcessingPanel({
           <div className="processing-feature-heading">
             <AudioLines size={19} />
             <h4>{vocalTitle}</h4>
-            <button
-              type="button"
-              className={vocalEnabled ? 'switch is-on' : 'switch'}
-              role="switch"
-              aria-checked={vocalEnabled}
-              aria-label={vocalTitle}
+            <SettingsSwitch checked={vocalEnabled} label={vocalTitle}
               onClick={() => onVocalChange(!vocalEnabled)}
             />
           </div>
@@ -201,12 +189,7 @@ export default function LyricsProcessingPanel({
           <div className="processing-feature-heading">
             <TextCursorInput size={19} />
             <h4>{wordTitle}</h4>
-            <button
-              type="button"
-              className={wordEnabled ? 'switch is-on' : 'switch'}
-              role="switch"
-              aria-checked={wordEnabled}
-              aria-label={wordTitle}
+            <SettingsSwitch checked={wordEnabled} label={wordTitle}
               onClick={() => onWordChange(!wordEnabled)}
             />
           </div>
@@ -282,6 +265,7 @@ export default function LyricsProcessingPanel({
           </div>
         </article>
       </div>
-    </section>
+      </div>
+    </SettingsSection>
   )
 }

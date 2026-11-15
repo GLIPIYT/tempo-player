@@ -982,7 +982,7 @@ input[type='color'].swatch:hover {
 .theme-card {
   overflow: hidden;
   border-radius: 10px;
-  border-color: color-mix(in srgb, var(--border) 60%);
+  border-color: color-mix(in srgb, var(--border) 60%, transparent);
   transition:
     border-color 0.18s ease,
     box-shadow 0.18s ease,

@@ -13,7 +13,7 @@ function Shortcuts() {
       const target = e.target
       if (target instanceof Element && (
         (target instanceof HTMLElement && target.isContentEditable) || target.closest(
-          'input, textarea, select, button, a, [role="button"], [role="link"], [role="slider"], [role="switch"], [role="textbox"], [contenteditable="true"], [contenteditable=""]',
+          'input, textarea, select, button, summary, a, [role="button"], [role="link"], [role="slider"], [role="switch"], [role="textbox"], [contenteditable="true"], [contenteditable=""]',
         )
       )) return
 

@@ -1,9 +1,18 @@
-import { useState, type CSSProperties } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { useState } from 'react'
+import { AudioLines, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react'
 import { useSettings, VISUALIZER_BARS_MIN, VISUALIZER_BARS_MAX, LYRICS_VISUALIZER_BARS_MAX, LYRICS_VISUALIZER_HEIGHT_MAX, type AppSettings, type VisualizerStyle } from '../../state/settings'
 import { useT } from '../../i18n'
+import { Segmented, SettingsSwitch, SliderRow } from './SettingsControls'
+import { SettingsMiniature } from './SettingsMiniature'
+import { SettingsSection } from './SettingsSection'
 import VisualizerPreview from './VisualizerPreview'
-import './visualizerSettings.css'
+
+const STYLES = [
+  { value: 'off', label: 'Off' },
+  { value: 'bars', label: 'Bars' },
+  { value: 'wave', label: 'Wave' },
+  { value: 'line', label: 'Line' },
+] as const
 
 export default function VisualizerSettingsPanel() {
   const t = useT()
@@ -14,42 +23,69 @@ export default function VisualizerSettingsPanel() {
     if (lyrics) update({ lyricsVisualizer: patch })
     else update({ visualizer: patch })
   }
-  const slider = (key: 'bars' | 'heightPx' | 'opacityPct' | 'smoothing', label: string, min: number, max: number, step: number, suffix = '') => <div className="set-row" key={key}>
-    <span className="set-row-label">{t(label)}</span><div className="slider-row">
-      <input type="range" min={min} max={max} step={step} value={viz[key]} aria-label={t(label)} style={{ '--fill': `${(viz[key] - min) / (max - min) * 100}%` } as CSSProperties} onChange={e => change({ [key]: Number(e.target.value) })} />
-      <span className="slider-value">{viz[key]}{suffix}</span>
-    </div>
-  </div>
-  const toggle = (label: string, active: boolean, onClick: () => void, disabled = false) => <div className={`set-row${disabled ? ' is-dim' : ''}`}>
-    <span className="set-row-label">{t(label)}</span><button type="button" className={`switch${active ? ' is-on' : ''}`} role="switch" aria-label={t(label)} aria-checked={active} disabled={disabled} onClick={onClick} />
-  </div>
-  return <section className={`set-card set-viz-pages${lyrics ? ' is-lyrics' : ''}`}>
-    <div className="set-card-title" key={String(lyrics)}>{t(lyrics ? 'Lyrics visualizer' : 'Visualizer')}</div>
-    <div className="set-viz-page-frame">
-      <button type="button" className={`set-viz-page-arrow is-left${lyrics ? ' is-visible' : ''}`} tabIndex={lyrics ? 0 : -1} aria-hidden={!lyrics} aria-label={t('Player visualizer')} onClick={() => setLyrics(false)}><ChevronLeft size={20} /></button>
-      <div key={String(lyrics)} className={`set-viz-page-preview${lyrics ? ' from-right' : ' from-left'}`}>
-        {lyrics && <div className="set-viz-lyrics-mock" aria-hidden="true"><div className="set-viz-mock-info"><i /><b /><span /></div><div className="set-viz-mock-lines"><i /><i /><i /><i /></div></div>}
-        <VisualizerPreview visualizer={viz} theme={settings.theme} offLabel={t('Off')} backgroundColor={lyrics && settings.lyricsVisualizer.useBackgroundColor} />
-      </div>
-      <button type="button" className={`set-viz-page-arrow is-right${!lyrics ? ' is-visible' : ''}`} tabIndex={lyrics ? -1 : 0} aria-hidden={lyrics} aria-label={t('Lyrics visualizer')} onClick={() => setLyrics(true)}><ChevronRight size={20} /></button>
-    </div>
-    <div key={`controls-${lyrics}`} className={`set-viz-page-controls${lyrics ? ' from-right' : ' from-left'}`}>
-      <div className="seg" role="group" aria-label={t(lyrics ? 'Lyrics visualizer' : 'Visualizer')}>
-        {(['off', 'bars', 'wave', 'line'] as VisualizerStyle[]).map((style, i) => <button key={style} type="button" className={`seg-btn${viz.style === style ? ' is-active' : ''}`} aria-pressed={viz.style === style} onClick={() => change({ style })}>{t(['Off', 'Bars', 'Wave', 'Line'][i])}</button>)}
-      </div>
-      <div className={viz.style === 'off' ? 'set-block is-dim' : 'set-block'}>
-        <div className="set-viz-sliders">
-          {slider('bars', 'Detail', VISUALIZER_BARS_MIN, lyrics ? LYRICS_VISUALIZER_BARS_MAX : VISUALIZER_BARS_MAX, 4)}
-          {slider('heightPx', 'Height', 24, lyrics ? LYRICS_VISUALIZER_HEIGHT_MAX : 160, 4, 'px')}
-          {slider('opacityPct', 'Opacity', 10, 100, 5, '%')}
-          {slider('smoothing', 'Smoothing', 0, 100, 5, '%')}
+
+  const off = viz.style === 'off'
+  const matchBackground = lyrics && settings.lyricsVisualizer.useBackgroundColor
+  const title = t(lyrics ? 'Lyrics visualizer' : 'Visualizer')
+  const nextTitle = t(lyrics ? 'Player visualizer' : 'Lyrics visualizer')
+  const Arrow = lyrics ? ChevronLeft : ChevronRight
+
+  return (
+    <>
+      <section className="set-card set-preview-card" aria-label={title}>
+        <div className="set-preview-heading">
+          <h3 className="set-card-title">{title}</h3>
+          <button type="button" className={lyrics ? 'icon-btn set-preview-back' : 'icon-btn'}
+            aria-label={nextTitle} title={nextTitle} onClick={() => setLyrics(value => !value)}>
+            <Arrow size={18} aria-hidden="true" />
+          </button>
         </div>
-        <div className="set-viz-toggles">
-          {toggle('Theme colour', viz.useThemeColor, () => change({ useThemeColor: !viz.useThemeColor }), lyrics && settings.lyricsVisualizer.useBackgroundColor)}
-          {lyrics && toggle('Match background', settings.lyricsVisualizer.useBackgroundColor, () => change({ useBackgroundColor: !settings.lyricsVisualizer.useBackgroundColor }), viz.useThemeColor)}
-          {toggle('Mirror', viz.mirror, () => change({ mirror: !viz.mirror }))}
+        <SettingsMiniature key={String(lyrics)}
+          waveform={settings.player.waveform} lyrics={lyrics ? settings.lyrics : undefined}>
+          <VisualizerPreview visualizer={viz} theme={settings.theme} offLabel={t('Off')} backgroundColor={matchBackground} />
+        </SettingsMiniature>
+      </section>
+      <SettingsSection id="visualizer-main" title={t('Basic parameters')} icon={AudioLines} defaultOpen>
+        <div className="set-row">
+          <span className="set-row-label">{t('Visualizer mode')}</span>
+          <Segmented<VisualizerStyle> label={t('Visualizer mode')} value={viz.style}
+            options={STYLES.map(option => ({ value: option.value, label: t(option.label) }))}
+            onChange={style => change({ style })} />
         </div>
-      </div>
-    </div>
-  </section>
+        <SliderRow label={t('Detail')} min={VISUALIZER_BARS_MIN}
+          max={lyrics ? LYRICS_VISUALIZER_BARS_MAX : VISUALIZER_BARS_MAX} step={4}
+          value={viz.bars} display={String(viz.bars)} disabled={off}
+          onChange={bars => change({ bars })} />
+        <SliderRow label={t('Height')} min={24}
+          max={lyrics ? LYRICS_VISUALIZER_HEIGHT_MAX : 160} step={4}
+          value={viz.heightPx} display={`${viz.heightPx}px`} disabled={off}
+          onChange={heightPx => change({ heightPx })} />
+        <SliderRow label={t('Opacity')} min={10} max={100} step={5}
+          value={viz.opacityPct} display={`${viz.opacityPct}%`} disabled={off}
+          onChange={opacityPct => change({ opacityPct })} />
+      </SettingsSection>
+      <SettingsSection id="visualizer-motion" title={t('Motion and color')} icon={SlidersHorizontal}>
+        <SliderRow label={t('Smoothing')} min={0} max={100} step={5}
+          value={viz.smoothing} display={`${viz.smoothing}%`} disabled={off}
+          onChange={smoothing => change({ smoothing })} />
+        <div className="set-row">
+          <span className="set-row-label">{t('Theme colour')}</span>
+          <SettingsSwitch label={t('Theme colour')} checked={viz.useThemeColor} disabled={off || matchBackground}
+            onClick={() => change({ useThemeColor: !viz.useThemeColor })} />
+        </div>
+        {lyrics ? (
+          <div className="set-row">
+            <span className="set-row-label">{t('Match background')}</span>
+            <SettingsSwitch label={t('Match background')} checked={matchBackground} disabled={off || viz.useThemeColor}
+              onClick={() => change({ useBackgroundColor: !matchBackground })} />
+          </div>
+        ) : null}
+        <div className="set-row">
+          <span className="set-row-label">{t('Mirror')}</span>
+          <SettingsSwitch label={t('Mirror')} checked={viz.mirror} disabled={off}
+            onClick={() => change({ mirror: !viz.mirror })} />
+        </div>
+      </SettingsSection>
+    </>
+  )
 }
