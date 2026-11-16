@@ -246,7 +246,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
   const artwork = <CollectionArtwork paths={artworkPaths} label={displayName} likes={isLikes} eager fetchPriority="high" />
   const playAll = () => {
     if (!tracks.length) return
-    player.playTracks(tracks.map(trackToUnified), 0)
+    player.playTracks(tracks.map(trackToUnified), 0, playlistId)
     void api.recordPlaylistStart(playlistId).then(bumpLibraryVersion).catch(cause => toast.show(String(cause), 'error'))
   }
   const collectionMenu = (event: MouseEvent) => {
@@ -381,7 +381,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                     },
                   })
                 }}
-                onDoubleClick={() => player.playTracks(tracks.map((x) => trackToUnified(x)), i)}
+                onDoubleClick={() => player.playTracks(tracks.map(trackToUnified), i, playlistId)}
                 onContextMenu={(e) => {
                   const handle = menus.current.get(t.id)
                   if (!handle) return
@@ -396,7 +396,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
                     aria-label={`${playAria} ${t.title}`}
                     onClick={(e) => {
                       e.stopPropagation()
-                      player.playTracks([trackToUnified(t)], 0)
+                      player.playTracks([trackToUnified(t)], 0, playlistId)
                     }}
                   >
                     <Play size={13} />

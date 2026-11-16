@@ -153,6 +153,8 @@ pub struct ListeningEvent {
     pub track_key: String,
     pub track: RecommendationTrack,
     pub start_reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playlist_id: Option<i64>,
     pub started_at: i64,
     pub elapsed_sec: f64,
     pub covered_sec: f64,
@@ -319,6 +321,7 @@ fn validate(event: &ListeningEvent) -> Result<(), String> {
         || event.revision <= 0
         || event.revision > 9_007_199_254_740_991
         || event.generation < 0
+        || event.playlist_id.is_some_and(|id| id <= 0)
     {
         return Err("Invalid session identity/revision".into());
     }
@@ -493,7 +496,8 @@ pub fn record(db: &Db, event: ListeningEvent) -> Result<(), String> {
             if revision == event.revision { return if old_json == encoded { Ok(()) } else { Err("Conflicting listening revision".into()) }; }
             let old: ListeningEvent = serde_json::from_str(&old_json).map_err(|e| e.to_string())?;
             if old.finished || old.track_key != event.track_key || old.started_at != event.started_at
-                || old.start_reason != event.start_reason || old.elapsed_sec > event.elapsed_sec || old.covered_sec > event.covered_sec {
+                || old.start_reason != event.start_reason || old.playlist_id != event.playlist_id
+                || old.elapsed_sec > event.elapsed_sec || old.covered_sec > event.covered_sec {
                 return Err("Session identity or counters cannot be overwritten".into());
             }
         } else {
@@ -516,7 +520,11 @@ pub fn record(db: &Db, event: ListeningEvent) -> Result<(), String> {
             if let Some(id) = track_id {
                 let complete = event.duration_sec.is_some_and(|d| d > 0.0 && event.covered_sec / d >= 0.9);
                 let skipped = matches!(event.end_reason.as_deref(), Some("select" | "next" | "previous" | "clear" | "remove")) && !complete;
-                let inserted = tx.execute("INSERT OR IGNORE INTO listening_history(track_id,played_at,listened_sec,covered_sec,completed,skipped,session_id) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![id,event.started_at/1000,event.elapsed_sec,event.covered_sec,complete,skipped,event.id]).map_err(err)?;
+                let inserted = tx.execute(
+                    "INSERT OR IGNORE INTO listening_history(track_id,played_at,listened_sec,covered_sec,completed,skipped,session_id,playlist_id) \
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                    params![id,event.started_at/1000,event.elapsed_sec,event.covered_sec,complete,skipped,event.id,event.playlist_id.unwrap_or(0)],
+                ).map_err(err)?;
                 if skipped && inserted > 0 { tx.execute("UPDATE tracks SET skip_count=skip_count+1 WHERE id=?1", [id]).map_err(err)?; }
             }
         }

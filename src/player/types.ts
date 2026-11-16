@@ -30,7 +30,7 @@ export interface PlayerApi {
   bufferPct: number | null
   /** True while a track is still being fetched and cannot start yet. */
   preparing: boolean
-  playTracks(tracks: UnifiedTrack[], startIndex?: number): void
+  playTracks(tracks: UnifiedTrack[], startIndex?: number, playlistId?: number): void
   updateTrackMetadata(track: Track): void
   toggle(): void
   next(): void

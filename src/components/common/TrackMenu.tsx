@@ -12,6 +12,7 @@ import { ArrowDown, ArrowUp, Disc3, FolderOpen, Heart, MoreHorizontal, PencilLin
 import { api } from '../../api/client'
 import type { Playlist, Track, UnifiedTrack } from '../../types/models'
 import { usePlayer } from '../../player'
+import { withPlaylistOrigin } from '../../player/queue'
 import { useLikes } from '../../hooks/useLikes'
 import { useNav } from '../../state/nav'
 import { useT } from '../../i18n'
@@ -146,11 +147,11 @@ const TrackMenu = forwardRef<TrackMenuHandle, TrackMenuProps>(function TrackMenu
     openFresh()
   }
 
-  const unified = playback?.track ?? trackToUnified(track)
+  const unified = withPlaylistOrigin(playback?.track ?? trackToUnified(track), playlistId)
 
   const playNow = () => {
     if (playback) playback.playNow()
-    else player.playTracks(tracks.map((t) => trackToUnified(t)), index)
+    else player.playTracks(tracks.map(trackToUnified), index, playlistId)
     close()
   }
 

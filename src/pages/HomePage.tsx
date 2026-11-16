@@ -89,8 +89,8 @@ export default function HomePage() {
   const recentAdded = home.recentAdded
   const likedTracks = home.data?.likedTracks ?? NO_TRACKS
 
-  const playSection = (tracks: Track[], index: number) => {
-    playerController.playTracks(tracks.map((tr) => trackToUnified(tr)), index)
+  const playSection = (tracks: Track[], index: number, playlistId?: number) => {
+    playerController.playTracks(tracks.map(trackToUnified), index, playlistId)
   }
 
   const playRecommendations = (index: number) => {
@@ -113,7 +113,7 @@ export default function HomePage() {
    * Right-click menu for a section header or a generated mix: play the lot, or
    * hide it for the rest of the day.
    */
-  const sectionMenu = (e: ReactMouseEvent, opts: { title: string; id: string; tracks?: Track[] }) => {
+  const sectionMenu = (e: ReactMouseEvent, opts: { title: string; id: string; tracks?: Track[]; playlistId?: number }) => {
     e.preventDefault()
     e.stopPropagation()
     const items: ContextMenuItem[] = []
@@ -123,7 +123,7 @@ export default function HomePage() {
         label: t('Play all'),
         icon: <Play size={13} />,
         disabled: sectionTracks.length === 0,
-        onSelect: () => playSection(sectionTracks, 0),
+        onSelect: () => playSection(sectionTracks, 0, opts.playlistId),
       })
     items.push({
         id: 'hide',
@@ -142,10 +142,10 @@ export default function HomePage() {
     openContextMenu({ x: e.clientX, y: e.clientY, title: opts.title, items })
   }
 
-  const trackContext = (e: ReactMouseEvent, track: Track, tracks: Track[], index: number) => {
+  const trackContext = (e: ReactMouseEvent, track: Track, tracks: Track[], index: number, playlistId?: number) => {
     e.preventDefault()
     e.stopPropagation()
-    setCtx({ x: e.clientX, y: e.clientY, track, tracks, index })
+    setCtx({ x: e.clientX, y: e.clientY, track, tracks, index, playlistId })
   }
 
   const recommendationContext = (event: ReactMouseEvent, source: ScTrack, playNow: () => void, isGenre: boolean) => {
@@ -167,7 +167,7 @@ export default function HomePage() {
     try {
       const tracks = (await api.getPlaylist(playlist.id)).map((row) => row.track)
       if (tracks.length === 0) return
-      playerController.playTracks(tracks.map(trackToUnified), 0)
+      playerController.playTracks(tracks.map(trackToUnified), 0, playlist.id)
       await api.recordPlaylistStart(playlist.id)
       bumpLibraryVersion()
     } catch (cause) {

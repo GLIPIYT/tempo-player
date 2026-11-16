@@ -9,6 +9,7 @@ import type { RepeatMode, Track, UnifiedTrack } from '../types/models'
 import type { TrackChangeEvent, TrackChangeReason } from './types'
 import { trackToUnified } from '../utils/unified'
 import type { PlayerSnapshot } from './controller'
+import { withPlaylistOrigin } from './queue'
 import type { TrackPlaybackPreferences } from './trackPlaybackPreferences'
 
 const PLAYER_PREFS = {
@@ -288,9 +289,10 @@ export class NativePlayerController {
     return Math.min(limit, Math.max(0, this.basePosition + elapsed * this.snapshot.playbackRate))
   }
 
-  playTracks(tracks: UnifiedTrack[], startIndex = 0): void {
+  playTracks(tracks: UnifiedTrack[], startIndex = 0, playlistId?: number): void {
     this.cancelContinuation()
-    this.send({ op: 'replace', tracks, index: startIndex, play: true })
+    const queue = playlistId === undefined ? tracks : tracks.map(track => withPlaylistOrigin(track, playlistId))
+    this.send({ op: 'replace', tracks: queue, index: startIndex, play: true })
   }
 
   toggle(): Promise<void> {

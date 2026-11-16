@@ -1,5 +1,9 @@
 import type { RepeatMode, UnifiedTrack } from '../types/models'
 
+export function withPlaylistOrigin(track: UnifiedTrack, playlistId?: number): UnifiedTrack {
+  return playlistId === undefined ? track : { ...track, listeningPlaylistId: playlistId }
+}
+
 function shuffleInto(target: UnifiedTrack[]): UnifiedTrack[] {
   const arr = target.slice()
   for (let i = arr.length - 1; i > 0; i--) {
@@ -39,6 +43,7 @@ export class QueueController {
         resolving: track.resolving,
         provenance: track.provenance,
         selectionReason: track.selectionReason,
+        listeningPlaylistId: track.listeningPlaylistId,
       }
       replacements.set(track, replacement)
       changed = true

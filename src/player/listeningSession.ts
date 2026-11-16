@@ -13,7 +13,7 @@ export class ListeningAccumulator {
     this.intervals = []
     this.event = {
       id: crypto.randomUUID(), revision: 0, trackKey: metadata.trackKey, track: metadata,
-      startReason, startedAt: Date.now(), elapsedSec: 0, coveredSec: 0,
+      startReason, playlistId: track.listeningPlaylistId, startedAt: Date.now(), elapsedSec: 0, coveredSec: 0,
       durationSec: track.durationSec, playbackRate: 1, finished: false, generation,
     }
     return { ...this.event }

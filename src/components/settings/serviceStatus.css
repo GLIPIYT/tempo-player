@@ -1,5 +1,9 @@
 .service-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
   width: 590px;
+  height: fit-content;
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--border);

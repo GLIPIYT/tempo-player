@@ -54,7 +54,7 @@ export default function PlaylistsPage() {
     try {
       const tracks = (await api.getPlaylist(playlist.id)).map((row) => row.track)
       if (tracks.length === 0) return
-      player.playTracks(tracks.map(trackToUnified), 0)
+      player.playTracks(tracks.map(trackToUnified), 0, playlist.id)
       await api.recordPlaylistStart(playlist.id)
       bumpLibraryVersion()
     } catch (cause: unknown) {

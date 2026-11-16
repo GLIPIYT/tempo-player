@@ -538,6 +538,9 @@ CREATE TABLE IF NOT EXISTS native_loudness_cache (
 CREATE INDEX IF NOT EXISTS idx_native_loudness_measured ON native_loudness_cache(measured_at);
 "#;
 
+// NULL marks history from before playlist attribution. Zero records a direct play.
+const MIGRATION_26: &str = "ALTER TABLE listening_history ADD COLUMN playlist_id INTEGER;";
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
     MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11, MIGRATION_12, MIGRATION_13,
@@ -550,7 +553,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_21,
     MIGRATION_22, MIGRATION_23, MIGRATION_24,
     crate::native_audio::track_preferences::MIGRATION,
-    MIGRATION_25,
+    MIGRATION_25, MIGRATION_26,
 ];
 
 pub struct Db {
@@ -3806,8 +3809,8 @@ impl Db {
         let conn = self.lock_conn()?;
         let tx = conn.unchecked_transaction().map_err(db_err)?;
         tx.execute(
-            "INSERT INTO listening_history(track_id, played_at, listened_sec, completed, skipped) \
-             VALUES(?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO listening_history(track_id, played_at, listened_sec, completed, skipped, playlist_id) \
+             VALUES(?1, ?2, ?3, ?4, ?5, 0)",
             params![track_id, now(), listened_sec, completed, skipped],
         )
         .map_err(db_err)?;
@@ -4765,7 +4768,7 @@ fn fetch_listening_period(
         Some(ListeningScope::Artist(id)) => ("AND t.artist_id = ?", Some(id)),
         Some(ListeningScope::Album(id)) => ("AND t.album_id = ?", Some(id)),
         Some(ListeningScope::Playlist(id)) => (
-            "AND t.id IN (SELECT track_id FROM playlist_tracks WHERE playlist_id = ?)",
+            "AND (h.playlist_id = ? OR (h.playlist_id IS NULL AND t.id IN (SELECT track_id FROM playlist_tracks WHERE playlist_id = ?)))",
             Some(id),
         ),
         None => ("", None),
@@ -4773,6 +4776,7 @@ fn fetch_listening_period(
     if entity_id.is_some_and(|id| id <= 0) {
         return Err("invalid listening history entity".into());
     }
+    let playlist_id = if let Some(ListeningScope::Playlist(id)) = scope { Some(id) } else { None };
     let mut buckets: Vec<ListeningPeriodBucket> = boundaries
         .windows(2)
         .map(|window| ListeningPeriodBucket {
@@ -4806,7 +4810,7 @@ fn fetch_listening_period(
         ))
         .map_err(db_err)?;
     let mut rows = stmt.query(rusqlite::params_from_iter(
-        [boundaries[0], boundaries[boundaries.len() - 1]].into_iter().chain(entity_id)
+        [boundaries[0], boundaries[boundaries.len() - 1]].into_iter().chain(entity_id).chain(playlist_id)
     ))
         .map_err(db_err)?;
     while let Some(row) = rows.next().map_err(db_err)? {
@@ -4893,7 +4897,7 @@ fn fetch_listening_period(
         conn.query_row(
             &format!("SELECT MAX(h.played_at) FROM listening_history h \
              JOIN tracks t ON t.id = h.track_id WHERE h.played_at >= 0 AND h.played_at < ?1 {filter}"),
-            rusqlite::params_from_iter(std::iter::once(reference).chain(entity_id)),
+            rusqlite::params_from_iter(std::iter::once(reference).chain(entity_id).chain(playlist_id)),
             |row| row.get::<_, Option<i64>>(0),
         )
         .map_err(db_err)?
@@ -6405,6 +6409,62 @@ mod tests {
         }
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn playlist_history_keeps_legacy_estimates_and_uses_recorded_sources() {
+        use crate::models::ListeningScope;
+        use crate::recommendation_store::{record, ListeningEvent, RecommendationTrack};
+
+        let (db, dir) = test_db("playlist_history_sources");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let member = seed_track(&db, folder.id, &fixture_file(&dir, "member.mp3"), "Member", "Band", None, 180.0);
+        let removed = seed_track(&db, folder.id, &fixture_file(&dir, "removed.mp3"), "Removed", "Band", None, 180.0);
+        let first = db.create_playlist("First").unwrap();
+        let second = db.create_playlist("Second").unwrap();
+        db.playlist_add_track(first.id, member).unwrap();
+        db.playlist_add_track(first.id, removed).unwrap();
+        db.playlist_add_track(second.id, member).unwrap();
+
+        let from = now() - 500;
+        insert_period_history(&db, member, from + 10, Some(5.0), true);
+        for (track_id, playlist_id, offset, seconds) in [
+            (removed, Some(first.id), 160, 24.0),
+            (member, None, 180, 18.0),
+            (member, Some(second.id), 220, 20.0),
+        ] {
+            let key = format!("local:{track_id}");
+            record(&db, ListeningEvent {
+                id: format!("playlist-test-{offset}"),
+                revision: 1,
+                track_key: key.clone(),
+                track: RecommendationTrack {
+                    track_key: key, source: "local".into(), source_id: track_id.to_string(),
+                    db_id: Some(track_id), title: "Track".into(), artists: vec!["Band".into()],
+                    album: None, duration_sec: Some(180.0), cover_path: None, external_url: None,
+                    provenance: None, traits: None,
+                },
+                start_reason: "manual".into(), playlist_id, started_at: (from + offset) * 1000,
+                elapsed_sec: seconds, covered_sec: seconds, duration_sec: Some(180.0),
+                playback_rate: 1.0, end_reason: Some("select".into()), finished: true, generation: 0,
+            }).unwrap();
+        }
+        db.playlist_remove_track(first.id, removed).unwrap();
+        db.record_history(member, Some(7.0), false, false).unwrap();
+
+        let boundaries = [from, now() + 10];
+        let first_scope = Some(ListeningScope::Playlist(first.id));
+        let first_stats = db.get_scoped_listening_period(&boundaries, None, first_scope).unwrap();
+        assert_eq!((first_stats.plays, first_stats.total_listened_sec), (2, 29.0));
+        assert_eq!(first_stats.top_track.unwrap().track.id, removed);
+        let second_stats = db.get_scoped_listening_period(&boundaries, None, Some(ListeningScope::Playlist(second.id))).unwrap();
+        assert_eq!((second_stats.plays, second_stats.total_listened_sec), (2, 25.0));
+        let later = db.get_scoped_listening_period(&[from + 200, boundaries[1]], Some(from + 200), first_scope).unwrap();
+        assert_eq!(later.plays, 0);
+        assert_eq!(later.previous_active_at, Some(from + 160));
+        assert_eq!(db.get_listening_period(&boundaries, None).unwrap().plays, 5);
+        drop(db);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

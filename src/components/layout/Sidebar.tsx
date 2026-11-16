@@ -343,7 +343,7 @@ export default function Sidebar() {
       try {
         const rows = await api.getPlaylist(id)
         if (rows.length === 0) return
-        player.playTracks(tracksToUnified(rows.map((r) => r.track)), 0)
+        player.playTracks(tracksToUnified(rows.map((r) => r.track)), 0, id)
         await api.recordPlaylistStart(id)
         bumpLibraryVersion()
       } catch {}

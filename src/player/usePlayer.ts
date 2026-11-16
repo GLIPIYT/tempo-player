@@ -25,7 +25,7 @@ type PlayerActions = Pick<
 >
 
 const actions: PlayerActions = {
-  playTracks: (tracks, startIndex) => playerController.playTracks(tracks, startIndex),
+  playTracks: (tracks, startIndex, playlistId) => playerController.playTracks(tracks, startIndex, playlistId),
   updateTrackMetadata: track => playerController.updateTrackMetadata(track),
   toggle: () => playerController.toggle(),
   next: () => playerController.next(),

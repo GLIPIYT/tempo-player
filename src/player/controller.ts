@@ -11,7 +11,7 @@ import { trackToUnified } from '../utils/unified'
 import { AudioEngine, type AudioChannel } from './engine'
 import { dbToLinear } from '../audio/loudness'
 import type { EqualizerSettings } from '../audio/equalizer'
-import { QueueController } from './queue'
+import { QueueController, withPlaylistOrigin } from './queue'
 import { ListeningAccumulator } from './listeningSession'
 import { recommendationService, type RadioReservation } from '../features/recommendations/service'
 import type { ListeningEvent, ListeningEndReason, ListeningStartReason } from '../features/recommendations/types'
@@ -421,7 +421,7 @@ export class PlayerController {
     return () => this.trackChangeListeners.delete(listener)
   }
 
-  playTracks(tracks: UnifiedTrack[], startIndex = 0): void {
+  playTracks(tracks: UnifiedTrack[], startIndex = 0, playlistId?: number): void {
     this.cancelRadio()
     // switching tracks manually counts as a skip for the track that was playing
     this.finishListening('select')
@@ -432,7 +432,7 @@ export class PlayerController {
     this.engine.stop()
     this.playedSourceIds.clear()
     this.playedTrackKeys.clear()
-    this.queueCtl.setQueue(tracks, startIndex)
+    this.queueCtl.setQueue(playlistId === undefined ? tracks : tracks.map(track => withPlaylistOrigin(track, playlistId)), startIndex)
     this.preloadNext()
     void this.startPlayableFromCurrent()
   }

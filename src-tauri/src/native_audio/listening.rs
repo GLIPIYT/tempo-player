@@ -46,6 +46,7 @@ impl ListeningAccumulator {
                 track_key: metadata.track_key.clone(),
                 track: metadata.clone(),
                 start_reason: valid_reason(reason).to_string(),
+                playlist_id: payload.get("listeningPlaylistId").and_then(Value::as_i64).filter(|id| *id > 0),
                 started_at: now,
                 elapsed_sec: 0.0,
                 covered_sec: 0.0,

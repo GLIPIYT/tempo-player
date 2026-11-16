@@ -291,6 +291,8 @@ export interface UnifiedTrack {
   traits?: { genre?: string | null; tags?: string[] | null; bpm?: number | null; version?: string | null }
   provenance?: RecommendationProvenance
   selectionReason?: ListeningStartReason
+  /** Playlist that supplied this queue entry, independent of its library identity. */
+  listeningPlaylistId?: number
   source: SourceId
   sourceId: string
   dbId: number | null

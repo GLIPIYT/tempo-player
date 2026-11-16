@@ -123,7 +123,7 @@ it('plays and pins playlists, then delegates deletable playlists to the confirma
   items.get('play')?.onSelect()
   await flush()
   expect(mocks.api.getPlaylist).toHaveBeenCalledWith(playlist.id)
-  expect(mocks.playTracks).toHaveBeenCalledWith(['track:9'], 0)
+  expect(mocks.playTracks).toHaveBeenCalledWith(['track:9'], 0, playlist.id)
   expect(mocks.api.recordPlaylistStart).toHaveBeenCalledWith(playlist.id)
   expect(mocks.api.setPlaylistPinned).not.toHaveBeenCalled()
   items.get('favorite')?.onSelect()

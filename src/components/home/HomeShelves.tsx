@@ -10,7 +10,7 @@ import Cover from '../common/Cover'
 import HomeSectionTitle from './HomeSectionTitle'
 import { HOME_RAIL_GAP, onHomeRailKeyDown, scrollHomeRail, useRecommendationRail } from './useRecommendationRail'
 
-type Section = { title: string; id: string; tracks?: Track[] }
+type Section = { title: string; id: string; tracks?: Track[]; playlistId?: number }
 const SIDEBAR_COVER_SIZE = 42
 
 interface HomeShelvesProps {
@@ -24,10 +24,10 @@ interface HomeShelvesProps {
   recommendations?: ReactNode
   hasPlaylistHistory: boolean
   unknownArtist: string
-  onPlay: (tracks: Track[], index: number) => void
+  onPlay: (tracks: Track[], index: number, playlistId?: number) => void
   onPlayPlaylist: (playlist: Playlist) => void
   onOpenPlaylist: (playlist: Playlist) => void
-  onTrackMenu: (event: MouseEvent, track: Track, tracks: Track[], index: number) => void
+  onTrackMenu: (event: MouseEvent, track: Track, tracks: Track[], index: number, playlistId?: number) => void
   onSectionMenu: (event: MouseEvent, section: Section) => void
 }
 
@@ -41,15 +41,16 @@ interface TrackRailProps {
   icon: LucideIcon
   id: string
   tracks: Track[]
+  playlistId?: number
   unknownArtist: string
   caption?: (track: Track) => string
   onOpen?: () => void
-  onPlay: (tracks: Track[], index: number) => void
+  onPlay: HomeShelvesProps['onPlay']
   onTrackMenu: HomeShelvesProps['onTrackMenu']
   onSectionMenu: HomeShelvesProps['onSectionMenu']
 }
 
-function TrackRail({ cardSize, title, icon, id, tracks, unknownArtist, caption, onOpen, onPlay, onTrackMenu, onSectionMenu }: TrackRailProps) {
+function TrackRail({ cardSize, title, icon, id, tracks, playlistId, unknownArtist, caption, onOpen, onPlay, onTrackMenu, onSectionMenu }: TrackRailProps) {
   const t = useT()
   const visible = tracks.length > 0 && !isSectionHidden(id)
   const step = cardSize + HOME_RAIL_GAP
@@ -58,12 +59,12 @@ function TrackRail({ cardSize, title, icon, id, tracks, unknownArtist, caption, 
 
   return (
     <section className="home-section home-rail-section" aria-label={title}>
-      <div className="home-section-head" onContextMenu={(event) => onSectionMenu(event, { title, id, tracks })}>
+      <div className="home-section-head" onContextMenu={(event) => onSectionMenu(event, { title, id, tracks, playlistId })}>
         <HomeSectionTitle icon={icon}>{title}</HomeSectionTitle>
         <div className="home-section-tools">
           {onOpen ? <button type="button" className="home-section-open" onClick={onOpen}>{t('Open Likes')} <ArrowUpRight size={14} /></button> : null}
           <div className="home-rail-controls">
-            <button type="button" aria-label={t('Play all')} title={t('Play all')} onClick={() => onPlay(tracks, 0)}><Play size={13} /></button>
+            <button type="button" aria-label={t('Play all')} title={t('Play all')} onClick={() => onPlay(tracks, 0, playlistId)}><Play size={13} /></button>
             {(canScrollLeft || canScrollRight) && <>
               <button type="button" aria-label={t('Scroll left')} disabled={!canScrollLeft} onClick={() => scrollHomeRail(ref.current, -1, step)}><ChevronLeft size={15} /></button>
               <button type="button" aria-label={t('Scroll right')} disabled={!canScrollRight} onClick={() => scrollHomeRail(ref.current, 1, step)}><ChevronRight size={15} /></button>
@@ -81,9 +82,9 @@ function TrackRail({ cardSize, title, icon, id, tracks, unknownArtist, caption, 
                 key={track.id}
                 type="button"
                 className="home-rail-track"
-                onClick={() => { if (!consumeDragClick()) onPlay(tracks, index) }}
+                onClick={() => { if (!consumeDragClick()) onPlay(tracks, index, playlistId) }}
                 onPointerDown={(event) => startDrag(event, track, ref.current)}
-                onContextMenu={(event) => onTrackMenu(event, track, tracks, index)}
+                onContextMenu={(event) => onTrackMenu(event, track, tracks, index, playlistId)}
               >
                 <Cover path={track.coverPath} label={track.title} size={cardSize} />
                 <strong title={track.title}>{track.title}</strong>
@@ -112,7 +113,7 @@ export default function HomeShelves({ cardSize, topTracks, recentAdded, recentPl
       <div className="home-content-grid">
         {(recommendations || likesVisible) && <div className="home-content-main">
           {recommendations}
-          <TrackRail title={t('Likes')} icon={Heart} id="home.likes" tracks={likedTracks}
+          <TrackRail title={t('Likes')} icon={Heart} id="home.likes" tracks={likedTracks} playlistId={likesPlaylist?.id}
             onOpen={likesPlaylist ? () => onOpenPlaylist(likesPlaylist) : undefined} {...trackActions} />
         </div>}
         {(addedVisible || playlistVisible) && <div className="home-content-side">

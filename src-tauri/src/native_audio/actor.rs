@@ -996,7 +996,7 @@ impl Actor {
                     Ok(())
                 }
                 "updateTrack" => {
-                    let track = TrackPayload::parse(
+                    let mut track = TrackPayload::parse(
                         command
                             .get("track")
                             .cloned()
@@ -1005,11 +1005,11 @@ impl Actor {
                     .0;
                     self.invalidate_preload();
                     self.persisted.queue.update_track(track.clone())?;
-                    if self
-                        .active_track
-                        .as_ref()
-                        .is_some_and(|current| same_identity(current, &track))
+                    if let Some(current) = self.active_track.as_ref().filter(|current| same_identity(current, &track))
                     {
+                        if let Some(playlist_id) = current.get("listeningPlaylistId") {
+                            track["listeningPlaylistId"] = playlist_id.clone();
+                        }
                         self.active_track = Some(track.clone());
                         let _ = self.listening.update_metadata(&track);
                     }

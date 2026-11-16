@@ -8,6 +8,7 @@ export interface TrackContextRequest {
   track: Track
   tracks: Track[]
   index: number
+  playlistId?: number
   playback?: TrackMenuPlayback
 }
 
@@ -42,6 +43,7 @@ export default function TrackContextMenu({ req, onClose }: TrackContextMenuProps
         track={req.track}
         tracks={req.tracks}
         index={req.index}
+        playlistId={req.playlistId}
         playback={req.playback}
         onChanged={onClose}
       />

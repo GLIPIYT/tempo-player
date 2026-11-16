@@ -85,6 +85,7 @@ export interface ListeningEvent {
   trackKey: string
   track: RecommendationTrack
   startReason: ListeningStartReason
+  playlistId?: number
   startedAt: number
   elapsedSec: number
   coveredSec: number

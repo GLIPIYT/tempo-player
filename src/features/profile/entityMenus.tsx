@@ -72,7 +72,7 @@ export function createProfileEntityMenus({ t, navigate, onDeletePlaylist }: Prof
     try {
       const rows = await api.getPlaylist(playlist.id)
       if (rows.length === 0) return
-      playerController.playTracks(rows.map(row => trackToUnified(row.track)), 0)
+      playerController.playTracks(rows.map(row => trackToUnified(row.track)), 0, playlist.id)
       await api.recordPlaylistStart(playlist.id)
       bumpLibraryVersion()
     } catch (error) {
