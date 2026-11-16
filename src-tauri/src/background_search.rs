@@ -5,7 +5,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Cursor, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::SystemTime;
@@ -261,8 +261,15 @@ pub async fn save_selected_background(
 /// Wallpaper search saves sanitized local copies here so they can be selected
 /// again without contacting the image provider.
 #[tauri::command]
-pub fn list_saved_backgrounds(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let entries = fs::read_dir(&state.backgrounds_dir)
+pub async fn list_saved_backgrounds(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let backgrounds_dir = state.backgrounds_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || saved_background_paths(&backgrounds_dir))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn saved_background_paths(dir: &Path) -> Result<Vec<String>, String> {
+    let entries = fs::read_dir(dir)
         .map_err(|error| format!("Could not read saved backgrounds: {error}"))?;
     let mut images: Vec<(SystemTime, PathBuf)> = entries
         .filter_map(Result::ok)

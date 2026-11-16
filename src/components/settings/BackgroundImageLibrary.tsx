@@ -7,6 +7,7 @@ import './BackgroundImageLibrary.css'
 
 interface Props {
   selectedPath: string | null
+  revision: number
   onSelect: (path: string) => void
 }
 
@@ -14,35 +15,46 @@ function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path
 }
 
-export default function BackgroundImageLibrary({ selectedPath, onSelect }: Props) {
+export default function BackgroundImageLibrary({ selectedPath, revision, onSelect }: Props) {
   const t = useT()
+  const galleryRef = useRef<HTMLDivElement>(null)
+  const [visibleOnce, setVisibleOnce] = useState(false)
   const [paths, setPaths] = useState<string[]>([])
   const [error, setError] = useState(false)
-  const requestId = useRef(0)
 
   useEffect(() => {
-    const current = ++requestId.current
+    if (visibleOnce || !galleryRef.current) return
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return
+      observer.disconnect()
+      setVisibleOnce(true)
+    })
+    observer.observe(galleryRef.current)
+    return () => observer.disconnect()
+  }, [visibleOnce])
+
+  useEffect(() => {
+    if (!visibleOnce) return
     let active = true
     void api.listSavedBackgrounds()
       .then((saved) => {
-        if (!active || current !== requestId.current) return
+        if (!active) return
         setPaths(saved)
         setError(false)
       })
       .catch(() => {
-        if (!active || current !== requestId.current) return
+        if (!active) return
         setError(true)
       })
     return () => {
       active = false
-      requestId.current += 1
     }
-  }, [selectedPath])
+  }, [revision, visibleOnce])
 
-  if (paths.length === 0 && !error) return null
+  if (paths.length === 0 && !error) return <div ref={galleryRef} />
 
   return (
-    <div className="saved-backgrounds" role="group" aria-label={t('Saved backgrounds')}>
+    <div ref={galleryRef} className="saved-backgrounds" role="group" aria-label={t('Saved backgrounds')}>
       <span className="saved-backgrounds-title">{t('Saved backgrounds')}</span>
       {error ? <span className="saved-backgrounds-error" role="status">{t('Could not load saved backgrounds')}</span> : null}
       <div className="saved-backgrounds-grid">

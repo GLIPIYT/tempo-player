@@ -1357,8 +1357,11 @@ fn covers_cache_info(dir: &Path) -> CoversCacheInfo {
 }
 
 #[tauri::command]
-pub fn get_covers_cache_info(state: State<'_, AppState>) -> Result<CoversCacheInfo, String> {
-    Ok(covers_cache_info(&state.covers_dir))
+pub async fn get_covers_cache_info(state: State<'_, AppState>) -> Result<CoversCacheInfo, String> {
+    let dir = state.covers_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || covers_cache_info(&dir))
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -2307,8 +2310,12 @@ pub async fn sc_upsert_track(
 }
 
 #[tauri::command]
-pub fn sc_cache_info(state: State<'_, AppState>) -> Result<crate::soundcloud_store::ScCacheInfo, String> {
-    Ok(crate::soundcloud_store::cache_info(&state.db, &state.sc_cache_dir))
+pub async fn sc_cache_info(state: State<'_, AppState>) -> Result<crate::soundcloud_store::ScCacheInfo, String> {
+    let db = state.db.clone();
+    let dir = state.sc_cache_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::soundcloud_store::cache_info(&db, &dir))
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
