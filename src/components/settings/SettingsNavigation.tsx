@@ -57,27 +57,35 @@ export function SettingsNavigation({ area, expanded, section, onArea, onSection 
   const t = useT()
   return (
     <nav className="set-nav" aria-label={t('Settings')}>
-      {SETTINGS_NAV.map(({ id, label, Icon, sections }) => (
-        <div key={id} className="set-nav-group">
-          <button type="button" className={area === id ? 'set-nav-item is-active' : 'set-nav-item'}
-            onClick={() => onArea(id)} aria-expanded={area === id && expanded}
-            aria-controls={`settings-nav-${id}`}>
-            <Icon size={16} aria-hidden="true" />
-            <span>{t(label)}</span>
-            <ChevronDown className="set-nav-arrow" size={14} aria-hidden="true" />
-          </button>
-          <div className="set-nav-children" id={`settings-nav-${id}`} hidden={area !== id || !expanded}>
-            {sections.map((item) => (
-              <button key={item.id} type="button" className="set-nav-child"
-                aria-current={section === item.id ? 'location' : undefined}
-                aria-controls={`settings-section-${item.id}`}
-                onClick={event => onSection(item.id, event.detail === 0)}>
-                {t(item.label)}
-              </button>
-            ))}
+      {SETTINGS_NAV.map(({ id, label, Icon, sections }) => {
+        const open = area === id && expanded
+        return (
+          <div key={id} className="set-nav-group">
+            <button type="button" className={area === id ? 'set-nav-item is-active' : 'set-nav-item'}
+              onClick={() => onArea(id)} aria-expanded={open}
+              aria-controls={`settings-nav-${id}`}>
+              <Icon size={16} aria-hidden="true" />
+              <span>{t(label)}</span>
+              <ChevronDown className="set-nav-arrow" size={14} aria-hidden="true" />
+            </button>
+            <div className="set-nav-children" id={`settings-nav-${id}`} data-expanded={open} aria-hidden={!open}
+              ref={element => { if (element) element.inert = !open }}>
+              <div className="set-nav-children-clip">
+                <div className="set-nav-links">
+                  {sections.map((item) => (
+                    <button key={item.id} type="button" className="set-nav-child"
+                      aria-current={section === item.id ? 'location' : undefined}
+                      aria-controls={`settings-section-${item.id}`}
+                      onClick={event => onSection(item.id, event.detail === 0)}>
+                      {t(item.label)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      ))}
+        )
+      })}
     </nav>
   )
 }
