@@ -32,7 +32,6 @@ export const ru: Record<string, string> = {
   'Startup and system': 'Запуск и система',
   Sound: 'Звук',
   'Themes and fonts': 'Темы и шрифт',
-  'Player preview': 'Предпросмотр плеера',
   'Background effects': 'Обработка фона',
   'Lyrics preview': 'Предпросмотр лирики',
   'Lyrics display': 'Текст и расположение',

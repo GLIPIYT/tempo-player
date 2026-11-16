@@ -72,7 +72,7 @@ import LyricsProgressColorPicker from '../components/settings/LyricsProgressColo
 import { CommitSlider, Segmented, SettingsSwitch, SliderRow } from '../components/settings/SettingsControls'
 import { SettingsSection as Card, SettingsSectionScope } from '../components/settings/SettingsSection'
 import { SETTINGS_NAV, SettingsNavigation, type SettingsArea, type SettingsSectionId } from '../components/settings/SettingsNavigation'
-import { SettingsLyricsPreview, SettingsMiniature } from '../components/settings/SettingsMiniature'
+import { SettingsLyricsPreview } from '../components/settings/SettingsMiniature'
 import './settingsPage.css'
 import {
   appVersion,
@@ -998,19 +998,34 @@ export default function SettingsPage() {
     if (!content || !target) return
 
     if (focusHeading) target.querySelector('h3')?.focus({ preventScroll: true })
-    cancelRoutedScrollRef.current?.()
-    const top = content.scrollTop + target.getBoundingClientRect().top - content.getBoundingClientRect().top - 8
-    content.scrollTo({
-      top,
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
-    })
+    const scrollToSection = () => {
+      cancelRoutedScrollRef.current?.()
+      const top = content.scrollTop + target.getBoundingClientRect().top - content.getBoundingClientRect().top - 8
+      content.scrollTo({
+        top,
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+      })
+    }
+
     setSection(next)
     cancelEmphasis()
     setEmphasizedSection(next)
-    emphasisTimer.current = window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       setEmphasizedSection(null)
       emphasisTimer.current = null
     }, 1000)
+    emphasisTimer.current = timer
+
+    // Measure the destination once any unfolding blocks above it have reached their new height.
+    const movingPanels = Array.from(content.querySelectorAll('.set-disclosure-panel[data-moving="true"]'))
+    const transitions = movingPanels.flatMap(panel => panel.getAnimations().map(animation => animation.finished))
+    if (transitions.length === 0) {
+      scrollToSection()
+    } else {
+      void Promise.allSettled(transitions).then(() => {
+        if (emphasisTimer.current === timer) scrollToSection()
+      })
+    }
   }
 
   const visitArea = (next: SettingsArea) => {
@@ -1813,10 +1828,6 @@ export default function SettingsPage() {
       )
       case 'player': return (
         <>
-          <section className="set-card set-preview-card" aria-label={t('Player preview')}>
-            <div className="set-preview-heading"><h3 className="set-card-title">{t('Player preview')}</h3></div>
-            <SettingsMiniature waveform={settings.player.waveform} />
-          </section>
           <Card defaultOpen title={t('Player')} icon={Music2}>
             <div className="set-row">
               <span className="set-row-label">{t('Waveform progress bar')}</span>
