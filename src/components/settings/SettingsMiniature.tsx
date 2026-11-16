@@ -1,43 +1,28 @@
 import { useState, type CSSProperties, type ReactNode } from 'react'
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import type { ThemeTokens } from '../../types/theme'
 import type { AppSettings } from '../../state/settings'
 import { useT } from '../../i18n'
 
 const BARS = [4, 7, 5, 11, 9, 14, 8, 12, 16, 13, 6, 11, 7, 9, 4, 6, 10, 5, 7, 4]
 
 export function SettingsMiniature({
-  lyrics, waveform = false, playerHidden = false, tokens, gradientAnchors, children,
+  lyrics, waveform = false, playerHidden = false, children,
 }: {
   lyrics?: AppSettings['lyrics']
   waveform?: boolean
   playerHidden?: boolean
-  tokens?: ThemeTokens
-  gradientAnchors?: { first: string; second: string }
   children?: ReactNode
 }) {
   const scale = playerHidden && lyrics?.enlargeWhenCollapsed ? 1.5 : 1
-  const accent = gradientAnchors
-    ? `linear-gradient(110deg, ${gradientAnchors.first}, ${gradientAnchors.second})`
-    : tokens?.accent
-  const style = {
-    ...(tokens && {
-      '--set-mini-bg': tokens.bg,
-      '--set-mini-surface': tokens.bgElevated,
-      '--set-mini-border': tokens.border,
-      '--set-mini-ink': tokens.text,
-      '--set-mini-accent': accent,
-    }),
-    ...(lyrics && {
-      '--set-mini-line-size': `${Math.round(lyrics.textSizePx * scale / 4)}px`,
-      '--set-mini-progress-opacity': lyrics.progressOpacityPct / 100,
-      '--set-mini-progress-height': `${Math.max(1, lyrics.progressThicknessPx / 2)}px`,
-      '--set-mini-progress-color': lyrics.progressColorMode === 'custom' ? lyrics.progressColor : undefined,
-    }),
-  } as CSSProperties
+  const style = lyrics ? {
+    '--set-mini-line-size': `${Math.round(lyrics.textSizePx * scale / 4)}px`,
+    '--set-mini-progress-opacity': lyrics.progressOpacityPct / 100,
+    '--set-mini-progress-height': `${Math.max(1, lyrics.progressThicknessPx / 2)}px`,
+    '--set-mini-progress-color': lyrics.progressColorMode === 'custom' ? lyrics.progressColor : undefined,
+  } as CSSProperties : undefined
   return (
     <div className="set-miniature" data-view={lyrics ? 'lyrics' : 'library'}
-      data-compact={Boolean(tokens)} data-player-hidden={playerHidden}
+      data-player-hidden={playerHidden}
       data-alignment={lyrics?.alignment} data-fill={lyrics?.textFillMode}
       data-progress={lyrics?.fillEnabled} data-direction={lyrics?.progressDirection}
       data-clip-progress={lyrics?.progressClipToText}

@@ -225,11 +225,11 @@ html .set-page--sections .slider-row input[type='range']::-moz-range-thumb {
 .set-preview-card .set-miniature { animation: settings-preview-in 200ms ease-out both; }
 @keyframes settings-preview-in { from { opacity: .5; translate: 0 3px; } to { opacity: 1; translate: none; } }
 .set-miniature {
-  --set-mini-base: var(--set-mini-bg, var(--bg));
-  --set-mini-panel: var(--set-mini-surface, var(--bg-elevated));
-  --set-mini-rule: var(--set-mini-border, var(--border));
-  --set-mini-text: var(--set-mini-ink, var(--text));
-  --set-mini-fill: var(--set-mini-accent, var(--tempo-gradient, var(--accent)));
+  --set-mini-base: var(--bg);
+  --set-mini-panel: var(--bg-elevated);
+  --set-mini-rule: var(--border);
+  --set-mini-text: var(--text);
+  --set-mini-fill: var(--tempo-gradient, var(--accent));
   position: relative;
   isolation: isolate;
   display: grid;
@@ -368,16 +368,6 @@ html .set-page--sections .slider-row input[type='range']::-moz-range-thumb {
 .set-miniature[data-clip-progress='false'] .set-miniature-body i.is-playing::after { width: 70%; }
 .set-miniature[data-direction='right-to-left'] .set-miniature-body i.is-playing::after { left: auto; right: 0; }
 .set-miniature[data-direction='center-out'] .set-miniature-body i.is-playing::after { left: 50%; translate: -50% 0; }
-
-.set-miniature[data-compact='true'] { height: 65px; grid-template: 9px minmax(0, 1fr) 11px / 24% minmax(0, 1fr); }
-.set-miniature[data-compact='true'] :is(.set-miniature-title, .set-miniature-body, .set-miniature-side, .set-miniature-transport) { padding: 3px 4px; gap: 3px; }
-.set-miniature[data-compact='true'] :is(.set-miniature-search, .set-miniature-heading, .set-miniature-side > i:not(.set-miniature-art)) { height: 2px; margin: 0; }
-.set-miniature[data-compact='true'] :is(.set-miniature-title i, .set-miniature-track b, .set-miniature-progress, .set-miniature-volume) { height: 2px; }
-.set-miniature[data-compact='true'] .set-miniature-albums { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; }
-.set-miniature[data-compact='true'] .set-miniature-albums > i { height: 16px; }
-.set-miniature[data-compact='true'] .set-miniature-track > i { width: 6px; height: 6px; border-radius: 1px; }
-.set-miniature[data-compact='true'] .set-miniature-track { gap: 2px; min-width: 0; }
-.set-page--sections .theme-card-custom .theme-preview { height: 65px; }
 
 @container settings (max-width: 605px) {
   .set-page--sections .set-layout { grid-template: auto minmax(0, 1fr) / minmax(0, 1fr); gap: 10px; }

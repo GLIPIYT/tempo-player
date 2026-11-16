@@ -891,6 +891,34 @@ function SoundCloudSessionCard({
   )
 }
 
+function ThemePreview({
+  tokens,
+  gradientAnchors,
+}: {
+  tokens: ThemeTokens
+  gradientAnchors?: { first: string; second: string }
+}) {
+  const accent = gradientAnchors
+    ? `linear-gradient(110deg, ${gradientAnchors.first}, ${gradientAnchors.second})`
+    : tokens.accent
+
+  return (
+    <div className="theme-preview" aria-hidden="true"
+      style={{ background: tokens.bg, color: tokens.textMuted, flexDirection: 'row' }}>
+      <div className="theme-preview-side" style={{ background: tokens.bgElevated }}>
+        <span className="theme-preview-line" />
+        <span className="theme-preview-line" />
+        <span className="theme-preview-line" />
+      </div>
+      <div className="theme-preview-main">
+        <span className="theme-preview-dot" style={{ background: accent }} />
+        <span className="theme-preview-pill" style={{ background: accent }} />
+        <span className="theme-preview-pill" style={{ background: tokens.border }} />
+      </div>
+    </div>
+  )
+}
+
 function BrandIconChoices({
   value,
   theme,
@@ -1475,10 +1503,6 @@ export default function SettingsPage() {
       )
       case 'themes': return (
         <>
-          <section className="set-card set-preview-card" aria-label={t('Theme preview')}>
-            <div className="set-preview-heading"><h3 className="set-card-title">{t('Theme preview')}</h3></div>
-            <SettingsMiniature waveform={settings.player.waveform} />
-          </section>
           <Card defaultOpen title={t('Theme')} icon={Palette}>
             <div className="theme-grid">
               {PRESETS.map((p) => (
@@ -1487,7 +1511,7 @@ export default function SettingsPage() {
                   className={activeId === p.id ? 'theme-card is-active' : 'theme-card'}
                   onClick={() => setPreset(p.id)}
                 >
-                  <SettingsMiniature tokens={p.tokens} gradientAnchors={p.gradientAnchors} />
+                  <ThemePreview tokens={p.tokens} gradientAnchors={p.gradientAnchors} />
                   <span className="theme-card-name">{p.name}</span>
                 </button>
               ))}
