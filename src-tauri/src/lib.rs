@@ -20,6 +20,7 @@ mod models;
 mod scanner;
 mod soundcloud;
 mod waveform_cache;
+mod audio_waveform;
 mod soundcloud_web;
 mod soundcloud_session;
 mod soundcloud_capture_policy;
@@ -32,6 +33,7 @@ mod recommendation_preview;
 mod artist_artwork;
 mod tray;
 mod updater;
+mod service_status;
 mod ytdlp;
 mod youtube_music;
 mod native_audio;
@@ -277,6 +279,7 @@ pub fn run() {
             commands::sc_import_artist,
             commands::sc_stream_url,
             commands::sc_waveform,
+            audio_waveform::audio_waveform,
             commands::fetch_online_lyrics,
             commands::fetch_online_lyrics_all,
             commands::sc_get_playback,
@@ -334,6 +337,7 @@ pub fn run() {
             commands::set_track_loudness,
             updater::updater_releases,
             updater::updater_latest,
+            service_status::check_services,
             updater::updater_download,
             updater::updater_install,
             updater::updater_discard

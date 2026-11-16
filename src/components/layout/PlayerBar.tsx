@@ -399,6 +399,8 @@ function PlayerBarContent() {
               key={p.currentTrack ? `${p.currentTrack.source}:${p.currentTrack.sourceId}` : 'none'}
               seed={p.currentTrack?.sourceId ?? 'none'}
               soundCloudTrackId={p.currentTrack?.source === 'soundcloud' ? p.currentTrack.sourceId : null}
+              audioTrack={p.currentTrack}
+              audioPreparing={p.preparing}
               waveformEnabled={settings.player.waveform}
               cacheWaveforms={settings.player.cacheWaveforms}
               position={livePos}

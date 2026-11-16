@@ -505,7 +505,7 @@ pub fn stored_feed_candidate(
     Ok(None)
 }
 
-fn find_youtube_cache(directory: &Path, key: &str) -> Option<PathBuf> {
+pub(crate) fn find_youtube_cache(directory: &Path, key: &str) -> Option<PathBuf> {
     const AUDIO_EXTENSIONS: &[&str] = &[
         "m4a", "mp4", "webm", "opus", "ogg", "oga", "mp3", "aac", "mka", "flac", "wav",
     ];

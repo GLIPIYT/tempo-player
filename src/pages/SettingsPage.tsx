@@ -74,6 +74,7 @@ import { CommitSlider, Segmented, SettingsSwitch, SliderRow } from '../component
 import { SettingsSection as Card, SettingsSectionScope } from '../components/settings/SettingsSection'
 import { SETTINGS_NAV, SettingsNavigation, type SettingsArea, type SettingsSectionId } from '../components/settings/SettingsNavigation'
 import { SettingsLyricsPreview } from '../components/settings/SettingsMiniature'
+import ServiceStatusPanel from '../components/settings/ServiceStatusPanel'
 import './settingsPage.css'
 import {
   appVersion,
@@ -1573,7 +1574,7 @@ export default function SettingsPage() {
                 onClick={() => update({ player: { cacheWaveforms: !settings.player.cacheWaveforms } })} />
             </div>
             <div className="set-note">
-              {t('Saves SoundCloud waveform data on this device for up to 12 hours, including after app restarts.')}
+              {t('Keeps waveform data for local files, SoundCloud and YouTube Music for up to 12 hours.')}
             </div>
             <div className="set-row">
               <span className="set-row-label">{t('Player bar layout')}</span>
@@ -1815,6 +1816,7 @@ export default function SettingsPage() {
           <UpdateCard />
         </>
       )
+      case 'service-status': return <ServiceStatusPanel />
       case 'application': return (
         <>
           <Card defaultOpen title={t('About')} icon={Info}>

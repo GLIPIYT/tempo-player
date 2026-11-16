@@ -39,6 +39,9 @@ fn now_ms() -> u64 {
 }
 
 fn valid_track_id(track_id: &str) -> bool {
+    if let Some(fingerprint) = track_id.strip_prefix("audio-v1:") {
+        return fingerprint.len() == 64 && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit());
+    }
     !track_id.is_empty()
         && track_id.len() <= 32
         && track_id.bytes().all(|byte| byte.is_ascii_digit())

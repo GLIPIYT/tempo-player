@@ -105,6 +105,7 @@ export default function TrackDetailPage({ track, onBack }: { track: UnifiedTrack
         </header>
         <section className="track-page-waveform" aria-label={t('Position')}>
           <WaveProgress key={trackKey(details)} seed={details.sourceId} soundCloudTrackId={details.source === 'soundcloud' ? details.sourceId : null}
+            audioTrack={details} audioPreparing={isCurrent && player.preparing}
             waveformEnabled cacheWaveforms={settings.player.cacheWaveforms} position={position}
             duration={hasDuration ? duration : 0} disabled={!isCurrent || !hasDuration} onSeek={player.seek} />
           <div className="track-page-times" aria-hidden="true"><span>{fmtTime(position)}</span><span>{fmtTime(duration)}</span></div>

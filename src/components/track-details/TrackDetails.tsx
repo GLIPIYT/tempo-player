@@ -77,6 +77,7 @@ export default function TrackDetails({ track, position, duration, onClose, onOpe
             <div className="track-details-playback" aria-label={`${t('Position')}: ${fmtTime(safePosition)}; ${t('Duration')}: ${fmtTime(knownDuration)}`}>
               <WaveProgress key={`${track.source}:${track.sourceId}`} seed={track.sourceId}
                 soundCloudTrackId={track.source === 'soundcloud' ? track.sourceId : null}
+                audioTrack={track}
                 waveformEnabled cacheWaveforms={settings.player.cacheWaveforms}
                 position={safePosition ?? 0} duration={knownDuration ?? 0} onSeek={onSeek} />
               <div className="track-details-times" aria-hidden="true"><span>{fmtTime(safePosition)}</span><span>{fmtTime(knownDuration)}</span></div>

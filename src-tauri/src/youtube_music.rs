@@ -31,6 +31,22 @@ fn client() -> &'static reqwest::Client {
     })
 }
 
+fn search_request(client: &reqwest::Client, body: &Value) -> reqwest::RequestBuilder {
+    client.post("https://music.youtube.com/youtubei/v1/search")
+        .query(&[("alt", "json")])
+        .header("Origin", "https://music.youtube.com")
+        .header("X-Youtube-Client-Name", "67")
+        .header("X-Youtube-Client-Version", CLIENT_VERSION)
+        .json(body)
+}
+
+pub(crate) fn search_probe(client: &reqwest::Client) -> reqwest::RequestBuilder {
+    search_request(client, &json!({
+        "context": { "client": { "clientName": "WEB_REMIX", "clientVersion": CLIENT_VERSION } },
+        "query": "Tempo"
+    }))
+}
+
 fn cache() -> &'static Mutex<HashMap<String, (Instant, SearchRows)>> {
     static CACHE: OnceLock<Mutex<HashMap<String, (Instant, SearchRows)>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -530,13 +546,7 @@ async fn search(query: &str, section: &str, limit: u32) -> Result<SearchRows, St
     // Normal UI requests fit in the first response. Continuations cover larger
     // callers without starting one extraction process per result.
     for _ in 0..3 {
-        let mut request = client()
-            .post("https://music.youtube.com/youtubei/v1/search")
-            .query(&[("alt", "json")])
-            .header("Origin", "https://music.youtube.com")
-            .header("X-Youtube-Client-Name", "67")
-            .header("X-Youtube-Client-Version", CLIENT_VERSION)
-            .json(&body);
+        let mut request = search_request(client(), &body);
         if let Some(token) = continuation.as_deref() {
             request = request.query(&[("continuation", token), ("ctoken", token)]);
         }

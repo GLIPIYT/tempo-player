@@ -316,6 +316,9 @@ export const api = {
   /** Loads public waveform peaks, optionally persisting them across app restarts. */
   scWaveform: (trackId: string, cacheDisk = false) =>
     invoke<number[]>('sc_waveform', { trackId, cacheDisk }),
+  audioWaveform: (track: { source: 'local'; id: number } | { source: 'youtube'; id: string },
+    durationSec: number, cacheDisk: boolean) =>
+    invoke<number[]>('audio_waveform', { track, durationSec, cacheDisk }),
 
   scSessionStatus: () => invoke<SoundCloudSessionStatus>('sc_session_status'),
   scSessionLogin: () => invoke<void>('sc_session_login'),

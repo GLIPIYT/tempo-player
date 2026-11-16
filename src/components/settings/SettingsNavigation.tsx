@@ -1,5 +1,5 @@
 import {
-  AudioLines, Captions, ChevronDown, Cloud, EyeOff, FolderOpen, HardDrive,
+  AudioLines, Captions, ChevronDown, Cloud, EyeOff, FolderOpen, Globe, HardDrive,
   Image, Info, LibraryBig, Music2, Palette, Plug, Power, RefreshCw,
   SlidersHorizontal, Volume2,
 } from 'lucide-react'
@@ -39,6 +39,7 @@ export const SETTINGS_NAV = [
   {
     id: 'about', label: 'About', Icon: Info, sections: [
       { id: 'updates', label: 'Updates', Icon: RefreshCw },
+      { id: 'service-status', label: 'Connectivity', Icon: Globe },
       { id: 'application', label: 'About Tempo', Icon: Info },
     ],
   },

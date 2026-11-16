@@ -3,6 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerE
 import { api } from '../../api/client'
 import { fmtTime } from '../../utils/format'
 import { useT } from '../../i18n'
+import type { UnifiedTrack } from '../../types/models'
 import {
   cachedWaveformRequest,
   fallbackWaveformHeights,
@@ -15,6 +16,8 @@ interface WaveProgressProps {
   duration: number
   seed: string
   soundCloudTrackId: string | null
+  audioTrack?: Pick<UnifiedTrack, 'source' | 'sourceId' | 'dbId'> | null
+  audioPreparing?: boolean
   waveformEnabled: boolean
   cacheWaveforms?: boolean
   disabled?: boolean
@@ -28,6 +31,8 @@ export default function WaveProgress({
   duration,
   seed,
   soundCloudTrackId,
+  audioTrack,
+  audioPreparing = false,
   waveformEnabled,
   cacheWaveforms = false,
   disabled = false,
@@ -45,21 +50,28 @@ export default function WaveProgress({
     samples: number[]
     persisted: boolean
   } | null>(null)
+  const localId = audioTrack?.source === 'local' ? audioTrack.dbId : null
+  const videoId = audioTrack?.source === 'youtube' ? audioTrack.sourceId : null
+  const sampleKey = soundCloudTrackId ? `sc:${soundCloudTrackId}`
+    : localId ? `local:${localId}` : videoId ? `yt:${videoId}` : null
+  const usableDuration = Number.isFinite(duration) && duration > 0 ? duration : 0
 
   useEffect(() => {
-    if (!waveformEnabled || !soundCloudTrackId || loadedWaveform?.trackId === soundCloudTrackId) return
+    if (!waveformEnabled || !sampleKey || (!soundCloudTrackId && audioPreparing)) return
+    if (loadedWaveform?.trackId === sampleKey && (loadedWaveform.persisted || !cacheWaveforms)) return
 
     let active = true
-    const memoryKey = `${soundCloudTrackId}:memory`
-    const diskKey = `${soundCloudTrackId}:disk`
+    const memoryKey = `${sampleKey}:memory`
+    const diskKey = `${sampleKey}:disk`
     // If caching is switched off while a disk-enabled request is already in
     // flight, observe that request instead of issuing a second one.
     const requestKey = cacheWaveforms || waveformRequestsRef.current.has(diskKey) ? diskKey : memoryKey
-    const request = cachedWaveformRequest(
-      waveformRequestsRef.current,
-      requestKey,
-      () => api.scWaveform(soundCloudTrackId, requestKey === diskKey),
-    )
+    const persist = requestKey === diskKey
+    const request = cachedWaveformRequest(waveformRequestsRef.current, requestKey, () => {
+      if (soundCloudTrackId) return api.scWaveform(soundCloudTrackId, persist)
+      if (localId !== null) return api.audioWaveform({ source: 'local', id: localId }, usableDuration, persist)
+      return api.audioWaveform({ source: 'youtube', id: videoId! }, usableDuration, persist)
+    })
     while (waveformRequestsRef.current.size > WAVEFORM_REQUEST_CACHE_SIZE) {
       const oldest = waveformRequestsRef.current.keys().next().value
       if (oldest === undefined) break
@@ -67,44 +79,14 @@ export default function WaveProgress({
     }
     request.then(samples => {
       if (active && Array.isArray(samples)) {
-        setLoadedWaveform({ trackId: soundCloudTrackId, samples, persisted: requestKey === diskKey })
+        setLoadedWaveform({ trackId: sampleKey, samples, persisted: persist })
       }
     }).catch(() => {
-      // SoundCloud may hide waveforms or be offline. The stable fallback below
-      // keeps seeking available without surfacing a player error.
+      // A missing audio file or provider waveform must not prevent seeking.
     })
     return () => { active = false }
-  }, [waveformEnabled, cacheWaveforms, soundCloudTrackId, loadedWaveform?.trackId])
-
-  useEffect(() => {
-    if (
-      !waveformEnabled || !cacheWaveforms || !soundCloudTrackId ||
-      loadedWaveform?.trackId !== soundCloudTrackId || loadedWaveform.persisted
-    ) return
-
-    let active = true
-    const diskKey = `${soundCloudTrackId}:disk`
-    const request = cachedWaveformRequest(
-      waveformRequestsRef.current,
-      diskKey,
-      () => api.scWaveform(soundCloudTrackId, true),
-    )
-    while (waveformRequestsRef.current.size > WAVEFORM_REQUEST_CACHE_SIZE) {
-      const oldest = waveformRequestsRef.current.keys().next().value
-      if (oldest === undefined) break
-      waveformRequestsRef.current.delete(oldest)
-    }
-    request.then(samples => {
-      if (active && Array.isArray(samples)) {
-        setLoadedWaveform(current => current?.trackId === soundCloudTrackId
-          ? { trackId: soundCloudTrackId, samples, persisted: true }
-          : current)
-      }
-    }).catch(() => {
-      // The already-loaded peaks remain usable even if disk persistence fails.
-    })
-    return () => { active = false }
-  }, [waveformEnabled, cacheWaveforms, soundCloudTrackId, loadedWaveform?.trackId, loadedWaveform?.persisted])
+  }, [waveformEnabled, cacheWaveforms, soundCloudTrackId, sampleKey, localId, videoId, audioPreparing,
+    usableDuration, loadedWaveform?.trackId, loadedWaveform?.persisted])
 
   // Use the rendered width so detail keeps growing with wide windows and UI
   // zoom. The helper factors zoom out only for its fit check against the row's
@@ -140,12 +122,12 @@ export default function WaveProgress({
   }, [])
 
   const heights = useMemo(() => {
-    if (soundCloudTrackId) {
-      const samples = loadedWaveform?.trackId === soundCloudTrackId ? loadedWaveform.samples : null
+    if (sampleKey) {
+      const samples = loadedWaveform?.trackId === sampleKey ? loadedWaveform.samples : null
       return soundCloudWaveformHeights(samples, barCount)
     }
     return fallbackWaveformHeights(seed, barCount)
-  }, [seed, barCount, soundCloudTrackId, loadedWaveform])
+  }, [seed, barCount, sampleKey, loadedWaveform])
 
   const commit = useCallback(
     (frac: number) => {
