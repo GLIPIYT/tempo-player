@@ -50,6 +50,19 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefer-offline
 
+      - name: Read annotated release notes
+        id: release-notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "${GITHUB_REF}^{tag}"
+          delimiter="release_notes_${GITHUB_RUN_ID}_${RANDOM}"
+          {
+            printf 'body<<%s\n' "$delimiter"
+            git for-each-ref --format='%(contents)' "$GITHUB_REF"
+            printf '%s\n' "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and upload installer
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
@@ -57,20 +70,18 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Tempo ${{ github.ref_name }}'
-          releaseBody: 'Windows installer (NSIS, x64).'
-          releaseDraft: false
+          releaseBody: ${{ steps.release-notes.outputs.body }}
+          releaseDraft: true
           prerelease: false
 
-      # The updater shows the release body to the user as the changelog, so it
-      # has to be the annotated tag's message rather than a placeholder.
-      - name: Use the tag annotation as the release notes
+      - name: Publish the completed release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+          installer="Tempo_${GITHUB_REF_NAME#v}_x64-setup.exe"
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | grep -Fx -- "$installer"
           notes_file="$(mktemp)"
-          git tag -l --format='%(contents:body)' "${GITHUB_REF_NAME}" > "$notes_file"
-          if [ ! -s "$notes_file" ]; then
-            git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > "$notes_file"
-          fi
-          gh release edit "${GITHUB_REF_NAME}" --notes-file "$notes_file"
+          git for-each-ref --format='%(contents)' "$GITHUB_REF" > "$notes_file"
+          gh release edit "$GITHUB_REF_NAME" --notes-file "$notes_file" --draft=false --latest

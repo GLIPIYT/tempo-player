@@ -11,12 +11,15 @@ function render(markdown: string): string {
 }
 
 describe('ReleaseNotes Markdown images', () => {
-  it('uses a bundled preview for the official poster and keeps its full-resolution link', () => {
-    const original = 'https://raw.githubusercontent.com/GLIPIYT/tempo-player/v1.5.0/docs/design/changelog-1.5.0/tempo-1.5.0-changelog.webp'
-    const markup = render(`![Tempo 1.5.0](<${original}>)`)
+  it.each([
+    ['1.5.0', '![Tempo 1.5.0](<https://raw.githubusercontent.com/GLIPIYT/tempo-player/v1.5.0/docs/design/changelog-1.5.0/tempo-1.5.0-changelog.webp>)'],
+    ['1.6.0', '[![Tempo 1.6.0](https://raw.githubusercontent.com/GLIPIYT/tempo-player/v1.6.0/src/updater/assets/v1.6.0-changelog-preview.webp)](https://raw.githubusercontent.com/GLIPIYT/tempo-player/v1.6.0/docs/design/changelog-1.6.0/tempo-1.6.0-changelog.webp)'],
+  ])('uses a bundled preview while keeping the full-resolution %s link', (version, markdown) => {
+    const original = `https://raw.githubusercontent.com/GLIPIYT/tempo-player/v${version}/docs/design/changelog-${version}/tempo-${version}-changelog.webp`
+    const markup = render(markdown)
 
     expect(markup).toContain(`href="${original}"`)
-    expect(markup).toContain('src="/src/updater/assets/v1.5.0-changelog-preview.webp"')
+    expect(markup).toContain(`src="/src/updater/assets/v${version}-changelog-preview.webp"`)
     expect(markup).not.toContain(`src="${original}"`)
   })
 

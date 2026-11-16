@@ -3,9 +3,13 @@ import { toast } from '../components/common/Toast'
 import { useT } from '../i18n'
 import { openExternalUrl } from '../utils/externalLinks'
 import { RELEASE_TYPE_MARKER } from './releaseType'
-import releasePosterPreview from './assets/v1.5.0-changelog-preview.webp'
+import preview150 from './assets/v1.5.0-changelog-preview.webp'
+import preview160 from './assets/v1.6.0-changelog-preview.webp'
 
-const RELEASE_POSTER_URL = 'https://raw.githubusercontent.com/GLIPIYT/tempo-player/v1.5.0/docs/design/changelog-1.5.0/tempo-1.5.0-changelog.webp'
+const POSTER_PREVIEWS = new Map([
+  ['https://raw.githubusercontent.com/GLIPIYT/tempo-player/v1.5.0/docs/design/changelog-1.5.0/tempo-1.5.0-changelog.webp', preview150],
+  ['https://raw.githubusercontent.com/GLIPIYT/tempo-player/v1.6.0/src/updater/assets/v1.6.0-changelog-preview.webp', preview160],
+])
 
 interface MarkdownImageTarget {
   src: string
@@ -40,9 +44,8 @@ function openLink(href: string, t: (key: string) => string) {
 function MarkdownImage({ src, alt, title }: MarkdownImageTarget & { alt: string }) {
   const [failed, setFailed] = useState(false)
   if (failed) return <span className="update-markdown-image-fallback">{alt}</span>
-  // Keep the 1.5.0 poster sharp enough for the dialog while avoiding a 13 MP
-  // decode. Its wrapping link still points at the full-resolution original.
-  const displaySrc = src === RELEASE_POSTER_URL ? releasePosterPreview : src
+  // Decode a smaller image in the dialog while linking to the original.
+  const displaySrc = POSTER_PREVIEWS.get(src) ?? src
   return (
     <img
       className="update-markdown-image"

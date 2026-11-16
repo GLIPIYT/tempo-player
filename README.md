@@ -13,30 +13,28 @@
 </p>
 
 <p align="center">
-  <a href="docs/design/changelog-1.5.0/tempo-1.5.0-changelog.webp">
-    <img src="docs/design/changelog-1.5.0/figures/home.png" alt="A personal mix rule in Tempo 1.5" width="100%">
+  <a href="docs/design/changelog-1.6.0/tempo-1.6.0-changelog.webp">
+    <img src="docs/design/changelog-1.6.0/figures/home.webp" alt="Tempo Home in a light theme" width="100%">
   </a>
 </p>
 
-## Tempo 1.5 — your music, your rules
+## Tempo 1.6 — a lighter look
 
-A very large update: personal mixes, a new profile, detailed listening history, and more ways to follow your lyrics.
+Light themes, a new Home layout, and more control over how each track sounds.
 
-- **Build your own mix.** Pick artists, genres, sources, listening hours and habits. Choose 1–50 songs and a rebuild interval. Copy a starting rule, reorder your mixes and rediscover forgotten tracks.
-- **Explore your listening day.** Open a month, day or hour in the chart. Compare time, plays and completion with the previous active period, and discover which songs and artists led the way.
-- **Follow every word.** Synced lyrics, word highlighting, a separate visualizer and a full-width focus view. Optional timing refinement uses local or fully cached audio; word analysis remains experimental.
-- **Enjoy your refreshed library.** New playlist, album, artist and profile pages. Pick artwork for a new playlist, rename it in its header and use familiar context actions throughout.
-
-<p align="center"><img src="docs/design/changelog-1.5.0/figures/profile.png" alt="Tempo profile, listening chart and a real music collection" width="100%"></p>
+- **Light, dark or automatic.** Choose a palette or set the appearance of a custom theme. The Settings sidebar takes you straight to the right section.
+- **Your mixes on Home.** Expand the mix column or browse recommendations, likes and recently played tracks in their own shelves.
+- **Volume and speed per track.** Tempo remembers your preferences and can draw waveforms from local and YouTube Music audio.
+- **A listening report for each playlist.** Open the graph on a local album, artist or playlist page. The diagnostics panel in About checks music services and other connections.
 
 <details>
-<summary><strong>Explore the 1.5 update in pictures</strong></summary>
+<summary><strong>See the 1.6 update in pictures</strong></summary>
 
-![Tempo 1.5.0 — visual changelog in Russian](docs/design/changelog-1.5.0/tempo-1.5.0-changelog.webp)
+![Tempo 1.6.0](docs/design/changelog-1.6.0/tempo-1.6.0-changelog.webp)
 
 </details>
 
-[What’s new in 1.5.0](docs/releases/v1.5.0.md) · [Download Tempo](https://github.com/GLIPIYT/tempo-player/releases/latest)
+[What’s new in 1.6.0](docs/releases/v1.6.0.md) · [Download Tempo](https://github.com/GLIPIYT/tempo-player/releases/latest)
 
 ## What Tempo brings together
 
