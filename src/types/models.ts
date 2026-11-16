@@ -369,6 +369,11 @@ export interface ListeningPeriodStats {
   topArtist: ListeningPeriodTopArtist | null
 }
 
+export interface ListeningScope {
+  kind: 'track' | 'artist' | 'album' | 'playlist'
+  id: number
+}
+
 export interface StatsSummary {
   totalMinutes: number
   plays: number

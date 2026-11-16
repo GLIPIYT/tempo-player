@@ -68,6 +68,7 @@ export interface AppSettings {
     cacheOnline: boolean
     searchCached: boolean
     capitalizeLines: boolean
+    whiteTextInLightTheme: boolean
     /** Refine line timing from the audio signal without downloading a model. */
     vocalAnalysisEnabled: boolean
     /** Explicit opt-in to known-text word alignment; only used in word-fill mode. */
@@ -171,6 +172,7 @@ export const defaultSettings: AppSettings = {
     cacheOnline: true,
     searchCached: false,
     capitalizeLines: true,
+    whiteTextInLightTheme: false,
     vocalAnalysisEnabled: true,
     whisperWordTimingsEnabled: false,
     enlargeWhenCollapsed: true,
@@ -255,6 +257,7 @@ function normalizeLyrics(value: Partial<AppSettings['lyrics']>): AppSettings['ly
     ...stored,
     searchCached: stored.searchCached === true,
     capitalizeLines: stored.capitalizeLines !== false,
+    whiteTextInLightTheme: stored.whiteTextInLightTheme === true,
     alignment: value.alignment === 'center' || value.alignment === 'right' ? value.alignment : 'left',
     vocalAnalysisEnabled: typeof stored.vocalAnalysisEnabled === 'boolean'
       ? stored.vocalAnalysisEnabled : base.vocalAnalysisEnabled,

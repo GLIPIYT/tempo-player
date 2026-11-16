@@ -1324,9 +1324,13 @@ pub async fn get_listening_period(
     state: State<'_, AppState>,
     boundaries: Vec<i64>,
     reference_before: Option<i64>,
+    scope: Option<crate::models::ListeningScope>,
 ) -> Result<ListeningPeriodStats, String> {
     let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || db.get_listening_period(&boundaries, reference_before))
+    tauri::async_runtime::spawn_blocking(move || match scope {
+        Some(scope) => db.get_scoped_listening_period(&boundaries, reference_before, Some(scope)),
+        None => db.get_listening_period(&boundaries, reference_before),
+    })
         .await
         .map_err(|error| error.to_string())?
 }

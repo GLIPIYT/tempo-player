@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, type ReactElement } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
-import type { ActiveTheme, ThemeTokens } from '../types/theme'
+import type { ActiveTheme, CustomThemeMode, ThemeTokens } from '../types/theme'
 import { TOKEN_VARS } from '../types/theme'
 import type { AppSettings } from '../state/settings'
 import { useSettings } from '../state/settings'
@@ -63,12 +63,23 @@ function mix(a: Rgb, b: Rgb, t: number): Rgb {
   }
 }
 
-function setThemeMode(root: HTMLElement, background: Rgb | null): ThemeMode {
+function detectThemeMode(background: Rgb | null): ThemeMode {
   const luminance = background ? relLuminance(background) : 0
-  const mode = contrast(0, luminance) >= contrast(1, luminance) ? 'light' : 'dark'
+  return contrast(0, luminance) >= contrast(1, luminance) ? 'light' : 'dark'
+}
+
+function setThemeMode(root: HTMLElement, background: Rgb | null, preference?: CustomThemeMode): ThemeMode {
+  const mode = preference === 'light' || preference === 'dark' ? preference : detectThemeMode(background)
   if (root.dataset.themeMode !== mode) root.dataset.themeMode = mode
   if (root.style.colorScheme !== mode) root.style.colorScheme = mode
   return mode
+}
+
+function surfaceInMode(color: string, mode: ThemeMode): string {
+  const rgb = parseHex(color)
+  if (!rgb || detectThemeMode(rgb) === mode) return color
+  const base = mode === 'light' ? { r: 237, g: 240, b: 244 } : { r: 14, g: 17, b: 24 }
+  return toHex(mix(base, rgb, mode === 'light' ? 0.23 : 0.15))
 }
 
 function deriveText(bg: Rgb, mode: ThemeMode): string {
@@ -100,6 +111,7 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
     root.style.removeProperty('--t-text')
     root.style.removeProperty('--t-gradient-first')
     root.style.removeProperty('--t-gradient-second')
+    root.style.removeProperty('--t-gradient-light-tint')
   }
 
   if (isGradient) {
@@ -113,7 +125,13 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
     const normalized = normalizeGradientAnchors(anchors)
     const first = parseHex(normalized.first)!
     const second = parseHex(normalized.second)!
-    setThemeMode(root, preset ? parseHex(preset.tokens.bg) : mix(first, second, 0.5))
+    const gradientBackground = mix(first, second, 0.5)
+    const mode = setThemeMode(root, preset ? parseHex(preset.tokens.bg) : gradientBackground, custom?.mode)
+    if (custom && mode === 'light' && detectThemeMode(gradientBackground) === 'dark') {
+      root.style.setProperty('--t-gradient-light-tint', surfaceInMode(toHex(gradientBackground), mode))
+    } else {
+      root.style.removeProperty('--t-gradient-light-tint')
+    }
     root.style.setProperty('--t-gradient-first', normalized.first)
     root.style.setProperty('--t-gradient-second', normalized.second)
     const needsOutline = [normalized.first, normalized.second].some(whiteTextNeedsOutline)
@@ -151,18 +169,28 @@ export function applyTheme(active: ActiveTheme | null | undefined): void {
   const accent = safeColor(base?.accent, CUSTOM_DEFAULT_BASE.accent)
   const bg = safeColor(base?.background, CUSTOM_DEFAULT_BASE.background)
   const surface = safeColor(base?.surface, CUSTOM_DEFAULT_BASE.surface)
-  const bgRgb = parseHex(safeColor(overrides.bg, bg))
-  const mode = setThemeMode(root, bgRgb)
+  const effectiveBackground = safeColor(overrides.bg, bg)
+  const originalBackground = parseHex(effectiveBackground)
+  const mode = setThemeMode(root, originalBackground, custom.mode)
+  const adaptsSurfaces = mode !== detectThemeMode(originalBackground)
+  const renderedBackground = parseHex(adaptsSurfaces ? surfaceInMode(effectiveBackground, mode) : effectiveBackground)
+  const text = renderedBackground ? deriveText(renderedBackground, mode) : '#e8ebf2'
   root.style.setProperty('--t-base-accent', accent)
-  root.style.setProperty('--t-base-bg', bg)
-  root.style.setProperty('--t-base-surface', surface)
+  root.style.setProperty('--t-base-bg', adaptsSurfaces ? surfaceInMode(bg, mode) : bg)
+  root.style.setProperty('--t-base-surface', adaptsSurfaces ? surfaceInMode(surface, mode) : surface)
   const playBtn = safeColor(base?.playButton, '')
   if (playBtn !== '') root.style.setProperty('--t-base-play-btn', playBtn)
-  root.style.setProperty('--t-text', bgRgb ? deriveText(bgRgb, mode) : '#e8ebf2')
+  root.style.setProperty('--t-text', text)
   updateAccentOutline(overrides.accent ?? accent, overrides.accentStrong ?? accent)
   for (const k of TOKEN_KEYS) {
     const v = overrides[k]
-    if (v) root.style.setProperty(TOKEN_VARS[k], v)
+    if (!v) continue
+    const isSurface = k === 'bg' || k === 'bgElevated' || k === 'surface' || k === 'surfaceHover' || k === 'border'
+    const ink = k === 'text' || k === 'textMuted' ? parseHex(v) : null
+    const needsInk = ink !== null && renderedBackground !== null
+      && contrast(relLuminance(ink), relLuminance(renderedBackground)) < 4.5
+    root.style.setProperty(TOKEN_VARS[k], adaptsSurfaces && isSurface ? surfaceInMode(v, mode)
+      : adaptsSurfaces && needsInk ? text : v)
   }
 }
 

@@ -16,6 +16,7 @@ import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
 import CollectionPlayButton from '../components/common/CollectionPlayButton'
 import CollectionShuffleButton from '../components/common/CollectionShuffleButton'
+import CollectionStatisticsButton from '../components/common/CollectionStatisticsButton'
 import CacheBadge from '../soundcloud/CacheBadge'
 import CollectionAlbumGrid from '../components/common/CollectionAlbumGrid'
 import TrackList from '../components/common/TrackList'
@@ -173,8 +174,8 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
           ) : null}
         </>
       }
-      actions={
-        albums.length > 0 || (tracks.data?.length ?? 0) > 0 ? (
+      actions={<>
+        {(albums.length > 0 || (tracks.data?.length ?? 0) > 0) && (
           <>
             <CollectionPlayButton disabled={!artistTracks.length} onClick={playAll} />
             <CollectionFavoriteButton active={fav.data ?? false} onClick={() => {
@@ -183,8 +184,9 @@ export default function ArtistDetailPage({ artistId }: { artistId: number }) {
             <CollectionShuffleButton disabled={!artistTracks.length} onPlay={playAll} />
             <button type="button" className="collection-icon-action" title={t('Change image')} aria-label={t('Change image')} disabled={imageBusy || imageSearchBusy} onClick={openImagePicker}><ImagePlus size={19} /></button>
           </>
-        ) : undefined
-      }
+        )}
+        <CollectionStatisticsButton subject={{ kind: 'artist', id: artist.id, title: artist.name, coverPath: artist.imagePath }} />
+      </>}
     >
 
       <CollectionArtistTabs active={tab} onChange={setTab} tabs={[

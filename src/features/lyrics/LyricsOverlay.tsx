@@ -1156,7 +1156,8 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
   )
 
   return (
-    <div className="lyr-overlay" role="dialog" aria-modal="true" aria-label={t('Lyrics')}>
+    <div className="lyr-overlay" data-white-lyrics={settings.lyrics.whiteTextInLightTheme || undefined}
+      role="dialog" aria-modal="true" aria-label={t('Lyrics')}>
       <Backdrop coverPath={track?.coverPath ?? null} />
       <LyricsVisualizer coverPath={track?.coverPath ?? null} hasCurrentTrack={track !== null} />
       <button type="button" className={`lyr-restore-player${sideCollapsed ? ' is-visible' : ''}`} tabIndex={sideCollapsed ? 0 : -1} aria-hidden={!sideCollapsed} aria-label={t('Show player')} onClick={() => setSideCollapsed(false)}><ChevronRight size={19} /></button>

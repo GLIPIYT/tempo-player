@@ -20,6 +20,7 @@ import type {
   LibraryFolder,
   LrclibPublishRequest,
   ListeningPeriodStats,
+  ListeningScope,
   LyricsOverride,
   OnlineLyricsCandidateData,
   Playlist,
@@ -281,8 +282,12 @@ export const api = {
   clearCoversCache: () => invoke<void>('clear_covers_cache'),
   getHistory: (limit: number, offset: number) =>
     invoke<HistoryEntry[]>('get_history', { limit, offset }),
-  getListeningPeriod: (boundaries: number[], referenceBefore?: number) =>
-    invoke<ListeningPeriodStats>('get_listening_period', referenceBefore === undefined ? { boundaries } : { boundaries, referenceBefore }),
+  getListeningPeriod: (boundaries: number[], referenceBefore?: number, scope?: ListeningScope) =>
+    invoke<ListeningPeriodStats>('get_listening_period', {
+      boundaries,
+      ...(referenceBefore === undefined ? {} : { referenceBefore }),
+      ...(scope ? { scope } : {}),
+    }),
 
   setTaskbarProgress: (position: number, duration: number, playing: boolean) =>
     invoke<void>('set_taskbar_progress', { position, duration, playing }),

@@ -113,6 +113,31 @@ describe('applyTheme mode', () => {
     expect(properties.has('--t-text')).toBe(false)
   })
 
+  it('adapts the rendered palette for a forced mode without replacing the saved colour', () => {
+    const { root, properties } = mockThemeDocument()
+    const custom = { base: { ...CUSTOM_DEFAULT_BASE, background: '#f9eddc' }, overrides: {} }
+    applyTheme({ kind: 'custom', custom: { ...custom, mode: 'dark' } })
+    expect(root.dataset.themeMode).toBe('dark')
+    expect(properties.get('--t-base-bg')).not.toBe(custom.base.background)
+    expect(custom.base.background).toBe('#f9eddc')
+
+    applyTheme({ kind: 'custom', custom: { ...custom, mode: 'auto' } })
+    expect(root.dataset.themeMode).toBe('light')
+    expect(properties.get('--t-base-bg')).toBe(custom.base.background)
+  })
+
+  it('keeps dark gradient anchors when the renderer is forced into light mode', () => {
+    const { root, properties } = mockThemeDocument()
+    const custom = { base: CUSTOM_DEFAULT_BASE, overrides: {}, gradientAnchors: { first: '#141b26', second: '#30213c' } }
+    applyTheme({ kind: 'custom', custom: { ...custom, mode: 'light' } })
+    expect(root.dataset.themeMode).toBe('light')
+    expect(properties.get('--t-gradient-first')).toBe('#141b26')
+    expect(properties.get('--t-gradient-light-tint')).toBeDefined()
+    applyTheme({ kind: 'custom', custom: { ...custom, mode: 'auto' } })
+    expect(root.dataset.themeMode).toBe('dark')
+    expect(properties.has('--t-gradient-light-tint')).toBe(false)
+  })
+
   it.each([
     ['#fef2df', '#ffdbec', 'light'],
     ['#141b26', '#30213c', 'dark'],

@@ -363,6 +363,15 @@ pub struct ListeningPeriodStats {
     pub top_artist: Option<ListeningPeriodTopArtist>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "camelCase")]
+pub enum ListeningScope {
+    Track(i64),
+    Artist(i64),
+    Album(i64),
+    Playlist(i64),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatsSummary {

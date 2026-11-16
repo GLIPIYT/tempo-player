@@ -59,7 +59,7 @@ const PAGE_LABELS: Record<StartupPage, string> = {
 import ScanLine from '../components/common/ScanLine'
 import ConfirmModal from '../components/common/ConfirmModal'
 import { toast } from '../components/common/Toast'
-import type { ActiveTheme, CustomTheme, ThemeTokens } from '../types/theme'
+import type { ActiveTheme, CustomTheme, CustomThemeMode, ThemeTokens } from '../types/theme'
 import { TOKEN_VARS } from '../types/theme'
 import { CUSTOM_DEFAULT_BASE, PRESETS, getPreset } from '../theme/presets'
 import { applyTheme, parseHex, toHex } from '../theme/engine'
@@ -999,6 +999,7 @@ export default function SettingsPage() {
   const custom: CustomTheme =
     settings.theme.kind === 'custom'
       ? {
+          ...settings.theme.custom,
           base: { ...settings.theme.custom.base },
           overrides: { ...settings.theme.custom.overrides },
           ...(settings.theme.custom.gradientAnchors
@@ -1352,6 +1353,16 @@ export default function SettingsPage() {
           {settings.theme.kind === 'custom' ? (
             <Card defaultOpen title={t('Custom theme')} icon={Palette}>
               <div className="set-row">
+                <span className="set-row-label">{t('Theme mode')}</span>
+                <Segmented<CustomThemeMode> label={t('Theme mode')} value={custom.mode ?? 'auto'}
+                  options={[
+                    { value: 'auto', label: t('Auto detect') },
+                    { value: 'light', label: t('Light') },
+                    { value: 'dark', label: t('Dark') },
+                  ]}
+                  onChange={mode => updateCustom({ ...custom, mode })} />
+              </div>
+              <div className="set-row">
                 <span className="set-row-label">{t('Palette')}</span>
                 <Segmented<'solid' | 'gradient'>
                   value={custom.gradientAnchors ? 'gradient' : 'solid'}
@@ -1599,6 +1610,11 @@ export default function SettingsPage() {
         <>
           <SettingsLyricsPreview lyrics={settings.lyrics} />
           <Card defaultOpen title={t('Lyrics display')} icon={Captions}>
+            <div className="set-row">
+              <span className="set-row-label">{t('White text in light theme')}</span>
+              <SettingsSwitch checked={settings.lyrics.whiteTextInLightTheme} label={t('White text in light theme')}
+                onClick={() => update({ lyrics: { whiteTextInLightTheme: !settings.lyrics.whiteTextInLightTheme } })} />
+            </div>
             <div className="set-row">
               <span className="set-row-label">{t('Capitalize lyric lines')}</span>
               <SettingsSwitch checked={settings.lyrics.capitalizeLines} label={t('Capitalize lyric lines')}

@@ -3865,9 +3865,18 @@ impl Db {
         boundaries: &[i64],
         reference_before: Option<i64>,
     ) -> Result<ListeningPeriodStats, String> {
+        self.get_scoped_listening_period(boundaries, reference_before, None)
+    }
+
+    pub fn get_scoped_listening_period(
+        &self,
+        boundaries: &[i64],
+        reference_before: Option<i64>,
+        scope: Option<crate::models::ListeningScope>,
+    ) -> Result<ListeningPeriodStats, String> {
         validate_listening_period_boundaries(boundaries)?;
         validate_listening_period_reference(boundaries, reference_before)?;
-        self.with_conn(|conn| fetch_listening_period(conn, boundaries, reference_before))
+        self.with_conn(|conn| fetch_listening_period(conn, boundaries, reference_before, scope))
     }
 
     pub fn clear_history(&self) -> Result<u32, String> {
@@ -4747,7 +4756,23 @@ fn fetch_listening_period(
     conn: &Connection,
     boundaries: &[i64],
     reference_before: Option<i64>,
+    scope: Option<crate::models::ListeningScope>,
 ) -> Result<ListeningPeriodStats, String> {
+    use crate::models::ListeningScope;
+    let track_limit = if matches!(scope, Some(ListeningScope::Artist(_))) { 6 } else { 3 };
+    let (filter, entity_id) = match scope {
+        Some(ListeningScope::Track(id)) => ("AND t.id = ?", Some(id)),
+        Some(ListeningScope::Artist(id)) => ("AND t.artist_id = ?", Some(id)),
+        Some(ListeningScope::Album(id)) => ("AND t.album_id = ?", Some(id)),
+        Some(ListeningScope::Playlist(id)) => (
+            "AND t.id IN (SELECT track_id FROM playlist_tracks WHERE playlist_id = ?)",
+            Some(id),
+        ),
+        None => ("", None),
+    };
+    if entity_id.is_some_and(|id| id <= 0) {
+        return Err("invalid listening history entity".into());
+    }
     let mut buckets: Vec<ListeningPeriodBucket> = boundaries
         .windows(2)
         .map(|window| ListeningPeriodBucket {
@@ -4771,16 +4796,18 @@ fn fetch_listening_period(
     // accumulated duration belongs to this start-time bucket; its playback
     // span cannot be reconstructed from the history table.
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT h.track_id, h.played_at, h.listened_sec, h.completed, ar.id \
              FROM listening_history h \
              JOIN tracks t ON t.id = h.track_id \
              LEFT JOIN artists ar ON ar.id = t.artist_id \
-             WHERE h.played_at >= ?1 AND h.played_at < ?2 \
+             WHERE h.played_at >= ?1 AND h.played_at < ?2 {filter} \
              ORDER BY h.played_at ASC, h.id ASC",
-        )
+        ))
         .map_err(db_err)?;
-    let mut rows = stmt.query(params![boundaries[0], boundaries[boundaries.len() - 1]])
+    let mut rows = stmt.query(rusqlite::params_from_iter(
+        [boundaries[0], boundaries[boundaries.len() - 1]].into_iter().chain(entity_id)
+    ))
         .map_err(db_err)?;
     while let Some(row) = rows.next().map_err(db_err)? {
         let track_id = row.get::<_, i64>(0).map_err(db_err)?;
@@ -4826,8 +4853,8 @@ fn fetch_listening_period(
     let unique_tracks = i64::try_from(track_ranks.len()).unwrap_or(i64::MAX);
     let mut ranked_tracks: Vec<_> = track_ranks.into_iter().collect();
     ranked_tracks.sort_by(compare_listening_period_ranks);
-    let mut top_tracks = Vec::with_capacity(ranked_tracks.len().min(3));
-    for (track_id, rank) in ranked_tracks.into_iter().take(3) {
+    let mut top_tracks = Vec::with_capacity(ranked_tracks.len().min(track_limit));
+    for (track_id, rank) in ranked_tracks.into_iter().take(track_limit) {
         let sql = format!("SELECT {} FROM {} WHERE t.id = ?1", TRACK_COLUMNS, TRACK_FROM);
         if let Some(track) = conn
             .query_row(&sql, params![track_id], |row| {
@@ -4864,9 +4891,9 @@ fn fetch_listening_period(
 
     let previous_active_at = if let Some(reference) = reference_before {
         conn.query_row(
-            "SELECT MAX(h.played_at) FROM listening_history h \
-             JOIN tracks t ON t.id = h.track_id WHERE h.played_at >= 0 AND h.played_at < ?1",
-            params![reference],
+            &format!("SELECT MAX(h.played_at) FROM listening_history h \
+             JOIN tracks t ON t.id = h.track_id WHERE h.played_at >= 0 AND h.played_at < ?1 {filter}"),
+            rusqlite::params_from_iter(std::iter::once(reference).chain(entity_id)),
             |row| row.get::<_, Option<i64>>(0),
         )
         .map_err(db_err)?
@@ -6326,6 +6353,56 @@ mod tests {
         let daily_seconds = daily.iter().map(|day| day.minutes * 60.0).sum::<f64>();
         assert!((daily_seconds - 1129.0).abs() < 0.0001);
 
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn listening_period_scopes_filter_both_totals_and_previous_activity() {
+        use crate::models::ListeningScope;
+        let (db, dir) = test_db("listening_period_scopes");
+        let folder = db.add_library_folder(dir.to_str().unwrap()).unwrap();
+        let first = seed_track(&db, folder.id, &fixture_file(&dir, "first.mp3"), "First", "Band", Some("Album"), 180.0);
+        let second = seed_track(&db, folder.id, &fixture_file(&dir, "second.mp3"), "Second", "Band", Some("Other album"), 180.0);
+        let third = seed_track(&db, folder.id, &fixture_file(&dir, "third.mp3"), "Third", "Other band", None, 180.0);
+        for (track, old, current, seconds) in [(first, 110, 210, 10.0), (second, 190, 250, 20.0), (third, 195, 270, 30.0)] {
+            insert_period_history(&db, track, old, Some(seconds), true);
+            insert_period_history(&db, track, current, Some(seconds), false);
+        }
+        let track = db.get_tracks_by_ids(&[first]).unwrap().remove(0);
+        let playlist = db.create_playlist("Focus").unwrap();
+        db.playlist_add_track(playlist.id, first).unwrap();
+        db.playlist_add_track(playlist.id, third).unwrap();
+
+        for (scope, expected_plays, expected_total, expected_previous) in [
+            (ListeningScope::Track(first), 1, 10.0, 110),
+            (ListeningScope::Artist(track.artist_id.unwrap()), 2, 30.0, 190),
+            (ListeningScope::Album(track.album_id.unwrap()), 1, 10.0, 110),
+            (ListeningScope::Playlist(playlist.id), 2, 40.0, 195),
+        ] {
+            let stats = db.get_scoped_listening_period(&[200, 240, 300], Some(200), Some(scope)).unwrap();
+            assert_eq!(stats.plays, expected_plays);
+            assert_eq!(stats.total_listened_sec, expected_total);
+            assert_eq!(stats.previous_active_at, Some(expected_previous));
+        }
+        assert!(db.get_scoped_listening_period(&[200, 300], None, Some(ListeningScope::Track(0))).is_err());
+
+        let mut ranked = Vec::new();
+        for index in 1..=7 {
+            let name = format!("Ranked {index}");
+            let path = fixture_file(&dir, &format!("ranked-{index}.mp3"));
+            let id = seed_track(&db, folder.id, &path, &name, "Band", Some("Album"), 180.0);
+            insert_period_history(&db, id, 310, Some(index as f64), false);
+            ranked.push(id);
+        }
+        ranked.reverse();
+        for (scope, limit) in [
+            (ListeningScope::Artist(track.artist_id.unwrap()), 6),
+            (ListeningScope::Album(track.album_id.unwrap()), 3),
+        ] {
+            let stats = db.get_scoped_listening_period(&[300, 400], None, Some(scope)).unwrap();
+            assert!(stats.top_tracks.iter().map(|item| item.track.id).eq(ranked[..limit].iter().copied()));
+        }
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

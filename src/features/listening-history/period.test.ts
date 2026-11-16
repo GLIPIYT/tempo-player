@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { compareMetric, historyDateLabel, hourlyLine, interpolateAnimatedValue, listeningComparisonPeriod, listeningPeriod, previousListeningSelection, smoothHourlyLine } from './period'
+import { compareMetric, historyDateLabel, hourlyLine, interpolateAnimatedValue, listeningComparisonPeriod, listeningPeriod, previousListeningSelection, shiftListeningMonth, smoothHourlyLine } from './period'
+
+it('moves entity statistics by calendar month from a drill-down date', () => {
+  expect(shiftListeningMonth('2026-03-31', -1)).toBe('2026-02-01')
+  expect(shiftListeningMonth('2026-12-31', 1)).toBe('2027-01-01')
+})
 
 afterEach(() => vi.unstubAllEnvs())
 describe('listening calendar periods', () => {

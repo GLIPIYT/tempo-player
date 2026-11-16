@@ -14,6 +14,7 @@ import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
 import CollectionPlayButton from '../components/common/CollectionPlayButton'
 import CollectionShuffleButton from '../components/common/CollectionShuffleButton'
+import CollectionStatisticsButton from '../components/common/CollectionStatisticsButton'
 import EmptyState from '../components/common/EmptyState'
 import TrackList from '../components/common/TrackList'
 import { useT } from '../i18n'
@@ -71,8 +72,8 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
       title={album.title}
       byline={album.artistId != null ? <button type="button" onClick={() => navigate({ name: 'artist', id: album.artistId! })}><Users size={15} />{album.artistName ?? unknownArtist}<ArrowRight size={13} /></button> : <span>{album.artistName ?? unknownArtist}</span>}
       meta={<><span>{album.year ?? '—'}</span><span className="meta-dot">·</span><span>{count(tracks.length, 'track')}</span><span className="meta-dot">·</span><span>{fmtTime(tracks.reduce((sum, track) => sum + (track.durationSec ?? 0), 0))}</span></>}
-      actions={
-        tracks.length > 0 ? (
+      actions={<>
+        {tracks.length > 0 && (
           <>
             <CollectionPlayButton onClick={playAll} />
             <CollectionFavoriteButton active={fav.data ?? false} onClick={() => {
@@ -80,8 +81,9 @@ export default function AlbumDetailPage({ albumId }: { albumId: number }) {
             }} />
             <CollectionShuffleButton onPlay={playAll} />
           </>
-        ) : undefined
-      }
+        )}
+        <CollectionStatisticsButton subject={{ kind: 'album', id: album.id, title: album.title, coverPath: album.coverPath }} />
+      </>}
     >
 
       {tracks.length === 0 ? (

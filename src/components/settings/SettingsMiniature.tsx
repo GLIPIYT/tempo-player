@@ -23,6 +23,7 @@ export function SettingsMiniature({
   return (
     <div className="set-miniature" data-view={lyrics ? 'lyrics' : 'library'}
       data-player-hidden={playerHidden}
+      data-white-lyrics={lyrics?.whiteTextInLightTheme || undefined}
       data-alignment={lyrics?.alignment} data-fill={lyrics?.textFillMode}
       data-progress={lyrics?.fillEnabled} data-direction={lyrics?.progressDirection}
       data-clip-progress={lyrics?.progressClipToText}

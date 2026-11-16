@@ -24,7 +24,10 @@ export interface ThemePreset {
   }
 }
 
+export type CustomThemeMode = 'auto' | 'light' | 'dark'
+
 export interface CustomTheme {
+  mode?: CustomThemeMode
   base: {
     accent: string
     background: string

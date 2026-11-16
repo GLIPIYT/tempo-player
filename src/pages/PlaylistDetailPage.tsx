@@ -19,6 +19,7 @@ import CollectionArtwork from '../components/common/CollectionArtwork'
 import CollectionFavoriteButton from '../components/common/CollectionFavoriteButton'
 import CollectionPlayButton from '../components/common/CollectionPlayButton'
 import CollectionShuffleButton from '../components/common/CollectionShuffleButton'
+import CollectionStatisticsButton from '../components/common/CollectionStatisticsButton'
 import { openContextMenu, type ContextMenuItem } from '../components/common/ContextMenu'
 import EditorialDetailLayout from '../components/common/EditorialDetailLayout'
 import CacheBadge from '../soundcloud/CacheBadge'
@@ -314,6 +315,7 @@ export default function PlaylistDetailPage({ playlistId }: { playlistId: number 
         {playlist && <>
           <CollectionFavoriteButton active={playlist.pinned ?? false} onClick={() => void togglePin()} />
           <CollectionShuffleButton disabled={!tracks.length} onPlay={playAll} />
+          <CollectionStatisticsButton subject={{ kind: 'playlist', id: playlistId, title: displayName, coverPath: artworkPaths.find(Boolean) }} />
           <button type="button" className="collection-icon-action" aria-label={t('More')} title={t('More')} onClick={collectionMenu}><Ellipsis size={22} /></button>
         </>}
       </>}

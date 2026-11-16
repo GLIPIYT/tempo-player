@@ -365,6 +365,10 @@ html .set-page--sections .slider-row input[type='range']::-moz-range-thumb {
 .set-miniature[data-view='lyrics'] .set-miniature-body i:nth-child(4) { --set-mini-width: 70%; }
 .set-miniature[data-view='lyrics'] .set-miniature-body i:nth-child(5) { --set-mini-width: 53%; }
 .set-miniature[data-view='lyrics'] .set-miniature-body i.is-playing { opacity: .85; }
+html[data-theme-mode='light'] .set-miniature[data-white-lyrics] .set-miniature-body i {
+  background: #fff;
+  outline: 1px solid #141217;
+}
 .set-miniature[data-view='lyrics'][data-alignment='center'] .set-miniature-body i { justify-self: center; }
 .set-miniature[data-view='lyrics'][data-alignment='right'] .set-miniature-body i { justify-self: end; }
 .set-miniature[data-fill='words'] .set-miniature-body i.is-playing {

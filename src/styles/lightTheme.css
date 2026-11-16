@@ -49,7 +49,7 @@ html:root[data-theme-mode='light'].theme-custom {
 }
 
 html:root[data-theme-mode='light'].theme-custom.theme-gradient {
-  --light-tint: color-mix(in srgb, var(--t-gradient-first), var(--t-gradient-second));
+  --light-tint: var(--t-gradient-light-tint, color-mix(in srgb, var(--t-gradient-first), var(--t-gradient-second)));
   --light-accent-source: var(--t-gradient-first);
   --surface: color-mix(in srgb, var(--light-tint) 12%, var(--light-paper));
 }
@@ -383,6 +383,15 @@ html:root[data-theme-mode='light'] .lyr-overlay {
   --lyrics-ink: var(--text);
   --lyrics-pending-ink: 63%;
   --lyrics-shade-color: var(--light-veil);
+}
+
+html:root[data-theme-mode='light'] .lyr-overlay[data-white-lyrics] {
+  --lyrics-ink: #fff;
+}
+
+html:root[data-theme-mode='light'] .lyr-overlay[data-white-lyrics] :is(.lyr-line-text, .lyr-plain) {
+  -webkit-text-stroke: .8px #141217;
+  paint-order: stroke fill;
 }
 
 html:root[data-theme-mode='light'] :is(.lyr-bg-img, .lyr-bg-fallback) {

@@ -1,9 +1,7 @@
 import { memo, useEffect, useState } from 'react'
 import { FolderOpen } from 'lucide-react'
-import type { ListeningPeriodTopTrack, SourceId } from '../../types/models'
+import type { ListeningPeriodTopTrack, SourceId, Track } from '../../types/models'
 import Cover from '../../components/common/Cover'
-import { playerController } from '../../player/controller'
-import { trackToUnified } from '../../utils/unified'
 import { useT } from '../../i18n'
 import { historyHours } from './period'
 
@@ -19,40 +17,70 @@ function SourceIcon({ source }: { source: SourceId }) {
   </span>
 }
 
-export const FeaturedTracks = memo(function FeaturedTracks({ tracks, lang, minutes = false }: { minutes?: boolean; tracks: readonly ListeningPeriodTopTrack[]; lang: 'ru' | 'en' }) {
+interface TrackSlideProps {
+  minutes: boolean
+  lang: 'ru' | 'en'
+  onTrack: (track: Track) => void
+}
+
+function TrackSlide({ entry, outgoing, entering, lang, minutes, onTrack }: TrackSlideProps & {
+  entry: ListeningPeriodTopTrack; outgoing?: boolean; entering?: boolean
+}) {
   const t = useT()
-  const [rotation, setRotation] = useState({ index: 0, previous: -1 })
-  const [hovered, setHovered] = useState(false)
-  const [focused, setFocused] = useState(false)
-  useEffect(() => {
-    if (tracks.length < 2 || hovered || focused) return
-    const timer = window.setInterval(() => {
-      if (!document.hidden) setRotation(old => ({ previous: old.index, index: (old.index + 1) % tracks.length }))
-    }, 3000)
-    return () => clearInterval(timer)
-  }, [tracks.length, hovered, focused])
-  useEffect(() => {
-    if (rotation.previous < 0) return
-    const timer = window.setTimeout(() => setRotation(old => ({ ...old, previous: -1 })), 420)
-    return () => clearTimeout(timer)
-  }, [rotation.previous, rotation.index])
-  const current = tracks[rotation.index % Math.max(1, tracks.length)]
-  const previous = tracks[rotation.previous]
-  if (!current) return <span className="muted">—</span>
-  const item = (entry: ListeningPeriodTopTrack, outgoing: boolean) => <button key={entry.track.id} type="button"
-    className={`history-featured-track history-track-slide${outgoing ? ' is-leaving' : rotation.previous >= 0 ? ' is-entering' : ''}`}
+  return <button type="button"
+    className={`history-featured-track history-track-slide${outgoing ? ' is-leaving' : entering ? ' is-entering' : ''}`}
     aria-hidden={outgoing || undefined} tabIndex={outgoing ? -1 : undefined}
-    onClick={() => playerController.playTracks(tracks.map(entry => trackToUnified(entry.track)), tracks.indexOf(entry))}>
-    <span className="history-track-art"><Cover path={entry.track.coverPath} label={entry.track.title} size={54} /></span>
+    onClick={() => onTrack(entry.track)}>
+    <span className="history-track-art"><Cover path={entry.track.coverPath} label={entry.track.title} size={54}
+      youtubeVideoId={entry.track.source === 'youtube' ? entry.track.externalId : undefined} /></span>
     <span className="history-track-copy">
       <span className="history-track-title"><strong>{entry.track.title}</strong><SourceIcon source={entry.track.source} /></span>
       <small>{entry.track.artistName ?? t('Unknown artist')}</small>
       <em>{minutes ? (entry.listenedSec / 60).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US', { maximumFractionDigits: 2 }) : historyHours(entry.listenedSec, lang)} {minutes ? t('Minutes') : lang === 'ru' ? 'ч' : 'h'} · {entry.playCount} {t('plays')}</em>
     </span>
   </button>
-  return <div className="history-track-rotation" onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
-    onFocus={() => setFocused(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false) }}>
-    {previous && item(previous, true)}
-    {item(current, false)}
-  </div>
+}
+
+function featuredPools<T>(tracks: readonly T[], paired: boolean): readonly (readonly T[])[] {
+  if (!paired || tracks.length < 2) return [tracks.slice(0, 3)]
+  if (tracks.length === 2) return [[tracks[0]], [tracks[1]]]
+  // The shorter pair shares a loop so the third track can move into the first slot.
+  if (tracks.length === 3) return [[tracks[0], tracks[2], tracks[1]], [tracks[2], tracks[1], tracks[0]]]
+  const ranked = tracks.slice(0, 6)
+  return [ranked.filter((_, index) => index % 2 === 0), ranked.filter((_, index) => index % 2 === 1)]
+}
+
+export const FeaturedTracks = memo(function FeaturedTracks({ tracks, paired = false, ...props }: TrackSlideProps & {
+  tracks: readonly ListeningPeriodTopTrack[]; paired?: boolean
+}) {
+  const t = useT()
+  const [rotation, setRotation] = useState({ step: 0, transitioning: false })
+  const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const pools = featuredPools(tracks, paired)
+  const rotating = pools.some(pool => pool.length > 1)
+  useEffect(() => {
+    if (!rotating || hovered || focused) return
+    const timer = window.setInterval(() => {
+      if (!document.hidden) setRotation(old => ({ step: old.step + 1, transitioning: true }))
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [rotating, hovered, focused])
+  useEffect(() => {
+    if (!rotation.transitioning) return
+    const timer = window.setTimeout(() => setRotation(old => ({ ...old, transitioning: false })), 420)
+    return () => window.clearTimeout(timer)
+  }, [rotation.step, rotation.transitioning])
+  return pools.map((pool, slot) => {
+    const current = pool[rotation.step % pool.length]
+    const previous = rotation.transitioning && pool.length > 1 ? pool[(rotation.step - 1) % pool.length] : undefined
+    return <div className="history-favorite" key={slot}>
+      <span className="history-favorite-label">{t(slot ? 'More most-listened tracks' : 'Most-listened track')}</span>
+      <div className="history-track-rotation" onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
+        onFocus={() => setFocused(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false) }}>
+        {previous && <TrackSlide key={previous.track.id} entry={previous} outgoing {...props} />}
+        {current ? <TrackSlide key={current.track.id} entry={current} entering={Boolean(previous)} {...props} /> : <span className="muted">—</span>}
+      </div>
+    </div>
+  })
 })

@@ -29,6 +29,13 @@ function parseLocalDate(dateKey: string): Date {
   return date
 }
 
+export function shiftListeningMonth(dateKey: string, offset: number): string {
+  const date = parseLocalDate(dateKey)
+  date.setDate(1)
+  date.setMonth(date.getMonth() + offset)
+  return localDateKey(date)
+}
+
 /** Local calendar boundaries, not fixed 24-hour approximations across DST. */
 export function listeningPeriod(selection: ListeningSelection) {
   const date = parseLocalDate(selection.date)
