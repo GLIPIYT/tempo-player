@@ -135,9 +135,17 @@ pub(super) fn prepare_input(
                 let seek_started = Instant::now();
                 let seek_result = decoder.try_seek(Duration::from_secs_f64(position));
                 log_startup_timing("decoder_initial_seek", "local", seek_started);
-                if seek_result.is_ok() && decoder.channels().get() as usize <= LOCAL_MAX_CHANNELS {
-                    duration_sec = valid_duration(spec.duration_sec).or(decoder_duration);
+                let mut local_seekable = seek_result.is_ok() && decoder.channels().get() as usize <= LOCAL_MAX_CHANNELS;
+                if local_seekable {
                     loudness.set_file(&path);
+                    let started = Instant::now();
+                    if loudness.measure_intro(&mut decoder) {
+                        local_seekable = decoder.try_seek(Duration::from_secs_f64(position)).is_ok();
+                        log_startup_timing("normalization_intro", "local", started);
+                    }
+                }
+                if local_seekable {
+                    duration_sec = valid_duration(spec.duration_sec).or(decoder_duration);
                     let worker_started = Instant::now();
                     let (local_source, control, status) =
                         open_local_buffered(decoder, position, loudness.clone())?;

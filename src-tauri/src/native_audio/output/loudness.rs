@@ -88,10 +88,41 @@ impl TrackLoudness {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .find_map(|(cached, gain)| (*cached == key).then_some(*gain));
-        if let Some(gain) = in_memory.or_else(|| self.read_gain(&key.cache_key("file"))) {
+        let measured = in_memory.or_else(|| self.read_gain(&key.cache_key("file")));
+        if let Some(gain) = measured {
             self.file_gain.store(gain.to_bits(), Ordering::Relaxed);
         }
+        #[cfg(debug_assertions)]
+        if self.enabled.load(Ordering::Relaxed) {
+            eprintln!("[tempo loudness] file_cache_hit={}", measured.is_some());
+        }
         let _ = self.file.set(key);
+    }
+
+    /// Measure a short prefix off the output thread. The caller rewinds the
+    /// decoder so the first audible frame already uses the provisional gain.
+    pub fn measure_intro<D>(self: &Arc<Self>, decoder: &mut D) -> bool
+    where
+        D: Source<Item = f32>,
+    {
+        if !self.enabled.load(Ordering::Relaxed) || self.has_file_gain() || self.live_gain().is_some() {
+            return false;
+        }
+        let channels = decoder.channels().get() as usize;
+        let rate = decoder.sample_rate().get();
+        let mut meter = LiveLoudness::new(self.clone(), channels as u32, rate);
+        let mut frame = vec![0.0; channels];
+        let frames = rate as usize * (LIVE_INITIAL_MS + 10) / 1000;
+        let mut consumed = false;
+        for _ in 0..frames {
+            for sample in &mut frame {
+                let Some(value) = decoder.next() else { return consumed };
+                *sample = value;
+                consumed = true;
+            }
+            meter.observe(&frame);
+        }
+        consumed
     }
 
     pub fn set_stream(&self, key: Option<String>) {
@@ -526,6 +557,29 @@ mod tests {
         let changed = TrackLoudness::new(true, Some(db));
         changed.set_file(file.path());
         assert_eq!(changed.linear_gain(), 1.0);
+    }
+
+    #[test]
+    fn cold_loud_intro_is_normalized_before_the_first_playback_sample() {
+        let file = test_tone_file(0.9);
+        let mut decoder = Decoder::builder()
+            .with_data(BufReader::new(File::open(file.path()).unwrap()))
+            .with_byte_len(file.as_file().metadata().unwrap().len())
+            .with_seekable(true)
+            .build()
+            .unwrap();
+        let target = TrackLoudness::new(true, None);
+        let start = std::time::Duration::ZERO;
+        let opening = decoder.by_ref().take(16).collect::<Vec<_>>();
+        decoder.try_seek(start).unwrap();
+        target.set_file(file.path());
+        assert_eq!(target.linear_gain(), 1.0);
+
+        assert!(target.measure_intro(&mut decoder));
+        assert!(target.linear_gain() < 0.5);
+        assert!(!target.has_file_gain());
+        decoder.try_seek(start).unwrap();
+        assert_eq!(decoder.by_ref().take(16).collect::<Vec<_>>(), opening);
     }
 
     #[test]

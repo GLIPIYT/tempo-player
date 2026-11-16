@@ -1,22 +1,27 @@
-/* Tempo's light materials. Keep artwork and custom color selections intact. */
+/* Light surfaces use the selected theme's hue at different depths. */
 html[data-theme-mode='light'] {
-  --light-paper: #e9edf2;
+  --light-paper: color-mix(in srgb, var(--light-tint) 42%, #eeefef);
   --light-tint: var(--bg);
   --light-accent-source: var(--accent);
-  --light-action-ink: #182231;
-  --light-action-fill: color-mix(in srgb, var(--light-accent-source) 27%, var(--light-paper));
-  --light-play-fill: color-mix(in srgb, var(--play-btn, var(--light-accent-source)) 35%, var(--light-paper));
-  --light-control-bg: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
-  --light-veil: color-mix(in srgb, var(--light-paper) 88%, var(--light-tint));
-  --light-divider: color-mix(in srgb, var(--text) 15%, transparent);
-  --light-hover: color-mix(in srgb, var(--text) 7%, transparent);
-  --light-shadow: 0 16px 44px #24365125;
+  --light-action-ink: #182029;
+  --light-action-fill: color-mix(in srgb, var(--light-accent-source) 43%, #f7f6f4);
+  --light-play-fill: color-mix(in srgb, var(--play-btn, var(--light-accent-source)) 46%, #f9f8f6);
+  --light-frame: color-mix(in srgb, var(--light-accent-source) 10%, var(--bg-elevated));
+  --light-transport: color-mix(in srgb, var(--light-accent-source) 14%, var(--bg-elevated));
+  --light-control-bg: color-mix(in srgb, var(--light-frame) 88%, transparent);
+  --light-artwork-ink: #f8f6f4;
+  --light-artwork-shade: color-mix(in srgb, var(--light-action-ink) 81%, var(--light-accent-source));
+  --light-veil: color-mix(in srgb, var(--light-paper) 66%, var(--light-tint));
+  --light-divider: color-mix(in srgb, var(--light-accent-source) 24%, transparent);
+  --light-hover: color-mix(in srgb, var(--light-accent-source) 11%, transparent);
+  --light-selected: color-mix(in srgb, var(--light-accent-source) 19%, transparent);
+  --light-shadow: 0 16px 44px color-mix(in srgb, var(--light-accent-source) 24%, transparent);
   --light-text-shadow: 0 0 2px var(--bg-elevated), 0 1px 3px var(--bg-elevated);
-  --detail-backdrop-color: var(--bg-elevated);
-  --profile-wash-color: var(--bg);
+  --detail-backdrop-color: var(--light-frame);
+  --profile-wash-color: var(--light-transport);
   --profile-overlay-ink: var(--text);
-  --artwork-control-bg: var(--bg-elevated);
-  --artist-art-shade: var(--bg-elevated);
+  --artwork-control-bg: var(--light-artwork-shade);
+  --artist-art-shade: var(--light-artwork-shade);
   --light-panel-text: var(--text);
   --light-panel-muted: var(--text-muted);
   --light-panel-border: var(--border);
@@ -29,35 +34,61 @@ html[data-theme-mode='light'] {
 html:root[data-theme-mode='light'].theme-custom {
   --light-tint: var(--t-base-bg, #e9eef5);
   --light-accent-source: var(--t-base-accent, #6c8cff);
-  --bg: color-mix(in srgb, var(--light-tint) 47%, var(--light-paper));
-  --bg-elevated: color-mix(in srgb, var(--light-tint) 13%, var(--light-paper));
-  --surface: color-mix(in srgb, var(--t-base-surface, var(--light-tint)) 8%, var(--light-paper));
-  --surface-hover: color-mix(in srgb, var(--surface) 92%, #344563);
-  --border: color-mix(in srgb, var(--bg-elevated) 79%, #506481);
+  --bg: color-mix(in srgb, var(--light-tint) 36%, var(--light-paper));
+  --bg-elevated: color-mix(in srgb, var(--light-paper) 81%, var(--light-accent-source));
+  --surface: color-mix(in srgb, var(--t-base-surface, var(--light-tint)) 14%,
+    color-mix(in srgb, var(--light-paper) 94%, var(--light-accent-source)));
+  --surface-hover: color-mix(in srgb, var(--surface) 83%, var(--light-accent-source));
+  --border: color-mix(in srgb, var(--surface) 74%, var(--accent-strong));
   --text: var(--t-text, #182231);
-  --text-muted: #425065;
-  --accent: color-mix(in srgb, var(--light-accent-source) 28%, #243452);
-  --accent-strong: color-mix(in srgb, var(--light-accent-source) 21%, #182b4b);
-  --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
+  --text-muted: color-mix(in srgb, var(--light-accent-source) 23%, var(--text));
+  --accent: color-mix(in srgb, var(--light-accent-source) 53%, var(--light-action-ink));
+  --accent-strong: color-mix(in srgb, var(--light-accent-source) 39%, var(--light-action-ink));
+  --accent-soft: var(--light-selected);
   --danger: #a5223e;
 }
 
 html:root[data-theme-mode='light'].theme-custom.theme-gradient {
   --light-tint: color-mix(in srgb, var(--t-gradient-first), var(--t-gradient-second));
   --light-accent-source: var(--t-gradient-first);
-  --surface: color-mix(in srgb, var(--light-tint) 7%, var(--light-paper));
+  --surface: color-mix(in srgb, var(--light-tint) 12%, var(--light-paper));
 }
 
 html[data-theme-mode='light'].theme-gradient {
   --light-action-fill: linear-gradient(110deg,
-    color-mix(in srgb, var(--t-gradient-first) 34%, var(--light-paper)),
-    color-mix(in srgb, var(--t-gradient-second) 34%, var(--light-paper)));
+    color-mix(in srgb, var(--t-gradient-first) 43%, #f7f6f4),
+    color-mix(in srgb, var(--t-gradient-second) 43%, #f7f6f4));
   --light-play-fill: var(--light-action-fill);
-  --range-start: color-mix(in srgb, var(--t-gradient-first) 42%, #263b60);
-  --range-end: color-mix(in srgb, var(--t-gradient-second) 42%, #263b60);
+  --range-start: color-mix(in srgb, var(--t-gradient-first) 58%, var(--light-action-ink));
+  --range-end: color-mix(in srgb, var(--t-gradient-second) 58%, var(--light-action-ink));
   --light-range-start: var(--range-start);
   --light-range-end: var(--range-end);
   --tempo-gradient-text: linear-gradient(100deg, var(--range-start), var(--range-end));
+}
+
+html:root[data-theme-mode='light'] :is(.sidebar, .titlebar, .topbar) {
+  background: var(--light-frame);
+}
+
+html:root[data-theme-mode='light'] .playerbar {
+  background: var(--light-transport);
+}
+
+html:root[data-theme-mode='light'].has-bg .sidebar {
+  background: color-mix(in srgb, var(--light-frame) 62%, transparent);
+}
+
+html:root[data-theme-mode='light'].has-bg :is(.titlebar, .topbar) {
+  background: color-mix(in srgb, var(--light-frame) 55%, transparent);
+}
+
+html:root[data-theme-mode='light'].has-bg .playerbar {
+  background: color-mix(in srgb, var(--light-transport) 70%, transparent);
+}
+
+html:root[data-theme-mode='light'] :is(.side-item.is-active, .fav-item.is-active, .set-nav-item.is-active,
+  .set-nav-child[aria-current='location'], .seg-btn.is-active) {
+  background: var(--light-selected);
 }
 
 html:root[data-theme-mode='light'].theme-gradient .pb-volume {
@@ -75,7 +106,7 @@ html[data-theme-mode='light'] :is(.bg-layer-dim, .set-bg-preview-dim) {
 }
 
 html[data-theme-mode='light'].has-bg .app-root {
-  --text-muted: color-mix(in srgb, var(--light-panel-muted) 62%, #0b1527);
+  --text-muted: color-mix(in srgb, var(--light-panel-muted) 74%, var(--light-action-ink));
 }
 
 html[data-theme-mode='light'].has-bg .app-content {
@@ -84,6 +115,20 @@ html[data-theme-mode='light'].has-bg .app-content {
 
 html:root[data-theme-mode='light'].has-bg .home-mix-stage--b {
   backdrop-filter: blur(8px);
+}
+
+html:root[data-theme-mode='light'] .home-mix-feature--b .home-mix-stage--b {
+  background:
+    radial-gradient(ellipse at 75% 15%, var(--light-selected), transparent 62%),
+    linear-gradient(112deg, color-mix(in srgb, var(--light-frame) 84%, transparent),
+      color-mix(in srgb, var(--surface) 76%, transparent));
+}
+
+html:root[data-theme-mode='light'].theme-gradient .home-mix-feature--b .home-mix-stage--b {
+  background:
+    radial-gradient(ellipse at 74% 15%, color-mix(in srgb, var(--t-gradient-second) 27%, transparent), transparent 61%),
+    linear-gradient(112deg, color-mix(in srgb, var(--t-gradient-first) 28%, var(--bg-elevated)),
+      color-mix(in srgb, var(--t-gradient-second) 26%, var(--surface)));
 }
 
 html:root[data-theme-mode='light'] :is(.mini-pill, .mini-card) {
@@ -205,27 +250,21 @@ html:root[data-theme-mode='light'] .pf-avatar-fallback {
   background: var(--light-control-bg);
 }
 
-html:root[data-theme-mode='light'] .artists-featured-copy {
-  color: var(--text);
-}
-
-html:root[data-theme-mode='light'] .artists-featured-copy > small {
-  color: var(--text-muted);
-}
-
-html:root[data-theme-mode='light'] .artists-featured-copy > small.artists-featured-label {
-  color: var(--text);
-}
-
 html:root[data-theme-mode='light'] :is(.artists-featured-label, .home-recommendation-cache, .collection-art-count,
   .album-wall-track-count, .collection-playlist-card-actions .collection-icon-action, .collection-album-favorite,
-  .collection-detail .collection-art-zoom, .pf-track-art > i, .pf-avatar-edit, .rail-badge, .rail-rank) {
-  color: var(--text);
-  border-color: var(--light-divider);
+  .collection-detail .collection-art-zoom, .pf-track-art > i, .pf-avatar-edit) {
+  color: var(--light-artwork-ink);
+  border-color: color-mix(in srgb, var(--light-artwork-ink) 25%, transparent);
+}
+
+html:root[data-theme-mode='light'] :is(.collection-playlist-card-actions .collection-icon-action,
+  .collection-album-favorite).is-active {
+  color: color-mix(in srgb, var(--light-accent-source) 41%, var(--light-artwork-ink));
 }
 
 html:root[data-theme-mode='light'] :is(.rail-badge, .rail-rank) {
   background: var(--light-action-fill);
+  color: var(--light-action-ink);
 }
 
 html:root[data-theme-mode='light'] :is(.home-recommendation-cache:hover,
