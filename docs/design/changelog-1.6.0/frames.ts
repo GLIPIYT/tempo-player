@@ -11,7 +11,28 @@ import releaseNotes from '/docs/releases/v1.5.1.md?raw'
 const frame = new URLSearchParams(location.search).get('frame') ?? 'home'
 const tracks = fixtureTracks
 const lyricsTrack = fixtureTracks.find(track => track.id === showcase.lyricClip.trackId)
-const firstTrack = trackToUnified(frame === 'lyrics-view' && lyricsTrack ? lyricsTrack : tracks[0])
+const demoLines = [
+  'В окнах медленно гаснет свет',
+  'Мы идём по знакомым улицам',
+  'Город прячет вчерашний след',
+  'И шаги становятся музыкой',
+  'До утра остаётся час',
+  'Слышишь этот город?',
+  'Этот свет на двоих у нас',
+  'И дорога выводит к морю',
+  'Пусть усталый трамвай уснёт',
+  'Первый луч заполняет крыши',
+  'Если ветер тебя позовёт',
+  'Я останусь чуть ближе, слышишь',
+]
+const demoTrack = {
+  ...(lyricsTrack ?? tracks[0]),
+  title: 'Свет в окнах',
+  artistName: 'Демо Tempo',
+  durationSec: 116,
+  coverPath: fixtureTracks.find(track => track.id === 471)?.coverPath ?? lyricsTrack?.coverPath,
+}
+const firstTrack = trackToUnified(frame === 'lyrics-view' ? demoTrack : tracks[0])
 const darkCustom = {
   kind: 'custom',
   custom: {
@@ -21,7 +42,7 @@ const darkCustom = {
     gradientAnchors: { first: '#a898d3', second: '#ddb2bb' },
   },
 }
-const theme = frame === 'custom' ? darkCustom : { kind: 'preset', presetId: 'lilac-light' }
+const theme = frame === 'custom' ? darkCustom : { kind: 'preset', presetId: frame === 'hero' ? 'violet' : 'lilac-light' }
 const start = ({
   library: 'library', track: 'library', albums: 'albums', album: 'albums',
   playlists: 'playlists', playlist: 'playlists', stats: 'playlists',
@@ -31,7 +52,7 @@ const storage = new Map([['tempo.settings.v1', JSON.stringify({
   profile: { ...fixtureIdentity, onboarded: true },
   audio: { normalize: true, crossfadeSec: 3 },
   player: { waveform: true },
-  lyrics: { whiteTextInLightTheme: frame === 'custom' || frame === 'lyrics-view', textFillMode: 'words' },
+  lyrics: { whiteTextInLightTheme: frame === 'custom' || frame === 'lyrics-view', textFillMode: 'words', textSizePx: 31 },
   visualizer: { style: 'bars', bars: 36, useThemeColor: true },
   lyricsVisualizer: { style: 'wave', bars: 64, useThemeColor: true },
 })]])
@@ -46,7 +67,7 @@ const callbacks = new Map()
 let callbackId = 0
 const preferences = { volume: .71, playbackRate: .93, savedVolume: .71, savedPlaybackRate: .93 }
 const audio = {
-  currentTrack: firstTrack, queue: [firstTrack], queueIndex: 0, position: frame === 'lyrics-view' ? 15.1 : 42,
+  currentTrack: firstTrack, queue: [firstTrack], queueIndex: 0, position: frame === 'lyrics-view' ? 50.5 : 42,
   duration: firstTrack.durationSec ?? 180, isPlaying: false,
   volume: .71, globalVolume: .8, playbackRate: .93, globalPlaybackRate: 1,
   preservePitch: true, repeat: 'off', shuffle: false, buffering: false, preparing: false,
@@ -121,8 +142,11 @@ const state = {
   list_saved_backgrounds: fixtureAlbums.slice(0, 5).map(item => item.coverPath).filter(Boolean),
   get_background_provider_status: [],
   get_lyrics_override: frame === 'lyrics-view' ? {
-    provider: 'manual', sourceArtist: lyricsTrack?.artistName ?? null, sourceTitle: lyricsTrack?.title ?? null,
-    lrc: showcase.lyricClip.lines.map((line, index) => `[00:${index === 0 ? '08' : '22'}.00]${line}`).join('\n'),
+    provider: 'manual', sourceArtist: demoTrack.artistName, sourceTitle: demoTrack.title,
+    lrc: demoLines.map((line, index) => {
+      const time = index * 9 + 4
+      return `[0${Math.floor(time / 60)}:${String(time % 60).padStart(2, '0')}.00]${line}`
+    }).join('\n'),
     offsetMs: 0, updatedAt: 0, isActive: true,
   } : null,
   lyrics_analysis_audio_identity: null,
@@ -200,7 +224,7 @@ const settingsFrames = {
   network: ['about', 'service-status'],
 }
 
-if (frame === 'home') {
+if (frame === 'home' || frame === 'hero') {
   const { recommendationService } = await import('/src/features/recommendations/service.ts')
   const recommendationPreview = {
     ...recommendationService.getSnapshot(),
