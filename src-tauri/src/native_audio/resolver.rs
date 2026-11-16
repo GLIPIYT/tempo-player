@@ -83,6 +83,16 @@ pub fn prepare_track(
         )
     };
 
+    if source == "youtube" && track.get("coverPath").and_then(Value::as_str).is_none_or(|path| path.trim().is_empty()) {
+        let saved_cover = track.get("dbId").and_then(Value::as_i64)
+            .and_then(|id| db.get_tracks_by_ids(&[id]).ok())
+            .and_then(|rows| rows.into_iter().next())
+            .and_then(|row| row.cover_path);
+        if let (Some(artwork), Some(object)) = (saved_cover, track.as_object_mut()) {
+            object.insert("coverPath".into(), json!(artwork));
+        }
+    }
+
     let preserved_path = (!force_soundcloud_ytdlp || source != "soundcloud")
         .then(|| track.get("localPath").and_then(Value::as_str))
         .flatten()
@@ -93,6 +103,8 @@ pub fn prepare_track(
         SourceSpec {
             location: path.to_string_lossy().into_owned(),
             duration_sec: duration,
+            loudness_db: db.clone(),
+            stream_loudness_key: None,
         }
     } else {
         match source.as_str() {
@@ -128,6 +140,8 @@ pub fn prepare_track(
                 SourceSpec {
                     location: path.to_string_lossy().into_owned(),
                     duration_sec: duration,
+                    loudness_db: db.clone(),
+                    stream_loudness_key: None,
                 }
             }
             "soundcloud" => {
@@ -240,6 +254,11 @@ pub fn prepare_track(
                 SourceSpec {
                     location,
                     duration_sec: resolved_duration,
+                    loudness_db: db.clone(),
+                    stream_loudness_key: Some(format!(
+                        "stream:1:soundcloud:{source_id}:{}",
+                        resolved_duration.map(|seconds| seconds.round() as u64).unwrap_or(0)
+                    )),
                 }
             }
             "youtube" => {
@@ -309,6 +328,9 @@ pub fn prepare_track(
                     .unwrap_or_default()
                     .to_string();
                 let mut final_duration = duration;
+                let mut artwork = track.get("coverPath").and_then(Value::as_str)
+                    .filter(|value| value.starts_with("https://"))
+                    .map(str::to_owned);
                 if artist.trim().is_empty() || album.trim().is_empty() {
                     let metadata_started = Instant::now();
                     let extra = crate::ytdlp::resolve_one(&settings.ytdlp_path, &bin_dir, &safe);
@@ -323,12 +345,9 @@ pub fn prepare_track(
                         if let Some(value) = extra.duration_ms.filter(|value| *value > 0) {
                             final_duration = Some(value as f64 / 1000.0);
                         }
+                        artwork = artwork.or(extra.thumbnail_url);
                     }
                 }
-                let artwork = track
-                    .get("coverPath")
-                    .and_then(Value::as_str)
-                    .filter(|value| value.starts_with("https://"));
                 let size = std::fs::metadata(&path).ok().map(|meta| meta.len() as i64);
                 let db_id = db.upsert_yt_track(
                     &safe,
@@ -336,7 +355,7 @@ pub fn prepare_track(
                     &artist,
                     &album,
                     (final_duration.unwrap_or(0.0).clamp(0.0, 604_800.0) * 1000.0).round() as i64,
-                    artwork,
+                    artwork.as_deref(),
                     size,
                 )?;
                 let _ = db.mark_cached_audio_path("youtube", &safe, &path)?;
@@ -353,11 +372,16 @@ pub fn prepare_track(
                     );
                     object.insert("album".into(), json!((!album.is_empty()).then_some(album)));
                     object.insert("durationSec".into(), json!(final_duration));
+                    if let Some(artwork) = artwork {
+                        object.insert("coverPath".into(), json!(artwork));
+                    }
                 }
                 let _ = app.emit(crate::soundcloud_store::LIBRARY_CHANGED_EVENT, safe);
                 SourceSpec {
                     location: path.to_string_lossy().into_owned(),
                     duration_sec: final_duration,
+                    loudness_db: db.clone(),
+                    stream_loudness_key: None,
                 }
             }
             other => return Err(format!("unsupported audio source: {other}")),

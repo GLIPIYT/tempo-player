@@ -2084,6 +2084,7 @@ pub async fn ytdlp_enrich(
                         artist: entry.artist.clone(),
                         album: entry.album.clone(),
                         duration_ms: entry.duration_ms,
+                        thumbnail_url: None,
                     },
                 );
             }

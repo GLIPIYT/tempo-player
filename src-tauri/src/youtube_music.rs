@@ -394,15 +394,7 @@ fn response_thumbnails(value: Option<&Value>) -> Vec<String> {
     value
         .and_then(|value| value.get("thumbnails"))
         .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .rev()
-                .filter_map(|item| item.get("url").and_then(Value::as_str))
-                .filter(|url| url.starts_with("https://"))
-                .map(str::to_string)
-                .collect()
-        })
+        .map(|items| crate::ytdlp::ranked_track_thumbnails(items))
         .unwrap_or_default()
 }
 
@@ -711,18 +703,7 @@ fn page_type(run: &Value) -> Option<&str> {
 }
 
 fn thumbnails(row: &Value) -> Vec<String> {
-    row.pointer("/thumbnail/musicThumbnailRenderer/thumbnail/thumbnails")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .rev()
-                .filter_map(|item| item.get("url").and_then(Value::as_str))
-                .filter(|url| url.starts_with("https://"))
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+    response_thumbnails(row.pointer("/thumbnail/musicThumbnailRenderer/thumbnail"))
 }
 
 fn duration(text: &str) -> Option<i64> {

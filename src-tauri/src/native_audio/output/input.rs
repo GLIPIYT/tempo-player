@@ -83,11 +83,12 @@ pub(super) fn prepare_input(
     let mut remote = None;
     let mut local = None;
     let buffering;
-    let loudness = TrackLoudness::new(settings.normalize);
+    let loudness = TrackLoudness::new(settings.normalize, Some(spec.loudness_db.clone()));
 
     let source: AudioSource;
     let duration_sec;
     if let Some(url) = remote_url(&spec.location)? {
+        loudness.set_stream(spec.stream_loudness_key.clone());
         let helper_started = Instant::now();
         let ffmpeg = ensure_ffmpeg(&bin_dir)?;
         log_startup_timing("ffmpeg_ready", "remote", helper_started);
@@ -145,6 +146,7 @@ pub(super) fn prepare_input(
                     buffering = Some(status.buffering.clone());
                     local = Some(control);
                 } else {
+                    loudness.set_local_stream(&path);
                     let helper_started = Instant::now();
                     let ffmpeg = ensure_ffmpeg(&bin_dir).map_err(|error| {
                         format!("Could not prepare local audio with the native decoder and the managed decoder is unavailable: {error}")
@@ -166,6 +168,7 @@ pub(super) fn prepare_input(
                 }
             }
             Err(decode_error) => {
+                loudness.set_local_stream(&path);
                 let helper_started = Instant::now();
                 let ffmpeg = ensure_ffmpeg(&bin_dir).map_err(|error| {
                     format!(

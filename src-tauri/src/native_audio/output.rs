@@ -85,10 +85,12 @@ impl OutputSettings {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SourceSpec {
     pub location: String,
     pub duration_sec: Option<f64>,
+    pub loudness_db: Arc<crate::database::Db>,
+    pub stream_loudness_key: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]

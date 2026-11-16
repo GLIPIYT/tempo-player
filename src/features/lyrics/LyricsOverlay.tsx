@@ -1167,7 +1167,8 @@ export default function LyricsOverlay({ onClose, onArtwork, onTrackDetails }: Ly
         <aside className="lyr-side" id="lyrics-player-pane">
           <div className="lyr-cover-shell">
             <button type="button" className="lyr-cover lyr-cover-button" onClick={onArtwork} disabled={!track} aria-label={t('View artwork')}>
-              <Cover path={track?.coverPath ?? null} label={track?.title ?? '?'} size={260} />
+              <Cover path={track?.coverPath} youtubeVideoId={track?.source === 'youtube' ? track.sourceId : undefined}
+                preferOriginal={track?.source === 'youtube'} loading="eager" label={track?.title ?? '?'} size={260} />
             </button>
             {settings.player.companionEnabled ? (
               <img className="lyr-companion" src={dancingCat} alt="" aria-hidden="true" draggable={false} />

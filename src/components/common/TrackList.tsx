@@ -88,7 +88,8 @@ export default function TrackList({ tracks, showAlbum = true, showIndex = true, 
               </div>
             ) : null}
             <div className="tl-main">
-              <Cover path={t.coverPath} label={t.title} size={30} />
+              <Cover path={t.coverPath} youtubeVideoId={t.source === 'youtube' ? t.externalId : undefined}
+                label={t.title} size={30} />
               <div className="tl-meta">
                 <span className="tl-title">{t.title}</span>
                 <span className="tl-artist"><span className="tl-artist-name">{t.artistName ?? unknownArtist}</span>{showSource && <TrackSourceIcon source={t.source} />}</span>

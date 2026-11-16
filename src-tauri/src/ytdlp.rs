@@ -388,10 +388,7 @@ fn map_hit(item: &serde_json::Value) -> Option<YtSearchHit> {
     let thumbnail_url = item
         .get("thumbnails")
         .and_then(|v| v.as_array())
-        .and_then(|list| list.last())
-        .and_then(|t| t.get("url"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+        .and_then(|list| ranked_track_thumbnails(list).into_iter().next())
         .or_else(|| Some(format!("https://i.ytimg.com/vi/{id}/mqdefault.jpg")));
     Some(YtSearchHit {
         url: format!("https://www.youtube.com/watch?v={id}"),
@@ -529,6 +526,7 @@ pub struct YtEnrichment {
     pub artist: Option<String>,
     pub album: Option<String>,
     pub duration_ms: Option<i64>,
+    pub thumbnail_url: Option<String>,
 }
 
 /// A plain mutex, not tokio's: this is read and written from a blocking task
@@ -1168,6 +1166,24 @@ fn push_thumbnail(urls: &mut Vec<String>, url: &str) {
     }
 }
 
+pub(crate) fn ranked_track_thumbnails(items: &[serde_json::Value]) -> Vec<String> {
+    let mut variants = items
+        .iter()
+        .rev()
+        .filter_map(|item| {
+            let url = item.get("url")?.as_str()?.trim();
+            if !url.starts_with("https://") {
+                return None;
+            }
+            let width = item.get("width").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            let height = item.get("height").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            Some((width.saturating_mul(height), url))
+        })
+        .collect::<Vec<_>>();
+    variants.sort_by_key(|(area, _)| std::cmp::Reverse(*area));
+    variants.into_iter().map(|(_, url)| url.to_string()).collect()
+}
+
 /// One `--dump-json` line, reduced to what the rows need.
 fn parse_json_entry(line: &str, job_id: &str) -> Option<YtEnrichment> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
@@ -1197,6 +1213,10 @@ fn parse_json_entry(line: &str, job_id: &str) -> Option<YtEnrichment> {
         .get("duration")
         .and_then(|v| v.as_f64())
         .map(|sec| (sec * 1000.0) as i64);
+    let thumbnail_url = value.get("thumbnails")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| ranked_track_thumbnails(items).into_iter().next())
+        .or_else(|| text(value.get("thumbnail")).filter(|url| url.starts_with("https://")));
 
     Some(YtEnrichment {
         job_id: job_id.to_string(),
@@ -1204,6 +1224,7 @@ fn parse_json_entry(line: &str, job_id: &str) -> Option<YtEnrichment> {
         artist,
         album,
         duration_ms,
+        thumbnail_url,
     })
 }
 

@@ -19,6 +19,37 @@ describe('buildCoverSources', () => {
     expect(firstAvailableArtwork(sources, [sources[0]])).toBe(thumbnail)
   })
 
+  it('upgrades small music artwork for larger surfaces but keeps the compact source for rows', () => {
+    const small = 'https://lh3.googleusercontent.com/music-art=w60-h60-l90-rj'
+    expect(buildCoverSources(small, false, 266)).toEqual([
+      'https://lh3.googleusercontent.com/music-art=w544-h544',
+      small,
+    ])
+    expect(buildCoverSources(small, false, 48)).toEqual([small])
+  })
+
+  it('recovers missing and broken track artwork from the video ID', () => {
+    const id = 'AbCdEf012-_'
+    const base = 'https://i.ytimg.com/vi/' + id
+    expect(buildCoverSources(null, false, 48, id)).toEqual([base + '/mqdefault.jpg'])
+    expect(buildCoverSources(null, false, 48, '42')).toEqual([])
+    expect(buildCoverSources(base + '/mqdefault.jpg', true)).toEqual([
+      base + '/maxresdefault.jpg',
+      base + '/sddefault.jpg',
+      base + '/hqdefault.jpg',
+      base + '/mqdefault.jpg',
+    ])
+    const reported = 'https://lh3.googleusercontent.com/artwork=s544'
+    expect(buildCoverSources(reported, true, 640, id)).toEqual([
+      'https://lh3.googleusercontent.com/artwork=s0',
+      reported,
+      base + '/maxresdefault.jpg',
+      base + '/sddefault.jpg',
+      base + '/hqdefault.jpg',
+      base + '/mqdefault.jpg',
+    ])
+  })
+
   it('preserves query parameters and fragments on original candidates', () => {
     const thumbnail = 'https://lh3.googleusercontent.com/artwork-id=w544-h544-l90-rj?authuser=0#cover'
 

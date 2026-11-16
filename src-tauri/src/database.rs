@@ -529,6 +529,14 @@ CREATE INDEX IF NOT EXISTS idx_audio_file_index_name_size ON audio_file_index(fi
 "#;
 
 const MIGRATION_24: &str = "ALTER TABLE playlists ADD COLUMN custom_cover_path TEXT;";
+const MIGRATION_25: &str = r#"
+CREATE TABLE IF NOT EXISTS native_loudness_cache (
+    cache_key TEXT PRIMARY KEY,
+    gain REAL NOT NULL,
+    measured_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_native_loudness_measured ON native_loudness_cache(measured_at);
+"#;
 
 const MIGRATIONS: &[&str] = &[
     MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6, MIGRATION_7,
@@ -542,6 +550,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_21,
     MIGRATION_22, MIGRATION_23, MIGRATION_24,
     crate::native_audio::track_preferences::MIGRATION,
+    MIGRATION_25,
 ];
 
 pub struct Db {
@@ -1441,6 +1450,7 @@ impl Db {
         artwork_url: Option<&str>,
         cached_size: Option<i64>,
     ) -> Result<i64, String> {
+        let artwork_url = artwork_url.filter(|url| !url.trim().is_empty());
         let path = format!("youtube://{}", video_id);
         let duration_sec = duration_ms as f64 / 1000.0;
         let search_text = build_search_text(title, artist, album, "");
@@ -1451,7 +1461,7 @@ impl Db {
             ).optional().map_err(db_err)?;
             let track_id = if let Some(id) = existing {
                 conn.execute(
-                    "UPDATE tracks SET title = ?1, artist_name = ?2, duration_sec = ?3, cover_path = ?4, search_text = ?5 \
+                    "UPDATE tracks SET title = ?1, artist_name = ?2, duration_sec = ?3, cover_path = COALESCE(?4, cover_path), search_text = ?5 \
                      WHERE id = ?6",
                     params![title, artist, duration_sec, artwork_url, search_text, id],
                 ).map_err(db_err)?;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type Ref } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { getSettings } from '../../state/settings'
-import { buildCoverSources, coverSourceRetryDelay, nextCoverSourceRetry, type CoverSourceRetry } from './coverSources'
+import { buildCoverSources, coverSourceRetryDelay, isYoutubeArtworkSource, nextCoverSourceRetry, type CoverSourceRetry } from './coverSources'
 import { firstAvailableArtwork } from './artworkFallback'
 import { forgetArtworkThumbnail, localArtworkSize, requestArtworkThumbnail, whenArtworkNear } from './artworkThumbnails'
 
@@ -18,6 +18,7 @@ interface CoverProps {
   thumbnailOnly?: boolean
   /** Try the provider's original image first when the URL can be safely upgraded. */
   preferOriginal?: boolean
+  youtubeVideoId?: string | null
 }
 
 function srcFor(path: string): string {
@@ -36,9 +37,9 @@ function hueFor(label: string): number {
   return h
 }
 
-export default function Cover({ path, label, size = 48, rounded = false, loading = 'lazy', fetchPriority = 'auto', thumbnailOnly = false, preferOriginal = false }: CoverProps) {
+export default function Cover({ path, label, size = 48, rounded = false, loading = 'lazy', fetchPriority = 'auto', thumbnailOnly = false, preferOriginal = false, youtubeVideoId }: CoverProps) {
   const displayPixels = size * (globalThis.devicePixelRatio || 1) * (getSettings().font.uiScalePct / 100)
-  const sources = buildCoverSources(path, preferOriginal, displayPixels)
+  const sources = buildCoverSources(path, preferOriginal, displayPixels, youtubeVideoId)
   const radius = rounded ? '9999px' : 'var(--radius-sm)'
   const base: CSSProperties = { width: size, height: size, borderRadius: radius }
   const thumbnailSize = localArtworkSize(path, displayPixels, preferOriginal, thumbnailOnly)
@@ -98,6 +99,9 @@ function CoverImage({ sources, label, size, loading, fetchPriority, base, onSour
 }) {
   const [failedSources, setFailedSources] = useState<string[]>([])
   const [retry, setRetry] = useState<(CoverSourceRetry & { pending: boolean }) | null>(null)
+  const [reload, setReload] = useState(0)
+  const placeholder = useRef<HTMLDivElement>(null)
+  const youtube = sources.some(isYoutubeArtworkSource)
   const source = firstAvailableArtwork(sources, failedSources)
   const retryAttempt = source && retry?.source === source
     ? retry.attempt - Number(retry.pending)
@@ -113,19 +117,49 @@ function CoverImage({ sources, label, size, loading, fetchPriority, base, onSour
     return () => window.clearTimeout(timeout)
   }, [retry, source])
 
+  useEffect(() => {
+    const element = placeholder.current
+    if (source || !youtube || !element) return
+    let timeout: number | undefined
+    const recover = () => {
+      const rect = element.getBoundingClientRect()
+      if (document.hidden || !navigator.onLine || rect.bottom < 0 || rect.top > window.innerHeight) return
+      setRetry(null)
+      setFailedSources([])
+      setReload(count => count + 1)
+    }
+    const stop = reload === 0 ? whenArtworkNear(element, () => {
+      timeout = window.setTimeout(recover, 5000)
+    }) : undefined
+    window.addEventListener('online', recover)
+    document.addEventListener('visibilitychange', recover)
+    return () => {
+      stop?.()
+      window.clearTimeout(timeout)
+      window.removeEventListener('online', recover)
+      document.removeEventListener('visibilitychange', recover)
+    }
+  }, [reload, source, youtube])
+
   if (source) {
+    const url = srcFor(source)
+    const cacheRetry = youtube && (retryAttempt > 0 || reload > 0) && isYoutubeArtworkSource(source)
+      ? new URL(url)
+      : null
+    cacheRetry?.searchParams.set('_tempo_retry', `${reload}.${retryAttempt}`)
     return (
       <img
         className="cover"
         key={`${source}:${retryAttempt}`}
-        src={srcFor(source)}
+        src={cacheRetry?.toString() ?? url}
         alt=""
         loading={loading}
         fetchPriority={fetchPriority}
         decoding="async"
         draggable={false}
         onError={() => {
-          const nextRetry = nextCoverSourceRetry(source, retry)
+          const advanceYoutube = youtube && sources.at(-1) !== source
+          const nextRetry = advanceYoutube ? null : nextCoverSourceRetry(source, retry)
           if (nextRetry) setRetry({ ...nextRetry, pending: true })
           else {
             onSourceFailed?.(source)
@@ -137,7 +171,7 @@ function CoverImage({ sources, label, size, loading, fetchPriority, base, onSour
     )
   }
 
-  return <CoverFallback label={label} size={size} base={base} />
+  return <CoverFallback label={label} size={size} base={base} elementRef={placeholder} />
 }
 
 function CoverFallback({ label, size, base, elementRef }: { label: string; size: number; base: CSSProperties; elementRef?: Ref<HTMLDivElement> }) {
