@@ -938,10 +938,13 @@ export default function SettingsPage() {
 
   const settingsPageRef = useRef<HTMLDivElement>(null)
   const settingsContentRef = useRef<HTMLDivElement>(null)
+  const cancelRoutedScrollRef = useRef<(() => void) | null>(null)
+  const emphasisTimer = useRef<number | null>(null)
 
-  const [section, setSection] = useState<SettingsSectionId>('startup')
+  const [areaId, setAreaId] = useState<SettingsArea>('general')
+  const [section, setSection] = useState<SettingsSectionId | null>(null)
+  const [emphasizedSection, setEmphasizedSection] = useState<SettingsSectionId | null>(null)
   const [expanded, setExpanded] = useState(true)
-  const lastSections = useRef<Partial<Record<SettingsArea, SettingsSectionId>>>({})
   const [advOpen, setAdvOpen] = useState(false)
   const [sysFonts, setSysFonts] = useState<string[] | null>(null)
   const [fontBusy, setFontBusy] = useState(false)
@@ -951,31 +954,53 @@ export default function SettingsPage() {
   const [captureLoadFailed, setCaptureLoadFailed] = useState(false)
   const [captureSaving, setCaptureSaving] = useState(false)
   const captureSavingRef = useRef(false)
-  const area = SETTINGS_NAV.find((item) => item.sections.some((entry) => entry.id === section)) ?? SETTINGS_NAV[0]
-  const currentSection = area.sections.find((item) => item.id === section) ?? area.sections[0]
-  const SectionIcon = currentSection.Icon
+  const area = SETTINGS_NAV.find(item => item.id === areaId) ?? SETTINGS_NAV[0]
+  const AreaIcon = area.Icon
 
-  const visitSection = (next: SettingsSectionId) => {
-    lastSections.current[area.id] = next
+  const cancelEmphasis = useCallback(() => {
+    if (emphasisTimer.current !== null) window.clearTimeout(emphasisTimer.current)
+    emphasisTimer.current = null
+  }, [])
+
+  useEffect(() => cancelEmphasis, [cancelEmphasis])
+
+  const visitSection = (next: SettingsSectionId, focusHeading: boolean) => {
+    const content = settingsContentRef.current
+    const target = content?.querySelector<HTMLElement>(`#settings-section-${next}`)
+    if (!content || !target) return
+
+    if (focusHeading) target.querySelector('h3')?.focus({ preventScroll: true })
+    cancelRoutedScrollRef.current?.()
+    const top = content.scrollTop + target.getBoundingClientRect().top - content.getBoundingClientRect().top - 8
+    content.scrollTo({
+      top,
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+    })
     setSection(next)
-    setExpanded(true)
+    cancelEmphasis()
+    setEmphasizedSection(next)
+    emphasisTimer.current = window.setTimeout(() => {
+      setEmphasizedSection(null)
+      emphasisTimer.current = null
+    }, 1000)
   }
 
   const visitArea = (next: SettingsArea) => {
-    if (next === area.id) {
+    if (next === areaId) {
       setExpanded(value => !value)
       return
     }
-    const destination = SETTINGS_NAV.find(item => item.id === next)
-    if (!destination) return
-    setSection(lastSections.current[next] ?? destination.sections[0].id)
+
+    cancelEmphasis()
+    setEmphasizedSection(null)
+    setSection(null)
+    setAreaId(next)
     setExpanded(true)
   }
 
   useLayoutEffect(() => {
-    const content = settingsContentRef.current
-    if (content) content.scrollTop = 0
-  }, [section])
+    settingsContentRef.current?.scrollTo({ top: 0, behavior: 'instant' })
+  }, [areaId])
 
   const reloadCaptureSettings = useCallback(async () => {
     setCaptureLoading(true)
@@ -990,8 +1015,8 @@ export default function SettingsPage() {
   }, [])
 
   useEffect(() => {
-    if (section === 'soundcloud' && soundCloudSession.status?.browserAvailable) void reloadCaptureSettings()
-  }, [section, reloadCaptureSettings, soundCloudSession.status?.browserAvailable])
+    if (areaId === 'general' && soundCloudSession.status?.browserAvailable) void reloadCaptureSettings()
+  }, [areaId, reloadCaptureSettings, soundCloudSession.status?.browserAvailable])
 
   const saveCaptureSettings = async (next: SoundCloudCaptureSettings) => {
     if (captureSavingRef.current) return
@@ -1052,20 +1077,22 @@ export default function SettingsPage() {
       if (frame === null) frame = window.requestAnimationFrame(animateScroll)
     }
 
+    cancelRoutedScrollRef.current = cancelRoutedScroll
     page.addEventListener('wheel', routeWheel, { passive: false })
     content.addEventListener('pointerdown', cancelRoutedScroll)
     return () => {
       page.removeEventListener('wheel', routeWheel)
       content.removeEventListener('pointerdown', cancelRoutedScroll)
-      if (frame !== null) window.cancelAnimationFrame(frame)
+      cancelRoutedScroll()
+      cancelRoutedScrollRef.current = null
     }
-  }, [section])
+  }, [areaId])
 
   const fontMode: FontMode =
     settings.font.importedPath !== null ? 'file' : settings.font.family !== null ? 'system' : 'default'
 
   useEffect(() => {
-    if (section !== 'themes' || fontMode !== 'system' || sysFonts !== null) return
+    if (areaId !== 'appearance' || fontMode !== 'system' || sysFonts !== null) return
     if (localFontsCache !== null) {
       setSysFonts(localFontsCache)
       return
@@ -1094,7 +1121,7 @@ export default function SettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [section, fontMode, sysFonts])
+  }, [areaId, fontMode, sysFonts])
 
   const needCyrillic = resolveLang(settings.lang) === 'ru'
 
@@ -1138,7 +1165,6 @@ export default function SettingsPage() {
         },
       })
     }
-    visitSection('themes')
   }
 
   const updateCustom = (next: CustomTheme) => update({ theme: { kind: 'custom', custom: next } })
@@ -1237,6 +1263,813 @@ export default function SettingsPage() {
   )
   /* eslint-enable react-hooks/exhaustive-deps */
 
+  const renderSubcategory = (id: SettingsSectionId) => {
+    switch (id) {
+      case 'startup': return (
+        <>
+          <Card defaultOpen title={t('Language')} icon={Languages}>
+            <div className="set-row">
+              <span className="set-row-label">{t('Language')}</span>
+              <Segmented<'ru' | 'en' | 'system'>
+                value={settings.lang}
+                options={[
+                  { value: 'system', label: t('System') },
+                  { value: 'ru', label: 'Русский' },
+                  { value: 'en', label: 'English' },
+                ]}
+                onChange={(lang) => update({ lang })}
+              />
+            </div>
+          </Card>
+          <Card defaultOpen title={t('Startup')} icon={Power} desc={t('Page opened at launch.')}>
+            <div className="set-row">
+              <span className="set-row-label">{t('Startup page')}</span>
+              <select
+                className="select"
+                value={settings.startupPage}
+                onChange={(e) => update({ startupPage: e.target.value as StartupPage })}
+              >
+                {STARTUP_PAGE_OPTIONS.map((page) => (
+                  <option key={page} value={page}>
+                    {t(PAGE_LABELS[page])}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="set-row">
+              <span className="set-row-label">{t('Group favorites in sidebar')}</span>
+              <SettingsSwitch checked={settings.sidebar.grouped} label={t('Group favorites in sidebar')}
+                onClick={() => update({ sidebar: { grouped: !settings.sidebar.grouped } })} />
+            </div>
+            <div className="set-note">
+              {t('Separates favorite playlists, artists and albums in the sidebar.')}
+            </div>
+          </Card>
+          <Card title={t('System integration')} icon={SlidersHorizontal}>
+            <div className="set-row">
+              <span className="set-row-label">{t('Launch at startup')}</span>
+              <SettingsSwitch checked={settings.system.autostart} label={t('Launch at startup')}
+                onClick={() => update({ system: { autostart: !settings.system.autostart } })} />
+            </div>
+            <div className="set-note">{t('Starts Tempo when you sign in.')}</div>
+            <div className="set-row">
+              <span className="set-row-label">{t('Keep running in the tray')}</span>
+              <SettingsSwitch checked={settings.system.closeToTray} label={t('Keep running in the tray')}
+                onClick={() => update({ system: { closeToTray: !settings.system.closeToTray } })} />
+            </div>
+            <div className="set-note">{t('Closing the window keeps playback running in the tray.')}</div>
+          </Card>
+        </>
+      )
+      case 'audio': return (
+        <>
+          <LoudnessCard />
+        </>
+      )
+      case 'processing': return (
+        <>
+          <LyricsAnalysisCard />
+        </>
+      )
+      case 'integrations': return (
+        <>
+          <Card defaultOpen title={t('Discord Rich Presence')} icon={Plug}>
+            <div className="set-row">
+              <span className="set-row-label">Discord Rich Presence</span>
+              <button
+                className={settings.discord.enabled ? 'switch is-on' : 'switch'}
+                role="switch"
+                aria-checked={settings.discord.enabled}
+                aria-label="Discord Rich Presence"
+                onClick={() => update({ discord: { enabled: !settings.discord.enabled } })}
+              />
+            </div>
+            {settings.discord.enabled ? (
+              <>
+                <SliderRow
+                  label={t('Discord lyric merge gap')}
+                  min={0}
+                  max={5}
+                  step={0.25}
+                  value={settings.discord.lyricStitchGapSec}
+                  display={settings.discord.lyricStitchGapSec === 0
+                    ? t('Off')
+                    : `${settings.discord.lyricStitchGapSec.toFixed(2)}s`}
+                  onChange={(lyricStitchGapSec) => update({ discord: { lyricStitchGapSec } })}
+                />
+              </>
+            ) : null}
+          </Card>
+          <Card
+            title={t('Mini player')}
+            desc={t('Always-on-top playback controls.')}
+          >
+            <div className="set-row">
+              <span className="set-row-label">{t('Floating mini player')}</span>
+              <SettingsSwitch checked={settings.miniPlayer.enabled} label={t('Floating mini player')}
+                onClick={() => update({ miniPlayer: { enabled: !settings.miniPlayer.enabled } })} />
+            </div>
+            {settings.miniPlayer.enabled ? (
+              <>
+                <div className="set-row">
+                  <span className="set-row-label">{t('Always show the expand button')}</span>
+                  <SettingsSwitch checked={settings.miniPlayer.alwaysShowButton} label={t('Always show the expand button')}
+                    onClick={() =>
+                      update({
+                        miniPlayer: { alwaysShowButton: !settings.miniPlayer.alwaysShowButton },
+                      })
+                    } />
+                </div>
+                <div className="set-row">
+                  <span className="set-row-label">{t('Show it when the track changes')}</span>
+                  <SettingsSwitch checked={settings.miniPlayer.autoShowOnTrackChange} label={t('Show it when the track changes')}
+                    onClick={() =>
+                      update({
+                        miniPlayer: { autoShowOnTrackChange: !settings.miniPlayer.autoShowOnTrackChange },
+                      })
+                    } />
+                </div>
+                {settings.miniPlayer.autoShowOnTrackChange ? (
+                  <>
+                    <CommitSlider
+                      label={t('Stay open for')}
+                      min={1}
+                      max={15}
+                      step={1}
+                      value={Math.round(settings.miniPlayer.autoShowDurationMs / 1000)}
+                      format={(v) => `${v}s`}
+                      onCommit={(v) => update({ miniPlayer: { autoShowDurationMs: clampMiniShowMs(v * 1000) } })}
+                    />
+                    <div className="set-row">
+                      <span className="set-row-label">{t('Show "Now playing" when it opens')}</span>
+                      <SettingsSwitch checked={settings.miniPlayer.showNowPlaying} label={t('Show "Now playing" when it opens')}
+                        onClick={() =>
+                          update({
+                            miniPlayer: { showNowPlaying: !settings.miniPlayer.showNowPlaying },
+                          })
+                        } />
+                    </div>
+                  </>
+                ) : null}
+              </>
+            ) : null}
+          </Card>
+        </>
+      )
+      case 'soundcloud': return (
+        <>
+          <SoundCloudSessionCard
+            status={soundCloudSession.status}
+            refreshStatus={soundCloudSession.refreshStatus}
+          />
+          {hasUsableSoundCloudSession ? (
+            <Card title={t('SoundCloud capture')} icon={Cloud}>
+              {captureSettings ? (
+                <>
+                  <div className="set-row">
+                    <span className="set-row-label">{t('Choose capture blocks automatically')}</span>
+                    <SettingsSwitch checked={captureSettings.automatic} label={t('Choose capture blocks automatically')}
+                      disabled={captureSaving}
+                      onClick={() => void saveCaptureSettings({
+                        ...captureSettings,
+                        automatic: !captureSettings.automatic,
+                      })} />
+                  </div>
+                  {captureSettings.automatic ? (
+                    <div className="set-note">
+                      {t('Automatic mode selects 1–8 blocks from current CPU load and available memory, while leaving resources for other apps.')}
+                    </div>
+                  ) : (
+                    <CommitSlider
+                      label={t('Concurrent capture blocks')}
+                      min={1}
+                      max={12}
+                      step={1}
+                      value={captureSettings.blocks}
+                      format={(value) => String(value)}
+                      disabled={captureSaving}
+                      onCommit={(blocks) => void saveCaptureSettings({
+                        ...captureSettings,
+                        blocks,
+                      })}
+                    />
+                  )}
+                </>
+              ) : (
+                <div className="set-actions">
+                  <span className="set-note">
+                    {captureLoadFailed
+                      ? t('Could not load SoundCloud capture settings')
+                      : t('Loading…')}
+                  </span>
+                  {captureLoadFailed ? (
+                    <button className="btn" onClick={() => void reloadCaptureSettings()} disabled={captureLoading}>
+                      {t('Retry')}
+                    </button>
+                  ) : null}
+                </div>
+              )}
+            </Card>
+          ) : null}
+        </>
+      )
+      case 'themes': return (
+        <>
+          <section className="set-card set-preview-card" aria-label={t('Theme preview')}>
+            <div className="set-preview-heading"><h3 className="set-card-title">{t('Theme preview')}</h3></div>
+            <SettingsMiniature waveform={settings.player.waveform} />
+          </section>
+          <Card defaultOpen title={t('Theme')} icon={Palette}>
+            <div className="theme-grid">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  className={activeId === p.id ? 'theme-card is-active' : 'theme-card'}
+                  onClick={() => setPreset(p.id)}
+                >
+                  <SettingsMiniature tokens={p.tokens} gradientAnchors={p.gradientAnchors} />
+                  <span className="theme-card-name">{p.name}</span>
+                </button>
+              ))}
+              <button
+                key="custom"
+                className={
+                  settings.theme.kind === 'custom' ? 'theme-card theme-card-custom is-active' : 'theme-card theme-card-custom'
+                }
+                onClick={() => activateCustom()}
+              >
+                <div className="theme-preview">
+                  <Plus size={20} />
+                </div>
+                <span className="theme-card-name">{t('Custom')}</span>
+              </button>
+            </div>
+          </Card>
+          <Card title={t('App icon')}>
+            <BrandIconChoices
+              value={settings.brandIconStyle}
+              theme={settings.theme}
+              label={t('App icon')}
+              onChange={(brandIconStyle) => update({ brandIconStyle })}
+            />
+          </Card>
+          {settings.theme.kind === 'custom' ? (
+            <Card defaultOpen title={t('Custom theme')} icon={Palette}>
+              <div className="set-row">
+                <span className="set-row-label">{t('Palette')}</span>
+                <Segmented<'solid' | 'gradient'>
+                  value={custom.gradientAnchors ? 'gradient' : 'solid'}
+                  options={[
+                    { value: 'solid', label: t('Solid colors') },
+                    { value: 'gradient', label: t('Gradient palette') },
+                  ]}
+                  onChange={(mode) => setGradientMode(mode === 'gradient')}
+                />
+              </div>
+              {custom.gradientAnchors ? (
+                <>
+                  <div className="set-row">
+                    <span className="set-row-label">{t('First color')}</span>
+                    <ColorField
+                      value={custom.gradientAnchors.first}
+                      onChange={(value) => updateGradientAnchor('first', value)}
+                      onPreview={(value) => previewGradientAnchor('first', value)}
+                    />
+                  </div>
+                  <div className="set-row">
+                    <span className="set-row-label">{t('Second color')}</span>
+                    <ColorField
+                      value={custom.gradientAnchors.second}
+                      onChange={(value) => updateGradientAnchor('second', value)}
+                      onPreview={(value) => previewGradientAnchor('second', value)}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="set-row">
+                    <span className="set-row-label">{t('Accent')}</span>
+                    <ColorField
+                      value={custom.base.accent}
+                      onChange={(accent) => updateCustom({ ...custom, base: { ...custom.base, accent } })}
+                      onPreview={(accent) => previewCustomTheme({ ...custom, base: { ...custom.base, accent } })}
+                    />
+                  </div>
+                  <div className="set-row">
+                    <span className="set-row-label">{t('Background')}</span>
+                    <ColorField
+                      value={custom.base.background}
+                      onChange={(background) => updateCustom({ ...custom, base: { ...custom.base, background } })}
+                      onPreview={(background) => previewCustomTheme({ ...custom, base: { ...custom.base, background } })}
+                    />
+                  </div>
+                  <div className="set-row">
+                    <span className="set-row-label">{t('Surface')}</span>
+                    <ColorField
+                      value={custom.base.surface}
+                      onChange={(surface) => updateCustom({ ...custom, base: { ...custom.base, surface } })}
+                      onPreview={(surface) => previewCustomTheme({ ...custom, base: { ...custom.base, surface } })}
+                    />
+                  </div>
+                  <div className="set-row">
+                    <span className="set-row-label">{t('Play button')}</span>
+                    <ColorField
+                      value={custom.base.playButton}
+                      onChange={(playButton) => updateCustom({ ...custom, base: { ...custom.base, playButton } })}
+                      onPreview={(playButton) => previewCustomTheme({ ...custom, base: { ...custom.base, playButton } })}
+                    />
+                  </div>
+                </>
+              )}
+              {!custom.gradientAnchors ? (
+                <>
+                  <button
+                    className={advOpen ? 'adv-toggle is-open' : 'adv-toggle'}
+                    onClick={() => setAdvOpen(!advOpen)}
+                  >
+                    <ChevronDown size={14} />
+                    {t('Advanced')}
+                  </button>
+                  {advancedOpen ? (
+                    <div className="tok-list">
+                      {resolved === null
+                        ? null
+                        : TOKEN_KEYS.map((k) => {
+                            const override = custom.overrides[k]
+                            return (
+                              <div key={k} className="tok-row">
+                                <span className="tok-name">{t(TOKEN_LABELS[k])}</span>
+                                <span className="tok-value">{override ?? (resolved[k] || '—')}</span>
+                                <input
+                                  type="color"
+                                  className="swatch"
+                                  value={asColorInput(override)}
+                                  onChange={(e) =>
+                                    updateCustom({
+                                      ...custom,
+                                      overrides: { ...custom.overrides, [k]: e.target.value },
+                                    })
+                                  }
+                                />
+                              </div>
+                            )
+                          })}
+                      <div className="set-actions">
+                        <button
+                          className="btn"
+                          disabled={Object.keys(custom.overrides).length === 0}
+                          onClick={() => updateCustom({ ...custom, overrides: {} })}
+                        >
+                          <RotateCcw size={14} />
+                          {t('Reset overrides')}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+              <div className="set-actions">
+                <button className="btn btn-danger" onClick={() => resetAppearance()}>
+                  <RotateCcw size={14} />
+                  {t('Reset theme')}
+                </button>
+              </div>
+            </Card>
+          ) : null}
+          <Card title={t('Font')} icon={Type}>
+            <div className="set-row">
+              <span className="set-row-label">{t('Source')}</span>
+              <Segmented<FontMode>
+                value={fontMode}
+                options={[
+                  { value: 'default', label: t('Default') },
+                  { value: 'system', label: t('System') },
+                  { value: 'file', label: t('File') },
+                ]}
+                onChange={setFontMode}
+              />
+            </div>
+            {fontMode === 'system' ? (
+              <>
+                <div className="set-row">
+                  <span className="set-row-label">{t('Installed fonts')}</span>
+                  {fontData.fonts === null ? (
+                    <span className="muted" style={{ fontSize: 12 }}>{t('Loading…')}</span>
+                  ) : (
+                    <FontListBox
+                      fonts={fontData.fonts}
+                      value={settings.font.family ?? FALLBACK_FONTS[0]}
+                      onSelect={(f) => update({ font: { family: f } })}
+                    />
+                  )}
+                </div>
+                {fontData.fonts !== null && fontData.hidden > 0 ? (
+                  <div className="muted font-hint">
+                    {fontData.hidden} {t('fonts hidden — missing glyphs for the interface language')}
+                  </div>
+                ) : null}
+                <div className="set-row">
+                  <span className="set-row-label">{t('Custom CSS stack')}</span>
+                  <input
+                    className="text-input stack-input"
+                    value={settings.font.family ?? ''}
+                    placeholder="'JetBrains Mono', monospace"
+                    onChange={(e) => update({ font: { family: e.target.value } })}
+                  />
+                </div>
+              </>
+            ) : null}
+            {fontMode === 'file' ? (
+              <div className="set-row">
+                <span className="set-row-stack">
+                  <span className="set-row-label">
+                    {settings.font.importedPath
+                      ? fileName(settings.font.importedPath)
+                      : t('No font file imported')}
+                  </span>
+                </span>
+                <button className="btn" disabled={fontBusy} onClick={() => void importFont()}>
+                  <FolderOpen size={15} />
+                  {t('Import font file')}
+                </button>
+              </div>
+            ) : null}
+            <div className="font-preview" style={{ fontSize: settings.font.sizePx }}>
+              Аа Бб Вв Aa Bb Cc 0123456789
+            </div>
+            <CommitSlider
+              label={t('Size')}
+              min={12}
+              max={18}
+              step={1}
+              value={settings.font.sizePx}
+              format={(v) => `${v}px`}
+              onCommit={(sizePx) => update({ font: { sizePx } })}
+            />
+            <CommitSlider
+              label={t('UI scale')}
+              min={80}
+              max={130}
+              step={5}
+              value={settings.font.uiScalePct}
+              format={(v) => `${v}%`}
+              onCommit={(uiScalePct) => update({ font: { uiScalePct } })}
+            />
+          </Card>
+        </>
+      )
+      case 'wallpaper': return (
+        <>
+          <Card defaultOpen title={t('Background image')} icon={Image}>
+            <div className="set-row">
+              <span className="set-row-label">
+                {settings.background.path ? fileName(settings.background.path) : t('No image selected')}
+              </span>
+              <div className="btn-group">
+                <button className="btn" disabled={bgBusy} onClick={() => void importBackground()}>
+                  <FolderOpen size={15} />
+                  {t('Import image')}
+                </button>
+                <button
+                  className="btn"
+                  disabled={settings.background.path === null}
+                  onClick={() => update({ background: { path: null } })}
+                >
+                  {t('None')}
+                </button>
+              </div>
+            </div>
+            {settings.background.path ? (
+              <div className="set-bg-preview" role="img" aria-label={t('Background image')}>
+                <div
+                  className="set-bg-preview-image"
+                  style={{
+                    backgroundImage: `url("${convertFileSrc(settings.background.path)}")`,
+                    filter: `blur(${settings.background.blurPx}px)`,
+                  }}
+                />
+                <div className="set-bg-preview-dim" style={{ '--wallpaper-dim': settings.background.dimPct / 100 } as CSSProperties} />
+              </div>
+            ) : null}
+            <BackgroundImageLibrary
+              selectedPath={settings.background.path}
+              onSelect={(path) => update({ background: { path } })}
+            />
+          </Card>
+          <Card defaultOpen title={t('Background effects')} icon={SlidersHorizontal}>
+            <SliderRow
+              label={t('Dim')}
+              min={0}
+              max={80}
+              step={1}
+              value={settings.background.dimPct}
+              display={`${settings.background.dimPct}%`}
+              onChange={(dimPct) => update({ background: { dimPct } })}
+            />
+            <SliderRow
+              label={t('Blur')}
+              min={0}
+              max={40}
+              step={1}
+              value={settings.background.blurPx}
+              display={`${settings.background.blurPx}px`}
+              onChange={(blurPx) => update({ background: { blurPx } })}
+            />
+          </Card>
+          <Card title={t('Search for background images')} icon={Image}>
+            <BackgroundSearchPanel
+              search={api.searchBackgrounds}
+              onSelect={async (result) => {
+                const storedPath = await api.saveSelectedBackground(result.provider, result.imageUrl)
+                update({ background: { path: storedPath } })
+              }}
+            />
+          </Card>
+        </>
+      )
+      case 'player': return (
+        <>
+          <section className="set-card set-preview-card" aria-label={t('Player preview')}>
+            <div className="set-preview-heading"><h3 className="set-card-title">{t('Player preview')}</h3></div>
+            <SettingsMiniature waveform={settings.player.waveform} />
+          </section>
+          <Card defaultOpen title={t('Player')} icon={Music2}>
+            <div className="set-row">
+              <span className="set-row-label">{t('Waveform progress bar')}</span>
+              <SettingsSwitch checked={settings.player.waveform} label={t('Waveform progress bar')}
+                onClick={() => update({ player: { waveform: !settings.player.waveform } })} />
+            </div>
+            <div className="set-row">
+              <span className="set-row-label">{t('Cache waveform data')}</span>
+              <SettingsSwitch checked={settings.player.cacheWaveforms} label={t('Cache waveform data')}
+                onClick={() => update({ player: { cacheWaveforms: !settings.player.cacheWaveforms } })} />
+            </div>
+            <div className="set-note">
+              {t('Saves SoundCloud waveform data on this device for up to 12 hours, including after app restarts.')}
+            </div>
+            <div className="set-row">
+              <span className="set-row-label">{t('Player bar layout')}</span>
+              <Segmented<'classic' | 'modern'>
+                value={settings.player.barStyle}
+                options={[
+                  { value: 'classic', label: t('Classic') },
+                  { value: 'modern', label: t('Modern') },
+                ]}
+                onChange={(barStyle) => update({ player: { barStyle } })}
+              />
+            </div>
+            <CommitSlider
+              label={t('Crossfade')}
+              min={0}
+              max={12}
+              step={1}
+              value={settings.audio.crossfadeSec}
+              format={(v) => (v === 0 ? t('Off') : `${v}s`)}
+              onCommit={(v) => update({ audio: { crossfadeSec: v } })}
+            />
+          </Card>
+          <Card title={t('Companion')}>
+            <div className="set-row">
+              <span className="set-row-label">{t('Enable companion')}</span>
+              <SettingsSwitch checked={settings.player.companionEnabled} label={t('Enable companion')}
+                onClick={() => update({ player: { companionEnabled: !settings.player.companionEnabled } })} />
+            </div>
+            <div className="set-note">{t('Now you’re not alone <3')}</div>
+          </Card>
+        </>
+      )
+      case 'lyrics': return (
+        <>
+          <SettingsLyricsPreview lyrics={settings.lyrics} />
+          <Card defaultOpen title={t('Lyrics display')} icon={Captions}>
+            <div className="set-row">
+              <span className="set-row-label">{t('Capitalize lyric lines')}</span>
+              <SettingsSwitch checked={settings.lyrics.capitalizeLines} label={t('Capitalize lyric lines')}
+                onClick={() => update({ lyrics: { capitalizeLines: !settings.lyrics.capitalizeLines } })} />
+            </div>
+            <div className="set-row">
+              <span className="set-row-label">{t('Enlarge lyrics when player is hidden')}</span>
+              <SettingsSwitch checked={settings.lyrics.enlargeWhenCollapsed} label={t('Enlarge lyrics when player is hidden')}
+                onClick={() => update({ lyrics: { enlargeWhenCollapsed: !settings.lyrics.enlargeWhenCollapsed } })} />
+            </div>
+            <div className="set-row">
+              <span className="set-row-label">{t('Lyrics alignment')}</span>
+            </div>
+            <div className="lyrics-alignment-cards" role="group" aria-label={t('Lyrics alignment')}>
+              {(['left', 'center', 'right'] as const).map(alignment => (
+                <button
+                  key={alignment}
+                  type="button"
+                  className={`lyrics-alignment-card${settings.lyrics.alignment === alignment ? ' is-active' : ''}`}
+                  aria-label={t(alignment === 'left' ? 'Left' : alignment === 'center' ? 'Center' : 'Right')}
+                  aria-pressed={settings.lyrics.alignment === alignment}
+                  onClick={() => update({ lyrics: { alignment } })}
+                >
+                  <span className={`lyrics-alignment-preview is-${alignment}`} aria-hidden="true">
+                    <i /><i /><i />
+                  </span>
+                  <span>{t(alignment === 'left' ? 'Left' : alignment === 'center' ? 'Center' : 'Right')}</span>
+                </button>
+              ))}
+            </div>
+            <SliderRow
+              label={t('Lyrics text size')}
+              min={16} max={40} step={1}
+              value={settings.lyrics.textSizePx}
+              display={`${settings.lyrics.textSizePx}px`}
+              onChange={textSizePx => update({ lyrics: { textSizePx } })}
+            />
+            <div className="set-row">
+              <span className="set-row-label">{t('Line movement')}</span>
+              <Segmented value={settings.lyrics.motionStyle}
+                options={[{ value: 'smooth', label: t('Smooth') }, { value: 'accelerated', label: t('Accelerated') }]}
+                onChange={motionStyle => update({ lyrics: { motionStyle } })} />
+            </div>
+            <div className="set-row">
+              <span className="set-row-label">{t('Text fill')}</span>
+              <Segmented value={settings.lyrics.textFillMode}
+                options={[{ value: 'continuous', label: t('Continuous') }, { value: 'words', label: t('By word') }]}
+                onChange={textFillMode => update({ lyrics: { textFillMode } })} />
+            </div>
+          </Card>
+          <Card title={t('Highlighting and progress')} icon={SlidersHorizontal}>
+            <div className="set-row lyrics-toggle-row">
+              <span className="set-row-label">{t('Animate progress line')}</span>
+              <SettingsSwitch checked={settings.lyrics.fillEnabled} label={t('Animate progress line')}
+                onClick={() => update({ lyrics: { fillEnabled: !settings.lyrics.fillEnabled } })} />
+            </div>
+            <div className="set-row">
+              <label className="set-row-label" htmlFor="lyrics-progress-direction">{t('Progress direction')}</label>
+              <select id="lyrics-progress-direction" className="select" value={settings.lyrics.progressDirection}
+                onChange={event => update({ lyrics: { progressDirection: event.target.value as typeof settings.lyrics.progressDirection } })}>
+                <option value="left-to-right">{t('Left to right')}</option>
+                <option value="right-to-left">{t('Right to left')}</option>
+                <option value="center-out">{t('Center outward')}</option>
+              </select>
+            </div>
+            <div className="set-row">
+              <span className="set-row-label">{t('Progress color')}</span>
+              <div className="lyrics-color-controls" role="group" aria-label={t('Progress color')}>
+                <div className="seg">
+                  <button type="button" className={`seg-btn${settings.lyrics.progressColorMode === 'theme' ? ' is-active' : ''}`}
+                    aria-pressed={settings.lyrics.progressColorMode === 'theme'}
+                    onClick={() => {
+                      if (settings.lyrics.progressColorMode !== 'theme') update({ lyrics: { progressColorMode: 'theme' } })
+                    }}>{t('Theme color')}</button>
+                  <button type="button" className={`seg-btn${settings.lyrics.progressColorMode === 'custom' ? ' is-active' : ''}`}
+                    aria-pressed={settings.lyrics.progressColorMode === 'custom'}
+                    onClick={() => {
+                      if (settings.lyrics.progressColorMode !== 'custom') update({ lyrics: { progressColorMode: 'custom' } })
+                    }}>{t('Custom color')}</button>
+                </div>
+                {settings.lyrics.progressColorMode === 'custom' && (
+                  <LyricsProgressColorPicker value={settings.lyrics.progressColor}
+                    onCommit={progressColor => update({ lyrics: { progressColor } })} />
+                )}
+              </div>
+            </div>
+            <SliderRow label={t('Progress opacity')} min={5} max={100} step={1}
+              value={settings.lyrics.progressOpacityPct} display={`${settings.lyrics.progressOpacityPct}%`}
+              onChange={progressOpacityPct => update({ lyrics: { progressOpacityPct } })} />
+            <SliderRow label={t('Progress thickness')} min={1} max={6} step={0.5}
+              value={settings.lyrics.progressThicknessPx} display={`${settings.lyrics.progressThicknessPx}px`}
+              onChange={progressThicknessPx => update({ lyrics: { progressThicknessPx } })} />
+            <div className="set-row lyrics-toggle-row">
+              <span className="set-row-label">{t('Clip progress to text')}</span>
+              <SettingsSwitch checked={settings.lyrics.progressClipToText} label={t('Clip progress to text')}
+                onClick={() => update({ lyrics: { progressClipToText: !settings.lyrics.progressClipToText } })} />
+            </div>
+          </Card>
+          <Card title={t('Lyrics cache')} icon={Database}>
+            <div className="set-row">
+              <span className="set-row-label">{t('Save lyrics to cache')}</span>
+              <SettingsSwitch checked={settings.lyrics.cacheOnline} label={t('Save lyrics to cache')}
+                onClick={() => update({ lyrics: { cacheOnline: !settings.lyrics.cacheOnline } })} />
+            </div>
+            <div className="set-note">{t('Online lyrics are cached for offline playback.')}</div>
+            {settings.lyrics.cacheOnline && <div className="set-row">
+              <span className="set-row-label">{t('Search cached lyrics')}</span>
+              <SettingsSwitch checked={settings.lyrics.searchCached} label={t('Search cached lyrics')}
+                onClick={() => update({ lyrics: { searchCached: !settings.lyrics.searchCached } })} />
+            </div>}
+          </Card>
+        </>
+      )
+      case 'visualizers': return (
+        <>
+          <VisualizerSettingsPanel />
+        </>
+      )
+      case 'folders': return (
+        <>
+          <Card defaultOpen title={t('Music folders')} icon={FolderOpen} desc={t('Folders scanned for audio files. Everything stays local.')}>
+            {foldersApi.error ? <div className="error-line">{foldersApi.error}</div> : null}
+            {foldersApi.loading ? (
+              <div className="muted" style={{ marginTop: 14, fontSize: 12.5 }}>{t('Loading…')}</div>
+            ) : foldersApi.folders.length === 0 ? (
+              <div className="muted" style={{ marginTop: 14, fontSize: 12.5 }}>{t('No folders added yet.')}</div>
+            ) : (
+              <div className="folder-list">
+                {foldersApi.folders.map((f) => (
+                  <div key={f.id} className="folder-row">
+                    <FolderOpen size={16} className="muted" />
+                    <div className="folder-info">
+                      <span className="folder-path" title={f.path}>
+                        {f.path}
+                      </span>
+                      <span className="folder-count">
+                        {f.trackCount ?? 0} {t('tracks')}
+                      </span>
+                    </div>
+                    <button
+                      className="icon-btn"
+                      aria-label={t('Rescan') + ' ' + f.path}
+                      disabled={scan.active}
+                      onClick={() => void api.rescanFolder(f.id)}
+                    >
+                      <RefreshCw size={14} />
+                    </button>
+                    <button
+                      className="icon-btn"
+                      aria-label={t('Remove') + ' ' + f.path}
+                      onClick={() => void removeFolder(f.id, f.path)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="set-actions">
+              <button className="btn" onClick={() => void foldersApi.addFolder()} disabled={foldersApi.busy}>
+                <FolderPlus size={15} />
+                {t('Add folder')}
+              </button>
+            </div>
+          </Card>
+          <Card title={t('Scanning')} icon={ScanIcon} desc={t('Runs in the background and updates tracks, albums and covers automatically.')}>
+            <ScanLine />
+            <div className="muted settings-line">
+              {foldersApi.folders.length}{' '}
+              {foldersApi.folders.length === 1 ? t('folder registered') : t('folders registered')}
+            </div>
+            <div className="set-actions">
+              <button className="btn" onClick={() => void api.rescanLibrary()} disabled={scan.active}>
+                <RefreshCw size={15} className={scan.active ? 'spin' : undefined} />
+                {t('Rescan library')}
+              </button>
+            </div>
+          </Card>
+        </>
+      )
+      case 'hidden': return (
+        <>
+          <HiddenTracksCard />
+        </>
+      )
+      case 'music-cache': return (
+        <>
+          <StorageCard kind="music" />
+        </>
+      )
+      case 'covers-cache': return (
+        <>
+          <StorageCard kind="covers" />
+        </>
+      )
+      case 'updates': return (
+        <>
+          <UpdateCard />
+        </>
+      )
+      case 'application': return (
+        <>
+          <Card defaultOpen title={t('About')} icon={Info}>
+            <div className="about-name">Tempo</div>
+            <div className="muted settings-line">
+              {t('Music from your files, SoundCloud and YouTube Music in one library and queue.')}
+            </div>
+            <div className="muted settings-line" style={{ marginTop: 8 }}>
+              {t('Author')}: gl1pi (@GLIPIYT)
+            </div>
+            <div className="muted settings-line">
+              {t('Beta tester')}: maslopodsolnechnoe
+            </div>
+            <div className="set-actions">
+              <button
+                className="btn"
+                onClick={() => void openUrl(REPOSITORY_URL).catch(() => toast.show(t('Could not open repository'), 'error'))}
+              >
+                <MarkGithubIcon size={16} />
+                {t('GitHub repository')}
+              </button>
+            </div>
+          </Card>
+        </>
+      )
+    }
+  }
+
   return (
     <div ref={settingsPageRef} className="page set-page set-page--sections">
       <div className="set-layout">
@@ -1244,847 +2077,33 @@ export default function SettingsPage() {
           <div className="set-head">
             <h1 className="page-title">{t('Settings')}</h1>
           </div>
-          <SettingsNavigation area={area.id} expanded={expanded} section={section}
+          <SettingsNavigation area={areaId} expanded={expanded} section={section}
             onArea={visitArea} onSection={visitSection} />
         </div>
 
         <div ref={settingsContentRef} className="set-content">
           <header className="set-category-head">
-            <SectionIcon className="set-category-icon" size={23} aria-hidden="true" />
-            <h2>{t(currentSection.label)}</h2>
+            <AreaIcon className="set-category-icon" size={23} aria-hidden="true" />
+            <h2>{t(area.label)}</h2>
           </header>
           <SettingsSectionScope>
-            <div key={section} className="set-section-content">
-
-              {section === 'startup' ? (
-                <>
-                  <Card defaultOpen title={t('Language')} icon={Languages}>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Language')}</span>
-                      <Segmented<'ru' | 'en' | 'system'>
-                        value={settings.lang}
-                        options={[
-                          { value: 'system', label: t('System') },
-                          { value: 'ru', label: 'Русский' },
-                          { value: 'en', label: 'English' },
-                        ]}
-                        onChange={(lang) => update({ lang })}
-                      />
-                    </div>
-                  </Card>
-                  <Card defaultOpen title={t('Startup')} icon={Power} desc={t('Page opened at launch.')}>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Startup page')}</span>
-                      <select
-                        className="select"
-                        value={settings.startupPage}
-                        onChange={(e) => update({ startupPage: e.target.value as StartupPage })}
-                      >
-                        {STARTUP_PAGE_OPTIONS.map((page) => (
-                          <option key={page} value={page}>
-                            {t(PAGE_LABELS[page])}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Group favorites in sidebar')}</span>
-                      <SettingsSwitch checked={settings.sidebar.grouped} label={t('Group favorites in sidebar')}
-                        onClick={() => update({ sidebar: { grouped: !settings.sidebar.grouped } })} />
-                    </div>
-                    <div className="set-note">
-                      {t('Separates favorite playlists, artists and albums in the sidebar.')}
-                    </div>
-                  </Card>
-                  <Card title={t('System integration')} icon={SlidersHorizontal}>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Launch at startup')}</span>
-                      <SettingsSwitch checked={settings.system.autostart} label={t('Launch at startup')}
-                        onClick={() => update({ system: { autostart: !settings.system.autostart } })} />
-                    </div>
-                    <div className="set-note">{t('Starts Tempo when you sign in.')}</div>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Keep running in the tray')}</span>
-                      <SettingsSwitch checked={settings.system.closeToTray} label={t('Keep running in the tray')}
-                        onClick={() => update({ system: { closeToTray: !settings.system.closeToTray } })} />
-                    </div>
-                    <div className="set-note">{t('Closing the window keeps playback running in the tray.')}</div>
-                  </Card>
-                </>
-              ) : null}
-
-              {section === 'audio' ? (
-                <>
-                  <LoudnessCard />
-                </>
-              ) : null}
-
-              {section === 'processing' ? (
-                <>
-                  <LyricsAnalysisCard />
-                </>
-              ) : null}
-
-              {section === 'integrations' ? (
-                <>
-                  <Card defaultOpen title={t('Discord Rich Presence')} icon={Plug}>
-                    <div className="set-row">
-                      <span className="set-row-label">Discord Rich Presence</span>
-                      <button
-                        className={settings.discord.enabled ? 'switch is-on' : 'switch'}
-                        role="switch"
-                        aria-checked={settings.discord.enabled}
-                        aria-label="Discord Rich Presence"
-                        onClick={() => update({ discord: { enabled: !settings.discord.enabled } })}
-                      />
-                    </div>
-                    {settings.discord.enabled ? (
-                      <>
-                        <SliderRow
-                          label={t('Discord lyric merge gap')}
-                          min={0}
-                          max={5}
-                          step={0.25}
-                          value={settings.discord.lyricStitchGapSec}
-                          display={settings.discord.lyricStitchGapSec === 0
-                            ? t('Off')
-                            : `${settings.discord.lyricStitchGapSec.toFixed(2)}s`}
-                          onChange={(lyricStitchGapSec) => update({ discord: { lyricStitchGapSec } })}
-                        />
-                      </>
-                    ) : null}
-                  </Card>
-                  <Card
-                    title={t('Mini player')}
-                    desc={t('Always-on-top playback controls.')}
-                  >
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Floating mini player')}</span>
-                      <SettingsSwitch checked={settings.miniPlayer.enabled} label={t('Floating mini player')}
-                        onClick={() => update({ miniPlayer: { enabled: !settings.miniPlayer.enabled } })} />
-                    </div>
-                    {settings.miniPlayer.enabled ? (
-                      <>
-                        <div className="set-row">
-                          <span className="set-row-label">{t('Always show the expand button')}</span>
-                          <SettingsSwitch checked={settings.miniPlayer.alwaysShowButton} label={t('Always show the expand button')}
-                            onClick={() =>
-                              update({
-                                miniPlayer: { alwaysShowButton: !settings.miniPlayer.alwaysShowButton },
-                              })
-                            } />
-                        </div>
-                        <div className="set-row">
-                          <span className="set-row-label">{t('Show it when the track changes')}</span>
-                          <SettingsSwitch checked={settings.miniPlayer.autoShowOnTrackChange} label={t('Show it when the track changes')}
-                            onClick={() =>
-                              update({
-                                miniPlayer: { autoShowOnTrackChange: !settings.miniPlayer.autoShowOnTrackChange },
-                              })
-                            } />
-                        </div>
-                        {settings.miniPlayer.autoShowOnTrackChange ? (
-                          <>
-                            <CommitSlider
-                              label={t('Stay open for')}
-                              min={1}
-                              max={15}
-                              step={1}
-                              value={Math.round(settings.miniPlayer.autoShowDurationMs / 1000)}
-                              format={(v) => `${v}s`}
-                              onCommit={(v) => update({ miniPlayer: { autoShowDurationMs: clampMiniShowMs(v * 1000) } })}
-                            />
-                            <div className="set-row">
-                              <span className="set-row-label">{t('Show "Now playing" when it opens')}</span>
-                              <SettingsSwitch checked={settings.miniPlayer.showNowPlaying} label={t('Show "Now playing" when it opens')}
-                                onClick={() =>
-                                  update({
-                                    miniPlayer: { showNowPlaying: !settings.miniPlayer.showNowPlaying },
-                                  })
-                                } />
-                            </div>
-                          </>
-                        ) : null}
-                      </>
-                    ) : null}
-                  </Card>
-                </>
-              ) : null}
-
-              {section === 'soundcloud' ? (
-                <>
-                  <SoundCloudSessionCard
-                    status={soundCloudSession.status}
-                    refreshStatus={soundCloudSession.refreshStatus}
-                  />
-                  {hasUsableSoundCloudSession ? (
-                    <Card title={t('SoundCloud capture')} icon={Cloud}>
-                      {captureSettings ? (
-                        <>
-                          <div className="set-row">
-                            <span className="set-row-label">{t('Choose capture blocks automatically')}</span>
-                            <SettingsSwitch checked={captureSettings.automatic} label={t('Choose capture blocks automatically')}
-                              disabled={captureSaving}
-                              onClick={() => void saveCaptureSettings({
-                                ...captureSettings,
-                                automatic: !captureSettings.automatic,
-                              })} />
-                          </div>
-                          {captureSettings.automatic ? (
-                            <div className="set-note">
-                              {t('Automatic mode selects 1–8 blocks from current CPU load and available memory, while leaving resources for other apps.')}
-                            </div>
-                          ) : (
-                            <CommitSlider
-                              label={t('Concurrent capture blocks')}
-                              min={1}
-                              max={12}
-                              step={1}
-                              value={captureSettings.blocks}
-                              format={(value) => String(value)}
-                              disabled={captureSaving}
-                              onCommit={(blocks) => void saveCaptureSettings({
-                                ...captureSettings,
-                                blocks,
-                              })}
-                            />
-                          )}
-                        </>
-                      ) : (
-                        <div className="set-actions">
-                          <span className="set-note">
-                            {captureLoadFailed
-                              ? t('Could not load SoundCloud capture settings')
-                              : t('Loading…')}
-                          </span>
-                          {captureLoadFailed ? (
-                            <button className="btn" onClick={() => void reloadCaptureSettings()} disabled={captureLoading}>
-                              {t('Retry')}
-                            </button>
-                          ) : null}
-                        </div>
-                      )}
-                    </Card>
-                  ) : null}
-                </>
-              ) : null}
-
-              {section === 'themes' ? (
-                <>
-                  <section className="set-card set-preview-card" aria-label={t('Theme preview')}>
-                    <div className="set-preview-heading"><h3 className="set-card-title">{t('Theme preview')}</h3></div>
-                    <SettingsMiniature waveform={settings.player.waveform} />
-                  </section>
-                  <Card defaultOpen title={t('Theme')} icon={Palette}>
-                    <div className="theme-grid">
-                      {PRESETS.map((p) => (
-                        <button
-                          key={p.id}
-                          className={activeId === p.id ? 'theme-card is-active' : 'theme-card'}
-                          onClick={() => setPreset(p.id)}
-                        >
-                          <SettingsMiniature tokens={p.tokens} gradientAnchors={p.gradientAnchors} />
-                          <span className="theme-card-name">{p.name}</span>
-                        </button>
-                      ))}
-                      <button
-                        key="custom"
-                        className={
-                          settings.theme.kind === 'custom' ? 'theme-card theme-card-custom is-active' : 'theme-card theme-card-custom'
-                        }
-                        onClick={() => activateCustom()}
-                      >
-                        <div className="theme-preview">
-                          <Plus size={20} />
-                        </div>
-                        <span className="theme-card-name">{t('Custom')}</span>
-                      </button>
-                    </div>
-                  </Card>
-
-                  <Card title={t('App icon')}>
-                    <BrandIconChoices
-                      value={settings.brandIconStyle}
-                      theme={settings.theme}
-                      label={t('App icon')}
-                      onChange={(brandIconStyle) => update({ brandIconStyle })}
-                    />
-                  </Card>
-
-                  {settings.theme.kind === 'custom' ? (
-                    <Card defaultOpen title={t('Custom theme')} icon={Palette}>
-                      <div className="set-row">
-                        <span className="set-row-label">{t('Palette')}</span>
-                        <Segmented<'solid' | 'gradient'>
-                          value={custom.gradientAnchors ? 'gradient' : 'solid'}
-                          options={[
-                            { value: 'solid', label: t('Solid colors') },
-                            { value: 'gradient', label: t('Gradient palette') },
-                          ]}
-                          onChange={(mode) => setGradientMode(mode === 'gradient')}
-                        />
-                      </div>
-
-                      {custom.gradientAnchors ? (
-                        <>
-                          <div className="set-row">
-                            <span className="set-row-label">{t('First color')}</span>
-                            <ColorField
-                              value={custom.gradientAnchors.first}
-                              onChange={(value) => updateGradientAnchor('first', value)}
-                              onPreview={(value) => previewGradientAnchor('first', value)}
-                            />
-                          </div>
-                          <div className="set-row">
-                            <span className="set-row-label">{t('Second color')}</span>
-                            <ColorField
-                              value={custom.gradientAnchors.second}
-                              onChange={(value) => updateGradientAnchor('second', value)}
-                              onPreview={(value) => previewGradientAnchor('second', value)}
-                            />
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="set-row">
-                            <span className="set-row-label">{t('Accent')}</span>
-                            <ColorField
-                              value={custom.base.accent}
-                              onChange={(accent) => updateCustom({ ...custom, base: { ...custom.base, accent } })}
-                              onPreview={(accent) => previewCustomTheme({ ...custom, base: { ...custom.base, accent } })}
-                            />
-                          </div>
-                          <div className="set-row">
-                            <span className="set-row-label">{t('Background')}</span>
-                            <ColorField
-                              value={custom.base.background}
-                              onChange={(background) => updateCustom({ ...custom, base: { ...custom.base, background } })}
-                              onPreview={(background) => previewCustomTheme({ ...custom, base: { ...custom.base, background } })}
-                            />
-                          </div>
-                          <div className="set-row">
-                            <span className="set-row-label">{t('Surface')}</span>
-                            <ColorField
-                              value={custom.base.surface}
-                              onChange={(surface) => updateCustom({ ...custom, base: { ...custom.base, surface } })}
-                              onPreview={(surface) => previewCustomTheme({ ...custom, base: { ...custom.base, surface } })}
-                            />
-                          </div>
-                          <div className="set-row">
-                            <span className="set-row-label">{t('Play button')}</span>
-                            <ColorField
-                              value={custom.base.playButton}
-                              onChange={(playButton) => updateCustom({ ...custom, base: { ...custom.base, playButton } })}
-                              onPreview={(playButton) => previewCustomTheme({ ...custom, base: { ...custom.base, playButton } })}
-                            />
-                          </div>
-                        </>
-                      )}
-
-                      {!custom.gradientAnchors ? (
-                        <>
-                          <button
-                            className={advOpen ? 'adv-toggle is-open' : 'adv-toggle'}
-                            onClick={() => setAdvOpen(!advOpen)}
-                          >
-                            <ChevronDown size={14} />
-                            {t('Advanced')}
-                          </button>
-
-                          {advancedOpen ? (
-                            <div className="tok-list">
-                              {resolved === null
-                                ? null
-                                : TOKEN_KEYS.map((k) => {
-                                    const override = custom.overrides[k]
-                                    return (
-                                      <div key={k} className="tok-row">
-                                        <span className="tok-name">{t(TOKEN_LABELS[k])}</span>
-                                        <span className="tok-value">{override ?? (resolved[k] || '—')}</span>
-                                        <input
-                                          type="color"
-                                          className="swatch"
-                                          value={asColorInput(override)}
-                                          onChange={(e) =>
-                                            updateCustom({
-                                              ...custom,
-                                              overrides: { ...custom.overrides, [k]: e.target.value },
-                                            })
-                                          }
-                                        />
-                                      </div>
-                                    )
-                                  })}
-                              <div className="set-actions">
-                                <button
-                                  className="btn"
-                                  disabled={Object.keys(custom.overrides).length === 0}
-                                  onClick={() => updateCustom({ ...custom, overrides: {} })}
-                                >
-                                  <RotateCcw size={14} />
-                                  {t('Reset overrides')}
-                                </button>
-                              </div>
-                            </div>
-                          ) : null}
-                        </>
-                      ) : null}
-
-                      <div className="set-actions">
-                        <button className="btn btn-danger" onClick={() => resetAppearance()}>
-                          <RotateCcw size={14} />
-                          {t('Reset theme')}
-                        </button>
-                      </div>
-                    </Card>
-                  ) : null}
-
-                  <Card title={t('Font')} icon={Type}>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Source')}</span>
-                      <Segmented<FontMode>
-                        value={fontMode}
-                        options={[
-                          { value: 'default', label: t('Default') },
-                          { value: 'system', label: t('System') },
-                          { value: 'file', label: t('File') },
-                        ]}
-                        onChange={setFontMode}
-                      />
-                    </div>
-
-                    {fontMode === 'system' ? (
-                      <>
-                        <div className="set-row">
-                          <span className="set-row-label">{t('Installed fonts')}</span>
-                          {fontData.fonts === null ? (
-                            <span className="muted" style={{ fontSize: 12 }}>{t('Loading…')}</span>
-                          ) : (
-                            <FontListBox
-                              fonts={fontData.fonts}
-                              value={settings.font.family ?? FALLBACK_FONTS[0]}
-                              onSelect={(f) => update({ font: { family: f } })}
-                            />
-                          )}
-                        </div>
-                        {fontData.fonts !== null && fontData.hidden > 0 ? (
-                          <div className="muted font-hint">
-                            {fontData.hidden} {t('fonts hidden — missing glyphs for the interface language')}
-                          </div>
-                        ) : null}
-                        <div className="set-row">
-                          <span className="set-row-label">{t('Custom CSS stack')}</span>
-                          <input
-                            className="text-input stack-input"
-                            value={settings.font.family ?? ''}
-                            placeholder="'JetBrains Mono', monospace"
-                            onChange={(e) => update({ font: { family: e.target.value } })}
-                          />
-                        </div>
-                      </>
-                    ) : null}
-
-                    {fontMode === 'file' ? (
-                      <div className="set-row">
-                        <span className="set-row-stack">
-                          <span className="set-row-label">
-                            {settings.font.importedPath
-                              ? fileName(settings.font.importedPath)
-                              : t('No font file imported')}
-                          </span>
-                        </span>
-                        <button className="btn" disabled={fontBusy} onClick={() => void importFont()}>
-                          <FolderOpen size={15} />
-                          {t('Import font file')}
-                        </button>
-                      </div>
-                    ) : null}
-
-                    <div className="font-preview" style={{ fontSize: settings.font.sizePx }}>
-                      Аа Бб Вв Aa Bb Cc 0123456789
-                    </div>
-
-                    <CommitSlider
-                      label={t('Size')}
-                      min={12}
-                      max={18}
-                      step={1}
-                      value={settings.font.sizePx}
-                      format={(v) => `${v}px`}
-                      onCommit={(sizePx) => update({ font: { sizePx } })}
-                    />
-                    <CommitSlider
-                      label={t('UI scale')}
-                      min={80}
-                      max={130}
-                      step={5}
-                      value={settings.font.uiScalePct}
-                      format={(v) => `${v}%`}
-                      onCommit={(uiScalePct) => update({ font: { uiScalePct } })}
-                    />
-                  </Card>
-                </>
-              ) : null}
-
-              {section === 'wallpaper' ? (
-                <>
-                  <Card defaultOpen title={t('Background image')} icon={Image}>
-                    <div className="set-row">
-                      <span className="set-row-label">
-                        {settings.background.path ? fileName(settings.background.path) : t('No image selected')}
-                      </span>
-                      <div className="btn-group">
-                        <button className="btn" disabled={bgBusy} onClick={() => void importBackground()}>
-                          <FolderOpen size={15} />
-                          {t('Import image')}
-                        </button>
-                        <button
-                          className="btn"
-                          disabled={settings.background.path === null}
-                          onClick={() => update({ background: { path: null } })}
-                        >
-                          {t('None')}
-                        </button>
-                      </div>
-                    </div>
-                    {settings.background.path ? (
-                      <div className="set-bg-preview" role="img" aria-label={t('Background image')}>
-                        <div
-                          className="set-bg-preview-image"
-                          style={{
-                            backgroundImage: `url("${convertFileSrc(settings.background.path)}")`,
-                            filter: `blur(${settings.background.blurPx}px)`,
-                          }}
-                        />
-                        <div className="set-bg-preview-dim" style={{ '--wallpaper-dim': settings.background.dimPct / 100 } as CSSProperties} />
-                      </div>
-                    ) : null}
-                    <BackgroundImageLibrary
-                      selectedPath={settings.background.path}
-                      onSelect={(path) => update({ background: { path } })}
-                    />
-                  </Card>
-                  <Card defaultOpen title={t('Background effects')} icon={SlidersHorizontal}>
-                    <SliderRow
-                      label={t('Dim')}
-                      min={0}
-                      max={80}
-                      step={1}
-                      value={settings.background.dimPct}
-                      display={`${settings.background.dimPct}%`}
-                      onChange={(dimPct) => update({ background: { dimPct } })}
-                    />
-                    <SliderRow
-                      label={t('Blur')}
-                      min={0}
-                      max={40}
-                      step={1}
-                      value={settings.background.blurPx}
-                      display={`${settings.background.blurPx}px`}
-                      onChange={(blurPx) => update({ background: { blurPx } })}
-                    />
-                  </Card>
-                  <Card title={t('Search for background images')} icon={Image}>
-                    <BackgroundSearchPanel
-                      search={api.searchBackgrounds}
-                      onSelect={async (result) => {
-                        const storedPath = await api.saveSelectedBackground(result.provider, result.imageUrl)
-                        update({ background: { path: storedPath } })
-                      }}
-                    />
-                  </Card>
-                </>
-              ) : null}
-
-              {section === 'player' ? (
-                <>
-                  <section className="set-card set-preview-card" aria-label={t('Player preview')}>
-                    <div className="set-preview-heading"><h3 className="set-card-title">{t('Player preview')}</h3></div>
-                    <SettingsMiniature waveform={settings.player.waveform} />
-                  </section>
-                  <Card defaultOpen title={t('Player')} icon={Music2}>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Waveform progress bar')}</span>
-                      <SettingsSwitch checked={settings.player.waveform} label={t('Waveform progress bar')}
-                        onClick={() => update({ player: { waveform: !settings.player.waveform } })} />
-                    </div>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Cache waveform data')}</span>
-                      <SettingsSwitch checked={settings.player.cacheWaveforms} label={t('Cache waveform data')}
-                        onClick={() => update({ player: { cacheWaveforms: !settings.player.cacheWaveforms } })} />
-                    </div>
-                    <div className="set-note">
-                      {t('Saves SoundCloud waveform data on this device for up to 12 hours, including after app restarts.')}
-                    </div>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Player bar layout')}</span>
-                      <Segmented<'classic' | 'modern'>
-                        value={settings.player.barStyle}
-                        options={[
-                          { value: 'classic', label: t('Classic') },
-                          { value: 'modern', label: t('Modern') },
-                        ]}
-                        onChange={(barStyle) => update({ player: { barStyle } })}
-                      />
-                    </div>
-                    <CommitSlider
-                      label={t('Crossfade')}
-                      min={0}
-                      max={12}
-                      step={1}
-                      value={settings.audio.crossfadeSec}
-                      format={(v) => (v === 0 ? t('Off') : `${v}s`)}
-                      onCommit={(v) => update({ audio: { crossfadeSec: v } })}
-                    />
-                  </Card>
-                  <Card title={t('Companion')}>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Enable companion')}</span>
-                      <SettingsSwitch checked={settings.player.companionEnabled} label={t('Enable companion')}
-                        onClick={() => update({ player: { companionEnabled: !settings.player.companionEnabled } })} />
-                    </div>
-                    <div className="set-note">{t('Now you’re not alone <3')}</div>
-                  </Card>
-                </>
-              ) : null}
-
-              {section === 'lyrics' ? (
-                <>
-                  <SettingsLyricsPreview lyrics={settings.lyrics} />
-                  <Card defaultOpen title={t('Lyrics display')} icon={Captions}>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Capitalize lyric lines')}</span>
-                      <SettingsSwitch checked={settings.lyrics.capitalizeLines} label={t('Capitalize lyric lines')}
-                        onClick={() => update({ lyrics: { capitalizeLines: !settings.lyrics.capitalizeLines } })} />
-                    </div>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Enlarge lyrics when player is hidden')}</span>
-                      <SettingsSwitch checked={settings.lyrics.enlargeWhenCollapsed} label={t('Enlarge lyrics when player is hidden')}
-                        onClick={() => update({ lyrics: { enlargeWhenCollapsed: !settings.lyrics.enlargeWhenCollapsed } })} />
-                    </div>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Lyrics alignment')}</span>
-                    </div>
-                    <div className="lyrics-alignment-cards" role="group" aria-label={t('Lyrics alignment')}>
-                      {(['left', 'center', 'right'] as const).map(alignment => (
-                        <button
-                          key={alignment}
-                          type="button"
-                          className={`lyrics-alignment-card${settings.lyrics.alignment === alignment ? ' is-active' : ''}`}
-                          aria-label={t(alignment === 'left' ? 'Left' : alignment === 'center' ? 'Center' : 'Right')}
-                          aria-pressed={settings.lyrics.alignment === alignment}
-                          onClick={() => update({ lyrics: { alignment } })}
-                        >
-                          <span className={`lyrics-alignment-preview is-${alignment}`} aria-hidden="true">
-                            <i /><i /><i />
-                          </span>
-                          <span>{t(alignment === 'left' ? 'Left' : alignment === 'center' ? 'Center' : 'Right')}</span>
-                        </button>
-                      ))}
-                    </div>
-                    <SliderRow
-                      label={t('Lyrics text size')}
-                      min={16} max={40} step={1}
-                      value={settings.lyrics.textSizePx}
-                      display={`${settings.lyrics.textSizePx}px`}
-                      onChange={textSizePx => update({ lyrics: { textSizePx } })}
-                    />
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Line movement')}</span>
-                      <Segmented value={settings.lyrics.motionStyle}
-                        options={[{ value: 'smooth', label: t('Smooth') }, { value: 'accelerated', label: t('Accelerated') }]}
-                        onChange={motionStyle => update({ lyrics: { motionStyle } })} />
-                    </div>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Text fill')}</span>
-                      <Segmented value={settings.lyrics.textFillMode}
-                        options={[{ value: 'continuous', label: t('Continuous') }, { value: 'words', label: t('By word') }]}
-                        onChange={textFillMode => update({ lyrics: { textFillMode } })} />
-                    </div>
-                  </Card>
-                  <Card title={t('Highlighting and progress')} icon={SlidersHorizontal}>
-                    <div className="set-row lyrics-toggle-row">
-                      <span className="set-row-label">{t('Animate progress line')}</span>
-                      <SettingsSwitch checked={settings.lyrics.fillEnabled} label={t('Animate progress line')}
-                        onClick={() => update({ lyrics: { fillEnabled: !settings.lyrics.fillEnabled } })} />
-                    </div>
-                    <div className="set-row">
-                      <label className="set-row-label" htmlFor="lyrics-progress-direction">{t('Progress direction')}</label>
-                      <select id="lyrics-progress-direction" className="select" value={settings.lyrics.progressDirection}
-                        onChange={event => update({ lyrics: { progressDirection: event.target.value as typeof settings.lyrics.progressDirection } })}>
-                        <option value="left-to-right">{t('Left to right')}</option>
-                        <option value="right-to-left">{t('Right to left')}</option>
-                        <option value="center-out">{t('Center outward')}</option>
-                      </select>
-                    </div>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Progress color')}</span>
-                      <div className="lyrics-color-controls" role="group" aria-label={t('Progress color')}>
-                        <div className="seg">
-                          <button type="button" className={`seg-btn${settings.lyrics.progressColorMode === 'theme' ? ' is-active' : ''}`}
-                            aria-pressed={settings.lyrics.progressColorMode === 'theme'}
-                            onClick={() => {
-                              if (settings.lyrics.progressColorMode !== 'theme') update({ lyrics: { progressColorMode: 'theme' } })
-                            }}>{t('Theme color')}</button>
-                          <button type="button" className={`seg-btn${settings.lyrics.progressColorMode === 'custom' ? ' is-active' : ''}`}
-                            aria-pressed={settings.lyrics.progressColorMode === 'custom'}
-                            onClick={() => {
-                              if (settings.lyrics.progressColorMode !== 'custom') update({ lyrics: { progressColorMode: 'custom' } })
-                            }}>{t('Custom color')}</button>
-                        </div>
-                        {settings.lyrics.progressColorMode === 'custom' && (
-                          <LyricsProgressColorPicker value={settings.lyrics.progressColor}
-                            onCommit={progressColor => update({ lyrics: { progressColor } })} />
-                        )}
-                      </div>
-                    </div>
-                    <SliderRow label={t('Progress opacity')} min={5} max={100} step={1}
-                      value={settings.lyrics.progressOpacityPct} display={`${settings.lyrics.progressOpacityPct}%`}
-                      onChange={progressOpacityPct => update({ lyrics: { progressOpacityPct } })} />
-                    <SliderRow label={t('Progress thickness')} min={1} max={6} step={0.5}
-                      value={settings.lyrics.progressThicknessPx} display={`${settings.lyrics.progressThicknessPx}px`}
-                      onChange={progressThicknessPx => update({ lyrics: { progressThicknessPx } })} />
-                    <div className="set-row lyrics-toggle-row">
-                      <span className="set-row-label">{t('Clip progress to text')}</span>
-                      <SettingsSwitch checked={settings.lyrics.progressClipToText} label={t('Clip progress to text')}
-                        onClick={() => update({ lyrics: { progressClipToText: !settings.lyrics.progressClipToText } })} />
-                    </div>
-                  </Card>
-                  <Card title={t('Lyrics cache')} icon={Database}>
-                    <div className="set-row">
-                      <span className="set-row-label">{t('Save lyrics to cache')}</span>
-                      <SettingsSwitch checked={settings.lyrics.cacheOnline} label={t('Save lyrics to cache')}
-                        onClick={() => update({ lyrics: { cacheOnline: !settings.lyrics.cacheOnline } })} />
-                    </div>
-                    <div className="set-note">{t('Online lyrics are cached for offline playback.')}</div>
-                    {settings.lyrics.cacheOnline && <div className="set-row">
-                      <span className="set-row-label">{t('Search cached lyrics')}</span>
-                      <SettingsSwitch checked={settings.lyrics.searchCached} label={t('Search cached lyrics')}
-                        onClick={() => update({ lyrics: { searchCached: !settings.lyrics.searchCached } })} />
-                    </div>}
-                  </Card>
-                </>
-              ) : null}
-
-              {section === 'visualizers' ? (
-                <>
-                  <VisualizerSettingsPanel />
-                </>
-              ) : null}
-
-              {section === 'folders' ? (
-                <>
-                  <Card defaultOpen title={t('Music folders')} icon={FolderOpen} desc={t('Folders scanned for audio files. Everything stays local.')}>
-                    {foldersApi.error ? <div className="error-line">{foldersApi.error}</div> : null}
-                    {foldersApi.loading ? (
-                      <div className="muted" style={{ marginTop: 14, fontSize: 12.5 }}>{t('Loading…')}</div>
-                    ) : foldersApi.folders.length === 0 ? (
-                      <div className="muted" style={{ marginTop: 14, fontSize: 12.5 }}>{t('No folders added yet.')}</div>
-                    ) : (
-                      <div className="folder-list">
-                        {foldersApi.folders.map((f) => (
-                          <div key={f.id} className="folder-row">
-                            <FolderOpen size={16} className="muted" />
-                            <div className="folder-info">
-                              <span className="folder-path" title={f.path}>
-                                {f.path}
-                              </span>
-                              <span className="folder-count">
-                                {f.trackCount ?? 0} {t('tracks')}
-                              </span>
-                            </div>
-                            <button
-                              className="icon-btn"
-                              aria-label={t('Rescan') + ' ' + f.path}
-                              disabled={scan.active}
-                              onClick={() => void api.rescanFolder(f.id)}
-                            >
-                              <RefreshCw size={14} />
-                            </button>
-                            <button
-                              className="icon-btn"
-                              aria-label={t('Remove') + ' ' + f.path}
-                              onClick={() => void removeFolder(f.id, f.path)}
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="set-actions">
-                      <button className="btn" onClick={() => void foldersApi.addFolder()} disabled={foldersApi.busy}>
-                        <FolderPlus size={15} />
-                        {t('Add folder')}
-                      </button>
-                    </div>
-                  </Card>
-
-                  <Card title={t('Scanning')} icon={ScanIcon} desc={t('Runs in the background and updates tracks, albums and covers automatically.')}>
-                    <ScanLine />
-                    <div className="muted settings-line">
-                      {foldersApi.folders.length}{' '}
-                      {foldersApi.folders.length === 1 ? t('folder registered') : t('folders registered')}
-                    </div>
-                    <div className="set-actions">
-                      <button className="btn" onClick={() => void api.rescanLibrary()} disabled={scan.active}>
-                        <RefreshCw size={15} className={scan.active ? 'spin' : undefined} />
-                        {t('Rescan library')}
-                      </button>
-                    </div>
-                  </Card>
-                </>
-              ) : null}
-
-              {section === 'hidden' ? (
-                <>
-                  <HiddenTracksCard />
-                </>
-              ) : null}
-
-              {section === 'music-cache' ? (
-                <>
-                  <StorageCard kind="music" />
-                </>
-              ) : null}
-
-              {section === 'covers-cache' ? (
-                <>
-                  <StorageCard kind="covers" />
-                </>
-              ) : null}
-
-              {section === 'updates' ? (
-                <>
-                  <UpdateCard />
-                </>
-              ) : null}
-
-              {section === 'application' ? (
-                <>
-                  <Card defaultOpen title={t('About')} icon={Info}>
-                    <div className="about-name">Tempo</div>
-                    <div className="muted settings-line">
-                      {t('Music from your files, SoundCloud and YouTube Music in one library and queue.')}
-                    </div>
-                    <div className="muted settings-line" style={{ marginTop: 8 }}>
-                      {t('Author')}: gl1pi (@GLIPIYT)
-                    </div>
-                    <div className="muted settings-line">
-                      {t('Beta tester')}: maslopodsolnechnoe
-                    </div>
-                    <div className="set-actions">
-                      <button
-                        className="btn"
-                        onClick={() => void openUrl(REPOSITORY_URL).catch(() => toast.show(t('Could not open repository'), 'error'))}
-                      >
-                        <MarkGithubIcon size={16} />
-                        {t('GitHub repository')}
-                      </button>
-                    </div>
-                  </Card>
-                </>
-              ) : null}
+            <div key={areaId} className="set-category-sections">
+              {area.sections.map(({ id, label, Icon }) => (
+                <section
+                  key={id}
+                  id={`settings-section-${id}`}
+                  data-section={id}
+                  data-muted={emphasizedSection !== null && emphasizedSection !== id ? true : undefined}
+                  className="set-subcategory set-section-content"
+                  aria-labelledby={`settings-section-heading-${id}`}
+                >
+                  <h3 className="set-subcategory-heading" id={`settings-section-heading-${id}`} tabIndex={-1}>
+                    <Icon size={15} aria-hidden="true" />
+                    {t(label)}
+                  </h3>
+                  {renderSubcategory(id)}
+                </section>
+              ))}
             </div>
           </SettingsSectionScope>
         </div>

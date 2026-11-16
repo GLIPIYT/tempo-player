@@ -50,9 +50,9 @@ export type SettingsSectionId = (typeof SETTINGS_NAV)[number]['sections'][number
 export function SettingsNavigation({ area, expanded, section, onArea, onSection }: {
   area: SettingsArea
   expanded: boolean
-  section: SettingsSectionId
+  section: SettingsSectionId | null
   onArea: (area: SettingsArea) => void
-  onSection: (section: SettingsSectionId) => void
+  onSection: (section: SettingsSectionId, focusHeading: boolean) => void
 }) {
   const t = useT()
   return (
@@ -69,7 +69,9 @@ export function SettingsNavigation({ area, expanded, section, onArea, onSection 
           <div className="set-nav-children" id={`settings-nav-${id}`} hidden={area !== id || !expanded}>
             {sections.map((item) => (
               <button key={item.id} type="button" className="set-nav-child"
-                aria-current={section === item.id ? 'page' : undefined} onClick={() => onSection(item.id)}>
+                aria-current={section === item.id ? 'location' : undefined}
+                aria-controls={`settings-section-${item.id}`}
+                onClick={event => onSection(item.id, event.detail === 0)}>
                 {t(item.label)}
               </button>
             ))}
